@@ -170,16 +170,18 @@
 }
 
 .polish {
-  border: none;
-  background: transparent;
-  color: #1fcfa9;
+  border: 1px solid rgba(17, 169, 138, 0.28);
+  background: #ebfffb;
+  color: #11a98a;
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
-  padding: 8px 4px;
+  padding: 8px 12px;
+  border-radius: 999px;
   transition: opacity 0.15s;
 
   &:hover:not(:disabled) {
+    border-color: rgba(17, 169, 138, 0.5);
     opacity: 0.8;
   }
   &:disabled {

@@ -26,6 +26,7 @@ import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '..
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
 import { sanitizeLoginReturnTo } from '../utils/loginReturnTo'
+import { resetCanvasRealPersonHint } from '../utils/canvasRealPersonHint'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 /** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
@@ -294,6 +295,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const handleLoginSuccess = useCallback(
     (session?: any, returnTo?: string) => {
+      resetCanvasRealPersonHint(getDraftUserScopeFromSession(session) || getCurrentDraftUserScope())
       sessionStorage.removeItem('zzh_sso_pending')
       const target = sanitizeLoginReturnTo(returnTo) || APP_HOME_PATH
       // A login result is newer than any session bootstrap already in flight.
@@ -337,6 +339,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearLocalAuthState = useCallback(
     (draftUserScope: string, broadcast: boolean) => {
+      resetCanvasRealPersonHint(draftUserScope)
       // The store switches every draft helper to the anonymous scope when the
       // session is cleared. Block both identities first so unmount cleanups or
       // delayed callbacks cannot recreate the signed-out user's draft under

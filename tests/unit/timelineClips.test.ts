@@ -218,7 +218,7 @@ describe('时间线片段模型', () => {
 
 describe('时间线校验与 cutlist', () => {
   it('拦住片段不足、素材缺失、片段过短与超长的时间线', () => {
-    expect(validateTimeline(createTimelineState())).toContain('至少需要 2 个片段才能合成')
+    expect(validateTimeline(createTimelineState())).toContain('请添加视频片段后再合成')
 
     const missingAsset = addTimelineClips(createTimelineState(), [
       createTimelineClip({ id: 'clip-1', assetId: 0, sourceDurationSec: 5 }),
@@ -254,7 +254,19 @@ describe('时间线校验与 cutlist', () => {
       output: { ratio: '16:9', resolution: '1080p' },
       total_duration_sec: 15,
     })
-    expect(() => buildTimelineCutlist(createTimelineState())).toThrow('至少需要 2 个片段')
+    expect(() => buildTimelineCutlist(createTimelineState())).toThrow('请添加视频片段')
+  })
+
+  it('单视频添加音频或调整原声音量后允许合成', () => {
+    const single = { clips: [createTimelineClip({ id: 'one', assetId: 101, sourceDurationSec: 5 })] }
+    expect(validateTimeline(single).join()).toContain('至少需要 2 个片段')
+    const voiced = {
+      ...single,
+      audioClips: [{ sourceNodeId: 'audio', assetId: 201, title: '配音', durationSec: 5 }],
+    } as TimelineState
+    expect(validateTimeline(voiced)).toEqual([])
+    expect(buildTimelineCutlist(voiced).clips).toHaveLength(1)
+    expect(validateTimeline({ ...single, originalAudioVolume: 0 })).toEqual([])
   })
 
   it('从持久化数据恢复时丢弃结构不合法的片段', () => {

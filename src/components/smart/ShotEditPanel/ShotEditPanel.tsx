@@ -10,6 +10,7 @@
  * 统一出图:提示词 + 选中的素材(refUrls) + 是否携带当前分镜图(carryCurrent) → onRegenerateImage。
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import ImageViewport from '@/components/common/ImageViewport'
 import type { Shot } from '../ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
 import InlineEdit from '@/components/common/InlineEdit'
@@ -181,7 +182,7 @@ export default function ShotEditPanel({
         {texts}
         {bigImg && (
           <div className={styles.seditLightbox} onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
-            <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+            <ImageViewport key={bigImg} src={bigImg} alt="分镜图片" />
             <button type="button" className={styles.seditLightboxClose} onClick={() => setBigImg('')} aria-label="关闭">
               ×
             </button>
@@ -335,7 +336,7 @@ export default function ShotEditPanel({
       {/* 放大查看灯箱(主体素材 / 当前分镜图 / 历史版本 共用) */}
       {bigImg && (
         <div className={styles.seditLightbox} onClick={() => setBigImg('')} role="dialog" aria-label="图片放大">
-          <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+          <ImageViewport key={bigImg} src={bigImg} alt="素材图片" />
           <button type="button" className={styles.seditLightboxClose} onClick={() => setBigImg('')} aria-label="关闭">
             ×
           </button>

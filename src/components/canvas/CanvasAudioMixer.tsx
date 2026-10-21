@@ -9,6 +9,7 @@ const LANES = [
   { key: 'bgm', label: 'BGM', color: '#43a783' },
 ] as const
 const LEGACY_SFX_LANE = { key: 'sfx', label: '历史音效', color: '#b98a46' } as const
+const PREVIEW_TIMEOUT_MS = 30_000
 export default function CanvasAudioMixer({
   clips,
   duration,
@@ -20,6 +21,9 @@ export default function CanvasAudioMixer({
   onAddAudio,
   originalAudioVolume = 1,
   onOriginalAudioVolumeChange,
+  onPreviewReadyChange,
+  onSoloChange,
+  onPreviewPlay,
 }: {
   clips: TimelineAudioClip[]
   duration: number
@@ -31,14 +35,23 @@ export default function CanvasAudioMixer({
   onAddAudio?: (sourceNodeId: string) => void
   originalAudioVolume?: number
   onOriginalAudioVolumeChange?: (volume: number) => void
+  onPreviewReadyChange?: (ready: boolean) => void
+  onSoloChange?: (solo: boolean) => void
+  onPreviewPlay?: (start: (() => Promise<boolean>) | null) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [preparing, setPreparing] = useState(false)
   const [preview, setPreview] = useState('')
-  const [hasPreparedPreview, setHasPreparedPreview] = useState(false)
+  const [previewError, setPreviewError] = useState('')
+  const [previewVersion, setPreviewVersion] = useState(0)
   const [solo, setSolo] = useState('')
+  const [mediaReady, setMediaReady] = useState(false)
   const lanes = clips.some((clip) => clip.lane === 'sfx') ? [...LANES, LEGACY_SFX_LANE] : [...LANES]
   const audio = useRef<HTMLAudioElement>(null)
   const requestRef = useRef(0)
+  const cacheRef = useRef(new Map<string, AudioBuffer>())
+  const playPendingRef = useRef(false)
+  const playBlockedRef = useRef(false)
   const { showToast } = useToast()
   const voiceDuration = clips
     .filter((clip) => clip.lane === 'voice' && !clip.muted)
@@ -51,24 +64,144 @@ export default function CanvasAudioMixer({
   useEffect(() => {
     requestRef.current += 1
     setPreview('')
-    setBusy(false)
+    setMediaReady(false)
+    playPendingRef.current = false
+    playBlockedRef.current = false
+    setPreviewError('')
+    const canPrepare = clips.length > 0 && duration > 0
+    setPreparing(canPrepare)
+    let cancelled = false
+    let url = ''
+    const controller = new AbortController()
+    const timeout = canPrepare
+      ? setTimeout(() => {
+          cancelled = true
+          controller.abort()
+          setPreparing(false)
+          setPreviewError('音频试听准备超时')
+        }, PREVIEW_TIMEOUT_MS)
+      : undefined
+    // 合并连续的参数编辑，避免每次滑条变化都解码整条音轨。
+    const timer = setTimeout(() => {
+      if (!canPrepare) return
+      void (async () => {
+        try {
+          const { renderAudioMix, audioBufferToWav } = await import('@/utils/audioMix')
+          if (cancelled) return
+          const output = !solo ? clips : clips.map((clip) => ({ ...clip, muted: clip.muted || clip.lane !== solo }))
+          const buffer = await renderAudioMix(output, duration, workspaceId, undefined, 1, {
+            signal: controller.signal,
+            cache: cacheRef.current,
+          })
+          if (cancelled) return
+          url = URL.createObjectURL(audioBufferToWav(buffer))
+          setPreview(url)
+        } catch (e: any) {
+          if (!cancelled) {
+            const message = e?.message || '音频试听准备失败'
+            setPreviewError(message)
+            showToast(message, 'error')
+          }
+        } finally {
+          clearTimeout(timeout)
+          if (!cancelled) setPreparing(false)
+        }
+      })()
+    }, 200)
     return () => {
+      cancelled = true
+      controller.abort()
+      clearTimeout(timer)
+      clearTimeout(timeout)
       requestRef.current += 1
+      if (url) URL.revokeObjectURL(url)
     }
-  }, [clips, duration, workspaceId, solo])
-  useEffect(
-    () => () => {
-      if (preview) URL.revokeObjectURL(preview)
-    },
-    [preview],
-  )
+  }, [clips, duration, workspaceId, solo, previewVersion, showToast])
   useEffect(() => {
+    if (!preview || mediaReady || previewError) return
+    const timer = setTimeout(() => {
+      setPreviewError('音频试听加载超时')
+    }, PREVIEW_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [preview, mediaReady, previewError])
+  useEffect(() => {
+    cacheRef.current.clear()
+  }, [workspaceId])
+  useEffect(() => {
+    onPreviewReadyChange?.(!clips.length || (mediaReady && !preparing && !previewError))
+  }, [clips.length, mediaReady, preparing, previewError, onPreviewReadyChange])
+  useEffect(() => {
+    onSoloChange?.(Boolean(solo))
+    return () => onSoloChange?.(false)
+  }, [solo, onSoloChange])
+  const startAudio = async (): Promise<boolean> => {
+    const player = audio.current
+    if (!clips.length) return true
+    if (!player || !mediaReady) return false
+    const request = requestRef.current
+    playBlockedRef.current = false
+    try {
+      player.currentTime = playheadSec >= duration ? 0 : playheadSec
+      await player.play()
+      if (request !== requestRef.current || audio.current !== player) {
+        player.pause()
+        return false
+      }
+      return true
+    } catch {
+      if (request !== requestRef.current || audio.current !== player) return false
+      playBlockedRef.current = true
+      setPreviewError('音频未能播放')
+      showToast('音频未能播放，请重试试听后重新点击播放', 'info')
+      return false
+    }
+  }
+  const startAudioRef = useRef(startAudio)
+  startAudioRef.current = startAudio
+  useEffect(() => {
+    onPreviewPlay?.(() => startAudioRef.current())
+    return () => onPreviewPlay?.(null)
+  }, [onPreviewPlay])
+  const syncAudio = () => {
     const player = audio.current
     if (!player || !preview) return
-    if (Math.abs(player.currentTime - playheadSec) > 0.25) player.currentTime = playheadSec
-    if (playing) void player.play().catch(() => showToast('请点击播放器开始试听', 'info'))
-    else player.pause()
-  }, [preview, playheadSec, playing, showToast])
+    if (previewError) {
+      player.pause()
+      return
+    }
+    try {
+      if (Math.abs(player.currentTime - playheadSec) > 0.25) player.currentTime = playheadSec
+    } catch {
+      // 元数据未加载时不能定位，loadedmetadata 会再同步一次。
+    }
+    if (playing && player.paused && !playPendingRef.current && !playBlockedRef.current) {
+      playPendingRef.current = true
+      const request = requestRef.current
+      void player
+        .play()
+        .catch(() => {
+          if (request !== requestRef.current || audio.current !== player) return
+          playBlockedRef.current = true
+          setPreviewError('音频播放失败或被浏览器阻止')
+          showToast('音频播放失败，请重试试听后重新点击播放', 'info')
+        })
+        .finally(() => {
+          if (request === requestRef.current) playPendingRef.current = false
+        })
+    } else if (!playing) player.pause()
+  }
+  const syncAudioRef = useRef(syncAudio)
+  syncAudioRef.current = syncAudio
+  useEffect(() => {
+    const player = audio.current
+    syncAudioRef.current()
+    return () => {
+      player?.pause()
+    }
+  }, [preview, playing, previewError])
+  useEffect(() => {
+    syncAudioRef.current()
+  }, [playheadSec])
   const update = (clip: TimelineAudioClip, patch: Record<string, unknown>) =>
     onChange(
       clips.map((item) =>
@@ -76,6 +209,10 @@ export default function CanvasAudioMixer({
       ),
     )
   const prepare = async (download: boolean) => {
+    if (!download) {
+      setPreviewVersion((version) => version + 1)
+      return
+    }
     if (busy) return
     const request = ++requestRef.current
     setBusy(true)
@@ -83,7 +220,7 @@ export default function CanvasAudioMixer({
       const { renderAudioMix, audioBufferToWav } = await import('@/utils/audioMix')
       const output =
         download || !solo ? clips : clips.map((clip) => ({ ...clip, muted: clip.muted || clip.lane !== solo }))
-      const buffer = await renderAudioMix(output, duration, workspaceId)
+      const buffer = await renderAudioMix(output, duration, workspaceId, undefined, 1, { cache: cacheRef.current })
       if (request !== requestRef.current) return
       const blob = audioBufferToWav(buffer)
       const url = URL.createObjectURL(blob)
@@ -93,14 +230,11 @@ export default function CanvasAudioMixer({
         anchor.download = `混音-${Date.now()}.wav`
         anchor.click()
         setTimeout(() => URL.revokeObjectURL(url), 1000)
-      } else {
-        setPreview(url)
-        setHasPreparedPreview(true)
       }
     } catch (e: any) {
       if (request === requestRef.current) showToast(e?.message || '混音失败', 'error')
     } finally {
-      if (request === requestRef.current) setBusy(false)
+      setBusy(false)
     }
   }
   return (
@@ -128,9 +262,15 @@ export default function CanvasAudioMixer({
               ))}
             </select>
           )}
-          <button type="button" disabled={busy || !clips.length || duration <= 0} onClick={() => void prepare(false)}>
-            {busy ? '正在混音…' : preview ? '重新准备试听' : '准备混音试听'}
-          </button>
+          {previewError && (
+            <button
+              type="button"
+              disabled={busy || preparing || !clips.length || duration <= 0}
+              onClick={() => void prepare(false)}
+            >
+              重试试听
+            </button>
+          )}
           <button type="button" disabled={busy || !clips.length || duration <= 0} onClick={() => void prepare(true)}>
             导出混音 WAV
           </button>
@@ -178,17 +318,38 @@ export default function CanvasAudioMixer({
           {originalAudioVolume ? '静音原声' : '开启原声'}
         </button>
       </div>
-      {hasPreparedPreview && !preview && clips.length > 0 && (
+      {preparing && (
         <p className={styles.stalePreview} role="status">
-          音轨或成片时长已变化，当前试听已失效。点击“准备混音试听”后再播放，导出会使用最新设置。
+          正在自动准备音频试听，就绪后会跟随上方视频播放。
+        </p>
+      )}
+      {previewError && (
+        <p className={styles.stalePreview} role="alert">
+          {previewError}，请重试试听。
         </p>
       )}
       {preview && (
         <>
-          <audio ref={audio} src={preview} preload="auto" />
-          <p className={styles.note} role="status">
-            试听已就绪，播放或拖动上方视频时音轨同步。
-          </p>
+          <audio
+            ref={audio}
+            src={preview}
+            preload="auto"
+            onLoadedMetadata={syncAudio}
+            onCanPlay={() => {
+              if (previewError) return
+              setMediaReady(true)
+              syncAudio()
+            }}
+            onError={() => {
+              setMediaReady(false)
+              setPreviewError('音频试听加载失败')
+            }}
+          />
+          {!previewError && (
+            <p className={styles.note} role="status" aria-live="polite">
+              {mediaReady ? '试听已就绪，播放或拖动上方视频时音轨同步。' : '试听文件已生成，正在加载音频，请稍候。'}
+            </p>
+          )}
         </>
       )}
       {lanes.map((lane) => (

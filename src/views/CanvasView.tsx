@@ -1,3 +1,8 @@
+import CanvasNodeFailure from '@/components/canvas/CanvasNodeFailure'
+import type { ToolImage, CanvasToolSubmission } from '@/components/canvas/CanvasImageTools'
+import { normalizeCanvasAssetSource } from '@/utils/canvasGeneration'
+import CanvasImageCropModal, { type InvalidCanvasImage } from '@/components/canvas/CanvasImageCropModal'
+import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import {
   canUseCanvasShortcuts,
   isCanvasShortcutTarget,
@@ -12,6 +17,8 @@ import {
 import {
   createContext,
   memo,
+  lazy,
+  Suspense,
   useCallback,
   useContext,
   useRef,
@@ -61,12 +68,17 @@ import CanvasArrowEdge, { canvasConnectionDisplayRole } from '@/components/canva
 const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
 /** 新建视频节点的默认比例：投放场景基本是竖屏 */
 const VIDEO_DEFAULT_RATIO = '9:16'
+const STORYBOARD_NODE_WIDTH = 500
+const STORYBOARD_NODE_HEIGHT = 480
 /** 重复连线的提示；同时作为「要不要闪一下已有连线」的判断依据 */
 const DUPLICATE_EDGE_MESSAGE = '这两个节点已经连过了，已高亮那条连线'
 
 const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import CanvasSelectionToolbar from '@/components/canvas/CanvasSelectionToolbar'
+import type { HdRequest } from '@/components/canvas/CanvasHdWorkspace'
+import { isHdActive, materializeHdResults } from '@/utils/canvasHd'
+import type { HdTask } from '@/api/canvasHd'
 import CanvasViewControls from '@/components/canvas/CanvasViewControls'
 import CanvasNodeSearch from '@/components/canvas/CanvasNodeSearch'
 import CanvasSettingsPanel from '@/components/canvas/CanvasSettingsPanel'
@@ -131,6 +143,7 @@ import { resolveCanvasConnectDropTarget, type CanvasNodeScreenRect } from '@/uti
 import { fetchAllCanvasElements, saveCanvasElementsBatched } from '@/api/canvasApi'
 import {
   cancelAiTask,
+  createAiResponse,
   createAiTask,
   extractTaskText,
   getAiTask,
@@ -143,7 +156,13 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 import { normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import CanvasAudioNode from '@/components/canvas/CanvasAudioNode'
-import { isAudioFile, normalizeAudioSettings, parseTimelineAudio, syncTimelineAudio } from '@/utils/canvasAudio'
+import {
+  isAudioFile,
+  normalizeAudioSettings,
+  parseTimelineAudio,
+  readAudioDuration,
+  syncTimelineAudio,
+} from '@/utils/canvasAudio'
 import { CANVAS_AUDIO_NODES_ENABLED, isCanvasAudioEntryVisible, isCanvasAudioKind } from '@/utils/canvasFeatureFlags'
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
@@ -177,7 +196,7 @@ import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { getVideoEditModeConflict, isVideoTaskModeField } from '@/utils/canvasVideoTaskMode'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
-import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
+import { isCanvasStoryboardText, parseCanvasStructuredText, toCanvasPromptContext } from '@/utils/canvasStructuredText'
 import InlineEdit from '@/components/common/InlineEdit'
 import CanvasNodeToolbar from '@/components/canvas/CanvasNodeToolbar'
 import { useLatestCallback } from '@/composables/useLatestCallback'
@@ -190,6 +209,7 @@ import {
 } from '@/utils/canvasNodeTitle'
 import {
   inferCanvasConnectionRole,
+  validateCanvasGenerationPrompt,
   validateCanvasImageInputs,
   validateCanvasVideoInputs,
   type CanvasVideoMode,
@@ -271,6 +291,9 @@ import {
 } from '@/utils/canvasElements'
 import './CanvasView.css'
 
+const CanvasImageTools = lazy(() => import('@/components/canvas/CanvasImageTools'))
+const CanvasHdWorkspace = lazy(() => import('@/components/canvas/CanvasUpscale'))
+
 /** 节点级生成历史最多保留的条数：够回看最近几版，又不至于把画布元素 payload 撑大。 */
 const CANVAS_RESULT_HISTORY_CAP = 12
 
@@ -317,11 +340,14 @@ export function normalizeNodeMedia(node: Node, workspaceId: number): Node {
       ? { ...data, resultUrl: assetStreamUrl(assetId, workspaceId) }
       : data
   const currentWidth = Number((node.style as Record<string, unknown> | undefined)?.width || 0)
-  const shouldExpandStoryboard = data.kind === 'text' && isCanvasStoryboardText(data.text) && currentWidth <= 300
+  const shouldExpandStoryboard =
+    data.kind === 'text' && isCanvasStoryboardText(data.text) && (currentWidth <= 300 || currentWidth === 420)
   return {
     ...node,
     data: nextData,
-    style: shouldExpandStoryboard ? { ...node.style, width: 420, height: 480 } : node.style,
+    style: shouldExpandStoryboard
+      ? { ...node.style, width: STORYBOARD_NODE_WIDTH, height: STORYBOARD_NODE_HEIGHT }
+      : node.style,
   }
 }
 
@@ -507,7 +533,7 @@ const TIMELINE_NODE_SIZE = { width: 460, height: 400 }
  */
 function newNodeFootprint(type: string): { width: number; height: number } {
   if (type === 'timeline') return TIMELINE_NODE_SIZE
-  if (type === 'audio') return { width: 320, height: 116 }
+  if (type === 'audio' || type === 'audio-editor') return { width: 320, height: 116 }
   if (type === 'video') return { width: 444, height: 250 }
   return { width: 250, height: 250 }
 }
@@ -561,6 +587,7 @@ async function mapWithConcurrency<T, R>(
  * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
  */
 interface CanvasNodeActions {
+  onNodeWheel?: (event: React.WheelEvent<HTMLDivElement>) => void
   onAudioGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
   onToggleImageResults?: (nodeId: string) => void
   onSelectImageResult?: (nodeId: string, assetId: number) => void
@@ -687,7 +714,7 @@ const CANVAS_SNAP_GRID: [number, number] = [16, 16]
 const LOCAL_PREVIEW_REVOKE_MS = 5000
 
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
-const NODE_PANEL_GAP = 16
+const NODE_PANEL_GAP = 24
 
 /** 面板左边缘要为左侧浮动工具栏让出的宽度 */
 const NODE_PANEL_LEFT_SAFE = 128
@@ -725,6 +752,7 @@ function createNodeId(type: string): string {
  */
 const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string }> = [
   ...(CANVAS_AUDIO_NODES_ENABLED ? [{ type: 'audio', label: '音频节点', desc: '配音、背景音乐、音效' }] : []),
+  ...(CANVAS_AUDIO_NODES_ENABLED ? [{ type: 'audio-editor', label: '音频编辑', desc: '裁剪、音量、淡入淡出' }] : []),
   { type: 'text', label: '文本节点', desc: '脚本、广告词、品牌文案' },
   { type: 'image', label: '图片节点', desc: '宣传图、海报、封面' },
   { type: 'video', label: '视频节点', desc: '宣传视频、动画、电影' },
@@ -804,6 +832,7 @@ const allowedSourceKinds: Record<string, string[]> = {
   // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
   timeline: ['video', 'timeline', 'audio'],
   audio: ['text', 'audio'],
+  'audio-editor': ['audio'],
 }
 
 /** 历史快照保留的最大步数，防止无界增长 */
@@ -1393,6 +1422,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     onAudioGenerated,
     imagePreviews,
     timeline: timelineActions,
+    onNodeWheel,
   } = useContext(CanvasNodeActionsContext)
 
   /**
@@ -1656,10 +1686,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
   return (
     <div
-      className={`canvas-default-node${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
+      className={`canvas-default-node${data.hd ? ' is-hd-result' : ''}${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
       style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
+      onWheel={onNodeWheel}
     >
       {/*
        * 头部：类型图标 + 名称（双击改名），节点外单行展示，完整名称通过悬停提示查看。
@@ -1770,7 +1801,23 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                           </span>
                         )}
                       </div>
-                      <p>{item.prompt}</p>
+                      <textarea
+                        className="nodrag"
+                        aria-label={`镜头 ${index + 1} 提示词`}
+                        value={item.prompt}
+                        disabled={taskRunning}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onChange={(event) => {
+                          const items = structuredText.items.map((shot, shotIndex) =>
+                            shotIndex === index ? { ...shot, prompt: event.target.value } : shot,
+                          )
+                          const value = JSON.stringify(items)
+                          setTextContent(value)
+                          if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+                          ;(window as any).__canvasTextContents.set(id, value)
+                          ;(window as any).__canvasMarkDirty?.()
+                        }}
+                      />
                     </div>
                   </article>
                 ))}
@@ -1990,11 +2037,24 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
-      {connectionError ? (
-        <div className="canvas-node-connect-error" title={connectionError} aria-hidden="true">
-          {connectionError}
+      {(taskFailed || connectionError) && (
+        <CanvasNodeFailure reason={connectionError || taskError}>
+          {taskFailed && <CanvasFailureDetails data={data} />}
+        </CanvasNodeFailure>
+      )}
+
+      {data.hd && (
+        <div className="canvas-hd-badge">
+          高清产物 · 新文件 · {String((data.hd as Record<string, unknown>).spec || '')}
+          {(data.hd as Record<string, unknown>).reviewPolicy === 'reuse_source' ? ' · 审核复用源件' : ''}
         </div>
-      ) : null}
+      )}
+      {data.hdProcessing && (
+        <div className="canvas-node-generation-mask" role="status">
+          <span className="canvas-node-generation-spinner" />
+          正在处理中 · {String(data.hdProcessing)}
+        </div>
+      )}
 
       {uploadingLocalFile && (
         <div className="canvas-node-generation-mask" role="status" aria-live="polite">
@@ -2060,26 +2120,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         </div>
       )}
 
-      {(taskRunning || taskFailed) && (
-        <div
-          className={`canvas-node-task${taskFailed ? ' is-failed' : ''}`}
-          role="status"
-          // 超过 4 行被截断时悬停仍能看全文
-          title={taskFailed ? taskError || undefined : undefined}
-        >
-          <span>
-            {taskFailed
-              ? `${data.taskErrorHistorical ? '上次生成失败：' : ''}${taskError || '生成失败，请重试'}`
-              : taskStatus === 'reconnecting'
-                ? '正在核对'
-                : '正在生成'}
-          </span>
+      {taskRunning && (
+        <div className="canvas-node-task" role="status">
+          <span>{taskStatus === 'reconnecting' ? '正在核对' : '正在生成'}</span>
           {taskRunning && videoEstimatedProgress !== null ? (
             <strong aria-hidden="true">{videoEstimatedProgress.toFixed(2)}%</strong>
           ) : taskRunning && taskPresentation.progress ? (
             <strong>{Math.round(taskPresentation.progress)}%</strong>
           ) : null}
-          {taskFailed && <CanvasFailureDetails data={data} />}
         </div>
       )}
 
@@ -2204,6 +2252,17 @@ function CanvasInner() {
    * 新建但还没同步到云端的画布没有 id，也就没有可以分享的对象。
    */
   const canvasId = Math.max(0, Math.floor(Number(routeProjectId) || 0))
+  const [hdRequest, setHdRequest] = useState<HdRequest | null>(null)
+  const [imageTool, setImageTool] = useState<{ source: ToolImage; code: string } | null>(null)
+  const [hdModalOpen, setHdModalOpen] = useState(false)
+  const [hdTasks, setHdTasks] = useState<HdTask[]>([])
+  const deliveredHdRef = useRef(new Set<string>())
+  const hdSelectionRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    deliveredHdRef.current.clear()
+    setHdTasks([])
+    setHdRequest(null)
+  }, [workspaceId, canvasId])
   const [shareOpen, setShareOpen] = useState(false)
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
@@ -2382,6 +2441,11 @@ function CanvasInner() {
   }, [])
   const transform = useStore((s) => s.transform)
 
+  // 图片工具属于打开它的节点；切换选择时关闭，避免失去锚点后回落到左侧。
+  useEffect(() => {
+    setImageTool((current) => (current && current.source.nodeId !== selectedNode?.id ? null : current))
+  }, [selectedNode?.id])
+
   // 编辑面板尺寸与锚点位置
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
@@ -2393,7 +2457,7 @@ function CanvasInner() {
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [selectedNode?.id])
+  }, [selectedNode?.id, imageTool])
 
   /**
    * 选中节点在屏幕上的矩形：由画布坐标 × 当前 transform 换算，不读节点 DOM。
@@ -2482,6 +2546,43 @@ function CanvasInner() {
     }
   }, [selectedNode])
 
+  const imageToolAnchor =
+    imageTool && selectedNode?.id === imageTool.source.nodeId && selectedNodeScreenRect
+      ? {
+          centerX: selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2,
+          bottom: selectedNodeScreenRect.bottom,
+        }
+      : null
+
+  const [imageToolHeight, setImageToolHeight] = useState(460)
+  const imageToolPanRef = useRef('')
+  useEffect(() => {
+    if (!imageTool) {
+      imageToolPanRef.current = ''
+      return
+    }
+    const key = `${imageTool.source.nodeId}:${imageTool.code}:${imageToolHeight}`
+    if (imageToolPanRef.current === key) return
+    imageToolPanRef.current = key
+    const node = latestRef.current.nodes.find((item) => item.id === imageTool.source.nodeId)
+    if (!node) return
+    const [tx, ty, currentZoom] = transform
+    const pane = document.querySelector('.react-flow')?.getBoundingClientRect()
+    const height = Number(node.measured?.height ?? node.style?.height ?? 250) || 250
+    const width = Number(node.measured?.width ?? node.style?.width ?? 250) || 250
+    const room = Math.max(100, window.innerHeight - imageToolHeight - 120)
+    const zoom = Math.min(currentZoom, room / height)
+    const center = Math.max(332, Math.min(window.innerWidth - 332, (node.position.x + width / 2) * currentZoom + tx))
+    const top = Math.max(
+      110,
+      Math.min(node.position.y * currentZoom + ty, window.innerHeight - imageToolHeight - 24 - height * zoom),
+    )
+    void setViewport(
+      { x: center - (node.position.x + width / 2) * zoom, y: top - node.position.y * zoom - (pane?.top || 0), zoom },
+      { duration: 200 },
+    )
+  }, [imageTool, imageToolHeight, transform, setViewport])
+
   const panelAnchor = useMemo(() => {
     if (!selectedNodeScreenRect) return null
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
@@ -2534,7 +2635,7 @@ function CanvasInner() {
   const panelPanRef = useRef('')
   useEffect(() => {
     const height = panelSize.height
-    if (!selectedNode || !(height > 0)) return
+    if (imageTool || !selectedNode || !(height > 0)) return
     const key = `${selectedNode.id}:${Math.round(height)}`
     if (panelPanRef.current === key) return
     panelPanRef.current = key
@@ -2545,12 +2646,18 @@ function CanvasInner() {
     const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
     const bottomY = (node.position.y + nodeHeight) * tz + ty
     const topY = node.position.y * tz + ty
+    // 靠近屏幕顶部的节点下移，保留操作条和标题的完整空间，避免夹取后贴住图片。
+    const topSafe = 144
+    if (topY < topSafe) {
+      setViewport({ x: tx, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
+      return
+    }
     const deficit = bottomY + NODE_PANEL_GAP * 2 + height - window.innerHeight
     if (deficit <= 0) return
-    const shift = Math.min(deficit, Math.max(0, topY - NODE_PANEL_GAP))
+    const shift = Math.min(deficit, Math.max(0, topY - topSafe))
     if (shift <= 1) return
     setViewport({ x: tx, y: ty - shift, zoom: tz }, { duration: 200 })
-  }, [selectedNode, panelSize.height, transform, setViewport])
+  }, [selectedNode, panelSize.height, transform, setViewport, imageTool])
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
     saveLastSelectedNodeId(routeProjectId, selectedNode?.id || '')
@@ -2748,6 +2855,10 @@ function CanvasInner() {
       const targetNode = latestRef.current.nodes.find((n) => n.id === targetId)
       const targetKind = (targetNode?.data?.kind as string) || 'text'
       const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
+      if (targetNode?.data?.audioRole === 'editor') {
+        if (sourceKind !== 'audio') return '音频编辑节点只能连接音频来源'
+        if (latestRef.current.edges.some((edge) => edge.target === targetId)) return '音频编辑节点只能连接一个音频来源'
+      }
       const allowed = allowedSourceKinds[targetKind] || []
       if (!allowed.includes(sourceKind)) return '该节点类型不能作为此节点的参考来源'
       // 数量上限只统计素材类来源（图片/视频）；文本来源不计入（其内容拼入 prompt，可无限连接）。
@@ -3439,6 +3550,7 @@ function CanvasInner() {
       )
       const created: Edge[] = []
       for (const sourceId of sourceIds) {
+        if (target.data?.audioRole === 'editor' && created.length) break
         // validateConnection 只看已落地的连线；同一批里前面刚连上的用 created 补上重复判断
         if (created.some((edge) => edge.source === sourceId)) continue
         if (validateConnection(sourceId, targetId)) continue
@@ -3586,6 +3698,10 @@ function CanvasInner() {
         skipHistory?: boolean
       },
     ) => {
+      if (type === 'audio-editor') {
+        type = 'audio'
+        options = { ...options, extraData: { ...options?.extraData, title: '音频编辑', audioRole: 'editor' } }
+      }
       // 结构变更前记录历史，供撤销使用
       if (!options?.skipHistory) commitHistory()
       const footprint = newNodeFootprint(type)
@@ -3647,86 +3763,29 @@ function CanvasInner() {
     [setNodes, commitHistory],
   )
 
-  const handleAudioGenerated = useCallback(
-    (sourceId: string, assetId: number, durationSec: number) => {
-      const source = latestRef.current.nodes.find((node) => node.id === sourceId)
-      if (!source || !(assetId > 0)) return
-      const audio = normalizeAudioSettings({
-        durationSec,
-        inSec: 0,
-        outSec: durationSec,
-        origin: 'generated',
+  // 仅首次接入时载入源素材，后续重新生成不会覆盖编辑成果。
+  useEffect(() => {
+    const updates = new Map<string, Record<string, unknown>>()
+    for (const target of nodes) {
+      if (target.data?.audioRole !== 'editor' || Number(target.data.assetId) > 0) continue
+      const edge = edges.find((item) => item.target === target.id)
+      const source = nodes.find((item) => item.id === edge?.source && item.data?.kind === 'audio')
+      if (!source || !(Number(source.data.assetId) > 0)) continue
+      const durationSec = Number((source.data.audio as any)?.durationSec || 0)
+      updates.set(target.id, {
+        sourceAudioNodeId: source.id,
+        assetId: source.data.assetId,
+        assetWorkspaceId: source.data.assetWorkspaceId || workspaceId,
+        resultUrl: assetStreamUrl(Number(source.data.assetId), Number(source.data.assetWorkspaceId || workspaceId)),
+        audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec }),
       })
-      const existing = latestRef.current.nodes.find((node) => node.data?.sourceAudioNodeId === sourceId)
-      if (existing) {
-        setNodes((nodes) =>
-          nodes.map((node) =>
-            node.id === existing.id
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    assetId,
-                    assetWorkspaceId: workspaceId,
-                    resultUrl: assetStreamUrl(assetId, workspaceId),
-                    audio,
-                  },
-                }
-              : node,
-          ),
-        )
-        setSaveStatus('dirty')
-        return
-      }
-      const width = Number((source.style as CSSProperties | undefined)?.width) || newNodeFootprint('audio').width
-      const editorSize = newNodeFootprint('audio')
-      const position = findFreeNodePosition({
-        anchor: { x: source.position.x + width + 72, y: source.position.y },
-        size: editorSize,
-        occupied: latestRef.current.nodes.map((node) => ({
-          x: node.position.x,
-          y: node.position.y,
-          width: Number((node.style as CSSProperties | undefined)?.width) || node.measured?.width || 250,
-          height: Number((node.style as CSSProperties | undefined)?.height) || node.measured?.height || 150,
-        })),
-      })
-      const editorId = appendNewNode('audio', position, {
-        extraData: {
-          title: '音频编辑',
-          audioRole: 'editor',
-          sourceAudioNodeId: sourceId,
-          assetId,
-          assetWorkspaceId: workspaceId,
-          assetSource: 'generated',
-          resultUrl: assetStreamUrl(assetId, workspaceId),
-          audio,
-        },
-      })
-      setEdges((edges) =>
-        addEdge(
-          {
-            id: buildEdgeId(sourceId, editorId, 0),
-            source: sourceId,
-            sourceHandle: `${sourceId}-right-source`,
-            target: editorId,
-            targetHandle: `${editorId}-left-target`,
-            data: {
-              slotIndex: 0,
-              role: inferCanvasConnectionRole({
-                targetKind: 'audio',
-                sourceKind: 'audio',
-                videoMode: 'auto',
-                slotIndex: 0,
-              }),
-            },
-          },
-          edges,
-        ),
-      )
-    },
-    [appendNewNode, setNodes, setEdges, workspaceId],
-  )
-
+    }
+    if (!updates.size) return
+    setNodes((items) =>
+      items.map((node) => (updates.has(node.id) ? { ...node, data: { ...node.data, ...updates.get(node.id) } } : node)),
+    )
+    setSaveStatus('dirty')
+  }, [nodes, edges, setNodes, workspaceId])
   const handleMenuSelect = useCallback(
     (type: string) => {
       if (!addMenu) return
@@ -3747,7 +3806,7 @@ function CanvasInner() {
         const sources = resolveConnectSources(addMenu.sourceId, newNodeId)
         const allowed = allowedSourceKinds[type] || []
         const created: Edge[] = []
-        for (const sourceId of sources) {
+        for (const sourceId of type === 'audio-editor' ? [addMenu.sourceId] : sources) {
           const source = latestRef.current.nodes.find((n) => n.id === sourceId)
           const sourceKind = String(source?.data?.kind || 'text')
           // 单个起点的类型菜单已过滤过；批量时其余来源仍要按目标类型筛一遍
@@ -4924,13 +4983,13 @@ function CanvasInner() {
       // 视频先按体积筛一遍：超限的不建节点，直接并入失败提示，
       // 否则用户会看着一个占位节点转很久最后失败，还不知道原因是文件太大。
       const allVideos = pickVideoFiles(files)
-      const audios = CANVAS_AUDIO_NODES_ENABLED
-        ? files.filter(isAudioFile).filter((file) => file.size <= 100 * 1024 * 1024)
-        : []
+      const allAudios = CANVAS_AUDIO_NODES_ENABLED ? files.filter(isAudioFile) : []
+      const audios = allAudios.filter((file) => file.size <= 100 * 1024 * 1024)
+      const oversizedAudios = allAudios.length - audios.length
       const videos = allVideos.filter((file) => file.size <= LOCAL_VIDEO_MAX_BYTES)
       const oversized = allVideos.length - videos.length
-      if (allImages.length === 0 && allVideos.length === 0 && audios.length === 0) {
-        showToast('支持图片和视频文件', 'error')
+      if (allImages.length === 0 && allVideos.length === 0 && allAudios.length === 0) {
+        showToast(CANVAS_AUDIO_NODES_ENABLED ? '支持图片、视频和音频文件' : '支持图片和视频文件', 'error')
         return
       }
       // 图片同样先做生成输入合规：<256px 的不建节点并说明原因，>5760px 的自动缩到范围内再上传。
@@ -4946,7 +5005,10 @@ function CanvasInner() {
       const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
       const rejectedImages = imageChecks.filter((item) => item.error).map((item) => item.error)
       if (images.length === 0 && videos.length === 0 && audios.length === 0) {
-        showToast(rejectedImages[0] || '视频超过 512MB，请压缩后再导入', 'error')
+        showToast(
+          rejectedImages[0] || (oversizedAudios ? '音频超过 100MB，请压缩后再导入' : '视频超过 512MB，请压缩后再导入'),
+          'error',
+        )
         return
       }
       // 图片在前、视频在后，保证超限被裁掉的总是排在后面的那些，顺序稳定可预期
@@ -4981,14 +5043,21 @@ function CanvasInner() {
             ratio,
             size,
             skipHistory: true,
-            extraData: { previewUrl, uploading: true, assetSource: 'upload', assetWorkspaceId: workspaceId },
+            extraData: {
+              previewUrl,
+              uploading: true,
+              assetSource: 'upload',
+              assetWorkspaceId: workspaceId,
+              ...(kind === 'audio' ? { title: file.name } : {}),
+            },
           },
         )
-        return { nodeId, file, previewUrl }
+        return { nodeId, file, previewUrl, kind }
       })
       const failures: string[] = [...rejectedImages]
-      await mapWithConcurrency(created, 4, async ({ nodeId, file, previewUrl }) => {
+      await mapWithConcurrency(created, 4, async ({ nodeId, file, previewUrl, kind }) => {
         try {
+          const durationSec = kind === 'audio' ? await readAudioDuration(previewUrl) : 0
           // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
           const out: any = await uploadAssetFile({ workspaceId, file })
           const assetId = Number(out?.asset?.id || 0)
@@ -5002,6 +5071,12 @@ function CanvasInner() {
             resultUrl: assetStreamUrl(assetId, workspaceId),
             uploading: false,
             previewUrl: '',
+            ...(kind === 'audio'
+              ? {
+                  title: file.name,
+                  audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec, origin: 'upload' }),
+                }
+              : {}),
           }
           setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...nextData } } : n)))
           setSelectedNode((prev) => (prev && prev.id === nodeId ? { ...prev, ...nextData } : prev))
@@ -5016,9 +5091,17 @@ function CanvasInner() {
       setSaveStatus('dirty')
       if (failures.length > 0) {
         showToast(failures.length > 1 ? `${failures.length} 个素材未能导入：${failures[0]}` : failures[0], 'error')
-      } else if (oversized > 0) {
+      } else if (oversized > 0 || oversizedAudios > 0) {
         // 已成功导入的部分不受影响，这里只解释被跳过的那些为什么没进来
-        showToast(`${oversized} 个视频超过 512MB 已跳过，请压缩后再导入`, 'info')
+        showToast(
+          [
+            oversized ? `${oversized} 个视频超过 512MB 已跳过` : '',
+            oversizedAudios ? `${oversizedAudios} 个音频超过 100MB 已跳过` : '',
+          ]
+            .filter(Boolean)
+            .join('；') + '，请压缩后再导入',
+          'info',
+        )
       } else if (skipped > 0) {
         // 其余素材已成功导入，这里只是数量提醒，不按错误呈现
         showToast(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 个素材，其余 ${skipped} 个已忽略`, 'info')
@@ -5072,8 +5155,8 @@ function CanvasInner() {
       // 文本编辑中保留浏览器默认粘贴；素材库弹窗、参考选择模式下不接管
       if (event.defaultPrevented || !acceptsCanvasShortcut(event.target)) return
       if (drawerPanel || isPickingRef) return
-      const { images, videos } = extractMediaFiles(event.clipboardData)
-      const files = [...images, ...videos]
+      const { images, videos, audios } = extractMediaFiles(event.clipboardData)
+      const files = [...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : [])]
       if (files.length === 0) {
         // 系统剪贴板里没有文件才轮到内存里的节点剪贴板：两者都靠 Ctrl+V，
         // 在 paste 事件里统一分流，避免复制过节点后再粘一张截图时两样一起落下来
@@ -5115,8 +5198,11 @@ function CanvasInner() {
       setFileDragActive(false)
       // 参考选择模式下画布正在等待点选来源节点，此时不接受导入
       if (isPickingRef) return
-      const { images, videos } = extractMediaFiles(event.dataTransfer)
-      void importLocalMedia([...images, ...videos], { x: event.clientX, y: event.clientY })
+      const { images, videos, audios } = extractMediaFiles(event.dataTransfer)
+      void importLocalMedia([...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : [])], {
+        x: event.clientX,
+        y: event.clientY,
+      })
     },
     [importLocalMedia, isPickingRef],
   )
@@ -5195,14 +5281,14 @@ function CanvasInner() {
   const handleNodePromptChange = useCallback(
     (prompt: string) => {
       const targetNodeId = selectedNode?.id
-      if (!targetNodeId || selectedNode?.kind === 'text') return
+      if (!targetNodeId) return
       setNodes((items) =>
         items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, prompt } } : item)),
       )
       setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, prompt } : current))
       setSaveStatus('dirty')
     },
-    [selectedNode?.id, selectedNode?.kind, setNodes, setSaveStatus],
+    [selectedNode?.id, setNodes, setSaveStatus],
   )
 
   /**
@@ -5316,6 +5402,9 @@ function CanvasInner() {
     if (shouldRecharge) openMemberCenterTab('recharge')
   }, [])
 
+  const [imageCropRequest, setImageCropRequest] = useState<{ targetId: string; images: InvalidCanvasImage[] } | null>(
+    null,
+  )
   const pendingNodeSubmissionsRef = useRef(new Set<string>())
   const submitNodeGeneration = useCallback(
     async (
@@ -5325,8 +5414,10 @@ function CanvasInner() {
       resume?: { idempotencyKey: string },
     ) => {
       if (!generate || !latestRef.current.nodes.some((node) => node.id === targetNodeId)) return
-      if (generate.kind === 'text') {
-        if (selectedNode?.id === targetNodeId) handleSaveNodeText(generate.prompt)
+      // 工具指令由后端生成，用户可以不填写补充描述。
+      const promptError = generate.params?.tool ? null : validateCanvasGenerationPrompt(generate.kind, generate.prompt)
+      if (promptError) {
+        showToast(promptError, 'error')
         return
       }
       const currentData = latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data
@@ -5348,10 +5439,6 @@ function CanvasInner() {
       const submitMaxImageRefs =
         getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
       if (generate.kind === 'video') {
-        if (!String(generate.prompt || '').trim()) {
-          showToast('请输入视频描述后再生成；仅连接图片或音频仍需要文字描述', 'error')
-          return
-        }
         const videoValidationArgs = {
           operationCode: generate.operationCode,
           videoMode: generate.videoMode,
@@ -5440,6 +5527,30 @@ function CanvasInner() {
           return
         }
       }
+      if (generate.kind === 'video') {
+        try {
+          const invalid = await Promise.all(
+            (generate.sourceRefs || [])
+              .filter((ref) => ref.kind === 'image')
+              .map(async (ref) => {
+                const url =
+                  Number(ref.assetId) > 0 ? assetStreamUrl(Number(ref.assetId), Number(workspaceId)) : ref.thumbnailUrl
+                if (!url) throw new Error('参考图尚未就绪，请重新选择素材')
+                const size = await readImageDimensions(url)
+                const issue = videoReferenceImageIssue(size)
+                return issue ? { ref, url, ...size, issue } : null
+              }),
+          )
+          const images = invalid.filter((item): item is InvalidCanvasImage => item !== null)
+          if (images.length) {
+            setImageCropRequest({ targetId: targetNodeId, images })
+            return
+          }
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : '无法读取参考图尺寸', 'error')
+          return
+        }
+      }
       const assetError = await preflightCanvasAssets({
         workspaceId: Number(workspaceId || 0),
         sourceRefs: generate.sourceRefs || [],
@@ -5508,6 +5619,7 @@ function CanvasInner() {
           operationCode: generate.operationCode,
           params: generate.params || {},
           generationRequest: generate,
+          textGenerationMode: generate.kind === 'text' ? 'storyboard' : undefined,
           taskIdempotencyKey,
           taskSubmissionFingerprint,
           taskSubmitInterrupted: false,
@@ -5530,27 +5642,80 @@ function CanvasInner() {
         setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
         setSaveStatus('dirty')
         // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
-        const task = await createAiTask({
-          workspaceId,
-          capability: generate.kind,
-          operationCode: generate.operationCode,
-          // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。视频再叠加禁文字守卫。
-          prompt: submitPrompt,
-          params: generate.params,
-          inputAssets,
-          modelVersionId: generate.modelVersionId,
-          onImagePartial: (event: Record<string, unknown>) => {
-            const b64 = event.b64_json || event.partial_image_b64
-            if (typeof b64 !== 'string' || !b64) return
-            const format = ['png', 'jpeg', 'webp'].includes(String(event.output_format))
-              ? String(event.output_format)
-              : 'png'
-            setImagePreviews((prev) => ({ ...prev, [targetNodeId]: `data:image/${format};base64,${b64}` }))
-          },
-          idempotencyKey: taskIdempotencyKey,
-        })
+        const task =
+          generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
+            ? await createAiResponse({
+                workspaceId,
+                operationCode: generate.operationCode,
+                prompt: submitPrompt,
+                params: generate.params,
+                inputAssets,
+                modelVersionId: generate.modelVersionId,
+                idempotencyKey: taskIdempotencyKey,
+              })
+            : await createAiTask({
+                workspaceId,
+                capability: generate.kind,
+                operationCode: generate.operationCode,
+                // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。视频再叠加禁文字守卫。
+                prompt: submitPrompt,
+                params: generate.params,
+                inputAssets,
+                modelVersionId: generate.modelVersionId,
+                onImagePartial: (event: Record<string, unknown>) => {
+                  const b64 = event.b64_json || event.partial_image_b64
+                  if (typeof b64 !== 'string' || !b64) return
+                  const format = ['png', 'jpeg', 'webp'].includes(String(event.output_format))
+                    ? String(event.output_format)
+                    : 'png'
+                  setImagePreviews((prev) => ({ ...prev, [targetNodeId]: `data:image/${format};base64,${b64}` }))
+                },
+                idempotencyKey: taskIdempotencyKey,
+              })
+        const immediateText =
+          generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
+            ? String(extractTaskText(task) || '').trim()
+            : ''
+        if (immediateText) {
+          if (!isCanvasStoryboardText(immediateText)) {
+            throw new Error('模型返回内容无法解析为有效分镜，原结果已保留，请调整需求后重试')
+          }
+          const completedAt = new Date().toISOString()
+          const resultData = {
+            taskId: 0,
+            taskStatus: 'succeeded',
+            taskProgress: 100,
+            taskError: '',
+            resultSyncAttempts: 0,
+            text: immediateText,
+            taskUpdatedAt: completedAt,
+          }
+          if (!(window as any).__canvasTextContents) {
+            ;(window as any).__canvasTextContents = new Map<string, string>()
+          }
+          ;((window as any).__canvasTextContents as Map<string, string>).set(targetNodeId, immediateText)
+          bumpTextRevisionRef.current()
+          setNodes((items) =>
+            items.map((item) =>
+              item.id === targetNodeId
+                ? {
+                    ...item,
+                    data: { ...item.data, ...resultData },
+                    style: { ...item.style, width: STORYBOARD_NODE_WIDTH, height: STORYBOARD_NODE_HEIGHT },
+                  }
+                : item,
+            ),
+          )
+          setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...resultData } : current))
+          rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
+          setSaveStatus('dirty')
+          scheduleSyncRef.current(true)
+          showToast('分镜已生成，可编辑后连接视频节点', 'success')
+          return
+        }
         const taskId = getAiTaskId(task)
-        if (!taskId) throw new Error('任务创建后未返回任务 ID')
+        if (!taskId)
+          throw new Error(generate.kind === 'text' ? '分镜生成请求未返回文本或任务 ID' : '任务创建后未返回任务 ID')
         // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
         rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
         // 3) 回写 task_id/task_status 到节点
@@ -5638,16 +5803,7 @@ function CanvasInner() {
         })
       }
     },
-    [
-      canvasModels,
-      handleInsufficientCredits,
-      handleSaveNodeText,
-      isRealPersonReferenceAuthorizedNow,
-      selectedNode,
-      workspaceId,
-      setNodes,
-      setSaveStatus,
-    ],
+    [canvasModels, handleInsufficientCredits, isRealPersonReferenceAuthorizedNow, workspaceId, setNodes, setSaveStatus],
   )
 
   restartGenerationRef.current = (nodeId, request) => {
@@ -5747,6 +5903,133 @@ function CanvasInner() {
     },
     [selectedNode, submitNodeGeneration],
   )
+
+  const handleImageToolGenerate = async ({ request, images, title }: CanvasToolSubmission) => {
+    const sources = images.map((image) => {
+      const node = latestRef.current.nodes.find((item) => item.id === image.nodeId)
+      if (
+        !node ||
+        Number(node.data.assetId) !== image.assetId ||
+        (Number(node.data.assetWorkspaceId) > 0 && Number(node.data.assetWorkspaceId) !== Number(workspaceId))
+      )
+        throw new Error('原图或参考图已更换，请重新打开工具')
+      return node
+    })
+    const source = sources[0]
+    const id = createNodeId('image')
+    const size = newNodeFootprint('image')
+    const position = findFreeNodePosition({
+      anchor: { x: source.position.x + Number(source.style?.width || 300) + 80, y: source.position.y },
+      size,
+      occupied: latestRef.current.nodes.map((node) => ({
+        x: node.position.x,
+        y: node.position.y,
+        width: Number(node.style?.width || 300),
+        height: Number(node.style?.height || 300),
+      })),
+    })
+    const sourceRefs: CanvasSourceRef[] = images.map((image, index) => ({
+      kind: 'image',
+      sourceId: image.nodeId,
+      edgeId: `tool-${id}-${index}`,
+      slotIndex: index,
+      assetId: image.assetId,
+      workspaceId: Number(workspaceId),
+      source: normalizeCanvasAssetSource(sources[index].data.assetSource),
+      realPerson: sources[index].data.realPerson as SmartRealPersonReference | undefined,
+      thumbnailUrl: assetStreamUrl(image.assetId, Number(workspaceId)),
+      title: image.title,
+    }))
+    const generate: CanvasGenerationRequest = { ...request, sourceRefs }
+    const node: Node = {
+      id,
+      type: 'image',
+      position,
+      style: size,
+      data: {
+        kind: 'image',
+        title: `${title}结果`,
+        prompt: request.prompt,
+        modelVersionId: request.modelVersionId,
+        operationCode: request.operationCode,
+        params: request.params,
+      },
+    }
+    const toolEdges: Edge[] = sourceRefs.map((ref) => ({
+      id: ref.edgeId,
+      source: ref.sourceId,
+      target: id,
+      type: CANVAS_ARROW_EDGE_TYPE,
+      data: { slotIndex: ref.slotIndex, role: 'reference_image' },
+    }))
+    commitHistory()
+    const next = { nodes: [...latestRef.current.nodes, node], edges: [...latestRef.current.edges, ...toolEdges] }
+    latestRef.current = next
+    setNodes(next.nodes)
+    setEdges(next.edges)
+    setSaveStatus('dirty')
+    await submitNodeGeneration(id, generate)
+    scheduleSyncRef.current(true)
+  }
+
+  const handlePanoramaViewChange = (values: Record<string, unknown>) => {
+    if (!imageTool) return
+    const { source } = imageTool
+    setNodes((items) =>
+      items.map((node) =>
+        node.id === source.nodeId && Number(node.data.assetId) === source.assetId
+          ? { ...node, data: { ...node.data, panoramaView: values } }
+          : node,
+      ),
+    )
+    setSaveStatus('dirty')
+  }
+
+  const handlePanoramaCapture = async (blob: Blob, values: Record<string, unknown>) => {
+    if (!imageTool) return
+    const { source } = imageTool
+    const original = latestRef.current.nodes.find(
+      (node) => node.id === source.nodeId && Number(node.data.assetId) === source.assetId,
+    )
+    if (!original) throw new Error('原素材已变更，请重新打开全景工具')
+    const file = new File([blob], `全景取景-${Date.now()}.png`, { type: 'image/png' })
+    const uploaded = await uploadAssetFile({ workspaceId, file, source: 'canvas-capture' })
+    const assetId = Number(uploaded?.asset?.id)
+    if (!Number.isSafeInteger(assetId) || assetId <= 0) throw new Error('取景上传失败，请重试')
+    const size = newNodeFootprint('image')
+    const position = findFreeNodePosition({
+      anchor: { x: original.position.x + Number(original.style?.width || 300) + 80, y: original.position.y },
+      size,
+      occupied: latestRef.current.nodes.map((node) => ({
+        x: node.position.x,
+        y: node.position.y,
+        width: Number(node.style?.width || 300),
+        height: Number(node.style?.height || 300),
+      })),
+    })
+    const id = appendNewNode('image', position, {
+      extraData: {
+        assetId,
+        assetWorkspaceId: workspaceId,
+        assetSource: 'upload',
+        title: '全景取景',
+        resultUrl: assetStreamUrl(assetId, Number(workspaceId)),
+        panoramaView: values,
+      },
+    })
+    setEdges((items) => [
+      ...items,
+      {
+        id: `panorama-${id}`,
+        source: source.nodeId,
+        target: id,
+        type: CANVAS_ARROW_EDGE_TYPE,
+        data: { provenance: true },
+      },
+    ])
+    scheduleSyncRef.current(true)
+    showToast('取景已添加到画布', 'success')
+  }
 
   /**
    * 一次出多张图时，把第 2..N 张落成原节点旁的兄弟节点（原节点放第 1 张）。
@@ -5911,11 +6194,15 @@ function CanvasInner() {
               const kind = String((node.data as any)?.kind || node.type || 'text')
               if (kind === 'text') {
                 const text = String(extractTaskText(task) || '')
-                if (text) {
+                if (text && (node.data.textGenerationMode !== 'storyboard' || isCanvasStoryboardText(text))) {
                   nextData.text = text
                   nextData.resultSyncAttempts = 0
                   if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
                   ;(window as any).__canvasTextContents.set(node.id, text)
+                  bumpTextRevisionRef.current()
+                } else if (text) {
+                  nextData.taskStatus = 'failed'
+                  nextData.taskError = '模型未返回有效分镜，已保留原内容，请调整需求后重新生成'
                 } else {
                   const resultSyncAttempts = Number((node.data as any)?.resultSyncAttempts || 0) + 1
                   nextData.resultSyncAttempts = resultSyncAttempts
@@ -5996,7 +6283,7 @@ function CanvasInner() {
                   node,
                   'success',
                   kind === 'text'
-                    ? '文本已生成，点击查看'
+                    ? '分镜已生成，可编辑后连接视频节点'
                     : extraResultAssetIds.length
                       ? `已生成 ${extraResultAssetIds.length + 1} 张图片，已在旁边排好`
                       : `${KIND_LABELS[kind] || '素材'}已生成，点击查看`,
@@ -6033,7 +6320,11 @@ function CanvasInner() {
                       data: { ...item.data, ...nextData },
                       style:
                         typeof nextData.text === 'string' && isCanvasStoryboardText(nextData.text)
-                          ? { ...item.style, width: 420, height: 480 }
+                          ? {
+                              ...item.style,
+                              width: STORYBOARD_NODE_WIDTH,
+                              height: STORYBOARD_NODE_HEIGHT,
+                            }
                           : nextData.imageResultAssetIds
                             ? { ...item.style, ...canvasImageResultSize({ ...item.data, ...nextData }) }
                             : item.style,
@@ -6604,7 +6895,12 @@ function CanvasInner() {
           realPerson: (data as any)?.realPerson,
           assetSource: (data as any)?.assetSource,
         })
-      items.push({ id: node.id, url, title })
+      items.push({
+        id: node.id,
+        url,
+        title,
+        panorama: (data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama',
+      })
       for (const assetId of canvasImageResultIds(data).filter((id) => id !== Number(data.assetId))) {
         items.push({
           id: `${node.id}:image:${assetId}`,
@@ -8015,7 +8311,14 @@ function CanvasInner() {
    */
   const nodeActions = useMemo<CanvasNodeActions>(
     () => ({
-      onAudioGenerated: handleAudioGenerated,
+      onNodeWheel: (event) => {
+        if (preferencesRef.current.wheelMode !== 'pan') return
+        const target = event.target as HTMLElement
+        if (target.closest('video, audio, input, textarea, select, button, [contenteditable="true"], .nopan')) return
+        event.preventDefault()
+        const [x, y, zoom] = transform
+        setViewport({ x: x - event.deltaX, y: y - event.deltaY, zoom }, { duration: 0 })
+      },
       imagePreviews,
       onCaptureFrame: handleCaptureFrame,
       onImageNaturalSize: handleImageNaturalSize,
@@ -8042,8 +8345,9 @@ function CanvasInner() {
       },
     }),
     [
-      handleAudioGenerated,
       imagePreviews,
+      transform,
+      setViewport,
       handleCaptureFrame,
       handleImageNaturalSize,
       changeImageResults,
@@ -8152,11 +8456,19 @@ function CanvasInner() {
    */
   const displayNodes = useMemo(() => {
     // 只在展示层隐藏历史音频节点，不从 nodes 中删除，避免下次同步误删云端数据。
-    const canvasNodes = CANVAS_AUDIO_NODES_ENABLED
+    const baseNodes = CANVAS_AUDIO_NODES_ENABLED
       ? nodes
       : nodes.map((node) =>
           isCanvasAudioKind(node.data?.kind || node.type) ? { ...node, hidden: true, selected: false } : node,
         )
+    const activeHd = new Map(
+      hdTasks
+        .filter((task) => task.workspace_id === workspaceId && task.canvas_id === canvasId && isHdActive(task))
+        .map((task) => [task.source.node_id, task.stage || '任务已受理']),
+    )
+    const canvasNodes = baseNodes.map((node) =>
+      activeHd.has(node.id) ? { ...node, data: { ...node.data, hdProcessing: activeHd.get(node.id) } } : node,
+    )
     // 参考选择模式下，标记不可选节点
     if (isPickingRef && pickingTargetId) {
       // 目标种类、允许来源、已连来源都与遍历项无关，提到循环外算一次。
@@ -8200,7 +8512,18 @@ function CanvasInner() {
       )
     }
     return canvasNodes
-  }, [isPickingRef, pickingTargetId, connectSourceId, timelineDropTargetId, nodes, edges, validateConnection])
+  }, [
+    isPickingRef,
+    pickingTargetId,
+    connectSourceId,
+    timelineDropTargetId,
+    nodes,
+    edges,
+    validateConnection,
+    hdTasks,
+    workspaceId,
+    canvasId,
+  ])
 
   /**
    * 节点变更的入口：在 React Flow 把拖拽位置写进状态前拦一道，做对齐吸附。
@@ -8330,6 +8653,7 @@ function CanvasInner() {
           ...rest,
           data: displayRole ? { ...data, displayRole } : data,
           type: CANVAS_ARROW_EDGE_TYPE,
+          ...(edgeData.hdLineage ? { style: { ...edge.style, stroke: '#35a66f', strokeDasharray: '6 4' } } : {}),
           hidden: edgesHidden || touchesHiddenAudioNode,
           className: className || undefined,
         }
@@ -8357,18 +8681,124 @@ function CanvasInner() {
   )
 
   const canvasShortcutsBlocked = Boolean(
+    imageTool ||
+    imageCropRequest ||
     settingsOpen ||
     shortcutsOpen ||
     searchOpen ||
     timelineEditorNodeId ||
     imagePreviewNodeId ||
     drawerPanel ||
+    hdModalOpen ||
     isPickingRef,
   )
   shortcutsBlockedRef.current = canvasShortcutsBlocked
 
+  const closeHdRequest = useCallback(() => setHdRequest(null), [])
+  const handleHdModalChange = useCallback(
+    (open: boolean) => {
+      setHdModalOpen(open)
+      if (!open && hdSelectionRef.current) {
+        const ids = hdSelectionRef.current
+        const wanted = new Set(ids)
+        setNodes((current) => current.map((node) => ({ ...node, selected: wanted.has(node.id) })))
+        setSelectedNodeIds(ids.length > 1 ? ids : [])
+        hdSelectionRef.current = null
+      }
+    },
+    [setNodes],
+  )
+  const receiveHdTasks = useLatestCallback((tasks: HdTask[]) => {
+    setHdTasks(tasks)
+    const next = materializeHdResults(
+      latestRef.current.nodes,
+      latestRef.current.edges,
+      tasks,
+      workspaceId,
+      canvasId,
+      deliveredHdRef.current,
+    )
+    for (const node of next.nodes) {
+      const hd = node.data.hd as { taskId?: string } | undefined
+      if (hd?.taskId) deliveredHdRef.current.add(hd.taskId)
+    }
+    if (next.changed) {
+      setNodes(next.nodes)
+      setEdges(next.edges)
+      setSaveStatus('dirty')
+    }
+  })
+
   return (
     <CanvasNodeActionsContext.Provider value={nodeActions}>
+      <Suspense fallback={null}>
+        <CanvasHdWorkspace
+          key={`${workspaceId}:${canvasId}`}
+          workspaceId={workspaceId}
+          canvasId={canvasId}
+          nodes={nodes}
+          request={hdRequest}
+          onCloseRequest={closeHdRequest}
+          onTasks={receiveHdTasks}
+          onModalChange={handleHdModalChange}
+        />
+      </Suspense>
+      {imageCropRequest ? (
+        <CanvasImageCropModal
+          images={imageCropRequest.images}
+          onClose={() => setImageCropRequest(null)}
+          onSave={async (image, file, width, height) => {
+            const targetId = imageCropRequest.targetId
+            const source = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
+            if (!source || !latestRef.current.nodes.some((node) => node.id === targetId))
+              throw new Error('素材节点已删除，请重新生成')
+            const uploaded = await uploadAssetFile({ workspaceId, file })
+            const assetId = Number(uploaded?.asset?.id)
+            if (!(assetId > 0)) throw new Error('裁切图片上传失败')
+            const latestSource = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
+            if (!latestSource || Number(latestSource.data.assetId) !== Number(source.data.assetId))
+              throw new Error('原素材已更换，请重新生成后裁切')
+            if (!latestRef.current.nodes.some((node) => node.id === targetId)) throw new Error('生成节点已删除')
+            const ratio = naturalImageRatio(width, height)
+            const resultUrl = assetStreamUrl(assetId, Number(workspaceId))
+            commitHistory()
+            const local = source.data.assetSource === 'upload'
+            setNodes((items) =>
+              items.map((node) => {
+                if (local && node.id === targetId)
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      croppedInputAssets: {
+                        ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
+                        [image.ref.edgeId]: {
+                          originalAssetId: Number(source.data.assetId),
+                          assetId,
+                          workspaceId: Number(workspaceId),
+                        },
+                      },
+                    },
+                  }
+                if (!local && node.id === source.id)
+                  return {
+                    ...node,
+                    data: { ...node.data, assetId, resultUrl, ratio },
+                    style: { ...node.style, ...canvasImageResultSize({ ...node.data, ratio }) },
+                  }
+                return node
+              }),
+            )
+            setSaveStatus('dirty')
+            setImageCropRequest((current) => {
+              if (!current || current.targetId !== targetId) return current
+              const images = current.images.filter((item) => item.ref.edgeId !== image.ref.edgeId)
+              return images.length ? { ...current, images } : null
+            })
+            showToast('裁切已保存，请在全部处理后重新点击生成', 'success')
+          }}
+        />
+      ) : null}
       <div
         /*
           多选期间给根节点打个标记，供 CSS 收起节点上的单节点操作胶囊。
@@ -8536,7 +8966,7 @@ function CanvasInner() {
         <input
           ref={localImageInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept={CANVAS_AUDIO_NODES_ENABLED ? 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.aac' : 'image/*,video/*'}
           multiple
           style={{ display: 'none' }}
           onChange={handleLocalImageInputChange}
@@ -8562,7 +8992,11 @@ function CanvasInner() {
                 <path d="M4 20h16" />
               </svg>
               <strong>松开即可添加到画布</strong>
-              <span>支持拖入本地图片与视频，也可以直接 Ctrl+V 粘贴</span>
+              <span>
+                {CANVAS_AUDIO_NODES_ENABLED
+                  ? '支持拖入本地图片、视频与音频，也可以直接 Ctrl/Cmd+V 粘贴'
+                  : '支持拖入本地图片与视频，也可以直接 Ctrl/Cmd+V 粘贴'}
+              </span>
             </div>
           </div>
         )}
@@ -8856,11 +9290,70 @@ function CanvasInner() {
             capturing={capturingNodeId === selectedNode.id}
             onRename={() => setRenamingNodeId(selectedNode.id)}
             onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
+            onHd={
+              ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
+                ? () => setHdRequest({ ids: [selectedNode.id], key: Date.now() })
+                : undefined
+            }
+            hdDisabledReason={
+              Number(nodes.find((node) => node.id === selectedNode.id)?.data.assetId) > 0 ? '' : '请先上传或生成素材'
+            }
             onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
             onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
             onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
             onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
+            onImageTool={(code) => {
+              const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+              const assetId = Number(node?.data.assetId)
+              if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+                showToast('请先上传或生成图片', 'error')
+                return
+              }
+              const initial =
+                code === 'image.panorama' &&
+                (node.data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama'
+                  ? 'panorama.view'
+                  : code
+              setImageTool({
+                code: initial,
+                source: { nodeId: node.id, assetId, title: String(node.data.title || '图片') },
+              })
+            }}
           />
+        )}
+
+        {imageTool && (
+          <Suspense fallback={null}>
+            <CanvasImageTools
+              key={`${workspaceId}:${imageTool.source.nodeId}:${imageTool.source.assetId}:${imageTool.code}`}
+              workspaceId={Number(workspaceId)}
+              source={imageTool.source}
+              initialTool={imageTool.code}
+              anchor={imageToolAnchor}
+              onHeightChange={setImageToolHeight}
+              initialView={
+                latestRef.current.nodes.find((node) => node.id === imageTool.source.nodeId)?.data.panoramaView as
+                  | Record<string, unknown>
+                  | undefined
+              }
+              images={nodes
+                .filter(
+                  (node) =>
+                    node.data.kind === 'image' &&
+                    Number(node.data.assetId) > 0 &&
+                    (!node.data.assetWorkspaceId || Number(node.data.assetWorkspaceId) === Number(workspaceId)),
+                )
+                .map((node) => ({
+                  nodeId: node.id,
+                  assetId: Number(node.data.assetId),
+                  title: String(node.data.title || `图片 ${node.id}`),
+                }))}
+              onClose={() => setImageTool(null)}
+              onGenerate={handleImageToolGenerate}
+              onCapture={handlePanoramaCapture}
+              onViewChange={handlePanoramaViewChange}
+            />
+          </Suspense>
         )}
 
         {/* 图片放大预览：带全部图片的画廊导航（左右箭头 / 方向键 / 底部缩略图条） */}
@@ -8870,6 +9363,15 @@ function CanvasInner() {
             activeId={imagePreviewNodeId}
             onSelect={setImagePreviewNodeId}
             onClose={() => setImagePreviewNodeId('')}
+            onPanorama={(id) => {
+              const node = latestRef.current.nodes.find((item) => item.id === id)
+              if (!node || !(Number(node.data.assetId) > 0)) return
+              setImagePreviewNodeId('')
+              setImageTool({
+                code: 'panorama.view',
+                source: { nodeId: id, assetId: Number(node.data.assetId), title: String(node.data.title || '全景图') },
+              })
+            }}
           />
         )}
 
@@ -9387,7 +9889,8 @@ function CanvasInner() {
           selectedNode.kind !== 'timeline' &&
           selectedNode.kind !== 'audio' &&
           selectedNodeIds.length < 2 &&
-          !addMenu && (
+          !addMenu &&
+          !imageTool && (
             <div
               ref={panelRef}
               className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${panelYielding ? ' is-yielding' : ''}`}
@@ -9395,7 +9898,14 @@ function CanvasInner() {
             >
               <CanvasNodePanel
                 node={selectedNodeForPanel}
+                currentUserId={currentUserId}
                 workspaceId={workspaceId}
+                onPickRealPerson={(slotIndex) => {
+                  if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
+                  setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                  setLibraryInitialTab('real_person')
+                  openDrawerPanel('assets')
+                }}
                 onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
                 onPickRefFromLibrary={(slotIndex) => {
                   if (!selectedNode) return
@@ -9437,6 +9947,32 @@ function CanvasInner() {
                 }}
                 onInsufficientCredits={handleInsufficientCredits}
                 onSaveText={handleSaveNodeText}
+                onCreateVideoFromText={() => {
+                  const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                  if (!source) return
+                  const text = (window as any).__canvasTextContents?.get(source.id) || source.data.text || ''
+                  const prompt = toCanvasPromptContext(text)
+                  if (!prompt.trim()) return
+                  const id = appendNewNode(
+                    'video',
+                    {
+                      x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
+                      y: source.position.y,
+                    },
+                    { extraData: { prompt }, ratio: '16:9' },
+                  )
+                  if (!id) return
+                  setEdges((items) => [
+                    ...items,
+                    {
+                      id: buildEdgeId(source.id, id, 0),
+                      source: source.id,
+                      target: id,
+                      data: { slotIndex: 0 },
+                    },
+                  ])
+                  setSaveStatus('dirty')
+                }}
                 onPromptChange={handleNodePromptChange}
                 onParamsChange={handleNodeParamsChange}
                 inheritedTexts={inheritedPromptTexts}

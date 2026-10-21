@@ -6,6 +6,7 @@
  * 现在整块统一成剪辑器常见的样子：画面在上，刻度尺与片段轨道紧贴其下，不留缝。
  */
 .player {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   width: 100%;

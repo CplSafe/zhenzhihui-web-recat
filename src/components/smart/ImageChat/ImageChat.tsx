@@ -1,3 +1,4 @@
+import { useMentionNavigation } from '@/composables/useMentionNavigation'
 /**
  * 智能成片「制作图片」对话视图(2.1,按 Figma 664:2740 还原)。
  * 与「制作视频」的 4 步流程不同:图片模式是 chat 聊天形式 —— 上方可滚动消息流
@@ -7,7 +8,9 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import EntryDropdown from '../EntryDropdown'
+import ImageViewport from '@/components/common/ImageViewport'
 import RatioIcon from '@/components/common/RatioIcon'
+import RatioLabel from '@/components/common/RatioLabel'
 import { openMemberCenter } from '@/stores/ui'
 import { fileToDataUrl, normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
@@ -498,6 +501,7 @@ export default function ImageChat({
     })
   }
 
+  const typedAtRef = useRef<number | null>(null)
   const handleAt = () => {
     // 点击工具栏会让 textarea 先失焦；部分浏览器/测试环境会在失焦后把
     // selectionStart 重置到文本末尾。光标位置已经由 onChange/onSelect 持续记录，
@@ -506,13 +510,37 @@ export default function ImageChat({
       insertAtCaret('@')
       return
     }
+    typedAtRef.current = null
     setAtOpen(true)
   }
   const pickRef = (index: number) => {
-    insertAtCaret(`@图片${index + 1} `)
+    if (typedAtRef.current !== null) {
+      const start = typedAtRef.current
+      const snippet = '@图片' + (index + 1) + ' '
+      setText(text.slice(0, start) + snippet + text.slice(caretRef.current))
+      caretRef.current = start + snippet.length
+      requestAnimationFrame(() => {
+        taRef.current?.focus()
+        taRef.current?.setSelectionRange(caretRef.current, caretRef.current)
+      })
+    } else insertAtCaret('@图片' + (index + 1) + ' ')
+    typedAtRef.current = null
     setAtOpen(false)
   }
 
+  const { activeIndex: atActive, setActiveIndex: setAtActive } = useMentionNavigation(
+    atOpen,
+    images.map((image, index) => image.url + '-' + index),
+    taRef,
+    pickRef,
+    () => setAtOpen(false),
+  )
+  useEffect(() => {
+    if (atOpen)
+      document
+        .querySelector('[aria-label="选择参考素材"] [aria-selected="true"]')
+        ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [atOpen, atActive])
   // 高亮:@图片N 标绿,其余普通文本(textarea 文字透明,叠在此层上)
   const renderHighlight = (t: string) => {
     if (!t) return null
@@ -993,6 +1021,11 @@ export default function ImageChat({
                 onChange={(e) => {
                   setText(e.target.value)
                   caretRef.current = e.target.selectionStart ?? e.target.value.length
+                  const caret = caretRef.current
+                  if (e.target.value[caret - 1] === '@' && images.length) {
+                    typedAtRef.current = caret - 1
+                    setAtOpen(true)
+                  } else setAtOpen(false)
                 }}
                 onScroll={(e) => {
                   if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop
@@ -1038,6 +1071,7 @@ export default function ImageChat({
                 icon={<RatioIcon ratio={ratio} />}
                 valueMinWidth={34}
                 ariaLabel="图片比例"
+                renderOption={(value) => <RatioLabel ratio={value} />}
                 placement="top"
               />
               <EntryDropdown
@@ -1081,11 +1115,15 @@ export default function ImageChat({
                     <div className={styles.atMask} onClick={() => setAtOpen(false)} aria-hidden="true" />
                     <div className={styles.atMenu} role="dialog" aria-label="选择参考素材">
                       <div className={styles.atMenuTitle}>选择参考素材</div>
-                      <div className={styles.atMenuGrid}>
+                      <div className={styles.atMenuGrid} role="listbox" aria-label="参考素材列表">
                         {images.map((image, i) => (
                           <button
                             type="button"
                             className={styles.atItem}
+                            role="option"
+                            aria-selected={i === atActive}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onMouseEnter={() => setAtActive(i)}
                             key={`${image.url}-${i}`}
                             onClick={() => pickRef(i)}
                             aria-label={`@图片${i + 1}`}
@@ -1186,7 +1224,7 @@ export default function ImageChat({
             </div>
           </div>
           <div className={styles.previewStage} onMouseDown={(event) => event.stopPropagation()}>
-            <img src={previewing.image.url} alt={`${previewing.label}大图预览`} />
+            <ImageViewport key={previewing.image.url} src={previewing.image.url} alt={`${previewing.label}大图预览`} />
           </div>
         </div>
       )}

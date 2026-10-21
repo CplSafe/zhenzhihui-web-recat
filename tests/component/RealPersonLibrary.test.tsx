@@ -132,6 +132,10 @@ describe('RealPersonLibrary', () => {
     await user.click(within(dialog).getByLabelText(/我确认已取得本人授权/))
     expect(startButton).toBeEnabled()
     await user.click(startButton)
+    expect(mocks.createRealPerson).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '同意并使用' })).toBeDisabled()
+    await user.click(screen.getByLabelText('我已阅读并同意人脸信息使用告知与授权'))
+    await user.click(screen.getByRole('button', { name: '同意并使用' }))
 
     await waitFor(() =>
       expect(mocks.createRealPerson).toHaveBeenCalledWith({
@@ -143,12 +147,55 @@ describe('RealPersonLibrary', () => {
       }),
     )
     expect(await within(dialog).findByLabelText(`认证二维码 ${session.h5_link}`)).toBeInTheDocument()
-    const links = within(dialog).getAllByRole('link')
-    expect(links).toHaveLength(2)
-    expect(links.every((link) => link.getAttribute('href') === session.h5_link)).toBe(true)
-    expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
-    expect(replaceVerificationLocation).toHaveBeenCalledWith(session.h5_link)
+    expect(within(dialog).queryAllByRole('link')).toHaveLength(0)
+    expect(screen.getByText('二维码有效期为 30 分钟')).toBeInTheDocument()
+    expect(window.open).not.toHaveBeenCalled()
+    expect(replaceVerificationLocation).not.toHaveBeenCalled()
     expect(closeVerificationWindow).not.toHaveBeenCalled()
+  })
+
+  it('keeps a failed QR session visible and refreshes it without opening another window', async () => {
+    const user = userEvent.setup()
+    mocks.createRealPerson.mockResolvedValue({ person: pendingPerson, h5_link: 'https://verify.example.test/first' })
+    mocks.syncRealPerson.mockResolvedValue({ ...pendingPerson, status: 'failed', last_error: '人脸识别未通过' })
+    mocks.restartRealPersonVerification.mockResolvedValue({
+      person: pendingPerson,
+      h5_link: 'https://verify.example.test/new',
+    })
+    render(<RealPersonLibrary workspaceId={21} userId={301} />)
+    await user.click(await screen.findByRole('button', { name: /^创建新形象/ }))
+    await user.type(screen.getByLabelText('形象名称'), '品牌主理人')
+    await user.click(screen.getByLabelText(/我确认已取得本人授权/))
+    await user.click(screen.getByRole('button', { name: /开始真人认证/ }))
+    await user.click(screen.getByLabelText('我已阅读并同意人脸信息使用告知与授权'))
+    await user.click(screen.getByRole('button', { name: '同意并使用' }))
+    await user.click(await screen.findByRole('button', { name: /我已完成认证，同步状态/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('认证失败，人脸识别未通过')
+    expect(screen.getByLabelText('认证二维码 https://verify.example.test/first')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /刷新二维码/ }))
+    expect(await screen.findByLabelText('认证二维码 https://verify.example.test/new')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(window.open).not.toHaveBeenCalled()
+  })
+
+  it('shows expiry below the QR code when the server deadline passes', async () => {
+    const user = userEvent.setup()
+    mocks.createRealPerson.mockImplementation(async () => ({
+      person: pendingPerson,
+      h5_link: 'https://verify.example.test/expiring',
+      expires_at: new Date(Date.now() + 150).toISOString(),
+    }))
+    render(<RealPersonLibrary workspaceId={21} userId={301} />)
+    await user.click(await screen.findByRole('button', { name: /^创建新形象/ }))
+    await user.type(screen.getByLabelText('形象名称'), '品牌主理人')
+    await user.click(screen.getByLabelText(/我确认已取得本人授权/))
+    await user.click(screen.getByRole('button', { name: /开始真人认证/ }))
+    await user.click(screen.getByLabelText('我已阅读并同意人脸信息使用告知与授权'))
+    await user.click(screen.getByRole('button', { name: '同意并使用' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('二维码已失效')
+    expect(screen.getByLabelText('认证二维码 https://verify.example.test/expiring')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /刷新二维码/ })).toBeEnabled()
+    expect(screen.queryByRole('heading', { name: '上传照片或视频' })).not.toBeInTheDocument()
   })
 
   it('rejects an unsafe KYC link and asks for a new verification session', async () => {
@@ -165,6 +212,8 @@ describe('RealPersonLibrary', () => {
     await user.type(screen.getByLabelText('形象名称'), '品牌主理人')
     await user.click(screen.getByLabelText(/我确认已取得本人授权/))
     await user.click(screen.getByRole('button', { name: /开始真人认证/ }))
+    await user.click(screen.getByLabelText('我已阅读并同意人脸信息使用告知与授权'))
+    await user.click(screen.getByRole('button', { name: '同意并使用' }))
 
     expect(await screen.findByRole('heading', { name: '需要认证链接' })).toBeInTheDocument()
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
@@ -207,8 +256,9 @@ describe('RealPersonLibrary', () => {
         expect.objectContaining({ workspaceId: 21, personId: 9 }),
       )
     })
-    expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
-    expect(replaceVerificationLocation).toHaveBeenCalledWith(renewedSession.h5_link)
+    expect(await screen.findByLabelText(`认证二维码 ${renewedSession.h5_link}`)).toBeInTheDocument()
+    expect(window.open).not.toHaveBeenCalled()
+    expect(replaceVerificationLocation).not.toHaveBeenCalled()
     expect(closeVerificationWindow).not.toHaveBeenCalled()
   })
 
@@ -221,10 +271,10 @@ describe('RealPersonLibrary', () => {
 
     await user.click(await screen.findByRole('button', { name: '管理品牌主理人' }))
     expect(await screen.findByRole('heading', { name: '上传照片或视频' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '返回真人素材库' }))
+    await user.click(screen.getByRole('button', { name: '返回' }))
     await user.click(await screen.findByRole('button', { name: /^创建新形象/ }))
 
-    expect(await screen.findByRole('heading', { name: '创建真人档案' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '真人认证授权' })).toBeInTheDocument()
     expect(mocks.getRealPerson).toHaveBeenCalledTimes(1)
     expect(sessionStorage.getItem('zzh:real-person-creation:301:21')).toBeNull()
   })
@@ -250,9 +300,13 @@ describe('RealPersonLibrary', () => {
     await user.type(screen.getByLabelText('形象名称'), '品牌主理人')
     await user.click(screen.getByLabelText(/我确认已取得本人授权/))
     await user.click(screen.getByRole('button', { name: /开始真人认证/ }))
+    await user.click(screen.getByLabelText('我已阅读并同意人脸信息使用告知与授权'))
+    await user.click(screen.getByRole('button', { name: '同意并使用' }))
     await user.click(await screen.findByRole('button', { name: /我已完成认证，同步状态/ }))
 
-    expect(await screen.findByRole('heading', { name: '上传照片或视频' })).toBeInTheDocument()
+    expect(await screen.findByText('认证成功，3 秒后自动返回素材上传页')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '上传照片或视频' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '上传照片或视频' }, { timeout: 4500 })).toBeInTheDocument()
     const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')
     expect(fileInput).not.toBeNull()
     const file = new File(['portrait'], 'portrait.png', { type: 'image/png' })

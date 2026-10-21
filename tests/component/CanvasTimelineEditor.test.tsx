@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -210,14 +210,117 @@ describe('CanvasTimelineEditor', () => {
       createTimelineClip({ id: 'clip-1', assetId: 1, sourceDurationSec: 5, inSec: 0, outSec: 5 }),
     ])
     render(<ControlledEditor initial={single} onCompose={vi.fn()} />)
-    expect(screen.getByText('至少需要 2 个片段才能合成')).toBeInTheDocument()
+    expect(screen.getByText(/至少需要 2 个片段才能合成/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '合成为一条视频' })).toBeDisabled()
+  })
+
+  it('单视频配音允许导出，音频未就绪时不能播放画面', () => {
+    const single = addTimelineClips(createTimelineState(), [
+      createTimelineClip({ id: 'clip-1', assetId: 1, sourceDurationSec: 5 }),
+    ])
+    render(
+      <ControlledEditor
+        initial={{
+          ...single,
+          audioClips: [
+            {
+              sourceNodeId: 'a',
+              assetId: 201,
+              title: '配音',
+              durationSec: 5,
+              inSec: 0,
+              outSec: 5,
+              startSec: 0,
+              volume: 1,
+              muted: false,
+              loop: false,
+              fadeInSec: 0,
+              fadeOutSec: 0,
+              lane: 'voice',
+              origin: 'generated',
+            },
+          ],
+        }}
+        onCompose={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: '合成为一条视频' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '播放' })).toBeDisabled()
+    const audioClip = screen.getByTitle('配音 · 5.0 秒')
+    fireEvent.pointerDown(audioClip, { button: 0, pointerId: 1, clientX: 100 })
+    fireEvent.pointerMove(audioClip, { pointerId: 1, clientX: 220 })
+    fireEvent.pointerUp(audioClip, { pointerId: 1, clientX: 220 })
+    expect(audioClip.style.left).not.toBe('0px')
+    fireEvent.click(screen.getByRole('button', { name: /撤销/ }))
+    expect(screen.getByTitle('配音 · 5.0 秒').style.left).toBe('0px')
+  })
+
+  it('同时开始的多段音频各占一行，并保留添加顺序与时间位置', () => {
+    render(
+      <ControlledEditor
+        initial={{
+          ...baseState(),
+          audioClips: ['voice', 'bgm', 'voice'].map((lane, index) => ({
+            sourceNodeId: `audio-${index}`,
+            assetId: 201 + index,
+            title: `音频 ${index + 1}`,
+            durationSec: 5,
+            inSec: 0,
+            outSec: 5,
+            startSec: 0,
+            volume: 1,
+            muted: false,
+            loop: false,
+            fadeInSec: 0,
+            fadeOutSec: 0,
+            lane: lane as 'voice' | 'bgm',
+            origin: 'generated' as const,
+          })),
+        }}
+      />,
+    )
+    const tracks = within(screen.getByLabelText('同步音轨')).getAllByRole('group')
+    expect(tracks).toHaveLength(3)
+    tracks.forEach((track, index) => {
+      expect(track).toHaveAccessibleName(`音轨 ${index + 1}：音频 ${index + 1}`)
+      expect(within(track).getByTitle(`音频 ${index + 1} · 5.0 秒`)).toHaveStyle({ left: '0px' })
+    })
   })
 
   it('空时间线给出接入片段的引导', () => {
     render(<ControlledEditor initial={createTimelineState()} />)
     expect(screen.getByText(/把画布上的视频拖进来/)).toBeInTheDocument()
     expect(screen.getByText(/时间线还是空的/)).toBeInTheDocument()
+  })
+
+  it('隐藏横向滚动条后仍可用鼠标滚轮横向浏览时间线', () => {
+    render(<ControlledEditor />)
+    const timeline = screen.getByRole('region', { name: '时间轴滚动区域' })
+    Object.defineProperties(timeline, {
+      scrollWidth: { configurable: true, value: 800 },
+      clientWidth: { configurable: true, value: 400 },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    })
+
+    fireEvent.wheel(timeline, { deltaY: 120, deltaX: 0 })
+
+    expect(timeline.scrollLeft).toBe(120)
+  })
+
+  it('30 秒内锁定适应宽度，超过 30 秒后启用缩放', () => {
+    const view = render(<ControlledEditor />)
+    expect(screen.getByRole('button', { name: '缩小时间轴' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '放大时间轴' })).toBeDisabled()
+    view.unmount()
+
+    const longTimeline = addTimelineClips(createTimelineState(), [
+      createTimelineClip({ id: 'long-1', assetId: 201, sourceDurationSec: 20, inSec: 0, outSec: 20 }),
+      createTimelineClip({ id: 'long-2', assetId: 202, sourceDurationSec: 20, inSec: 0, outSec: 15 }),
+    ])
+    render(<ControlledEditor initial={longTimeline} />)
+
+    expect(screen.getByRole('button', { name: '缩小时间轴' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '放大时间轴' })).toBeEnabled()
   })
 
   it('空时间线也能从画布挑视频起步，不必先有连线', async () => {

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 智能成片「入口/需求输入」页(2.1,按 Figma 79:3966 还原)。
  * 大标题 + 制作视频/制作图片 Tab + 上传&提示词卡片 +
  * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
@@ -61,6 +61,7 @@ import { useConfirmDialog, useToast } from '@/composables/useToast'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
+import ImageDetailModal from '@/components/common/ImageDetailModal'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { createMaterialFromAsset } from '@/utils/materials'
@@ -396,6 +397,7 @@ export default function SmartEntry({
   const toolbarSettings = useDismissablePopover<HTMLDivElement>()
   const toolbarMore = useDismissablePopover<HTMLDivElement>()
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [detailImage, setDetailImage] = useState('')
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
   const [libraryTab, setLibraryTab] = useState('mine')
@@ -1255,7 +1257,20 @@ export default function SmartEntry({
                 <div className={styles.attachments}>
                   {images.map((url, index) => (
                     <div className={styles.thumb} key={`${url}-${index}`}>
-                      <img src={url} alt="" />
+                      <img
+                        src={url}
+                        alt="参考素材"
+                        role="button"
+                        tabIndex={0}
+                        aria-label="查看参考素材"
+                        onClick={() => setDetailImage(url)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setDetailImage(url)
+                          }
+                        }}
+                      />
                       <button
                         type="button"
                         className={styles.thumbX}
@@ -1521,6 +1536,7 @@ export default function SmartEntry({
                         </button>
                       </span>
                       <MaterialMentionPopover
+                        inputRef={taRef}
                         open={atOpen}
                         title="选择参考素材"
                         layout="grid"
@@ -1625,6 +1641,7 @@ export default function SmartEntry({
       </div>
       {/* 只在打开时挂载：它自己有一个按 workspace/tab 拉取项目列表的 effect，
           常驻会让从未打开过素材库的用户也白跑一次分页扫描。 */}
+      {detailImage ? <ImageDetailModal src={detailImage} onClose={() => setDetailImage('')} /> : null}
       {libraryOpen && (
         <MaterialLibraryPicker
           modelValue={libraryOpen}

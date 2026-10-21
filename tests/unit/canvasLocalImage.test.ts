@@ -75,8 +75,8 @@ describe('canvas local image import helpers', () => {
   it('extracts images and videos together so a pasted video is not dropped', () => {
     const png = imageFile()
     const mp4 = videoFile()
-    expect(extractMediaFiles(dataTransfer({ files: [png, mp4] }))).toEqual({ images: [png], videos: [mp4] })
-    expect(extractMediaFiles(null)).toEqual({ images: [], videos: [] })
+    expect(extractMediaFiles(dataTransfer({ files: [png, mp4] }))).toEqual({ images: [png], videos: [mp4], audios: [] })
+    expect(extractMediaFiles(null)).toEqual({ images: [], videos: [], audios: [] })
   })
 
   it('does not fall through to items when the file list holds only a video', () => {
@@ -87,6 +87,7 @@ describe('canvas local image import helpers', () => {
     expect(extractMediaFiles(dataTransfer({ files: [dropped], items: [{ kind: 'file', file: other }] }))).toEqual({
       images: [],
       videos: [dropped],
+      audios: [],
     })
   })
 
@@ -101,7 +102,44 @@ describe('canvas local image import helpers', () => {
           ],
         }),
       ),
-    ).toEqual({ images: [], videos: [mp4] })
+    ).toEqual({ images: [], videos: [mp4], audios: [] })
+  })
+
+  it('extracts dropped audio with images and videos, including files with no MIME type', () => {
+    const png = imageFile()
+    const mp4 = videoFile()
+    const mp3 = new File(['audio'], '旁白.MP3')
+    const wav = new File(['audio'], '背景.wav', { type: 'audio/wav' })
+    expect(extractMediaFiles(dataTransfer({ files: [png, mp4, mp3, wav] }))).toEqual({
+      images: [png],
+      videos: [mp4],
+      audios: [mp3, wav],
+    })
+  })
+
+  it('extracts pasted audio from items and ignores text, null files and unsupported documents', () => {
+    const audio = new File(['audio'], '配音.m4a')
+    expect(
+      extractMediaFiles(
+        dataTransfer({
+          items: [
+            { kind: 'string', file: null },
+            { kind: 'file', file: null },
+            { kind: 'file', file: new File(['text'], 'note.txt') },
+            { kind: 'file', file: audio },
+          ],
+        }),
+      ),
+    ).toEqual({ images: [], videos: [], audios: [audio] })
+  })
+
+  it('prefers the file list for audio to avoid importing clipboard items twice', () => {
+    const audio = new File(['audio'], '配音.aac')
+    expect(extractMediaFiles(dataTransfer({ files: [audio], items: [{ kind: 'file', file: audio }] }))).toEqual({
+      images: [],
+      videos: [],
+      audios: [audio],
+    })
   })
 
   it('caps a single local video at the same 512MB budget the timeline compositor uses', () => {

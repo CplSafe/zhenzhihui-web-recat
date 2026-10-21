@@ -46,6 +46,16 @@ interface CaptchaState {
 
 // 登录页大图轮播数据的 SWR 缓存键(slug=login)
 const LOGIN_BANNERS_CACHE_KEY = 'login-banners'
+// 仅记住账号，不设置过期时间；与登录会话分开存储，退出登录仍保留。
+const REMEMBERED_ACCOUNT_KEY = 'zzh_remembered_login_account'
+function readRememberedAccount(): string | null {
+  try {
+    const account = window.localStorage.getItem(REMEMBERED_ACCOUNT_KEY)
+    return account !== null && /^\d{0,11}$/.test(account) ? account : null
+  } catch {
+    return null
+  }
+}
 // 图片幻灯片自动切换间隔(视频则播完即切)
 const IMAGE_AUTOPLAY_MS = 3000
 // 接口无数据时的兜底标题(保持原静态四项)
@@ -92,7 +102,17 @@ export default function LoginView() {
   const [displayedMediaUrl, setDisplayedMediaUrl] = useState('')
   const [readyMediaUrl, setReadyMediaUrl] = useState('')
   const [loginMode, setLoginMode] = useState<'password' | 'sms'>('sms')
-  const [phone, setPhone] = useState('')
+  const [rememberedAccount] = useState(readRememberedAccount)
+  const [phone, setPhone] = useState(rememberedAccount ?? '')
+  const [rememberAccount, setRememberAccount] = useState(rememberedAccount !== null)
+  useEffect(() => {
+    try {
+      if (rememberAccount) window.localStorage.setItem(REMEMBERED_ACCOUNT_KEY, phone)
+      else window.localStorage.removeItem(REMEMBERED_ACCOUNT_KEY)
+    } catch {
+      // 浏览器禁用本地存储时仍允许正常登录。
+    }
+  }, [rememberAccount, phone])
   const [password, setPassword] = useState('')
   const [smsCode, setSmsCode] = useState('')
   const [captcha, setCaptcha] = useState<CaptchaState>({ id: '', image: '', answer: '' })
@@ -820,6 +840,14 @@ export default function LoginView() {
           </button>
 
           <div className="zlogin-foot">
+            <label className="zlogin-remember">
+              <input
+                type="checkbox"
+                checked={rememberAccount}
+                onChange={(event) => setRememberAccount(event.target.checked)}
+              />
+              <span>记住账号</span>
+            </label>
             <button type="button" className="zlogin-forgot" onClick={() => setAuthModal('forgot')}>
               忘记密码？
             </button>

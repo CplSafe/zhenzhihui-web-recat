@@ -686,26 +686,17 @@
   box-sizing: border-box;
 }
 
-/*
- * 选中态。
- *
- * 原来是 rgb(122,122,122) 的灰框——灰色在界面里的语义是「不可用」，
- * 用它标「这是你正在编辑的那个节点」正好说反了，而且和品牌色毫无关系。
- * 改成品牌色实线 + 一层同色柔光：远看能一眼扫到，近看不喧宾夺主。
- * !important 必须留着，React Flow 自带的 .selected 样式优先级在这之上。
- */
+/* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
 .react-flow__node.selected {
-  outline: var(--canvas-brand) solid 2px !important;
+  outline: #16a88b solid 1.5px !important;
   outline-offset: 1px;
   border-radius: 14px;
 }
 
 .react-flow__node.selected .canvas-default-node {
   box-shadow:
-    0 0 0 6px rgb(87 103 229 / 10%),
-    0px 4px 10px rgba(0, 0, 0, 0.12),
-    0px 14px 18px rgba(0, 0, 0, 0.1),
-    0px 26px 20px rgba(0, 0, 0, 0.06);
+    0 0 0 3px rgb(22 168 139 / 7%),
+    0 4px 14px rgb(26 57 46 / 10%);
 }
 
 /* React Flow hover 阴影清除 */
@@ -1128,12 +1119,16 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
   color: #26332f;
   text-align: left;
 }
 
 .canvas-storyboard__summary {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1143,6 +1138,7 @@
 
 .canvas-storyboard__summary > div {
   display: flex;
+  min-width: 0;
   align-items: baseline;
   gap: 8px;
 }
@@ -1168,7 +1164,9 @@
 .canvas-storyboard__list {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 10px 6px 10px 4px;
   scrollbar-width: thin;
   scrollbar-color: #c8d8d2 transparent;
@@ -1176,10 +1174,12 @@
 
 .canvas-storyboard__item {
   display: grid;
+  min-width: 0;
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 10px;
   padding: 11px 9px;
   border-radius: 11px;
+  box-sizing: border-box;
 }
 
 .canvas-storyboard__item + .canvas-storyboard__item {
@@ -1210,12 +1210,14 @@
 
 .canvas-storyboard__title-row {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .canvas-storyboard__title-row strong {
+  min-width: 0;
   overflow: hidden;
   color: #24332f;
   font-size: calc(13px * var(--canvas-readable-text-scale));
@@ -1225,9 +1227,12 @@
 }
 
 .canvas-storyboard__meta {
+  min-width: 0;
+  max-width: 45%;
   flex: none;
   color: #789088;
   font-size: calc(10px * var(--canvas-readable-text-scale));
+  overflow-wrap: anywhere;
 }
 
 .canvas-storyboard__content p {
@@ -2240,4 +2245,41 @@
   .canvas-default-node.is-audio .canvas-audio-generator [data-audio-action='generate'] {
     grid-column: 3;
   }
+}
+
+.canvas-storyboard__content textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 72px;
+  padding: 8px;
+  box-sizing: border-box;
+  border: 1px solid #e8e8ed;
+  border-radius: 6px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.canvas-default-node.is-hd-result {
+  border: 2px solid #35a66f;
+}
+.canvas-hd-badge {
+  padding: 7px 12px;
+  color: #24774e;
+  background: #eaf8f0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.canvas-hd-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: #e34949;
+  color: white;
+  font-size: 11px;
 }

@@ -7,6 +7,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Select } from 'antd'
+import RatioLabel from '@/components/common/RatioLabel'
 import { getAssetDownloadUrl, uploadAssetFile } from '@/api/business'
 import {
   createMarketDemand,
@@ -253,17 +255,15 @@ export default function DemandFormModal({ open, targetIp = null, onClose, onPubl
             />
             <div className={styles.descChips}>
               <label className={styles.chip}>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-                  <path d="M10.5 19h3" strokeLinecap="round" />
-                </svg>
-                <select value={ratio} onChange={(event) => setRatio(event.target.value)} aria-label="视频比例">
-                  {RATIO_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  value={ratio}
+                  onChange={setRatio}
+                  aria-label="视频比例"
+                  variant="borderless"
+                  className={styles.ratioSelect}
+                  getPopupContainer={(trigger) => trigger.parentElement!}
+                  options={RATIO_OPTIONS.map((value) => ({ value, label: <RatioLabel ratio={value} /> }))}
+                />
               </label>
               <label className={styles.chip}>
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">

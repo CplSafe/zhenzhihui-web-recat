@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "type": "frontend",
+  "name": "我的素材：打开视频预览及左右切换到视频时自动播放",
+  "description": "点「播放」打开预览后视频自动开始播放；在预览里左右切换到另一个视频时也自动播放。前提：测试账号的「我的素材」里至少有两条视频。",
+  "priority": "p1",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "打开 /login，切换到「密码登录」标签，用项目里保存的测试账号登录（勾选同意协议后点击「登录」）"
+    },
+    {
+      "type": "action",
+      "description": "点击左侧边栏的「我的素材」，在类型筛选里点击「视频」"
+    },
+    {
+      "type": "action",
+      "description": "鼠标悬停在第一个视频素材卡片上，点击出现的「播放」按钮"
+    },
+    {
+      "type": "assertion",
+      "description": "弹出全屏预览层，视频在不点击播放按钮的情况下自己开始播放：几秒后播放器的进度时间从 0:00 开始增加"
+    },
+    {
+      "type": "action",
+      "description": "点击预览层右侧的「下一个」箭头按钮，切换到下一个素材；如果下一个是图片，继续点击右侧箭头，直到切换到一个视频"
+    },
+    {
+      "type": "assertion",
+      "description": "切换到的视频同样自动开始播放，进度时间在几秒内从 0:00 开始增加，不需要手动点击播放"
+    },
+    {
+      "type": "action",
+      "description": "点击播放器控制条上的暂停按钮"
+    },
+    {
+      "type": "assertion",
+      "description": "视频暂停，进度时间停止变化（手动暂停 / 继续仍然可用）"
+    }
+  ]
+}

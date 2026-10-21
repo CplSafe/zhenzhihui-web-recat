@@ -3,6 +3,10 @@
   width: 100%;
   height: 100%;
   color: #fff;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 14px;
+  background: #fff;
 }
 .expanded {
   display: grid;
@@ -32,12 +36,16 @@
 }
 .stack {
   position: absolute;
-  inset: 0;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
   object-fit: cover;
   background: #fff;
-  transform: translate(calc(var(--layer) * 5px), calc(var(--layer) * 7px)) rotate(calc(var(--layer) * 1.5deg));
+  transform: translate(calc(var(--layer) * 3px), calc(var(--layer) * 4px));
   pointer-events: none;
-  box-shadow: 0 2px 8px #0003;
+  box-shadow:
+    0 0 0 1px #dfe9e4,
+    0 2px 5px #233e2f12;
 }
 .actions {
   position: absolute;

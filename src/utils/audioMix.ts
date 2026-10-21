@@ -10,7 +10,12 @@ export async function renderAudioMix(
   workspaceId: number,
   original?: ArrayBuffer,
   originalVolume = 1,
+  options: { signal?: AbortSignal; cache?: Map<string, AudioBuffer> } = {},
 ): Promise<AudioBuffer> {
+  const checkCancelled = () => {
+    if (options.signal?.aborted) throw new DOMException('混音已取消', 'AbortError')
+  }
+  checkCancelled()
   if (!(duration > 0 && duration <= 300)) throw new Error('混音时长须在 0–300 秒以内')
   const context = new OfflineAudioContext(2, Math.ceil(duration * 48000), 48000)
   const schedule = (buffer: AudioBuffer, clip: TimelineAudioClip) => {
@@ -50,17 +55,42 @@ export async function renderAudioMix(
   }
   // 顺序读取，防止同时解码多条大音频造成内存峰值。
   for (const clip of clips) {
-    if (clip.muted) continue
-    const response = await fetch(assetStreamUrl(clip.assetId, workspaceId), { credentials: 'include' })
+    checkCancelled()
+    if (clip.muted || clip.volume <= 0 || clip.startSec >= duration) continue
+    const key = `${workspaceId}:${clip.assetId}`
+    const cached = options.cache?.get(key)
+    if (cached) {
+      schedule(cached, clip)
+      continue
+    }
+    const response = await fetch(assetStreamUrl(clip.assetId, workspaceId), {
+      credentials: 'include',
+      signal: options.signal,
+    })
     if (!response.ok) throw new Error(`${clip.title} 加载失败（HTTP ${response.status}）`)
     const declared = Number(response.headers.get('content-length') || 0)
     if (declared > 100 * 1024 * 1024) throw new Error('单条音频超过 100MB，请裁剪后导入')
     const bytes = await response.arrayBuffer()
     if (bytes.byteLength > 100 * 1024 * 1024) throw new Error('单条音频超过 100MB，请裁剪后导入')
     const buffer = await context.decodeAudioData(bytes)
+    checkCancelled()
+    // 缓存仅由当前剪辑会话持有，限制解码后 PCM 的内存占用。
+    const bufferBytes = buffer.length * buffer.numberOfChannels * 4
+    if (options.cache && bufferBytes <= 64 * 1024 * 1024) {
+      let used = [...options.cache.values()].reduce((sum, item) => sum + item.length * item.numberOfChannels * 4, 0)
+      for (const [oldKey, item] of options.cache) {
+        if (used + bufferBytes <= 64 * 1024 * 1024) break
+        options.cache.delete(oldKey)
+        used -= item.length * item.numberOfChannels * 4
+      }
+      options.cache.set(key, buffer)
+    }
     schedule(buffer, clip)
   }
-  return context.startRendering()
+  checkCancelled()
+  const rendered = await context.startRendering()
+  checkCancelled()
+  return rendered
 }
 
 /** WAV PCM16，浏览器可直接下载；不依赖压缩编码器。 */

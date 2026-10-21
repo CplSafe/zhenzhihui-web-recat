@@ -199,6 +199,21 @@ describe.each([
 })
 
 describe('CanvasNodePanel 模型选择器', () => {
+  it('悬停展开模型列表，移入列表后保持展开，移出后收起', async () => {
+    const user = userEvent.setup()
+    renderPanel([
+      { modelVersionId: 21, displayName: '模型一', operationCodes: IMAGE_OPERATIONS },
+      { modelVersionId: 22, displayName: '模型二', operationCodes: IMAGE_OPERATIONS },
+    ])
+    const trigger = screen.getByRole('button', { name: '模型一' })
+    await user.hover(trigger)
+    const option = await screen.findByText('模型二')
+    await user.hover(option)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await user.unhover(option)
+    await waitFor(() => expect(screen.queryByText('模型二')).not.toBeInTheDocument())
+  })
+
   it('图片模型未声明比例参数时不再显示独立的比例按钮', () => {
     renderPanel([{ modelVersionId: 21, displayName: 'Seedream 5.0', operationCodes: IMAGE_OPERATIONS }])
 
@@ -222,8 +237,8 @@ describe('CanvasNodePanel 模型选择器', () => {
       },
     ])
 
-    await user.click(screen.getByRole('button', { name: '1:1' }))
-    expect(screen.getByText('比例')).toBeInTheDocument()
+    await user.hover(screen.getByRole('button', { name: '1:1' }))
+    expect(await screen.findByText('比例')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '9:16' })).toBeInTheDocument()
   })
 
@@ -236,11 +251,98 @@ describe('CanvasNodePanel 模型选择器', () => {
     expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
   })
 
-  it('文本节点保留保存提示词按钮，不显示费用或飞机图标', () => {
+  it('图片节点没有描述时不提交，避免参考素材被当成空请求发送', () => {
+    const onGenerate = vi.fn()
+    renderPanel(
+      [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }],
+      { ...imageNodeWithReference(), prompt: '' },
+      { onGenerate },
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入图片描述后再生成')
+    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(onGenerate).not.toHaveBeenCalled()
+  })
+
+  it('文本节点缺少模型时禁止生成，但仍允许保存普通文本', () => {
     renderPanel([], { id: 'node-text', kind: 'text', text: '一段提示词' })
 
-    expect(screen.getByRole('button', { name: '保存提示词' })).toBeEnabled()
-    expect(screen.queryByText('约0.2元')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存为文本' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '生成分镜' })).toBeDisabled()
+  })
+
+  it('文本节点调用所选脚本模型生成分镜，而不是保存输入', async () => {
+    const onGenerate = vi.fn()
+    const onSaveText = vi.fn()
+    renderPanel(
+      [],
+      { id: 'text', kind: 'text', prompt: '五秒咖啡广告', text: '上一版结果' },
+      {
+        models: {
+          text: [{ modelVersionId: 35, displayName: '脚本模型', operationCodes: ['responses.multimodal'] }],
+          image: [],
+          video: [],
+        },
+        onGenerate,
+        onSaveText,
+      },
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: '生成分镜' }))
+    expect(onSaveText).not.toHaveBeenCalled()
+    expect(onGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'text',
+        modelVersionId: 35,
+        operationCode: 'responses.multimodal',
+        prompt: expect.stringContaining('用户需求：\n五秒咖啡广告'),
+      }),
+    )
+    expect(screen.getByRole('textbox')).toHaveValue('五秒咖啡广告')
+  })
+
+  it('分镜结果变化不覆盖创作需求，视频创建需要用户主动点击', async () => {
+    const onCreateVideoFromText = vi.fn()
+    renderPanel(
+      [],
+      { id: 'text', kind: 'text', prompt: '咖啡广告', text: '[{"title":"开场","prompt":"咖啡杯特写"}]' },
+      {
+        onCreateVideoFromText,
+      },
+    )
+    expect(screen.getByRole('textbox')).toHaveValue('咖啡广告')
+    expect(onCreateVideoFromText).not.toHaveBeenCalled()
+    await userEvent.setup().click(screen.getByRole('button', { name: '创建视频节点' }))
+    expect(onCreateVideoFromText).toHaveBeenCalledOnce()
+  })
+
+  it('视频提示词被改写后，不追加原分镜，也不把 JSON 发给视频模型', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    renderPanel(
+      [],
+      { id: 'v', kind: 'video', prompt: '', sourceRefs: [] },
+      {
+        models: {
+          text: [],
+          image: [],
+          video: [{ modelVersionId: 35, displayName: '视频模型', operationCodes: ['video.generate'] }],
+        },
+        inheritedTexts: [
+          { sourceId: 'text', edgeId: 'edge', text: '[{"title":"开场","prompt":"咖啡杯特写","duration":5}]' },
+        ],
+        onGenerate,
+      },
+    )
+    const input = screen.getByRole('textbox')
+    expect(input).toHaveValue('1. 开场（时长 5）\n咖啡杯特写')
+    await user.clear(input)
+    await user.type(input, '改为咖啡豆俯拍')
+    await user.click(screen.getByRole('button', { name: '生成' }))
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '改为咖啡豆俯拍' }))
+    await user.clear(input)
+    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '用最新分镜替换提示词' }))
+    expect(input).toHaveValue('1. 开场（时长 5）\n咖啡杯特写')
   })
 
   it('多资产汇合时展示最终输入数量，并在模型超限时阻止生成', () => {
@@ -809,7 +911,13 @@ describe('CanvasNodePanel 生成 / 重新生成文案', () => {
   const imageModels = [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }]
 
   it('只有素材、从没生成过的节点（上传/拖入的图）显示「生成」', () => {
-    renderPanel(imageModels, { id: 'node-uploaded', kind: 'image', prompt: '', resultUrl: '/u.png', assetId: 5 })
+    renderPanel(imageModels, {
+      id: 'node-uploaded',
+      kind: 'image',
+      prompt: '重新绘制这张素材',
+      resultUrl: '/u.png',
+      assetId: 5,
+    })
     expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
     expect(screen.queryByText('重新生成')).not.toBeInTheDocument()
   })
@@ -1473,6 +1581,29 @@ it('视频数量带条单位且背景音不会混成水印开关', async () => {
   expect(screen.getByRole('slider', { name: '生成数量' })).toHaveValue('2')
   expect(screen.getByRole('button', { name: '有背景音' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '无水印' })).toBeInTheDocument()
+})
+
+it('视频接入音频后强制无背景音并禁用切换', async () => {
+  const user = userEvent.setup()
+  const model = {
+    ...modelWithFields([{ name: 'generate_audio', display_name: '自动生成背景音', type: 'bool', default: true }]),
+    operationCodes: ['video.generate'],
+  }
+  renderPanel(
+    [],
+    {
+      id: 'video-audio',
+      kind: 'video',
+      prompt: '测试视频',
+      videoMode: 'auto',
+      params: { generate_audio: true },
+      sourceRefs: [{ nodeId: 'audio-source', kind: 'audio', assetId: 42 }],
+    },
+    { models: { text: [], image: [], video: [model] } },
+  )
+  await user.click(screen.getByRole('button', { name: /无背景音/ }))
+  expect(screen.getByRole('button', { name: '有背景音' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '无背景音' })).toBeDisabled()
 })
 
 it('保留 Seedream 的 size 分辨率档位', async () => {

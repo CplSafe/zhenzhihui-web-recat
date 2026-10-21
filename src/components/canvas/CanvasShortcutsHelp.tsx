@@ -16,6 +16,7 @@ import {
   type CanvasShortcutBindings,
 } from '@/utils/canvasKeyboard'
 import styles from './CanvasShortcutsHelp.module.css'
+import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 
 interface ShortcutRow {
   keys: string[]
@@ -72,7 +73,10 @@ export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: ['拖出连线到空白处'], label: '直接新建并连接下一个节点' },
       { keys: ['多选后拖出连线'], label: '把选中的几个节点一次连到同一个目标' },
       { keys: [`${MOD} + F`], label: '搜索 / 定位节点' },
-      { keys: ['拖入文件', `${MOD} + V`], label: '导入本地图片或视频' },
+      {
+        keys: ['拖入文件', `${MOD} + V`],
+        label: CANVAS_AUDIO_NODES_ENABLED ? '导入本地图片、视频或音频' : '导入本地图片或视频',
+      },
     ],
   },
 ]

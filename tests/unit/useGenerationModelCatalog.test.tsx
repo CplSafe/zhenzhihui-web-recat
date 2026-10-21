@@ -416,12 +416,12 @@ describe('useGenerationModelCatalog', () => {
         ?.operationGroups.find((group) => group.operationCode === 'video.generate')?.models ?? []
     expect(videoModels.map(({ modelVersionId, displayName }) => ({ modelVersionId, displayName }))).toEqual([
       { modelVersionId: 921, displayName: 'HappyHorse 参考生视频' },
+      { modelVersionId: 930, displayName: 'MiniMax 图生视频' },
       { modelVersionId: 922, displayName: 'Seedance 2.0' },
       { modelVersionId: 928, displayName: 'Seedance 2.0 Fast' },
       { modelVersionId: 929, displayName: 'Seedance 2.0 Mini' },
       { modelVersionId: 925, displayName: '其他视频生成模型' },
       { modelVersionId: 926, displayName: '后端新增视频模型' },
-      { modelVersionId: 930, displayName: 'MiniMax 图生视频' },
     ])
     expect(result.current.operationStates['video.generate']).toMatchObject({
       status: 'ready',
@@ -434,12 +434,12 @@ describe('useGenerationModelCatalog', () => {
         ?.subgroups?.find((group) => group.key === 'video.generate')?.models ?? []
     expect(dropdownModels.map(({ name }) => name)).toEqual([
       'HappyHorse 参考生视频',
+      'MiniMax 图生视频',
       'Seedance 2.0',
       'Seedance 2.0 Fast',
       'Seedance 2.0 Mini',
       '其他视频生成模型',
       '后端新增视频模型',
-      'MiniMax 图生视频',
     ])
   })
 

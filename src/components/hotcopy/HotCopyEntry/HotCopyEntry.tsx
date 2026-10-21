@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
+import ImageDetailModal from '@/components/common/ImageDetailModal'
 import { fileToDataUrl, normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { listAiTasks, extractAssetPageItems } from '@/api/business'
@@ -430,6 +431,7 @@ export default function HotCopyEntry({
   const [videoFile, setVideoFile] = useState<File | null>(initialDraft.videoFile)
   const [videoFileName, setVideoFileName] = useState(initialDraft.videoFileName)
   const [videoPreview, setVideoPreview] = useState(initialDraft.videoPreview)
+  const [detailImage, setDetailImage] = useState('')
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
   const [libraryMaterialsScope, setLibraryMaterialsScope] = useState('')
@@ -1323,7 +1325,20 @@ export default function HotCopyEntry({
                     <div className="hotcopy__products">
                       {products.map((p, i) => (
                         <div className="hotcopy__product" key={i}>
-                          <img src={p.url} alt="" />
+                          <img
+                            src={p.url}
+                            alt={`替换素材 ${i + 1}`}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`查看替换素材 ${i + 1}`}
+                            onClick={() => setDetailImage(p.url)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                setDetailImage(p.url)
+                              }
+                            }}
+                          />
                           <button type="button" onClick={() => removeProduct(i)} aria-label="移除">
                             ×
                           </button>
@@ -1387,6 +1402,7 @@ export default function HotCopyEntry({
                     </button>
                   </span>
                   <MaterialMentionPopover
+                    inputRef={taRef}
                     open={atOpen}
                     title="选择替换素材"
                     items={products.map((product, index) => ({
@@ -1521,6 +1537,7 @@ export default function HotCopyEntry({
       />
 
       {/* 素材库选择器(选替换素材图片,可多选) */}
+      {detailImage ? <ImageDetailModal src={detailImage} onClose={() => setDetailImage('')} /> : null}
       <MaterialLibraryPicker
         modelValue={productLibOpen}
         onModelValueChange={setProductLibOpen}

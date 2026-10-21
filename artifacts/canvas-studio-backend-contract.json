@@ -1,0 +1,177 @@
+{
+  "checked_at": "2026-10-21",
+  "tools": {
+    "get": {
+      "security": [
+        {
+          "BearerAuth": []
+        }
+      ],
+      "description": "prompt_workflow 通过现有任务接口 params.tool/tool_version/tool_params 执行；browser 工具仅保存画布状态和上传截图。模型 ID 已按空间套餐过滤。\n人像质感调节 image.portrait_texture、多角度编辑 image.multi_angle、场景全景 image.panorama 均使用 operation_code=image.image_to_image；工具 code 放在 params.tool，不是 operation_code。这是图像编辑生成工作流，不是独立的人脸修复算法接口。\n情绪调节 image.portrait_emotion 使用同一图像编辑流程，引导保留人物身份、构图和背景。tool_params.emotion 可为 neutral/happy/sad/angry/surprised/fearful/disgusted/calm（默认 happy），strength 可为 subtle/natural/strong（默认 natural）；这是目标表情编辑，不是情绪识别。\n从返回的 model_version_ids 选择模型，从 params_schema 读取工具参数；空模型列表表示当前空间没有可用模型。机位 scene.director、全景浏览 panorama.view 为浏览器工具，不提交 AI 任务。\n当前多角度与人像质感为 v2，必须显式发送 tool_version=2；旧版省略版本或 version=1 的参数保持兼容。上述图片编辑工具均由模型生成，execution=prompt_workflow 表示应用参数转换成提示词，不代表供应商提供原生相机、光源或肤质 API。模型尺寸、数量等参数仍按 GET /api/v1/ai/models 返回的模型 schema 发送和计费。\n多角度 v2：tool=image.multi_angle，tool_params={horizontal_angle:90,vertical_angle:30,zoom:5}；水平角 0..360（0/360 原视角，90 右侧，180 背面，270 左侧），俯仰 -30..60（正值俯视），zoom 0..10（远景至特写）。只接受一张 reference_image，不保证精确几何。\n多角度 v2 仅支持阿里云北京 qwen-image-2.0-2026-03-03，无额外 LoRA、无需自部署 GPU。旧 Plus 快照已在实际调用中返回 Model not exist，本次采用当前官方模型列表中的 2.0 固定版。部署会补入默认禁用的 Qwen 模型，管理员配置百炼北京 API Key 并启用及分配套餐后才出现在可用模型列表。打光和人像质感应另选各自 model_version_ids 中的模型。\nQwen 原生 params：count 整数 1..6（默认 1，后端转为 n）；size 可选，格式 1024*1536，宽高正整数且总像素 262144..4194304，上游会调整到接近的 16 的倍数；negative_prompt 最多 500 字符；prompt_extend 默认 false；watermark 默认 false；seed 可选整数 0..2147483647。不支持 quality/ratio/resolution/n 等其他接口字段。任务 prompt 与工具指令合计最多 800 字符，超限拒绝。普通 Qwen 图生图支持 1..3 张输入，多角度仅一张；每张最大 10 MiB，JPEG/PNG/BMP/TIFF/WEBP/GIF（GIF 首帧）。\nQwen 北京按成功输出图片计费，每张 0.20 元/10 积分，尺寸不影响单价；默认一次一张，多个不同角度需分别提交，count 多张表示同一视角的候选图。估价不调用生成 API；部分成功按实际输出结算，重复提交复用 idempotency_key。\n多角度示例（替换空间、模型、素材 ID）：{\"workspace_id\":1,\"model_version_id\":42,\"operation_code\":\"image.image_to_image\",\"idempotency_key\":\"angle-501-v2\",\"params\":{\"count\":1,\"tool\":\"image.multi_angle\",\"tool_version\":2,\"tool_params\":{\"horizontal_angle\":90,\"vertical_angle\":30,\"zoom\":5}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。估价去掉 idempotency_key，POST /api/v1/ai/tasks/estimate-cost；提交 POST /api/v1/ai/tasks，沿用任务状态和 outputs。\n人像质感 v2：五个枚举字段 subject_scene_fusion=轻度对齐/自然融合/深度融合，lighting_fusion=柔和补光/自然匹配/氛围强化，skin_texture=清透修饰/自然肤质/真实肌理，surface_texture=柔和纹理/自然纹理/颗粒质感，sharpness=柔焦/标准清晰/高清锐化。默认均为中间档，只接受一张 reference_image。\n打光 image.relight v1：mode=manual/smart/reference。manual 使用 key_light=left/top/right/front/bottom/back、brightness=0..100、color=空字符串或 #RRGGBB、rim_light=布尔；smart 使用 preset 或任务 prompt，preset 从 schema 读取；reference 必须传两张不同的 reference_image，顺序为原图、打光参考图。manual/smart 仅一张原图。不要提交其他模式的隐藏字段；参数 visible_when 控制展示。工具输入不得混用 image_urls、mask 或 previous_task_id。\n打光示例（替换模型和素材 ID）：{\"workspace_id\":1,\"model_version_id\":42,\"operation_code\":\"image.image_to_image\",\"idempotency_key\":\"relight-501-v1\",\"params\":{\"tool\":\"image.relight\",\"tool_version\":1,\"tool_params\":{\"mode\":\"manual\",\"key_light\":\"left\",\"brightness\":65,\"color\":\"#FFDDAA\",\"rim_light\":true}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。提交与估价共用相同工具参数和素材校验，结果仍在任务 outputs 中返回。\n人像示例（模型和素材 ID 必须替换为当前空间可用值）：{\"workspace_id\":1,\"model_version_id\":43,\"operation_code\":\"image.image_to_image\",\"idempotency_key\":\"portrait-501-v2\",\"params\":{\"tool\":\"image.portrait_texture\",\"tool_version\":2,\"tool_params\":{\"subject_scene_fusion\":\"自然融合\",\"lighting_fusion\":\"自然匹配\",\"skin_texture\":\"自然肤质\",\"surface_texture\":\"自然纹理\",\"sharpness\":\"标准清晰\"}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。提交至 POST /api/v1/ai/tasks；估价使用同一正文去掉 idempotency_key，提交至 POST /api/v1/ai/tasks/estimate-cost。\n情绪示例（替换模型、素材 ID）：{\"workspace_id\":1,\"model_version_id\":42,\"operation_code\":\"image.image_to_image\",\"idempotency_key\":\"emotion-501-v1\",\"params\":{\"tool\":\"image.portrait_emotion\",\"tool_version\":1,\"tool_params\":{\"emotion\":\"happy\",\"strength\":\"subtle\"}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。\n图片超分、视频画质增强通过 GET /api/v1/ai/models 的 operation_code=image.upscale 或 video.upscale 发现模型，不在本工具目录中；执行仍使用上述统一估价与任务接口。",
+      "produces": ["application/json"],
+      "tags": ["AI"],
+      "summary": "无限画布工具：多角度、打光、人像质感、情绪、全景与机位",
+      "parameters": [
+        {
+          "type": "integer",
+          "description": "工作空间",
+          "name": "workspace_id",
+          "in": "query",
+          "required": true
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "OK",
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/response.Response"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "data": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/ai.CreativeTool"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "403": {
+          "description": "Forbidden",
+          "schema": {
+            "$ref": "#/definitions/response.Response"
+          }
+        }
+      }
+    }
+  },
+  "tool_schema": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "display_name": {
+        "type": "string"
+      },
+      "execution": {
+        "type": "string"
+      },
+      "input_types": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "max_input_images": {
+        "type": "integer"
+      },
+      "min_input_images": {
+        "type": "integer"
+      },
+      "model_version_ids": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "operation_code": {
+        "type": "string"
+      },
+      "output_type": {
+        "type": "string"
+      },
+      "params_schema": {
+        "$ref": "#/definitions/catalog.ParamsSchema"
+      },
+      "projection": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      }
+    }
+  },
+  "field_schema": {
+    "type": "object",
+    "properties": {
+      "affects_cost": {
+        "type": "boolean"
+      },
+      "affects_latency": {
+        "type": "boolean"
+      },
+      "control": {
+        "type": "string",
+        "example": "slider"
+      },
+      "default": {},
+      "display_name": {
+        "type": "string",
+        "example": "画面比例"
+      },
+      "exclusive_max": {
+        "type": "boolean"
+      },
+      "exclusive_min": {
+        "type": "boolean"
+      },
+      "group": {
+        "type": "string",
+        "example": "advanced"
+      },
+      "help": {
+        "type": "string",
+        "example": "宽高比"
+      },
+      "max": {
+        "type": "number"
+      },
+      "min": {
+        "type": "number"
+      },
+      "name": {
+        "type": "string",
+        "example": "ratio"
+      },
+      "operation_codes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "options": {
+        "type": "array",
+        "items": {}
+      },
+      "options_source": {
+        "type": "string"
+      },
+      "required": {
+        "type": "boolean"
+      },
+      "step": {
+        "type": "number"
+      },
+      "type": {
+        "type": "string",
+        "example": "select"
+      },
+      "unit": {
+        "type": "string"
+      },
+      "visible_when": {
+        "$ref": "#/definitions/catalog.ParamCondition"
+      }
+    }
+  }
+}

@@ -375,9 +375,27 @@
 }
 .modelChevron {
   flex: none;
+  width: 16px;
+  height: 16px;
   color: #8894a3;
-  font-size: 16px;
-  line-height: 1;
+  transition:
+    transform 0.18s ease,
+    color 0.18s ease;
+}
+.modelTrigger:hover:not(:disabled) .modelChevron,
+.modelTrigger[aria-expanded='true'] .modelChevron {
+  color: #138d74;
+}
+.modelTrigger[aria-expanded='true'] .modelChevron {
+  transform: rotate(180deg);
+}
+.modelTrigger:disabled .modelChevron {
+  opacity: 0.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .modelChevron {
+    transition: none;
+  }
 }
 .modelMenu {
   position: absolute;
@@ -512,4 +530,10 @@
   .generator .prompt {
     min-height: 110px;
   }
+}
+
+.mentionMenu button[aria-selected='true'] {
+  border-color: #1fcfa9;
+  box-shadow: inset 0 0 0 1px #1fcfa9;
+  background: #e9faf5;
 }

@@ -1021,15 +1021,17 @@
 
 /* AI一键润色:青色文字按钮 */
 .seditPolish {
-  border: none;
-  background: none;
-  padding: 0;
-  color: #32c7a6;
+  border: 1px solid rgba(17, 169, 138, 0.28);
+  background: #ebfffb;
+  padding: 5px 10px;
+  border-radius: 999px;
+  color: #11a98a;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
 
   &:hover:not(:disabled) {
+    border-color: rgba(17, 169, 138, 0.5);
     color: #11a98a;
     text-decoration: underline;
   }

@@ -14,7 +14,7 @@ export function sampleAudioPeaks(channels: readonly Float32Array[], count = 48):
 }
 
 /** 浏览器本地解码，不保存签名地址、PCM 或波形到云端草稿。 */
-export async function loadAudioWaveform(src: string, signal: AbortSignal): Promise<number[]> {
+export async function loadAudioWaveform(src: string, signal: AbortSignal, count = 48): Promise<number[]> {
   const response = await fetch(src, { credentials: 'include', signal })
   if (!response.ok) throw new Error('音频波形加载失败')
   if (Number(response.headers.get('content-length')) > 100 * 1024 * 1024) throw new Error('音频超过 100MB')
@@ -24,5 +24,8 @@ export async function loadAudioWaveform(src: string, signal: AbortSignal): Promi
   const context = new OfflineAudioContext(1, 1, 48000)
   const buffer = await context.decodeAudioData(bytes)
   signal.throwIfAborted()
-  return sampleAudioPeaks(Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index)))
+  return sampleAudioPeaks(
+    Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index)),
+    count,
+  )
 }

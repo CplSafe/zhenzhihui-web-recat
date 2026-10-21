@@ -3,6 +3,7 @@ import {
   cancelAiTask,
   createAiResponse,
   createAiTask,
+  estimateAiTaskCost,
   getAiTask,
   getAiTaskId,
   streamAiResponse,
@@ -77,6 +78,48 @@ describe('AI task identifier boundaries', () => {
 })
 
 describe('paid AI task submission safety', () => {
+  it.each(['', '   ', undefined])(
+    'fills an empty tool prompt at the HTTP boundary for estimation and saved-task retries: %j',
+    async (prompt) => {
+      const bodies: Record<string, unknown>[] = []
+      const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        bodies.push(body)
+        if (!String(body.prompt || '').trim())
+          return jsonResponse({ code: 10001, message: '请求体格式不合法，请检查 JSON 结构' }, 400)
+        return String(url).includes('estimate-cost')
+          ? jsonResponse({ data: { estimated_cost: 10, balance: 100, can_afford: true } })
+          : jsonResponse({ data: { id: 901, status: 'queued' } }, 201)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const params = { tool: 'image.relight', tool_version: 1, tool_params: { mode: 'manual', brightness: 65 } }
+      const inputAssets = [{ asset_id: 501, role: 'reference_image' }]
+      await estimateAiTaskCost({
+        workspaceId: 7,
+        modelVersionId: 42,
+        operationCode: 'image.image_to_image',
+        prompt,
+        params,
+        inputAssets,
+      })
+      await expect(
+        createAiTask({
+          workspaceId: 7,
+          capability: 'image',
+          modelVersionId: 42,
+          modelVersion: { id: 42 },
+          operationCode: 'image.image_to_image',
+          idempotencyKey: 'old-canvas-tool-key',
+          prompt,
+          params,
+          inputAssets,
+        }),
+      ).resolves.toMatchObject({ id: 901 })
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0]).toMatchObject({ prompt: '请按工具参数处理参考图片。', params, input_assets: inputAssets })
+      expect(bodies[1]).toMatchObject({ ...bodies[0], idempotency_key: 'old-canvas-tool-key' })
+    },
+  )
   it('waits for a slow image response body without aborting or creating another paid request at two minutes', async () => {
     vi.useFakeTimers()
     let signal: AbortSignal | null | undefined
@@ -190,6 +233,33 @@ describe('paid AI task submission safety', () => {
     expect(bodies[0].idempotency_key).toMatch(/^resp_/)
     expect(bodies[1].idempotency_key).toBe(bodies[0].idempotency_key)
     expect(bodies[1]).toEqual(bodies[0])
+  })
+
+  it('reuses the caller idempotency key for a canvas storyboard response', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ data: { output_text: '[{"title":"开场","prompt":"篮球入网"}]' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      createAiResponse({
+        workspaceId: 7,
+        operationCode: 'responses.multimodal',
+        modelVersionId: 93,
+        idempotencyKey: 'canvas-storyboard-test',
+        prompt: '生成分镜',
+      }),
+    ).resolves.toMatchObject({ output_text: '[{"title":"开场","prompt":"篮球入网"}]' })
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit]
+    const body = JSON.parse(String(init.body || '{}'))
+    expect(String(url)).toContain('/api/v1/ai/responses')
+    expect(body).toMatchObject({
+      workspace_id: 7,
+      operation_code: 'responses.multimodal',
+      model_version_id: 93,
+      idempotency_key: 'canvas-storyboard-test',
+    })
   })
 
   it('passes the caller AbortSignal through and cancels a non-streaming explicit script request', async () => {

@@ -20,9 +20,17 @@ function normalizeStoryboardItem(value: unknown, index: number): CanvasStoryboar
   const item = value as Record<string, unknown>
   const title = asText(item.title || item.name || item.shot_title || item.scene_title) || `镜头 ${index + 1}`
   const prompt = asText(
-    item.prompt || item.description || item.content || item.visual || item.scene || item.image_prompt,
+    item.prompt ||
+      item.desc ||
+      item.description ||
+      item.content ||
+      item.visual ||
+      item.scene ||
+      item.scene_description ||
+      item.visual_description ||
+      item.image_prompt,
   )
-  if (!prompt) return null
+  if (!prompt && !asText(item.title || item.name || item.shot_title || item.scene_title)) return null
   const durationValue = item.duration ?? item.seconds ?? item.duration_seconds
   const shotValue = item.shot ?? item.camera ?? item.shot_type ?? item.camera_movement
   return {
@@ -77,7 +85,20 @@ export function parseCanvasStructuredText(value: unknown): CanvasStructuredText 
 }
 
 export function isCanvasStoryboardText(value: unknown): boolean {
-  return parseCanvasStructuredText(value).kind === 'storyboard'
+  const parsed = parseCanvasStructuredText(value)
+  return parsed.kind === 'storyboard' && parsed.items.every((item) => Boolean(item.prompt.trim()))
+}
+
+/** Keep the user's brief separate from the generated JSON contract. */
+export function buildCanvasStoryboardPrompt(brief: string): string {
+  return [
+    '你是视频分镜策划。根据用户需求和参考素材生成可用于视频生成的分镜提示词。',
+    '仅返回 JSON 数组，不要 Markdown 或解释。每个镜头包含 title、prompt、duration、shot。',
+    'prompt 必须描述主体、场景、动作、光线和风格；shot 描述运镜，duration 为秒数。',
+    '保持镜头间主体和风格一致，遵守用户指定的总时长；未指定时规划一段简短视频。',
+    '不要要求画面生成字幕、文字或水印。不要臆造参考素材中不存在的身份信息。',
+    `用户需求：\n${brief.trim()}`,
+  ].join('\n')
 }
 
 /** Convert internal structured text into neutral, readable downstream context. */

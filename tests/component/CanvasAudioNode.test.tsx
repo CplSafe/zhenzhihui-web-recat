@@ -2,11 +2,20 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasAudioNode from '@/components/canvas/CanvasAudioNode'
 
-const mocks = vi.hoisted(() => ({ waveform: vi.fn(), update: vi.fn(), upload: vi.fn(), renderMix: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  waveform: vi.fn(),
+  update: vi.fn(),
+  upload: vi.fn(),
+  renderMix: vi.fn(),
+  getNode: vi.fn(),
+  getEdges: vi.fn(),
+}))
 vi.mock('@/utils/audioWaveform', () => ({ loadAudioWaveform: mocks.waveform }))
 vi.mock('@/utils/audioMix', () => ({ renderAudioMix: mocks.renderMix, audioBufferToWav: () => new Blob(['wav']) }))
 vi.mock('@/api/business', () => ({ uploadAssetFile: mocks.upload }))
-vi.mock('@xyflow/react', () => ({ useReactFlow: () => ({ updateNodeData: mocks.update }) }))
+vi.mock('@xyflow/react', () => ({
+  useReactFlow: () => ({ updateNodeData: mocks.update, getNode: mocks.getNode, getEdges: mocks.getEdges }),
+}))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
 vi.mock('@/components/canvas/CanvasAudioGenerator', () => ({ default: () => null }))
 
@@ -15,6 +24,8 @@ describe('画布音频节点波形加载', () => {
   beforeEach(() => {
     mocks.waveform.mockReset()
     mocks.update.mockReset()
+    mocks.getNode.mockReset()
+    mocks.getEdges.mockReset().mockReturnValue([])
     mocks.upload.mockReset()
     mocks.renderMix.mockReset()
     mocks.waveform.mockResolvedValue([0.2, 0.8])
@@ -71,7 +82,67 @@ describe('画布音频节点波形加载', () => {
     expect(screen.queryByText('输入描述，选择模型生成声音')).not.toBeInTheDocument()
   })
 
-  it('生成后的独立编辑节点仅展示音频编辑操作', () => {
+  it('生成完成后展示结果波形、时长和播放状态', async () => {
+    const { container, rerender } = render(
+      <CanvasAudioNode nodeId="audio-1" data={{ taskStatus: 'processing' }} workspaceId={21} src="" selected />,
+    )
+    expect(screen.getByText('音频生成中')).toBeInTheDocument()
+
+    rerender(
+      <CanvasAudioNode
+        nodeId="audio-1"
+        data={{ taskStatus: 'succeeded', assetId: 42, audio: { durationSec: 8, outSec: 8 } }}
+        workspaceId={21}
+        src="/sample.wav"
+        selected
+      />,
+    )
+    await waitFor(() => expect(container.querySelectorAll('i')).toHaveLength(2))
+    expect(screen.getByText('/ 00:08')).toBeInTheDocument()
+    expect(screen.queryByText('音频生成中')).not.toBeInTheDocument()
+    const audio = container.querySelector('audio')!
+    expect(audio).toHaveAttribute('src', '/sample.wav')
+    fireEvent.play(audio)
+    expect(screen.getByRole('button', { name: '暂停音频' })).toBeInTheDocument()
+    fireEvent.pause(audio)
+    expect(screen.getByRole('button', { name: '播放音频' })).toBeInTheDocument()
+  })
+
+  it('手动创建的空编辑节点提示连接或上传音频', () => {
+    render(<CanvasAudioNode nodeId="editor" data={{ audioRole: 'editor' }} workspaceId={21} src="" selected />)
+    expect(screen.getByText('连接音频节点或上传音频')).toBeInTheDocument()
+    expect(screen.getByText('上传 MP3 / WAV / M4A / AAC')).toBeInTheDocument()
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('源素材改变不会覆盖编辑结果，用户点击后才载入最新音频并重置参数', () => {
+    mocks.getEdges.mockReturnValue([{ source: 'source', target: 'editor' }])
+    mocks.getNode.mockReturnValue({
+      id: 'source',
+      data: { kind: 'audio', assetId: 99, assetWorkspaceId: 21, audio: { durationSec: 12 } },
+    })
+    render(
+      <CanvasAudioNode
+        nodeId="editor"
+        data={{ audioRole: 'editor', assetId: 42, audio: { durationSec: 8, inSec: 2, outSec: 6, volume: 0.5 } }}
+        workspaceId={21}
+        src="/sample.wav"
+        selected
+      />,
+    )
+    expect(mocks.update).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '使用源节点最新音频' }))
+    expect(mocks.update).toHaveBeenCalledWith(
+      'editor',
+      expect.objectContaining({
+        sourceAudioNodeId: 'source',
+        assetId: 99,
+        audio: expect.objectContaining({ durationSec: 12, inSec: 0, outSec: 12, volume: 1 }),
+      }),
+    )
+  })
+
+  it('独立编辑节点仅展示音频编辑操作', () => {
     render(
       <CanvasAudioNode
         nodeId="audio-editor"
@@ -84,7 +155,9 @@ describe('画布音频节点波形加载', () => {
     expect(screen.getByRole('region', { name: '音频编辑' })).toBeInTheDocument()
     expect(screen.getByText('裁剪起点')).toBeInTheDocument()
     expect(screen.getByText('裁剪终点')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '导出裁剪与音量设置 WAV' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '导出裁剪与音量设置 WAV' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '下载音频' })).toHaveAttribute('download')
+    expect(screen.queryByRole('link', { name: '下载源音频' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存为新素材并用于下游' })).toBeInTheDocument()
     expect(screen.queryByText('生成历史')).not.toBeInTheDocument()
   })

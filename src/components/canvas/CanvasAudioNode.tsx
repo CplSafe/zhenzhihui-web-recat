@@ -29,7 +29,7 @@ export default function CanvasAudioNode({
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const isEditor = data.audioRole === 'editor'
-  const { updateNodeData } = useReactFlow()
+  const { updateNodeData, getNode, getEdges } = useReactFlow()
   const { showToast } = useToast()
   const settings = normalizeAudioSettings(data.audio)
   const [busy, setBusy] = useState(false)
@@ -39,7 +39,6 @@ export default function CanvasAudioNode({
   const [peaks, setPeaks] = useState<number[]>([])
   const [waveformStatus, setWaveformStatus] = useState('')
   const [waveformVisible, setWaveformVisible] = useState(false)
-  const [exporting, setExporting] = useState(false)
   const [savingEdited, setSavingEdited] = useState(false)
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)
   const [panelPlacement, setPanelPlacement] = useState<'below' | 'right' | 'left' | 'above'>('below')
@@ -170,13 +169,12 @@ export default function CanvasAudioNode({
   const elapsed = Math.min(visibleDuration, Math.max(0, currentTime - playbackStart))
   const progress = visibleDuration > 0 ? elapsed / visibleDuration : 0
   const activeBars = useMemo(() => Math.round(progress * peaks.length), [progress, peaks.length])
-  const isGenerating = ['processing', 'pending', 'queued', 'running', 'result_pending'].includes(
+  const isGenerating = ['preparing', 'processing', 'pending', 'queued', 'running', 'result_pending'].includes(
     String(data.taskStatus || ''),
   )
-  const exportEdited = async (saveToAssets = false) => {
-    if (exporting || !(Number(data.assetId) > 0) || visibleDuration <= 0) return
-    setExporting(true)
-    if (saveToAssets) setSavingEdited(true)
+  const saveEditedAudio = async () => {
+    if (savingEdited || !(Number(data.assetId) > 0) || visibleDuration <= 0) return
+    setSavingEdited(true)
     try {
       const { renderAudioMix, audioBufferToWav } = await import('@/utils/audioMix')
       const buffer = await renderAudioMix(
@@ -195,39 +193,29 @@ export default function CanvasAudioNode({
       )
       const blob = audioBufferToWav(buffer)
       const name = `${String(data.title || '音频').replace(/\.[^.]+$/, '')}-裁剪.wav`
-      if (saveToAssets) {
-        const file = new File([blob], name, { type: 'audio/wav' })
-        const result: any = await uploadAssetFile({ workspaceId, file, source: 'canvas-audio-edit' })
-        const assetId = Number(result?.asset?.id || 0)
-        if (!assetId) throw new Error('保存音频未返回素材 ID')
-        updateNodeData(nodeId, {
-          assetId,
-          title: name,
-          resultUrl: assetStreamUrl(assetId, workspaceId),
-          assetWorkspaceId: workspaceId,
-          audio: normalizeAudioSettings({
-            ...settings,
-            durationSec: visibleDuration,
-            inSec: 0,
-            outSec: visibleDuration,
-            volume: 1,
-            fadeInSec: 0,
-            fadeOutSec: 0,
-          }),
-        })
-        showToast('裁剪音频已保存为新素材，下游会使用这个版本', 'success')
-        return
-      }
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = name
-      link.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      const file = new File([blob], name, { type: 'audio/wav' })
+      const result: any = await uploadAssetFile({ workspaceId, file, source: 'canvas-audio-edit' })
+      const assetId = Number(result?.asset?.id || 0)
+      if (!assetId) throw new Error('保存音频未返回素材 ID')
+      updateNodeData(nodeId, {
+        assetId,
+        title: name,
+        resultUrl: assetStreamUrl(assetId, workspaceId),
+        assetWorkspaceId: workspaceId,
+        audio: normalizeAudioSettings({
+          ...settings,
+          durationSec: visibleDuration,
+          inSec: 0,
+          outSec: visibleDuration,
+          volume: 1,
+          fadeInSec: 0,
+          fadeOutSec: 0,
+        }),
+      })
+      showToast('裁剪音频已保存为新素材，下游会使用这个版本', 'success')
     } catch (error: any) {
-      showToast(error?.message || '音频导出失败', 'error')
+      showToast(error?.message || '音频保存失败', 'error')
     } finally {
-      setExporting(false)
       setSavingEdited(false)
     }
   }
@@ -282,8 +270,25 @@ export default function CanvasAudioNode({
     }
   }
   return (
-    <div ref={nodeElement} className={`${styles.node} nopan nowheel`}>
-      {!src ? (
+    <div ref={nodeElement} className={`${styles.node} nopan`}>
+      {isGenerating ? (
+        <div
+          className={`${styles.emptyCard} ${styles.generatingCard}`}
+          role="status"
+          aria-live="polite"
+          aria-label="音频生成中"
+        >
+          <span className={styles.generatingWave} aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((bar) => (
+              <i key={bar} style={{ animationDelay: `${bar * 0.12}s` }} />
+            ))}
+          </span>
+          <div className={styles.emptyCopy}>
+            <strong>音频生成中</strong>
+            <span>{data.taskStatus === 'preparing' ? '正在准备并提交任务' : '正在生成声音，完成后即可试听'}</span>
+          </div>
+        </div>
+      ) : !src ? (
         <div className={styles.emptyCard}>
           <span className={styles.emptyIcon} aria-hidden="true">
             ♫
@@ -291,7 +296,11 @@ export default function CanvasAudioNode({
           <div className={styles.emptyCopy}>
             <strong>{isEditor ? '编辑音频' : isGenerating ? '音频生成中' : '创建音频'}</strong>
             <span>
-              {isEditor ? '等待源音频' : isGenerating ? '生成完成后在这里试听' : '输入描述，选择模型生成声音'}
+              {isEditor
+                ? '连接音频节点或上传音频'
+                : isGenerating
+                  ? '生成完成后在这里试听'
+                  : '输入描述，选择模型生成声音'}
             </span>
           </div>
           <span className={styles.emptyArrow} aria-hidden="true">
@@ -463,6 +472,30 @@ export default function CanvasAudioNode({
         {!isEditor && (
           <CanvasAudioGenerator nodeId={nodeId} data={data} workspaceId={workspaceId} onGenerated={onGenerated} />
         )}
+        {isEditor && (
+          <button
+            type="button"
+            onClick={() => {
+              const edge = getEdges().find((item) => item.target === nodeId)
+              const source = edge ? getNode(edge.source) : undefined
+              if (!source || source.data?.kind !== 'audio' || !(Number(source.data.assetId) > 0)) {
+                showToast('请先连接一个已有生成结果或上传素材的音频节点', 'info')
+                return
+              }
+              const durationSec = Number((source.data.audio as any)?.durationSec || 0)
+              const sourceWorkspaceId = Number(source.data.assetWorkspaceId || workspaceId)
+              updateNodeData(nodeId, {
+                sourceAudioNodeId: source.id,
+                assetId: source.data.assetId,
+                assetWorkspaceId: sourceWorkspaceId,
+                resultUrl: assetStreamUrl(Number(source.data.assetId), sourceWorkspaceId),
+                audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec }),
+              })
+            }}
+          >
+            使用源节点最新音频
+          </button>
+        )}
         {isEditor && src && (
           <p className={styles.routingHint}>
             下一步：连接到视频剪辑节点可将声音混入成片；连接到视频生成节点仅作为模型参考，需该模型支持音频输入。
@@ -580,19 +613,12 @@ export default function CanvasAudioNode({
                   </small>
                   <div className={`${styles.editorActions} canvas-audio-editor-actions`}>
                     <a href={assetStreamUrl(Number(data.assetId), workspaceId)} download>
-                      下载源音频
+                      下载音频
                     </a>
                     <button
                       type="button"
-                      disabled={exporting || visibleDuration <= 0}
-                      onClick={() => void exportEdited(false)}
-                    >
-                      {exporting ? '正在导出…' : '导出裁剪与音量设置 WAV'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={exporting || visibleDuration <= 0}
-                      onClick={() => void exportEdited(true)}
+                      disabled={savingEdited || visibleDuration <= 0}
+                      onClick={() => void saveEditedAudio()}
                     >
                       {savingEdited ? '正在保存…' : '保存为新素材并用于下游'}
                     </button>

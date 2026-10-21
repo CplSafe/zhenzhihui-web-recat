@@ -631,7 +631,13 @@ export function validateTimeline(state: TimelineState | null | undefined): strin
   const clips = state?.clips || []
   const problems: string[] = []
 
-  if (clips.length < 2) problems.push('至少需要 2 个片段才能合成')
+  if (!clips.length) problems.push('请添加视频片段后再合成')
+  else if (
+    clips.length === 1 &&
+    !parseTimelineAudio(state?.audioClips).length &&
+    (state?.originalAudioVolume ?? 1) === 1
+  )
+    problems.push('至少需要 2 个片段才能合成，或为当前视频添加音频')
   if (clips.length > MAX_TIMELINE_CLIPS) problems.push(`片段数不能超过 ${MAX_TIMELINE_CLIPS} 个`)
 
   const invalid = clips.filter((clip) => !(Number(clip.assetId) > 0))

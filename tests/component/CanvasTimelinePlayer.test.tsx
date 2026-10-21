@@ -29,6 +29,24 @@ function readout(): string {
 }
 
 describe('CanvasTimelinePlayer', () => {
+  it('音频未准备好时阻止起播，音频启动失败时画面不播放', async () => {
+    const beforePlay = vi.fn().mockResolvedValue(false)
+    const { rerender } = render(
+      <CanvasTimelinePlayer clips={twoClips} workspaceId={21} playbackBlocked beforePlay={beforePlay} />,
+    )
+    expect(screen.getByRole('button', { name: '播放' })).toBeDisabled()
+    rerender(<CanvasTimelinePlayer clips={twoClips} workspaceId={21} beforePlay={beforePlay} />)
+    await userEvent.click(screen.getByRole('button', { name: '播放' }))
+    expect(beforePlay).toHaveBeenCalledTimes(1)
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled()
+    beforePlay.mockResolvedValue(true)
+    await userEvent.click(screen.getByRole('button', { name: '播放' }))
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
+    rerender(<CanvasTimelinePlayer clips={twoClips} workspaceId={21} playbackBlocked beforePlay={beforePlay} />)
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '播放' })).toBeDisabled()
+  })
+
   it('用两个 video 槽位承载相邻片段，下一段提前加载好', () => {
     render(<CanvasTimelinePlayer clips={twoClips} workspaceId={21} />)
     const [slotA, slotB] = videos()

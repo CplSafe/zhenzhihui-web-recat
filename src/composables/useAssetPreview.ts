@@ -79,6 +79,7 @@ function ensureGlobalKeyboard() {
   if (globalKeyHandler) return
   globalKeyHandler = (e: KeyboardEvent) => {
     if (!sharedPreviewState.visible) return
+    if (e.key !== 'Escape' && e.target instanceof HTMLElement && e.target.matches('input, textarea, select')) return
     if (e.key === 'Escape') {
       closePreviewSilent()
     } else if (e.key === 'ArrowLeft') {

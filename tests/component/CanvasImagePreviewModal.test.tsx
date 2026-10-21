@@ -22,6 +22,16 @@ function renderModal(overrides: Partial<React.ComponentProps<typeof CanvasImageP
 }
 
 describe('CanvasImagePreviewModal', () => {
+  it('提供全景产物的沉浸取景入口，普通照片不显示该入口', async () => {
+    const onPanorama = vi.fn()
+    renderModal({
+      items: [{ id: 'pano', url: '/pano.png', title: '全景生成结果', panorama: true }],
+      activeId: 'pano',
+      onPanorama,
+    })
+    await userEvent.click(screen.getByRole('button', { name: '360° 沉浸浏览／取景' }))
+    expect(onPanorama).toHaveBeenCalledWith('pano')
+  })
   it('展示当前图片、标题与「第几张 / 共几张」序号', () => {
     renderModal()
     const image = screen.getByRole('img', { name: '图片 · 场景图' })
@@ -67,6 +77,14 @@ describe('CanvasImagePreviewModal', () => {
     expect(screen.queryByRole('button', { name: /一张图片/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
     expect(screen.queryByText('1 / 1')).not.toBeInTheDocument()
+  })
+
+  it('在图片预览中提供高清处理入口，并支持禁用状态', async () => {
+    const user = userEvent.setup()
+    const onHd = vi.fn()
+    renderModal({ onHd })
+    await user.click(screen.getByRole('button', { name: '高清处理' }))
+    expect(onHd).toHaveBeenCalledOnce()
   })
 
   it('当前图片被删掉（activeId 失效）时回退到第一张而不是白屏', () => {

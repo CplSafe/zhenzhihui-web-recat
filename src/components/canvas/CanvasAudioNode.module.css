@@ -610,3 +610,41 @@
     padding: 14px 16px;
   }
 }
+
+.generatingCard {
+  border: 1px solid rgba(17, 169, 138, 0.3);
+  background: linear-gradient(135deg, #f2fcf9, #e8f8f3);
+}
+.generatingWave {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #ddf4ec;
+}
+.generatingWave i {
+  width: 3px;
+  height: 22px;
+  border-radius: 3px;
+  background: #11a98a;
+  animation: audioGeneratingWave 0.9s ease-in-out infinite alternate;
+}
+@keyframes audioGeneratingWave {
+  from {
+    transform: scaleY(0.3);
+    opacity: 0.5;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .generatingWave i {
+    animation: none;
+  }
+}

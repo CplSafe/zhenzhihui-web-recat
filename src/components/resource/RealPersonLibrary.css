@@ -287,13 +287,21 @@
   position: absolute;
   z-index: 2;
   top: 28px;
-  right: 40px;
-  padding: 7px 12px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #7e848c;
-  font-size: 13px;
+  left: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 112px;
+  min-height: 48px;
+  padding: 12px 24px;
+  border: 1px solid #d4dedb;
+  border-radius: 10px;
+  background: #fff;
+  color: #303133;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px #203e3210;
   cursor: pointer;
 }
 
@@ -301,6 +309,11 @@
 .real-person-flow-exit:focus-visible {
   background: #edf1f1;
   color: #303133;
+}
+
+.real-person-flow-exit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .real-person-flow-exit:focus-visible {
@@ -1158,12 +1171,12 @@
 
   .real-person-flow-exit {
     top: 16px;
-    right: 16px;
+    left: 16px;
   }
 
   .real-person-steps {
     width: calc(100% - 32px);
-    margin: 70px auto 44px;
+    margin: 88px auto 44px;
   }
 
   .real-person-step-label {
@@ -1235,4 +1248,23 @@
 
 .real-person-pagination .ant-pagination-item-active a {
   color: #5767e5;
+}
+.real-person-qr-transition {
+  text-align: center;
+}
+
+.real-person-transition-qr img {
+  display: block;
+  width: 220px;
+  height: 220px;
+  margin: 20px auto;
+}
+
+.real-person-qr-transition [role='alert'] {
+  color: #d4380d;
+  margin-bottom: 16px;
+}
+
+.real-person-qr-transition [role='status'] {
+  margin-bottom: 16px;
 }
