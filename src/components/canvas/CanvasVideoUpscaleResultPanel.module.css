@@ -1,0 +1,44 @@
+.panel {
+  box-sizing: border-box;
+  max-height: min(440px, calc(100dvh - 100px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.panel p {
+  margin: 0;
+  line-height: 1.6;
+}
+.panel dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.panel dl > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+}
+.panel dt {
+  color: #697d76;
+}
+.panel dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.retry {
+  align-self: flex-end;
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 20px;
+  background: #0ca886;
+  color: white;
+  cursor: pointer;
+}
+.retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.retry:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+}

@@ -12,7 +12,8 @@
  * 「引用时定义在不在」这个时序问题——无论边是新建、历史恢复还是增量同步进来的，
  * 它渲染出来的那一刻箭头就在。
  */
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, Position, type EdgeProps } from '@xyflow/react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { BaseEdge, getBezierPath, Position, useStore, useStoreApi, type EdgeProps } from '@xyflow/react'
 import type { CanvasConnectionRole } from '@/utils/canvasGeneration'
 
 /** 箭头配色，与画布连线同色系；边自带 stroke 时以边为准。 */
@@ -33,6 +34,62 @@ const ARROW_ROTATION: Record<Position, number> = {
 
 /** 尖端落在 (0,0)，尾部向后张开；尺寸与 React Flow 的 ArrowClosed 观感一致。 */
 const ARROW_POINTS = '0,0 -9,-4.5 -9,4.5'
+
+/** 按连线中点向两端查找空白位置；标签与节点间额外保留 8px。 */
+export function findCanvasEdgeLabelPosition(
+  candidates: Array<{ x: number; y: number }>,
+  obstacles: Array<{ x: number; y: number; width: number; height: number }>,
+  width: number,
+  height: number,
+) {
+  return candidates.find((point) =>
+    obstacles.every(
+      (node) =>
+        point.x + width / 2 + 8 < node.x ||
+        point.x - width / 2 - 8 > node.x + node.width ||
+        point.y + height / 2 + 8 < node.y ||
+        point.y - height / 2 - 8 > node.y + node.height,
+    ),
+  )
+}
+
+function CanvasEdgeRoleLabel({ path, label }: { path: string; label: string }) {
+  const pathRef = useRef<SVGPathElement>(null)
+  const textRef = useRef<SVGTextElement>(null)
+  const nodes = useStore((state) => state.nodes)
+  const store = useStoreApi()
+  const [placement, setPlacement] = useState<{ x: number; y: number; width: number } | null>(null)
+  useLayoutEffect(() => {
+    const curve = pathRef.current
+    if (!curve?.getTotalLength || !curve.getPointAtLength) return
+    const width = Math.max(label.length * 10, textRef.current?.getComputedTextLength?.() || 0) + 16
+    const length = curve.getTotalLength()
+    const candidates = [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8].map((fraction) => curve.getPointAtLength(length * fraction))
+    const obstacles = Array.from(store.getState().nodeLookup.values())
+      .filter((node) => !node.hidden)
+      .map((node) => ({
+        ...node.internals.positionAbsolute,
+        width: node.measured.width || node.width || 0,
+        height: node.measured.height || node.height || 0,
+      }))
+    const point = findCanvasEdgeLabelPosition(candidates, obstacles, width, 22)
+    setPlacement(point ? { x: point.x, y: point.y, width } : null)
+  }, [path, label, nodes, store])
+  return (
+    <g className="canvas-edge-role-label" aria-hidden="true" pointerEvents="none">
+      <path ref={pathRef} d={path} fill="none" stroke="none" />
+      <g
+        visibility={placement ? 'visible' : 'hidden'}
+        transform={`translate(${placement?.x || 0} ${placement?.y || 0})`}
+      >
+        <rect x={-(placement?.width || 0) / 2} y={-11} width={placement?.width || 0} height={22} rx={5} />
+        <text ref={textRef} textAnchor="middle" dominantBaseline="central">
+          {label}
+        </text>
+      </g>
+    </g>
+  )
+}
 
 export function canvasConnectionRoleLabel(role: unknown): string {
   // 参考素材已经在来源节点中可见，不再在线上重复显示「参考图」「源视频」。
@@ -74,8 +131,10 @@ export default function CanvasArrowEdge({
   markerStart,
   interactionWidth,
   data,
+  selected,
 }: EdgeProps) {
-  const [path, labelX, labelY] = getBezierPath({
+  const [hovered, setHovered] = useState(false)
+  const [path] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -88,7 +147,7 @@ export default function CanvasArrowEdge({
   const roleLabel = data?.hdLineage ? '高清处理' : canvasConnectionRoleLabel(data?.displayRole || data?.role)
 
   return (
-    <>
+    <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <BaseEdge id={id} path={path} style={style} markerStart={markerStart} interactionWidth={interactionWidth} />
       {/* 只描边会得到一个空心的「>」，看着不像箭头：填充与描边同色，边缘才是实心的 */}
       <polygon
@@ -100,17 +159,7 @@ export default function CanvasArrowEdge({
         strokeLinejoin="round"
         transform={`translate(${targetX} ${targetY}) rotate(${rotation})`}
       />
-      {roleLabel ? (
-        <EdgeLabelRenderer>
-          <div
-            className="canvas-edge-role-label nodrag nopan"
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-            aria-hidden="true"
-          >
-            {roleLabel}
-          </div>
-        </EdgeLabelRenderer>
-      ) : null}
-    </>
+      {roleLabel && (hovered || selected) ? <CanvasEdgeRoleLabel path={path} label={roleLabel} /> : null}
+    </g>
   )
 }

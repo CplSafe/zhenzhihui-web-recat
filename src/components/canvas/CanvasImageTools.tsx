@@ -1,4 +1,5 @@
 import CanvasToolSelect from './CanvasToolSelect'
+import CanvasPortalBoundary from './CanvasPortalBoundary'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, ConfigProvider, Modal, Spin } from 'antd'
 import { listCanvasTools, type CreativeTool, type ToolField } from '@/api/canvasTools'
@@ -122,6 +123,7 @@ export default function CanvasImageTools(props: Props) {
         footer={null}
         width={code === 'panorama.view' ? 960 : 640}
         mask={false}
+        modalRender={(modal) => <CanvasPortalBoundary floating>{modal}</CanvasPortalBoundary>}
         wrapClassName={styles.toolWindow}
         style={
           props.anchor
@@ -185,10 +187,14 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
     return () => observer.disconnect()
   }, [onHeightChange])
 
-  const allowed = models.filter(
-    (model) =>
-      tool.model_version_ids?.includes(Number(model.id)) &&
-      (!model.operation_codes?.length || model.operation_codes.includes(tool.operation_code || '')),
+  const allowed = useMemo(
+    () =>
+      models.filter(
+        (model) =>
+          tool.model_version_ids?.includes(Number(model.id)) &&
+          (!model.operation_codes?.length || model.operation_codes.includes(tool.operation_code || '')),
+      ),
+    [models, tool.model_version_ids, tool.operation_code],
   )
   const [modelId, setModelId] = useState(Number(allowed[0]?.id || 0))
   const fields = tool.params_schema?.fields || []
@@ -209,6 +215,14 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
   const nativeDefaults = (list: ToolField[]) =>
     tool.code === 'image.panorama' ? panoramaModelDefaults(list, schemaDefaults(list)) : schemaDefaults(list)
   const [nativeValues, setNativeValues] = useState(() => nativeDefaults(nativeFields))
+  useEffect(() => {
+    if (allowed.some((model) => Number(model.id) === modelId)) return
+    const next = allowed[0]
+    setModelId(Number(next?.id || 0))
+    const nextFields = modelFields(next, tool.operation_code)
+    const nextValues = schemaDefaults(nextFields)
+    setNativeValues(tool.code === 'image.panorama' ? panoramaModelDefaults(nextFields, nextValues) : nextValues)
+  }, [allowed, modelId, tool.code, tool.operation_code])
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const [submitError, setSubmitError] = useState('')
@@ -232,6 +246,8 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
   let validation = ''
   if (!browser) {
     try {
+      if (!allowed.length) throw new Error('当前空间暂无可用模型')
+      if (!selectedModel) throw new Error('正在更新可用模型，请稍候')
       request = buildToolGeneration({
         tool,
         modelId,
@@ -370,33 +386,35 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
           )}
         </div>
         <div className={styles.studioParams}>
-          <label className={styles.modelLine}>
-            <span>模型</span>
-            <CanvasToolSelect
-              aria-label="生成模型"
-              value={modelId}
-              disabled={busy}
-              onChange={(event) => {
-                const id = Number(event.target.value)
-                setModelId(id)
-                setNativeValues(
-                  nativeDefaults(
-                    modelFields(
-                      allowed.find((model) => Number(model.id) === id),
-                      tool.operation_code,
+          {(allowed.length > 1 || (!angle && !panorama)) && (
+            <label className={styles.modelLine}>
+              <span>模型</span>
+              <CanvasToolSelect
+                aria-label="生成模型"
+                value={modelId}
+                disabled={busy}
+                onChange={(event) => {
+                  const id = Number(event.target.value)
+                  setModelId(id)
+                  setNativeValues(
+                    nativeDefaults(
+                      modelFields(
+                        allowed.find((model) => Number(model.id) === id),
+                        tool.operation_code,
+                      ),
                     ),
-                  ),
-                )
-              }}
-            >
-              {!allowed.length && <option value={0}>当前空间暂无可用模型</option>}
-              {allowed.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.display_name || model.name || `模型 ${model.id}`}
-                </option>
-              ))}
-            </CanvasToolSelect>
-          </label>
+                  )
+                }}
+              >
+                {!allowed.length && <option value={0}>当前空间暂无可用模型</option>}
+                {allowed.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.display_name || model.name || `模型 ${model.id}`}
+                  </option>
+                ))}
+              </CanvasToolSelect>
+            </label>
+          )}
           <CanvasToolFields
             fields={fields.filter((field) => !['mode', 'preset'].includes(field.name))}
             values={values}
@@ -529,7 +547,7 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
             <p>{tool.description}</p>
           </details>
         )}
-        {!browser && (
+        {!browser && allowed.length > 1 && (
           <label className={styles.field}>
             <span>生成模型</span>
             <CanvasToolSelect

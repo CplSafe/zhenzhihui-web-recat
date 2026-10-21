@@ -5,6 +5,8 @@
  * （试过，反而压住了顶部标题）。它只有六个按钮，高度本就该由内容决定。
  */
 .toolbar {
+  zoom: var(--canvas-ui-scale, 1);
+  max-height: calc(100dvh / var(--canvas-ui-scale, 1) - 140px);
   position: absolute;
   top: 50%;
   left: 46px;
@@ -255,7 +257,7 @@
   .toolbar {
     top: max(82px, env(safe-area-inset-top));
     left: 50%;
-    max-width: calc(100vw - 32px);
+    max-width: calc(100vw / var(--canvas-ui-scale, 1) - 32px);
     flex-direction: row;
     gap: 8px;
     padding: 8px 10px;

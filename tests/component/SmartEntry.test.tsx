@@ -573,13 +573,17 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
   })
 
-  it('requires every homepage model slot and submits the backend model ids after dropdown selection', async () => {
+  it('hides the script picker, replaces a stale selection with Qwen 3.8 Max and submits both model ids', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
     render(
       <TestSmartEntry
         onSubmit={onSubmit}
-        initial={{ text: '生成一条新品短视频', duration: '10s' }}
+        initial={{
+          text: '生成一条新品短视频',
+          duration: '10s',
+          generationModels: { 'responses.multimodal': 730 },
+        }}
         requireModelSelection
         modelGroups={[
           {
@@ -589,7 +593,10 @@ describe('SmartEntry mode, options, validation, and submission', () => {
               {
                 key: 'responses.multimodal',
                 label: '脚本生成模型',
-                models: [{ id: 731, name: '后端返回的脚本模型' }],
+                models: [
+                  { id: 730, name: '其他脚本模型' },
+                  { id: 731, name: '通义千问 3.8 Max(智能体)' },
+                ],
               },
             ],
           },
@@ -616,7 +623,9 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('请先选择本次创作使用的全部模型', 'info')
 
     await user.click(screen.getByRole('button', { name: /生成模型/ }))
-    expect(screen.getByRole('option', { name: /后端返回的脚本模型/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByText('脚本生成模型')).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /通义千问 3.8 Max/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /其他脚本模型/ })).not.toBeInTheDocument()
     await pickModel(user, '后端返回的视频模型')
 
     await user.click(submit)
@@ -1144,6 +1153,31 @@ describe('SmartEntry uploads and recovery actions', () => {
     expect(textbox).toHaveValue('@图片1 放到场景中')
   })
 
+  it('navigates all four directions immediately after clicking the @ toolbar button', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{ text: '', images: Array.from({ length: 9 }, (_, index) => `data:image-${index}`) }}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '@' }))
+    const textbox = screen.getByRole('textbox', { name: '创作需求' })
+    expect(textbox).toHaveFocus()
+    for (const [key, label] of [
+      ['ArrowRight', '@图片2'],
+      ['ArrowDown', '@图片5'],
+      ['ArrowLeft', '@图片4'],
+      ['ArrowUp', '@图片1'],
+    ]) {
+      await user.keyboard(`{${key}}`)
+      expect(screen.getByRole('option', { name: label })).toHaveAttribute('aria-selected', 'true')
+    }
+    await user.keyboard('{Enter}')
+    expect(textbox).toHaveValue('@图片1 ')
+    expect(screen.queryByRole('listbox', { name: '选择参考素材' })).not.toBeInTheDocument()
+  })
+
   it('opens the material strip for a manually typed @ and replaces that trigger in place', async () => {
     const user = userEvent.setup()
     render(
@@ -1157,7 +1191,10 @@ describe('SmartEntry uploads and recovery actions', () => {
 
     const materialStrip = await screen.findByRole('listbox', { name: '选择参考素材' })
     expect(within(materialStrip).getAllByRole('option')).toHaveLength(2)
-    await user.click(within(materialStrip).getByRole('option', { name: '@图片2' }))
+    expect(textbox).toHaveFocus()
+    await user.keyboard('{ArrowRight}')
+    expect(within(materialStrip).getByRole('option', { name: '@图片2' })).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Enter}')
 
     expect(textbox).toHaveValue('@图片2 把素材放到这里')
     expect(screen.queryByRole('listbox', { name: '选择参考素材' })).not.toBeInTheDocument()

@@ -2,11 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import ImageViewport from '@/components/common/ImageViewport'
 
-function loaded() {
+function loaded(width = 1000, height = 500) {
   const image = screen.getByRole('img', { name: '测试图' })
   Object.defineProperties(image, {
-    naturalWidth: { value: 1000, configurable: true },
-    naturalHeight: { value: 500, configurable: true },
+    naturalWidth: { value: width, configurable: true },
+    naturalHeight: { value: height, configurable: true },
   })
   fireEvent.load(image)
   return image
@@ -35,6 +35,20 @@ describe('ImageViewport', () => {
     expect(percent).toHaveValue(100)
     fireEvent.click(screen.getByRole('button', { name: '适应窗口' }))
     expect(percent).toHaveValue(50)
+  })
+
+  it('小尺寸本地图片适应窗口时放大，100%恢复原始像素尺寸', () => {
+    render(<ImageViewport src="blob:local-upload" alt="测试图" />)
+    const image = loaded(200, 100)
+    const percent = screen.getByRole('spinbutton', { name: '图片缩放百分比' })
+    expect(percent).toHaveValue(250)
+    expect(image.style.transform).toContain('scale(2.5)')
+    fireEvent.click(screen.getByRole('button', { name: '100%' }))
+    expect(percent).toHaveValue(100)
+    expect(image.style.transform).toContain('scale(1)')
+    fireEvent.click(screen.getByRole('button', { name: '适应窗口' }))
+    expect(percent).toHaveValue(250)
+    expect(image.style.transform).toContain('scale(2.5)')
   })
 
   it('滚轮阻止背景滚动，以鼠标位置为中心缩放', () => {

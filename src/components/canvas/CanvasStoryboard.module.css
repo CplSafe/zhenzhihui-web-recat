@@ -1,0 +1,205 @@
+.card {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  color: #26332f;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e6efeb;
+}
+.header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.header span {
+  color: #168a70;
+  font-size: 12px;
+  font-weight: 600;
+}
+.header strong {
+  font-size: 17px;
+}
+.expand,
+.footer button {
+  border: 1px solid #d5e5df;
+  border-radius: 8px;
+  background: #f4faf7;
+  color: #168a70;
+  padding: 8px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.list,
+.fullList {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #c8d8d2 transparent;
+}
+.list {
+  flex: 1;
+  padding: 8px 12px 16px;
+}
+.shot {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px 8px;
+  border-bottom: 1px solid #edf2f0;
+}
+.index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  border-radius: 8px;
+  background: #e7f7f1;
+  color: #168a70;
+  font-size: 13px;
+  font-weight: 600;
+}
+.content {
+  min-width: 0;
+}
+.content h3 {
+  margin: 0;
+  font-size: calc(15px * var(--canvas-readable-text-scale, 1));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.meta {
+  margin: 5px 0 10px;
+  color: #789088;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.content textarea {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid #e1e9e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #30423a;
+  font-family: inherit;
+  font-size: calc(14px * var(--canvas-readable-text-scale, 1));
+  line-height: 1.7;
+  resize: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.content textarea:disabled {
+  background: #f7f9f8;
+  color: #718179;
+}
+.link {
+  margin-top: 6px;
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: #168a70;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.expanded {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  height: min(680px, calc(85dvh - 140px));
+  min-height: 0;
+  gap: 20px;
+}
+.directory {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid #e6efeb;
+  padding: 8px 14px 8px 0;
+}
+.directory button {
+  display: block;
+  width: 100%;
+  margin-bottom: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  padding: 10px;
+  color: #486157;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.directory button:hover {
+  background: #edf7f2;
+  color: #168a70;
+}
+.fullList {
+  padding-right: 8px;
+}
+.fullList > div {
+  scroll-margin-top: 8px;
+}
+.fullList .content textarea {
+  overflow: hidden;
+}
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.footer span {
+  color: #789088;
+  font-size: 12px;
+}
+.mobileDirectory {
+  display: none;
+}
+.card :is(button, textarea, [tabindex]):focus-visible,
+.expanded :is(button, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid #168a70;
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .expanded {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .directory {
+    display: none;
+  }
+  .mobileDirectory {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .mobileDirectory select {
+    min-width: 0;
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #d5e5df;
+    border-radius: 8px;
+  }
+  .fullList {
+    flex: 1;
+  }
+  .shot {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 10px;
+  }
+}

@@ -25,6 +25,51 @@ afterEach(() => {
 })
 
 describe('AI task identifier boundaries', () => {
+  it.each(['image', 'video'])(
+    'keeps %s upscale estimation and submission valid with an empty saved prompt',
+    async (kind) => {
+      const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+        String(url).includes('estimate-cost')
+          ? jsonResponse({ data: { estimated_cost: 10, balance: 100, can_afford: true } })
+          : jsonResponse({ data: { id: 55, status: 'pending' } }),
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const request = {
+        workspaceId: 11,
+        modelVersionId: 47,
+        operationCode: `${kind}.upscale`,
+        prompt: '',
+        params: { scale: 2 },
+        inputAssets: [{ asset_id: 99, role: kind }],
+      }
+      await estimateAiTaskCost(request)
+      await createAiTask({ ...request, capability: kind, modelVersion: { id: 47 } })
+      const [estimate, submitted] = fetchMock.mock.calls.map((call) =>
+        JSON.parse(String((call as unknown as [unknown, RequestInit])[1].body)),
+      )
+      expect(estimate.prompt.trim()).not.toBe('')
+      expect(submitted).toMatchObject(estimate)
+    },
+  )
+  it('submits video upscale without requiring a generation description', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ data: { id: 55, status: 'pending' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      createAiTask({
+        workspaceId: 11,
+        capability: 'video',
+        operationCode: 'video.upscale',
+        modelVersionId: 47,
+        modelVersion: { id: 47 },
+        prompt: '',
+        params: { resolution: '2k' },
+        inputAssets: [{ asset_id: 99, role: 'video' }],
+      }),
+    ).resolves.toMatchObject({ id: 55 })
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    expect(body.prompt).toContain('参考视频')
+    expect(body.input_assets).toEqual([{ asset_id: 99, role: 'video' }])
+  })
   it('reads id, task_id and taskId aliases while skipping a zero alias', () => {
     expect(getAiTaskId({ id: 11 })).toBe(11)
     expect(getAiTaskId({ task_id: '12' })).toBe(12)

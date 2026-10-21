@@ -16,6 +16,7 @@ import type { CanvasTimelineSource } from './CanvasTimelineNodeActions'
 import styles from './CanvasTimelineNodeBody.module.css'
 
 interface CanvasTimelineNodeBodyProps {
+  canvasZoom?: number
   nodeId: string
   clips: readonly TimelineClip[]
   workspaceId: number
@@ -30,6 +31,7 @@ interface CanvasTimelineNodeBodyProps {
 }
 
 export default function CanvasTimelineNodeBody({
+  canvasZoom,
   nodeId,
   clips,
   workspaceId,
@@ -76,6 +78,7 @@ export default function CanvasTimelineNodeBody({
           />
         ) : (
           <CanvasTimelinePlayer
+            canvasZoom={canvasZoom}
             clips={clips}
             workspaceId={workspaceId}
             compact

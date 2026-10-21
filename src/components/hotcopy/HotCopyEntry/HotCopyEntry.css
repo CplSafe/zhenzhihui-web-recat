@@ -910,12 +910,18 @@
   .hotcopy__sendArea {
     justify-content: flex-end;
     box-sizing: border-box;
-    padding-right: 64px;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
   .hotcopy__send--plain,
   .hotcopy__regen {
     min-height: 44px;
+  }
+
+  .hotcopy__send--plain {
+    min-width: 88px;
+    padding: 0 12px;
   }
 
   .hotcopy__resume-actions {

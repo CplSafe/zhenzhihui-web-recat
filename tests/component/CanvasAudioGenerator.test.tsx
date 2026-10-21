@@ -566,6 +566,41 @@ describe('音频生成任务提交', () => {
     expect(mocks.result).toHaveBeenCalledWith({ workspaceId: 21, task: completed, type: 'audio', fallbackTaskId: 71 })
     expect(mocks.submit).not.toHaveBeenCalled()
   })
+  it('重新进入画布核对历史失败任务后恢复成功，不重新提交', async () => {
+    mocks.wait.mockResolvedValue({ id: 71, status: 'succeeded' })
+    mocks.result.mockResolvedValue(82)
+    mocks.duration.mockResolvedValue(8)
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        data={{ taskId: 71, taskStatus: 'reconnecting', taskErrorHistorical: true }}
+        workspaceId={21}
+      />,
+    )
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith('a', expect.objectContaining({ assetId: 82, taskStatus: 'succeeded' })),
+    )
+    expect(mocks.wait).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 21, task: { id: 71, status: 'reconnecting' } }),
+    )
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
+  it('核对确认音频任务失败后退出核对态并显示错误', async () => {
+    mocks.wait.mockRejectedValue(Object.assign(new Error('供应商生成失败'), { response: { status: 'failed' } }))
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        data={{ taskId: 71, taskStatus: 'reconnecting', taskErrorHistorical: true }}
+        workspaceId={21}
+      />,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('供应商生成失败')
+    expect(mocks.update).toHaveBeenCalledWith(
+      'a',
+      expect.objectContaining({ taskStatus: 'failed', taskError: '供应商生成失败' }),
+    )
+    expect(mocks.submit).not.toHaveBeenCalled()
+  })
   it('音频入库成功后通知画布创建独立编辑节点', async () => {
     mocks.wait.mockResolvedValue({ id: 71, status: 'succeeded' })
     mocks.result.mockResolvedValue(82)

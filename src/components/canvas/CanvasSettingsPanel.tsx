@@ -122,6 +122,19 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>交互操作</h3>
 
+            <Row label="界面大小" hint="仅调整工具栏、编辑面板和弹窗；浏览器缩小时可调大">
+              <Segmented
+                value={preferences.uiSize}
+                options={[
+                  { value: 'standard', label: '标准' },
+                  { value: 'large', label: '较大' },
+                  { value: 'extra-large', label: '特大' },
+                ]}
+                onChange={(uiSize) => onChange({ uiSize })}
+                ariaLabel="界面大小"
+              />
+            </Row>
+
             <Row label="滚轮默认操作" hint="按住 Ctrl/⌘ 滚动始终是缩放">
               <Segmented
                 value={preferences.wheelMode}

@@ -64,10 +64,6 @@ vi.mock('@/components/material/MaterialLibraryPicker', () => ({
     ) : null,
 }))
 
-vi.mock('@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal', () => ({
-  default: () => null,
-}))
-
 vi.mock('@/components/smart/EntryCanvasBg', () => ({
   default: () => null,
 }))

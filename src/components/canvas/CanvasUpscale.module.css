@@ -1,0 +1,126 @@
+.window {
+  pointer-events: auto;
+}
+.panel {
+  position: fixed;
+  margin: 0;
+  padding: 0;
+  max-width: calc(100vw - 24px);
+  pointer-events: auto;
+}
+.panel :global(.ant-modal-content) {
+  padding: 18px;
+  border: 1px solid #e2e9e5;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px #243d3226;
+}
+.panel :global(.ant-modal-title) {
+  color: #253732;
+  font-size: 15px;
+}
+.panel :global(.ant-modal-close) {
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100dvh - 130px);
+  overflow-y: auto;
+}
+.row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  color: #586860;
+  font-size: 13px;
+}
+.fields > label {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+.fields > label > small {
+  display: none;
+}
+.fields > label > span {
+  font-size: 13px;
+  color: #586860;
+}
+.choices {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.choices button {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid #e1e7e3;
+  border-radius: 8px;
+  background: #fff;
+  color: #607168;
+  cursor: pointer;
+}
+.choices button[aria-pressed='true'] {
+  border-color: #11a98a;
+  background: #e7f8f1;
+  color: #09896d;
+}
+.choices input {
+  width: 64px;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid #e1e7e3;
+  border-radius: 8px;
+  padding: 0 6px;
+}
+.choices :focus-visible {
+  outline: 2px solid #11a98a;
+  outline-offset: 2px;
+}
+.choices :disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sizes {
+  padding-top: 2px;
+  color: #74827d;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.details {
+  color: #74827d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.details summary {
+  cursor: pointer;
+}
+.details p {
+  margin: 6px 0;
+}
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1ee;
+}
+.cost {
+  color: #74827d;
+  font-size: 12px;
+}
+.footer :global(.ant-btn-primary) {
+  background: #11a98a;
+  box-shadow: none;
+  border-radius: 10px;
+}

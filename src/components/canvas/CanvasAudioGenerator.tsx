@@ -1,3 +1,4 @@
+import ViewportFloatingPanel from './ViewportFloatingPanel'
 import { useMentionNavigation } from '@/composables/useMentionNavigation'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import { useReactFlow } from '@xyflow/react'
@@ -117,6 +118,37 @@ export default function CanvasAudioGenerator({
     typeof params.voice_id === 'number' && Number.isSafeInteger(params.voice_id) && params.voice_id > 0
       ? params.voice_id
       : 0
+  const [resolvedVoice, setResolvedVoice] = useState<{ id: number; name: string; workspaceId: number } | null>(null)
+  const [voiceNameLoading, setVoiceNameLoading] = useState(false)
+  const savedVoiceName =
+    data.selectedPublicVoice?.id === serverVoiceId && typeof data.selectedPublicVoice?.name === 'string'
+      ? data.selectedPublicVoice.name.trim()
+      : ''
+  const selectedVoiceName =
+    savedVoiceName ||
+    (resolvedVoice?.id === serverVoiceId && resolvedVoice.workspaceId === workspaceId ? resolvedVoice.name : '')
+  useEffect(() => {
+    if (!serverVoiceId || selectedVoiceName) {
+      setVoiceNameLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    setVoiceNameLoading(true)
+    void getVoice({ workspaceId, signal: controller.signal }, serverVoiceId)
+      .then((voice) => {
+        if (controller.signal.aborted) return
+        const name = voice.name.trim()
+        setResolvedVoice({ id: serverVoiceId, name, workspaceId })
+        updateNodeData(nodeId, { selectedPublicVoice: { id: serverVoiceId, name } })
+      })
+      .catch(() => {
+        // 名称仅供展示，获取失败时保留音色编号，不影响生成。
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setVoiceNameLoading(false)
+      })
+    return () => controller.abort()
+  }, [serverVoiceId, selectedVoiceName, workspaceId, nodeId, updateNodeData])
   const canManageVoices = useWorkspaceSessionStore((state) => {
     const member = Number(state.currentWorkspaceMemberWorkspaceId) === workspaceId ? state.currentWorkspaceMember : null
     const workspace = (state.userWorkspaces || state.authSession?.workspaces || []).find(
@@ -238,7 +270,11 @@ export default function CanvasAudioGenerator({
   const changeParams = (next: Record<string, unknown>) => {
     const cleaned = withoutSubtitleParam(next)
     setParams(cleaned)
-    updateNodeData(nodeId, { params: cleaned })
+    if (cleaned.voice_id !== params.voice_id) setResolvedVoice(null)
+    updateNodeData(nodeId, {
+      params: cleaned,
+      ...(cleaned.voice_id !== params.voice_id ? { selectedPublicVoice: null } : {}),
+    })
   }
   const selectModel = (key: string) => {
     if (uploadingReference) return
@@ -326,7 +362,10 @@ export default function CanvasAudioGenerator({
     .map((node) => String(node?.data?.text || ''))
     .filter(Boolean)
     .join('\n')
-  const running = busy || ['processing', 'pending', 'queued', 'running', 'result_pending'].includes(data.taskStatus)
+  const recoverableTask = ['processing', 'pending', 'queued', 'running', 'result_pending', 'reconnecting'].includes(
+    data.taskStatus,
+  )
+  const running = busy || recoverableTask
   const receive = async (task: any, signal: AbortSignal) => {
     const result = await waitForAiTask({
       workspaceId,
@@ -379,11 +418,8 @@ export default function CanvasAudioGenerator({
   }
   // 在途任务刷新后继续等同一个任务，不重新提交或重复扣费。
   useEffect(() => {
-    if (
-      !(Number(data.taskId) > 0) ||
-      !['processing', 'pending', 'queued', 'running', 'result_pending'].includes(data.taskStatus)
-    )
-      return
+    // 历史失败在画布加载时会变成 reconnecting，必须继续查询原任务。
+    if (!(Number(data.taskId) > 0) || !recoverableTask) return
     const abort = new AbortController()
     setBusy(true)
     void receive({ id: data.taskId, status: data.taskStatus }, abort.signal)
@@ -403,9 +439,9 @@ export default function CanvasAudioGenerator({
         if (!abort.signal.aborted) setBusy(false)
       })
     return () => abort.abort()
-    // 仅任务身份改变时恢复，进度回写不重复启动轮询。
+    // 任务身份或可恢复性改变时接管/停止轮询，进度回写不重复启动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.taskId, workspaceId, nodeId, retry])
+  }, [data.taskId, workspaceId, nodeId, retry, recoverableTask])
   const uploadReference = async (file?: File, saveSample = false): Promise<boolean> => {
     if (!file || uploadingReference || running) return false
     if (saveSample && !selectedAudioConstraint && !clone) {
@@ -776,17 +812,6 @@ export default function CanvasAudioGenerator({
         >
           {uploadingReference ? '上传中…' : '+ 参考音频'}
         </button>
-        <button
-          type="button"
-          disabled={running || uploadingReference || !userId}
-          onClick={() => {
-            setVoiceLibraryTab('samples')
-            setSampleLibraryOpen(true)
-            setSettingsOpen(false)
-          }}
-        >
-          音色库
-        </button>
         <input
           ref={referenceInput}
           type="file"
@@ -852,7 +877,18 @@ export default function CanvasAudioGenerator({
           >
             音色库
           </button>
-          {serverVoiceId > 0 && <span className={styles.referenceHint}>已选公共音色 #{serverVoiceId}</span>}
+          {serverVoiceId > 0 && (
+            <span className={styles.referenceHint}>
+              已选公共音色：
+              {selectedVoiceName ? (
+                <strong>{selectedVoiceName}</strong>
+              ) : voiceNameLoading ? (
+                '加载中…'
+              ) : (
+                `#${serverVoiceId}`
+              )}
+            </span>
+          )}
         </>
       )}
       {sampleLibraryOpen && userId && (
@@ -870,6 +906,8 @@ export default function CanvasAudioGenerator({
                     const next = { ...params }
                     for (const field of voiceFields) delete next[field.name]
                     changeParams({ ...next, voice_id: voice.id })
+                    setResolvedVoice({ id: voice.id, name: voice.name, workspaceId })
+                    updateNodeData(nodeId, { selectedPublicVoice: { id: voice.id, name: voice.name } })
                     showToast(`已选用音色：${voice.name}`, 'success')
                   }
                 : undefined
@@ -1014,7 +1052,7 @@ export default function CanvasAudioGenerator({
           </svg>
         </button>
         {modelMenuOpen && models.length > 0 && (
-          <div
+          <ViewportFloatingPanel
             className={styles.modelMenu}
             role="listbox"
             aria-label="音频生成模型列表"
@@ -1059,7 +1097,7 @@ export default function CanvasAudioGenerator({
                 </button>
               )
             })}
-          </div>
+          </ViewportFloatingPanel>
         )}
       </div>
       {!loadingModels && !error && models.length === 0 && (

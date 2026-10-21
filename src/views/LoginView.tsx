@@ -10,6 +10,7 @@ import './LoginView.css'
 import loginHero from '@/assets/login-hero.webp'
 import loginHeroFallback from '@/assets/login-hero-fallback.jpg'
 import AgreementModal from '@/components/auth/AgreementModal'
+import PrivacyPolicyModal from '@/components/auth/PrivacyPolicyModal'
 import AuthActionModal, { type AuthActionMode } from '@/components/auth/AuthActionModal'
 import {
   clearExistingSession,
@@ -123,6 +124,7 @@ export default function LoginView() {
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [loginErrors, setLoginErrors] = useState({ phone: '', password: '', code: '', captcha: '' })
   const [showAgreementModal, setShowAgreementModal] = useState(false)
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false)
   // 注册 / 重置密码 弹窗;以及「验证码登录时手机号未注册」触发的补全注册弹窗
   const [authModal, setAuthModal] = useState<AuthActionMode | null>(null)
   const [smsRegister, setSmsRegister] = useState<{ mobile: string; smsCode: string } | null>(null)
@@ -446,7 +448,11 @@ export default function LoginView() {
   }
 
   function handleLink(label: string) {
-    if (label === '用户协议' || label === '隐私政策') {
+    if (label === '隐私政策') {
+      setShowPrivacyPolicy(true)
+      return
+    }
+    if (label === '用户协议') {
       agreementModalContextRef.current = 'view'
       setShowAgreementModal(true)
       return
@@ -882,6 +888,7 @@ export default function LoginView() {
         </div>
       </section>
 
+      {showPrivacyPolicy && <PrivacyPolicyModal onClose={() => setShowPrivacyPolicy(false)} />}
       {showAgreementModal && (
         <AgreementModal
           agreed={agreed}

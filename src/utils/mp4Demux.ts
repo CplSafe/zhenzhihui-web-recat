@@ -1,11 +1,10 @@
 /**
  * MP4 样本表解析：把 stbl 里那堆压缩表还原成「每个样本在文件的哪个字节、什么时间、是不是关键帧」。
  *
- * mp4Probe 只读规格（能不能拼），这里读的是拼接真正需要的东西——样本级的位置与时间。
- * 两者共用 mp4Boxes 的 box 读取原语。
+ * 使用 mp4Boxes 的 box 读取原语，解析拼接所需的样本级位置与时间。
  *
  * 只解析非分片 MP4（progressive）。分片 MP4 的样本表在各个 moof 里，形态完全不同，
- * 由调用方先用 mp4Probe 的 fragmented 判定挡掉，这里不做静默降级。
+ * 分片输入应由调用方校验并拒绝，这里不做静默降级。
  */
 import { findBox, findPath, readBoxes, readFourCc, readVersion, toHex, type Bytes, type Mp4Box } from '@/utils/mp4Boxes'
 

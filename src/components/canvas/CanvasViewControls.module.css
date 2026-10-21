@@ -8,6 +8,11 @@
  * 小地图隐藏后由 .barLower 把它落回底部，避免下方空出一块。
  */
 .bar {
+  zoom: var(--canvas-ui-scale, 1);
+  max-width: calc(100vw / var(--canvas-ui-scale, 1) - 32px);
+  box-sizing: border-box;
+  overflow-x: auto;
+  overscroll-behavior: contain;
   position: absolute;
   bottom: 16px;
   left: 16px;
@@ -25,6 +30,7 @@
 }
 
 .btn {
+  flex-shrink: 0;
   display: inline-flex;
   width: 28px;
   height: 28px;
@@ -39,6 +45,16 @@
   transition:
     background-color 140ms ease,
     color 140ms ease;
+}
+.uiSize {
+  flex-shrink: 0;
+  min-height: 32px;
+  border: 1px solid #e2e6ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #2f3646;
+  font: inherit;
+  font-size: 13px;
 }
 
 .btn:hover {
@@ -117,7 +133,7 @@
   .bar {
     bottom: max(16px, env(safe-area-inset-bottom));
     left: 50%;
-    max-width: calc(100vw - 32px);
+    max-width: calc(100vw / var(--canvas-ui-scale, 1) - 32px);
     transform: translateX(-50%);
   }
 

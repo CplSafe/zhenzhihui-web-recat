@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal, Button, Select, Slider, Alert } from 'antd'
 import RatioLabel from '@/components/common/RatioLabel'
+import CanvasPortalBoundary from './CanvasPortalBoundary'
 import type { CanvasSourceRef } from './CanvasNodePanel'
 import { videoReferenceImageIssue } from '@/utils/imageFile'
 import styles from './CanvasImageCropModal.module.css'
@@ -73,6 +74,8 @@ export default function CanvasImageCropModal({
 
   return (
     <Modal
+      zIndex={2200}
+      modalRender={(modal) => <CanvasPortalBoundary>{modal}</CanvasPortalBoundary>}
       open
       title="参考图尺寸不符合要求"
       onCancel={busy ? undefined : onClose}

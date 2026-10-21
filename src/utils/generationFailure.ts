@@ -7,6 +7,10 @@ export interface GenerationFailure {
   submissionId?: string
   failedAt: string
   stage: 'task' | 'rejected' | 'unknown' | 'local'
+  operationCode?: string
+  modelVersionId?: number
+  workspaceId?: number
+  canvasId?: number
 }
 
 function identifier(value: unknown): string | undefined {
@@ -31,7 +35,16 @@ export function failureIdentifiers(error: any = {}): { taskId?: string; requestI
 
 export function buildGenerationFailure(
   error: any,
-  context: { taskId?: unknown; submissionId?: unknown; failedAt?: unknown; submitted?: boolean } = {},
+  context: {
+    taskId?: unknown
+    submissionId?: unknown
+    failedAt?: unknown
+    submitted?: boolean
+    operationCode?: string
+    modelVersionId?: number
+    workspaceId?: number
+    canvasId?: number
+  } = {},
 ): GenerationFailure {
   const ids = failureIdentifiers(error)
   const taskId = ids.taskId || identifier(context.taskId)
@@ -45,11 +58,15 @@ export function buildGenerationFailure(
     submissionId: identifier(context.submissionId),
     failedAt: String(context.failedAt || new Date().toISOString()),
     stage: taskId ? 'task' : !context.submitted ? 'local' : httpStatus && httpStatus < 500 ? 'rejected' : 'unknown',
+    operationCode: context.operationCode,
+    modelVersionId: context.modelVersionId,
+    workspaceId: context.workspaceId,
+    canvasId: context.canvasId,
   }
 }
 
 export function nodeGenerationFailure(data: Record<string, any>): GenerationFailure {
-  return (
+  const failure: GenerationFailure =
     data.taskFailure ||
     buildGenerationFailure(
       { message: data.taskError },
@@ -60,7 +77,18 @@ export function nodeGenerationFailure(data: Record<string, any>): GenerationFail
         submitted: Boolean(data.taskId || data.taskIdempotencyKey),
       },
     )
-  )
+  return {
+    ...failure,
+    failedAt: data.taskFailure ? failure.failedAt : String(data.taskUpdatedAt || data.taskStartedAt || ''),
+    operationCode:
+      failure.operationCode ||
+      (data.generationRequest || data.videoUpscaleRequest)?.operationCode ||
+      data.operationCode,
+    modelVersionId:
+      failure.modelVersionId ||
+      (data.generationRequest || data.videoUpscaleRequest)?.modelVersionId ||
+      data.modelVersionId,
+  }
 }
 
 export function archiveGenerationFailure(data: Record<string, any>): GenerationFailure[] {
@@ -90,7 +118,11 @@ export function formatGenerationFailure(details: GenerationFailure): string {
     details.submissionId && `提交编号（幂等键）：${details.submissionId}`,
     details.code && `错误码：${details.code}`,
     details.httpStatus && `HTTP 状态：${details.httpStatus}`,
-    `失败时间：${details.failedAt}`,
+    details.operationCode && `操作类型：${details.operationCode}`,
+    details.modelVersionId && `模型 ID：${details.modelVersionId}`,
+    details.workspaceId && `空间 ID：${details.workspaceId}`,
+    details.canvasId && `画布 ID：${details.canvasId}`,
+    `失败时间：${details.failedAt || '未记录'}`,
   ]
     .filter(Boolean)
     .join('\n')

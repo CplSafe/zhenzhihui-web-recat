@@ -10,6 +10,8 @@
 import styles from './CanvasViewControls.module.css'
 
 export interface CanvasViewControlsProps {
+  uiSize?: 'standard' | 'large' | 'extra-large'
+  onUiSizeChange?: (size: 'standard' | 'large' | 'extra-large') => void
   /** 当前缩放倍率（1 = 100%） */
   zoom: number
   onZoomIn: () => void
@@ -37,6 +39,8 @@ export interface CanvasViewControlsProps {
 }
 
 export default function CanvasViewControls({
+  uiSize = 'standard',
+  onUiSizeChange,
   zoom,
   onZoomIn,
   onZoomOut,
@@ -57,6 +61,18 @@ export default function CanvasViewControls({
 
   return (
     <div className={`${styles.bar} nodrag nopan`} role="toolbar" aria-label="画布视图控制">
+      {onUiSizeChange && (
+        <select
+          className={styles.uiSize}
+          aria-label="界面大小"
+          value={uiSize}
+          onChange={(event) => onUiSizeChange(event.target.value as 'standard' | 'large' | 'extra-large')}
+        >
+          <option value="standard">界面：标准</option>
+          <option value="large">界面：较大</option>
+          <option value="extra-large">界面：特大</option>
+        </select>
+      )}
       <button type="button" className={styles.btn} onClick={onZoomOut} title="缩小" aria-label="缩小">
         <MinusIcon />
       </button>

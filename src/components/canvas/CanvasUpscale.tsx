@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
-import { Alert, Button, Modal, Select, Space, Spin } from 'antd'
+import CanvasPortalBoundary from './CanvasPortalBoundary'
+import { Alert, Button, Modal, Radio, Select, Spin } from 'antd'
 import { createAiTask, estimateAiTaskCost, getAiTaskId, getAiTask, listAiModels, waitForAiTask } from '@/api/business'
 import type { ToolField } from '@/api/canvasTools'
-import type { HdTask } from '@/api/canvasHd'
+import type { HdTask, HdSource } from '@/api/canvasHd'
 import type { HdRequest } from './CanvasHdWorkspace'
 import { hdSources } from '@/utils/canvasHd'
 import { creditsYuanLabel } from '@/utils/creditsYuan'
-import { activeToolParams, schemaDefaults, validateToolFields } from '@/utils/canvasTools'
+import { activeToolParams, fieldOptions, fieldVisible, schemaDefaults, validateToolFields } from '@/utils/canvasTools'
 import CanvasToolFields from './CanvasToolFields'
 import { showToast } from '@/stores/ui'
 import { extractOutputAssetId, findAssetIdByTaskId } from '@/utils/taskMedia'
+import { assetStreamUrl } from '@/utils/assetUrl'
+import { upscaleDisplayFields, upscaleImageSize } from '@/utils/canvasUpscale'
+import styles from './CanvasUpscale.module.css'
 
 interface Model {
   id: number
@@ -18,6 +22,19 @@ interface Model {
   name?: string
   operation_codes?: string[]
   params_schema?: { fields?: ToolField[] } | string
+}
+export interface VideoUpscaleSubmission {
+  source: HdSource
+  modelName?: string
+  paramLabels?: Record<string, string>
+  request: {
+    kind: 'video'
+    prompt: string
+    modelVersionId: number
+    operationCode: string
+    params: Record<string, unknown>
+    inputAssets: Array<{ asset_id: number; role: string }>
+  }
 }
 export function upscaleFields(model?: Model, operation = ''): ToolField[] {
   let schema = model?.params_schema
@@ -38,6 +55,7 @@ export function upscaleFields(model?: Model, operation = ''): ToolField[] {
 }
 
 export default function CanvasUpscale(props: {
+  anchor?: { centerX: number; bottom: number } | null
   workspaceId: number
   canvasId: number
   nodes: Node[]
@@ -45,9 +63,13 @@ export default function CanvasUpscale(props: {
   onCloseRequest: () => void
   onTasks: (tasks: HdTask[]) => void
   onModalChange: (open: boolean) => void
+  onVideoGenerate?: (submission: VideoUpscaleSubmission) => Promise<void>
 }) {
   const source = hdSources(props.nodes.filter((node) => props.request?.ids.includes(node.id)))[0]
   const operation = source ? `${source.kind}.upscale` : ''
+  const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight })
+  const [panelHeight, setPanelHeight] = useState(350)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const [models, setModels] = useState<Model[]>([])
   const [modelId, setModelId] = useState(0)
   const [values, setValues] = useState<Record<string, unknown>>({})
@@ -55,6 +77,9 @@ export default function CanvasUpscale(props: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [quote, setQuote] = useState<any>(null)
+  const [quoting, setQuoting] = useState(false)
+  const [quoteError, setQuoteError] = useState('')
+  const [sourceSize, setSourceSize] = useState<{ key: string; width: number; height: number } | null>(null)
   const lock = useRef(false)
   const tasks = useRef<HdTask[]>([])
   const key = useRef('')
@@ -65,6 +90,44 @@ export default function CanvasUpscale(props: {
     return () => active.abort()
   }, [])
   const open = Boolean(props.request)
+  const mediaUrl = open && source ? assetStreamUrl(source.asset_id, props.workspaceId) : ''
+  const mediaKind = source?.kind
+  useEffect(() => {
+    setSourceSize(null)
+    if (!mediaUrl || !mediaKind) return
+    let active = true
+    const media = mediaKind === 'image' ? new Image() : document.createElement('video')
+    const loaded = () => {
+      const width = media instanceof HTMLVideoElement ? media.videoWidth : (media as HTMLImageElement).naturalWidth
+      const height = media instanceof HTMLVideoElement ? media.videoHeight : (media as HTMLImageElement).naturalHeight
+      if (active && width > 0 && height > 0) setSourceSize({ key: mediaUrl, width, height })
+    }
+    if (media instanceof HTMLVideoElement) {
+      media.preload = 'metadata'
+      media.onloadedmetadata = loaded
+    } else media.onload = loaded
+    media.src = mediaUrl
+    return () => {
+      active = false
+      media.onload = null
+      if (media instanceof HTMLVideoElement) {
+        media.onloadedmetadata = null
+        media.removeAttribute('src')
+        media.load()
+      } else media.src = ''
+    }
+  }, [mediaUrl, mediaKind])
+  useEffect(() => {
+    const resize = () => setViewport({ width: window.innerWidth, height: window.innerHeight })
+    window.addEventListener('resize', resize)
+    return () => window.removeEventListener('resize', resize)
+  }, [])
+  useEffect(() => {
+    if (!open || !bodyRef.current) return
+    const observer = new ResizeObserver(([entry]) => setPanelHeight(entry.contentRect.height + 78))
+    observer.observe(bodyRef.current)
+    return () => observer.disconnect()
+  }, [open, loading, modelId])
   const { onModalChange } = props
   useEffect(() => {
     onModalChange(open)
@@ -97,22 +160,95 @@ export default function CanvasUpscale(props: {
   }, [open, operation, props.workspaceId, props.request?.key])
   const model = models.find((m) => Number(m.id) === modelId)
   const fields = upscaleFields(model, operation)
+  const choiceFields = fields.filter(
+    (field) =>
+      field.name !== 'multiple' &&
+      fieldOptions(field).length > 0 &&
+      (source?.kind === 'video' || /resolution|enhance|style/.test(field.name)),
+  )
+  const multipleField = fields.find((field) => field.name === 'multiple' && fieldVisible(field, values))
+  const multipleOptions = multipleField ? fieldOptions(multipleField) : []
+  const multiples = multipleField
+    ? (multipleOptions.length
+        ? multipleOptions.map((option) => Number(option.value))
+        : multipleField.min !== undefined && multipleField.max !== undefined
+          ? [2, 4, 6]
+          : []
+      ).filter(
+        (value) =>
+          Number.isFinite(value) &&
+          value > 0 &&
+          (multipleField.min === undefined || value >= multipleField.min) &&
+          (multipleField.max === undefined || value <= multipleField.max) &&
+          (!multipleField.step ||
+            Math.abs(
+              (value - (multipleField.min ?? 0)) / multipleField.step -
+                Math.round((value - (multipleField.min ?? 0)) / multipleField.step),
+            ) < 1e-8),
+      )
+    : []
+  const changeValues = (next: Record<string, unknown>) => {
+    setValues(next)
+    key.current = crypto.randomUUID()
+  }
+  const activeParams = activeToolParams(fields, values)
+  const knownSize = sourceSize?.key === mediaUrl ? sourceSize : null
+  const targetSize =
+    source?.kind === 'image' && knownSize ? upscaleImageSize(knownSize.width, knownSize.height, activeParams) : null
   const body =
     source && model
       ? {
           workspaceId: props.workspaceId,
           modelVersionId: modelId,
           operationCode: model.operation_codes!.find((op) => op === operation),
-          params: activeToolParams(fields, values),
+          // 创建任务要求非空 prompt；与估价共用正文，素材处理无需用户另填描述。
+          prompt:
+            source.kind === 'video'
+              ? '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。'
+              : '请按超分参数提升参考图片的清晰度，保持原图内容、构图和主体不变。',
+          params: activeParams,
           inputAssets: [{ asset_id: source.asset_id, role: source.kind }],
         }
       : null
   const fingerprint = JSON.stringify(body)
+  const validationError = validateToolFields(fields, values)
   useEffect(() => {
     setQuote(null)
-  }, [fingerprint])
+    setQuoteError('')
+    setQuoting(false)
+    if (!open || fingerprint === 'null' || validationError) return
+    let active = true
+    setQuoting(true)
+    const timer = window.setTimeout(() => {
+      void estimateAiTaskCost(JSON.parse(fingerprint))
+        .then((result) => {
+          if (!active) return
+          if (
+            !Number.isFinite(result?.estimated_cost) ||
+            result.estimated_cost < 0 ||
+            !Number.isFinite(result?.balance) ||
+            result.balance < 0 ||
+            typeof result?.can_afford !== 'boolean'
+          )
+            throw new Error('估价信息不完整，请重试')
+          setQuote({ ...result, key: fingerprint })
+        })
+        .catch((err) => {
+          if (active) setQuoteError(err instanceof Error ? err.message : '费用计算失败，请调整参数后重试')
+        })
+        .finally(() => {
+          if (active) setQuoting(false)
+        })
+    }, 300)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [fingerprint, open, validationError])
+  const currentQuote = quote?.key === fingerprint ? quote : null
   async function run() {
     if (lock.current || !source || !body) return
+    if (!currentQuote || !currentQuote.can_afford || currentQuote.balance < currentQuote.estimated_cost) return
     const validation = validateToolFields(fields, values)
     if (validation) {
       setError(validation)
@@ -122,20 +258,28 @@ export default function CanvasUpscale(props: {
     setBusy(true)
     setError('')
     try {
-      if (!quote || quote.key !== fingerprint) {
-        const result = await estimateAiTaskCost(body)
-        if (
-          !Number.isFinite(result?.estimated_cost) ||
-          result.estimated_cost < 0 ||
-          !Number.isFinite(result?.balance) ||
-          result.balance < 0 ||
-          typeof result?.can_afford !== 'boolean'
-        )
-          throw new Error('估价信息不完整，请重试')
-        setQuote({ ...result, key: fingerprint })
+      if (source.kind === 'video' && props.onVideoGenerate) {
+        await props.onVideoGenerate({
+          source,
+          modelName: model.display_name || model.name || `超分模型 #${modelId}`,
+          paramLabels: Object.fromEntries(fields.map((field) => [field.name, field.display_name || field.name])),
+          request: {
+            kind: 'video',
+            prompt: body.prompt,
+            modelVersionId: body.modelVersionId,
+            operationCode: body.operationCode,
+            params: body.params,
+            inputAssets: body.inputAssets,
+          },
+        })
         return
       }
-      const task = await createAiTask({ ...body, capability: source.kind, idempotencyKey: key.current })
+      const task = await createAiTask({
+        ...body,
+        modelVersion: model,
+        capability: source.kind,
+        idempotencyKey: key.current,
+      })
       const base: HdTask = {
         id: String(getAiTaskId(task)),
         workspace_id: props.workspaceId,
@@ -212,9 +356,26 @@ export default function CanvasUpscale(props: {
   }
   return (
     <Modal
+      zIndex={1800}
       open={open}
       title="超分"
       footer={null}
+      mask
+      focusTriggerAfterClose={false}
+      modalRender={(modal) => <CanvasPortalBoundary>{modal}</CanvasPortalBoundary>}
+      width={420}
+      className={styles.panel}
+      wrapClassName={styles.window}
+      style={{
+        left: Math.max(
+          12,
+          Math.min(
+            viewport.width - Math.min(420, viewport.width - 24) - 12,
+            (props.anchor?.centerX ?? viewport.width / 2) - 210,
+          ),
+        ),
+        top: Math.max(12, Math.min(viewport.height - panelHeight - 24, (props.anchor?.bottom ?? 100) + 12)),
+      }}
       onCancel={() => {
         if (!busy) props.onCloseRequest()
       }}
@@ -227,52 +388,139 @@ export default function CanvasUpscale(props: {
       ) : !models.length ? (
         <Alert type="info" message="当前空间暂无可用超分模型，请联系管理员启用模型并授权套餐。" />
       ) : (
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <span>{source.name}</span>
-          <Select
-            aria-label="超分模型"
-            value={modelId}
-            disabled={busy}
-            style={{ width: '100%' }}
-            options={models.map((m) => ({ value: Number(m.id), label: m.display_name || m.name }))}
-            onChange={(id) => {
-              setModelId(id)
-              setValues(
-                schemaDefaults(
-                  upscaleFields(
-                    models.find((m) => Number(m.id) === id),
-                    operation,
+        <div ref={bodyRef} className={styles.body}>
+          <div className={styles.row}>
+            <span>模型选择</span>
+            <Select
+              aria-label="超分模型"
+              value={modelId}
+              disabled={busy}
+              style={{ width: '100%' }}
+              options={models.map((m) => ({ value: Number(m.id), label: m.display_name || m.name }))}
+              onChange={(id) => {
+                setModelId(id)
+                setValues(
+                  schemaDefaults(
+                    upscaleFields(
+                      models.find((m) => Number(m.id) === id),
+                      operation,
+                    ),
                   ),
-                ),
-              )
-              key.current = crypto.randomUUID()
-            }}
-          />
-          <CanvasToolFields
-            fields={fields}
-            values={values}
-            disabled={busy}
-            onChange={(next) => {
-              setValues(next)
-              key.current = crypto.randomUUID()
-            }}
-          />
-          {quote && (
+                )
+                key.current = crypto.randomUUID()
+              }}
+            />
+          </div>
+          <div className={styles.fields}>
+            {upscaleDisplayFields(choiceFields)
+              .filter((field) => fieldVisible(field, values))
+              .map((field) => (
+                <div className={styles.row} key={field.name}>
+                  <span>{field.display_name || field.name}</span>
+                  <Radio.Group
+                    aria-label={field.display_name || field.name}
+                    optionType="button"
+                    buttonStyle="solid"
+                    disabled={busy}
+                    value={values[field.name]}
+                    options={fieldOptions(field) as Array<{ value: string | number; label: string }>}
+                    onChange={(event) => changeValues({ ...values, [field.name]: event.target.value })}
+                  />
+                </div>
+              ))}
+            <CanvasToolFields
+              fields={upscaleDisplayFields(
+                fields.filter((field) => field.name !== 'multiple' && !choiceFields.includes(field)),
+              )}
+              values={values}
+              disabled={busy}
+              onChange={changeValues}
+            />
+          </div>
+          {multipleField && (
+            <div className={styles.row}>
+              <span>放大倍数</span>
+              <div className={styles.choices} role="group" aria-label="放大倍数">
+                {multiples.map((value) => (
+                  <button
+                    type="button"
+                    key={value}
+                    disabled={busy}
+                    aria-pressed={values.multiple === value}
+                    onClick={() => changeValues({ ...values, multiple: value })}
+                  >
+                    {value} 倍
+                  </button>
+                ))}
+                {!multipleOptions.length && (
+                  <input
+                    type="number"
+                    aria-label="放大倍率（倍）"
+                    title="自定义放大倍率"
+                    disabled={busy}
+                    min={multipleField.min}
+                    max={multipleField.max}
+                    step={multipleField.step ?? (multipleField.type === 'integer' ? 1 : 'any')}
+                    value={values.multiple === undefined ? '' : Number(values.multiple)}
+                    onChange={(event) =>
+                      changeValues({
+                        ...values,
+                        multiple: event.target.value === '' ? undefined : Number(event.target.value),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          <div aria-live="polite" className={styles.sizes}>
+            <div>原始尺寸：{knownSize ? `${knownSize.width} × ${knownSize.height} 像素` : '暂未获取到素材尺寸'}</div>
+            {source.kind === 'image' ? (
+              <div>预计输出：{targetSize ? `${targetSize.width} × ${targetSize.height} 像素` : '由模型参数决定'}</div>
+            ) : (
+              <div>
+                目标分辨率：
+                {String(
+                  activeParams.resolution ||
+                    (activeParams.resolution_limit ? `短边 ${activeParams.resolution_limit} 像素` : '由模型参数决定'),
+                )}
+              </div>
+            )}
+            <small>最终输出尺寸以处理结果为准。</small>
+          </div>
+          <details className={styles.details}>
+            <summary>参数说明</summary>
+            {upscaleDisplayFields(fields)
+              .filter((field) => field.help)
+              .map((field) => (
+                <p key={field.name}>{field.help}</p>
+              ))}
+          </details>
+          {currentQuote && (!currentQuote.can_afford || currentQuote.estimate_note) && (
             <Alert
               type={quote.can_afford ? 'info' : 'warning'}
               message={`${quote.estimate_kind === 'reservation' ? '预冻结金额' : '预估费用'}：${creditsYuanLabel(quote.estimated_cost)} · 余额 ${quote.balance} 积分`}
               description={quote.estimate_note}
             />
           )}
-          <Button
-            type="primary"
-            loading={busy}
-            disabled={Boolean(quote && (!quote.can_afford || quote.balance < quote.estimated_cost))}
-            onClick={() => void run()}
-          >
-            {quote ? '确认超分' : '预估费用'}
-          </Button>
-        </Space>
+          <div className={styles.footer}>
+            <span className={styles.cost} aria-live="polite">
+              {currentQuote
+                ? `${currentQuote.estimate_kind === 'reservation' ? '预冻结' : '预计'} ${creditsYuanLabel(currentQuote.estimated_cost)}`
+                : quoting
+                  ? '正在计算费用…'
+                  : quoteError || '等待有效参数以计算费用'}
+            </span>
+            <Button
+              type="primary"
+              loading={busy}
+              disabled={!currentQuote || !currentQuote.can_afford || currentQuote.balance < currentQuote.estimated_cost}
+              onClick={() => void run()}
+            >
+              确认超分
+            </Button>
+          </div>
+        </div>
       )}
       {error && <Alert type="error" message={error} style={{ marginTop: 12 }} />}
     </Modal>

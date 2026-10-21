@@ -1,3 +1,5 @@
+import { hasOpenCanvasModal } from './canvasModal'
+
 const platform =
   typeof navigator === 'undefined'
     ? ''
@@ -92,6 +94,16 @@ export function matchesCanvasShortcut(
   return shortcutFromKeyboardEvent(event) === binding
 }
 
+/** 在画布快捷键作用域内接管浏览器的加减缩放，兼容主键盘和小键盘。 */
+export function resolveCanvasZoomShortcut(
+  event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'>,
+): 'in' | 'out' | null {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return null
+  if (event.key === '+' || event.key === '=') return 'in'
+  if (event.key === '-') return 'out'
+  return null
+}
+
 export function formatCanvasShortcut(binding: string): string {
   return binding
     .replace(/^Mod(?=\+|$)/, CANVAS_MOD)
@@ -112,7 +124,7 @@ export function isCanvasShortcutTarget(root: HTMLElement | null, target: EventTa
 export function canUseCanvasShortcuts(root: HTMLElement | null, target: EventTarget | null, blocked = false): boolean {
   return (
     !blocked &&
-    !document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])') &&
+    !hasOpenCanvasModal() &&
     isCanvasShortcutTarget(root, document.activeElement) &&
     isCanvasShortcutTarget(root, target)
   )

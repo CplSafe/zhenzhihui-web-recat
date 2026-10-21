@@ -5,6 +5,7 @@ import {
   formatCanvasShortcut,
   isCanvasShortcutTarget,
   matchesCanvasShortcut,
+  resolveCanvasZoomShortcut,
   resolveCanvasCreationShortcut,
   shortcutFromKeyboardEvent,
 } from '@/utils/canvasKeyboard'
@@ -23,6 +24,20 @@ function key(key: string, modifiers: Partial<KeyboardEventInit> = {}) {
 }
 
 describe('画布快捷键冲突处理', () => {
+  it('识别主键盘和小键盘的 Ctrl / Command 加减号，不接管其他组合', () => {
+    for (const modifier of ['ctrlKey', 'metaKey']) {
+      for (const name of ['+', '=']) {
+        expect(resolveCanvasZoomShortcut(key(name, { [modifier]: true }))).toBe('in')
+      }
+      expect(resolveCanvasZoomShortcut(key('-', { [modifier]: true }))).toBe('out')
+    }
+    expect(resolveCanvasZoomShortcut(key('+', { ctrlKey: true, shiftKey: true }))).toBe('in')
+    expect(resolveCanvasZoomShortcut(key('+', { ctrlKey: true, code: 'NumpadAdd' }))).toBe('in')
+    expect(resolveCanvasZoomShortcut(key('-', { ctrlKey: true, code: 'NumpadSubtract' }))).toBe('out')
+    expect(resolveCanvasZoomShortcut(key('+'))).toBeNull()
+    expect(resolveCanvasZoomShortcut(key('0', { ctrlKey: true }))).toBeNull()
+    expect(resolveCanvasZoomShortcut(key('+', { ctrlKey: true, altKey: true }))).toBeNull()
+  })
   it('连线、副本、添加使用 L、Shift+D、N', () => {
     expect(resolveCanvasCreationShortcut(key('l'))).toBe('connect')
     expect(resolveCanvasCreationShortcut(key('L'))).toBe('connect')

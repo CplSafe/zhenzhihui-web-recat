@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Select } from 'antd'
 import {
   createVoice,
   deleteVoice,
@@ -7,7 +8,6 @@ import {
   isVoiceTraining,
   listVoices,
   retryVoice,
-  setVoiceFavorite,
   syncVoice,
   updateVoice,
   type Voice,
@@ -39,6 +39,14 @@ const statusLabel = (voice: Voice) =>
         ? '训练失败'
         : voice.status || '状态待确认'
 const message = (error: unknown) => (error instanceof Error ? error.message : '操作失败，请稍后重试')
+const languageNames = new Intl.DisplayNames(['zh-CN'], { type: 'language' })
+const languageLabel = (value: string) => {
+  try {
+    return languageNames.of(value.replace(/_/g, '-')) || value
+  } catch {
+    return value
+  }
+}
 
 export default function ServerVoiceLibrary({
   userId,
@@ -57,6 +65,9 @@ export default function ServerVoiceLibrary({
   const [search, setSearch] = useState('')
   const [compatibleOnly, setCompatibleOnly] = useState(true)
   const [language, setLanguage] = useState('')
+  const [languages, setLanguages] = useState<string[]>([])
+  const [languagesLoading, setLanguagesLoading] = useState(false)
+  const [languagesError, setLanguagesError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -67,6 +78,42 @@ export default function ServerVoiceLibrary({
   const rows = useRef(items)
   rows.current = items
   const { requestConfirm } = useConfirmDialog()
+  useEffect(() => {
+    const controller = new AbortController()
+    setLanguages([])
+    setLanguage('')
+    setLanguagesLoading(true)
+    setLanguagesError(false)
+    void (async () => {
+      const values = new Set<string>()
+      let nextOffset = 0
+      while (!controller.signal.aborted) {
+        const page = await listVoices({
+          workspaceId,
+          modelVersionId: compatibleOnly ? modelVersionId : undefined,
+          source: publicOnly ? 'public' : source === 'public' || source === 'cloned' ? source : undefined,
+          favorites: !publicOnly && source === 'favorites' ? true : undefined,
+          limit: 100,
+          offset: nextOffset,
+          signal: controller.signal,
+        })
+        for (const voice of page.items) {
+          if ((!publicOnly || voice.source === 'public') && voice.language?.trim()) values.add(voice.language)
+        }
+        nextOffset += page.items.length
+        if (!page.items.length || nextOffset >= page.total) break
+      }
+      if (!controller.signal.aborted)
+        setLanguages([...values].sort((a, b) => languageLabel(a).localeCompare(languageLabel(b), 'zh-CN')))
+    })()
+      .catch(() => {
+        if (!controller.signal.aborted) setLanguagesError(true)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLanguagesLoading(false)
+      })
+    return () => controller.abort()
+  }, [workspaceId, modelVersionId, compatibleOnly, source, publicOnly, revision])
   useEffect(() => {
     onBusyChange(busy)
     return () => onBusyChange(false)
@@ -161,7 +208,7 @@ export default function ServerVoiceLibrary({
       const current = await getVoice({ workspaceId, signal }, voice.id)
       if (!isVoiceReady(current)) {
         replace(current)
-        throw new Error('该音色尚不可用，请同步状态或选择其他音色')
+        throw new Error('该音色尚不可用，请稍后重试或选择其他音色')
       }
       if (!signal.aborted) onSelect(current)
     })
@@ -185,13 +232,14 @@ export default function ServerVoiceLibrary({
     <section aria-label="公共音色库">
       <div className={styles.heading}>
         <div>
-          <strong>公共音色库</strong>
           <p>
-            {modelVersionId && compatibleOnly
-              ? '已按当前模型筛选兼容音色，可跨设备使用。'
-              : publicOnly
-                ? '展示公共音色；开启模型兼容筛选后可选用。'
-                : '展示全部音色供管理；开启模型兼容筛选后可选用。'}
+            {!modelVersionId
+              ? '可浏览公共音色；选用前请先选择支持音色库的配音模型。'
+              : compatibleOnly
+                ? '已按当前模型筛选兼容音色。'
+                : publicOnly
+                  ? '展示公共音色；开启模型兼容筛选后可选用。'
+                  : '展示全部音色供管理；开启模型兼容筛选后可选用。'}
           </p>
         </div>
         {!publicOnly && (
@@ -234,17 +282,34 @@ export default function ServerVoiceLibrary({
             <option value="favorites">个人收藏</option>
           </select>
         )}
-        <input
+        <Select
+          className={styles.languageFilter}
+          classNames={{ popup: { root: `nodrag nopan nowheel ${styles.languagePopup}` } }}
+          popupRender={(menu) => <div onWheel={(event) => event.stopPropagation()}>{menu}</div>}
           aria-label="音色语种"
-          placeholder="语种（可选）"
-          value={language}
-          disabled={busy}
-          onChange={(e) => {
-            setLanguage(e.target.value)
+          placeholder="全部语种"
+          value={language || undefined}
+          showSearch
+          allowClear
+          optionFilterProp="label"
+          loading={languagesLoading}
+          disabled={busy || languagesLoading}
+          options={languages.map((value) => ({ value, label: `${languageLabel(value)}（${value}）` }))}
+          notFoundContent={languagesError ? '语种加载失败，请重试' : '暂无匹配语种'}
+          onChange={(value) => {
+            setLanguage(value || '')
             setOffset(0)
           }}
         />
       </div>
+      {languagesError && (
+        <p role="status" className={styles.note}>
+          语种选项加载失败。
+          <button type="button" disabled={busy} onClick={() => setRevision((v) => v + 1)}>
+            重试
+          </button>
+        </p>
+      )}
       {!publicOnly && !canManage && (
         <p className={styles.note}>创建音色需要空间所有者或管理员权限，并使用预付费音色槽位。</p>
       )}
@@ -272,6 +337,18 @@ export default function ServerVoiceLibrary({
       {!loading && !error && !items.length && (
         <p className={styles.empty} role="status">
           暂无符合条件的音色。
+          {(search || language) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('')
+                setLanguage('')
+                setOffset(0)
+              }}
+            >
+              清除筛选
+            </button>
+          )}
         </p>
       )}
       <div className={styles.grid}>
@@ -282,17 +359,29 @@ export default function ServerVoiceLibrary({
               <span className={styles.tag}>{statusLabel(voice)}</span>
             </div>
             <p>{voice.description || (voice.source === 'public' ? '公共音色' : '自建音色')}</p>
-            <small>{[voice.language, voice.gender, ...(voice.tags || [])].filter(Boolean).join(' · ')}</small>
+            <small>
+              {[voice.language ? languageLabel(voice.language) : '语种未标注', voice.gender, ...(voice.tags || [])]
+                .filter(Boolean)
+                .join(' · ')}
+            </small>
             {sanitizeMediaUrl(voice.preview_url) ? (
               <audio
                 controls
                 preload="none"
                 src={sanitizeMediaUrl(voice.preview_url)}
                 aria-label={`试听 ${voice.name}`}
-                onError={() => setError('试听暂时不可用，请点击该音色的“同步”获取最新地址')}
+                onError={() =>
+                  setError(
+                    voice.source === 'public'
+                      ? '试听暂时不可用，请稍后重试'
+                      : '试听暂时不可用，请点击该音色的“同步”获取最新地址',
+                  )
+                }
               />
             ) : (
-              <p className={styles.note}>暂无试听，尝试同步获取最新地址。</p>
+              <p className={styles.note}>
+                {voice.source === 'public' ? '暂无试听。' : '暂无试听，尝试同步获取最新地址。'}
+              </p>
             )}
             {voice.last_error && <p className={styles.error}>{voice.last_error}</p>}
             <div className={styles.actions}>
@@ -306,19 +395,6 @@ export default function ServerVoiceLibrary({
               <button
                 type="button"
                 disabled={controlsDisabled}
-                aria-label={`${voice.is_favorite ? '取消收藏' : '收藏'} ${voice.name}`}
-                onClick={() =>
-                  void action(async (signal) => {
-                    await setVoiceFavorite({ workspaceId, signal }, voice.id, !voice.is_favorite)
-                    if (!signal.aborted) setRevision((v) => v + 1)
-                  })
-                }
-              >
-                {voice.is_favorite ? '★ 已收藏' : '☆ 收藏'}
-              </button>
-              <button
-                type="button"
-                disabled={controlsDisabled}
                 onClick={() =>
                   void action(async (signal) => {
                     const value = await getVoice({ workspaceId, signal }, voice.id)
@@ -328,18 +404,20 @@ export default function ServerVoiceLibrary({
               >
                 详情
               </button>
-              <button
-                type="button"
-                disabled={controlsDisabled}
-                onClick={() =>
-                  void action(async (signal) => {
-                    const value = await syncVoice({ workspaceId, signal }, voice.id)
-                    if (!signal.aborted) replace(value)
-                  })
-                }
-              >
-                同步
-              </button>
+              {voice.source !== 'public' && (
+                <button
+                  type="button"
+                  disabled={controlsDisabled}
+                  onClick={() =>
+                    void action(async (signal) => {
+                      const value = await syncVoice({ workspaceId, signal }, voice.id)
+                      if (!signal.aborted) replace(value)
+                    })
+                  }
+                >
+                  同步
+                </button>
+              )}
               {!publicOnly && canManage && voice.source === 'cloned' && (
                 <>
                   <button type="button" disabled={controlsDisabled} onClick={() => setForm({ mode: 'edit', voice })}>

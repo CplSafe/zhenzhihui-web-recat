@@ -40,6 +40,49 @@ function renderPanel(imageModels: any[], node: any = imageNodeWithReference(), e
 }
 
 describe('CanvasNodePanel unified real-person material entry', () => {
+  it('参考来源菜单脱离可滚动面板，并支持关闭和选用素材', async () => {
+    const user = userEvent.setup()
+    const onPickRefFromLibrary = vi.fn()
+    renderPanel([], { id: 'image', kind: 'image', prompt: '', sourceRefs: [] }, { onPickRefFromLibrary })
+    const trigger = screen.getByTitle('添加参考')
+    await user.click(trigger)
+    const menu = await screen.findByRole('menu')
+    const panelRoot = Array.from(document.body.children).find((element) => element.contains(trigger))
+    expect(panelRoot).not.toContainElement(menu)
+    expect(menu.closest('.ant-popover')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    await user.click(trigger)
+    await user.click(await screen.findByRole('menuitem', { name: '从素材库选择' }))
+    expect(onPickRefFromLibrary).toHaveBeenCalledWith(0)
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+  })
+  it.each(['Seedance 2.5', '其他视频模型'])('按当前模型显示真人库入口：%s', async (displayName) => {
+    const user = userEvent.setup()
+    const onPickRealPerson = vi.fn()
+    renderPanel(
+      [],
+      { id: 'video', kind: 'video', prompt: '', sourceRefs: [] },
+      {
+        models: {
+          text: [],
+          image: [],
+          video: [{ modelVersionId: 41, displayName, operationCodes: ['video.generate'] }],
+        },
+        onPickRefFromLibrary: vi.fn(),
+        onPickRealPerson,
+      },
+    )
+    await user.click(screen.getByTitle('添加参考'))
+    if (displayName.startsWith('Seedance')) {
+      await user.click(screen.getByRole('menuitem', { name: '从真人库选择' }))
+      expect(onPickRealPerson).toHaveBeenCalledWith(0)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    } else {
+      expect(screen.queryByRole('menuitem', { name: '从真人库选择' })).not.toBeInTheDocument()
+    }
+  })
   it('keeps the plus material entry and marks a connected real-person reference without a separate library button', () => {
     renderPanel(
       [],
@@ -271,6 +314,47 @@ describe('CanvasNodePanel 模型选择器', () => {
     expect(screen.getByRole('button', { name: '生成分镜' })).toBeDisabled()
   })
 
+  it.each(['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'])(
+    '文本请求保留模型 schema 声明的输出长度参数 %s',
+    async (tokenField) => {
+      const onGenerate = vi.fn()
+      renderPanel(
+        [],
+        { id: 'text-params', kind: 'text', prompt: '生成一个台词' },
+        {
+          models: {
+            text: [
+              {
+                modelVersionId: 21,
+                displayName: '文本模型',
+                operationCodes: ['responses.multimodal'],
+                source: {
+                  params_schema: {
+                    fields: [
+                      { name: 'temperature', type: 'number', default: 0.5 },
+                      { name: tokenField, type: 'number', default: 4000, min: 1, max: 8192 },
+                    ],
+                  },
+                },
+              },
+            ],
+            image: [],
+            video: [],
+          },
+          onGenerate,
+        },
+      )
+      await userEvent.setup().click(screen.getByRole('button', { name: '生成分镜' }))
+      expect(onGenerate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operationCode: 'responses.multimodal',
+          modelVersionId: 21,
+          params: { temperature: 0.5, [tokenField]: 4000 },
+        }),
+      )
+    },
+  )
+
   it('文本节点调用所选脚本模型生成分镜，而不是保存输入', async () => {
     const onGenerate = vi.fn()
     const onSaveText = vi.fn()
@@ -298,6 +382,7 @@ describe('CanvasNodePanel 模型选择器', () => {
       }),
     )
     expect(screen.getByRole('textbox')).toHaveValue('五秒咖啡广告')
+    expect(screen.queryByRole('button', { name: '脚本模型' })).not.toBeInTheDocument()
   })
 
   it('分镜结果变化不覆盖创作需求，视频创建需要用户主动点击', async () => {
@@ -313,6 +398,18 @@ describe('CanvasNodePanel 模型选择器', () => {
     expect(onCreateVideoFromText).not.toHaveBeenCalled()
     await userEvent.setup().click(screen.getByRole('button', { name: '创建视频节点' }))
     expect(onCreateVideoFromText).toHaveBeenCalledOnce()
+  })
+
+  it('没有分镜结果时也能用刚输入的文字创建视频节点', async () => {
+    const user = userEvent.setup()
+    const onCreateVideoFromText = vi.fn()
+    renderPanel([], { id: 'text', kind: 'text', prompt: '', text: '' }, { onCreateVideoFromText })
+    const create = screen.getByRole('button', { name: '创建视频节点' })
+    expect(create).toBeDisabled()
+    await user.type(screen.getByRole('textbox'), '咖啡杯特写')
+    expect(create).toBeEnabled()
+    await user.click(create)
+    expect(onCreateVideoFromText).toHaveBeenCalledWith('咖啡杯特写')
   })
 
   it('视频提示词被改写后，不追加原分镜，也不把 JSON 发给视频模型', async () => {
@@ -1583,10 +1680,12 @@ it('视频数量带条单位且背景音不会混成水印开关', async () => {
   expect(screen.getByRole('button', { name: '无水印' })).toBeInTheDocument()
 })
 
-it('视频接入音频后强制无背景音并禁用切换', async () => {
+it.each(['Seedance 2.0', '其他视频模型'])('音频连接的视频默认有声且允许切换：%s', async (displayName) => {
   const user = userEvent.setup()
+  const onParamsChange = vi.fn()
   const model = {
     ...modelWithFields([{ name: 'generate_audio', display_name: '自动生成背景音', type: 'bool', default: true }]),
+    displayName,
     operationCodes: ['video.generate'],
   }
   renderPanel(
@@ -1596,14 +1695,64 @@ it('视频接入音频后强制无背景音并禁用切换', async () => {
       kind: 'video',
       prompt: '测试视频',
       videoMode: 'auto',
-      params: { generate_audio: true },
       sourceRefs: [{ nodeId: 'audio-source', kind: 'audio', assetId: 42 }],
     },
-    { models: { text: [], image: [], video: [model] } },
+    { models: { text: [], image: [], video: [model] }, onParamsChange },
   )
+  await user.click(screen.getByRole('button', { name: /有背景音/ }))
+  expect(screen.getByRole('button', { name: '有背景音' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: '无背景音' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: '无背景音' }))
+  expect(onParamsChange).toHaveBeenLastCalledWith(expect.objectContaining({ generate_audio: false }))
+  expect(screen.getByRole('button', { name: '无背景音' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: '有背景音' }))
+  expect(onParamsChange).toHaveBeenLastCalledWith(expect.objectContaining({ generate_audio: true }))
+  expect(screen.getByRole('button', { name: '有背景音' })).toHaveAttribute('aria-pressed', 'true')
+})
+
+it('已有视频新接音频默认开启，手动关闭及重新打开保留无声设置', async () => {
+  const user = userEvent.setup()
+  const model = {
+    ...modelWithFields([{ name: 'generate_audio', display_name: '生成音频', type: 'bool', default: true }]),
+    operationCodes: ['video.generate'],
+  }
+  function Harness() {
+    const [connected, setConnected] = useState(false)
+    const [open, setOpen] = useState(true)
+    const [params, setParams] = useState({ generate_audio: false })
+    return (
+      <>
+        <button onClick={() => setConnected(true)}>连接音频</button>
+        <button onClick={() => setOpen(!open)}>切换面板</button>
+        {open && (
+          <CanvasNodePanel
+            node={
+              {
+                id: 'video',
+                kind: 'video',
+                prompt: '测试视频',
+                videoMode: 'auto',
+                params,
+                sourceRefs: connected ? [{ nodeId: 'audio', kind: 'audio', assetId: 42 }] : [],
+              } as any
+            }
+            workspaceId={7}
+            models={{ text: [], image: [], video: [model] } as any}
+            onParamsChange={(next) => setParams(next as typeof params)}
+          />
+        )}
+      </>
+    )
+  }
+  render(<Harness />)
+  await user.click(screen.getByRole('button', { name: '连接音频' }))
+  await user.click(screen.getByRole('button', { name: /有背景音/ }))
+  await user.click(screen.getByRole('button', { name: '无背景音' }))
+  expect(screen.getByRole('button', { name: '无背景音' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: '切换面板' }))
+  await user.click(screen.getByRole('button', { name: '切换面板' }))
   await user.click(screen.getByRole('button', { name: /无背景音/ }))
-  expect(screen.getByRole('button', { name: '有背景音' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: '无背景音' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '无背景音' })).toHaveAttribute('aria-pressed', 'true')
 })
 
 it('保留 Seedream 的 size 分辨率档位', async () => {

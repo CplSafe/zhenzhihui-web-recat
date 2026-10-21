@@ -13,6 +13,22 @@ import {
 } from '@/utils/canvasTaskState'
 
 describe('canvas task restoration', () => {
+  it('刷新后用超分请求快照恢复孤儿提交，重试仍沿用原幂等键', () => {
+    const request = { kind: 'video', operationCode: 'video.upscale', modelVersionId: 8, params: { scale: 2 } }
+    const data = {
+      taskStatus: 'submitting',
+      taskStartedAt: new Date().toISOString(),
+      taskIdempotencyKey: 'upscale-original',
+      videoUpscaleRequest: request,
+    }
+    expect(classifyOrphanSubmission(data, { now: Date.now(), submittingInThisPage: false })).toBe('resume')
+    expect(reusableInterruptedIdempotencyKey({ ...data, taskSubmitInterrupted: true }, request)).toBe(
+      'upscale-original',
+    )
+    expect(
+      reusableInterruptedIdempotencyKey({ ...data, taskSubmitInterrupted: true }, { ...request, modelVersionId: 9 }),
+    ).toBe('')
+  })
   it.each(['failed', 'error', 'cancelled', 'expired', 'result_sync_failed', 'reconnecting'])(
     'rechecks a saved %s task without showing its cached error',
     (taskStatus) => {
@@ -74,8 +90,8 @@ describe('canvas task presentation', () => {
     expect(getCanvasTaskPresentation({ status: 'reconnecting', progress: 70, error: 'old error' })).toEqual({
       running: true,
       failed: false,
-      title: '正在核对任务状态',
-      detail: '正在读取上次任务的最新状态',
+      title: '正在恢复任务',
+      detail: '获取最新进度…',
     })
   })
   it('does not invent a percentage when the backend has not returned one', () => {

@@ -22,6 +22,45 @@
   background: #f8f9fa;
 }
 
+/* 只调整操作界面，不对 React Flow 的坐标层施加 zoom/transform。 */
+.canvas-view.has-modal .canvas-panel-area,
+.canvas-view.has-modal .canvas-audio-panel {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.canvas-view.has-modal .react-flow {
+  pointer-events: none;
+}
+
+.canvas-navigation,
+.canvas-global-actions {
+  zoom: var(--canvas-ui-scale, 1);
+}
+
+.canvas-view .canvas-panel-area > * {
+  zoom: var(--canvas-ui-scale, 1);
+  max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
+  max-height: calc((100dvh - 160px) / var(--canvas-ui-scale, 1));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.canvas-view .canvas-audio-panel {
+  zoom: var(--canvas-ui-scale, 1);
+  max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
+  max-height: calc((100dvh - 160px) / var(--canvas-ui-scale, 1));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Modal 和 Select 通过 Portal 挂在 body 下，因此显式限定画布弹层。 */
+body[data-canvas-ui='true'] .canvas-ui-dialog {
+  zoom: var(--canvas-ui-scale, 1);
+  box-sizing: border-box;
+  width: min(900px, calc((100vw - 48px) / var(--canvas-ui-scale, 1))) !important;
+}
+
 /*
  * 手势由 React Flow 统一解释：双指平移、捏合缩放。
  * Safari 若保留默认 touch-action，会同时尝试页面平移/缩放，表现为画布和页面抢手势。
@@ -89,14 +128,6 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
-}
-
-/* 指针落在面板下方的「添加下一步」加号上：面板淡出并放行指针，移开即恢复（见 CanvasView panelYielding）。
-   留一点不透明度，用户能看出面板只是让开、没有消失。 */
-.canvas-panel-area.is-yielding {
-  opacity: 0.12;
-  pointer-events: none;
-  transition: opacity var(--canvas-dur-fast) var(--canvas-ease);
 }
 
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
@@ -281,47 +312,41 @@
   outline-offset: 2px;
 }
 
-.canvas-brand {
+.canvas-navigation {
   position: absolute;
-  top: 28px;
-  left: 28px;
+  top: 20px;
+  left: 20px;
   /* chrome 档：品牌区右侧就是保存状态，被节点压住会让人以为没保存 */
   z-index: 1100;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  max-width: calc((100vw - 40px) / var(--canvas-ui-scale, 1));
+  box-sizing: border-box;
+  padding: 12px 16px 12px 12px;
+  border: 1px solid #e8edf1;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 18px rgb(23 33 61 / 7%);
 }
-
-/*
- * 左上角的柔和白色渐隐：没有底色时，平移到这里的节点会从 logo 和保存状态背后透出来，
- * 两层内容搅在一起。实底卡片又太重，这里用一块无边缘的径向渐隐托住品牌区和返回按钮，
- * 节点滑进来时自然淡出，不出现生硬的框。不拦截指针，下面的节点仍可操作。
- */
-.canvas-view::before {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1050;
-  width: 240px;
-  height: 160px;
-  background: radial-gradient(
-    ellipse at top left,
-    rgba(248, 249, 250, 0.94) 0%,
-    rgba(248, 249, 250, 0.8) 45%,
-    rgba(248, 249, 250, 0) 100%
-  );
-  content: '';
-  pointer-events: none;
+.canvas-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid #edf0f3;
 }
 
 .canvas-brand-logo {
-  width: 50px;
-  height: 50px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
   flex-shrink: 0;
 }
 
 .canvas-brand-text {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -329,7 +354,7 @@
 
 .canvas-brand-name {
   font-family: 'PingFang SC', sans-serif;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   color: #333;
   line-height: 1;
@@ -460,18 +485,16 @@
 }
 
 .canvas-edge-role-label {
-  position: absolute;
-  z-index: 2;
-  padding: 2px 6px;
-  border: 1px solid rgb(102 113 127 / 18%);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 92%);
-  color: #66717f;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
   font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
   pointer-events: none;
+}
+.canvas-edge-role-label rect {
+  fill: #f8f9fa;
+  stroke: rgb(102 113 127 / 12%);
+}
+.canvas-edge-role-label text {
+  fill: #66717f;
+  stroke: none;
 }
 
 .canvas-node-connect-error {
@@ -501,10 +524,10 @@
   /* 位置交给 MiniMap 的 position="bottom-left"，这里只调外观与外边距，
      免得用 !important 去顶 React Flow 自己的 .react-flow__panel 定位。
      下外边距要让开它下面那条视图控制条（36px 高 + 16px 间距 + 12px 呼吸）。 */
-  width: 190px;
-  height: 130px;
+  width: calc(190px * var(--canvas-ui-scale, 1));
+  height: calc(130px * var(--canvas-ui-scale, 1));
   margin: 16px;
-  margin-bottom: 64px;
+  margin-bottom: calc(64px * var(--canvas-ui-scale, 1));
   border: 1px solid #e2e6ef;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.92);
@@ -591,21 +614,17 @@
   outline: none;
 }
 
-/* 独立返回按钮：位于左侧工具栏上方、留出间距，构成独立工具组；始终显示不随抽屉隐藏 */
+/* 返回按钮与品牌、保存状态共用一个实底导航面板。 */
 .canvas-back-btn {
-  position: absolute;
-  top: 104px;
-  left: 47px;
   /* 与品牌区同档：选中节点会被 React Flow 抬到 1000 以上，停在 10 会被节点盖住 */
   z-index: 1100;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
   border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  color: #5767e5;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #f5f7f9;
+  color: #526174;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -623,6 +642,10 @@
   &:active {
     transform: scale(0.92);
   }
+}
+.canvas-back-btn:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
 }
 
 /* 覆盖 React Flow 默认节点样式 */
