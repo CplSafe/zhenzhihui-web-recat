@@ -8,6 +8,7 @@ import { MODEL_NOT_FOUND_CODE, chooseModelCandidate, isRetryableModelSelectionEr
 import { DEFAULT_MODEL_PLAN_CANDIDATES, normalizePlanCandidates } from '../utils/modelPlans'
 import { sleep } from '../utils/common'
 import { failureIdentifiers } from '../utils/generationFailure'
+import { normalizeCanvasToolPrompt } from '../utils/canvasTools'
 import { sanitizeMediaUrl } from '../utils/urlSafety'
 import { isAllowedUploadUrl as isUploadUrlAllowedByPolicy } from '../utils/uploadUrlSafety'
 import { resolveUploadMimeType } from '../utils/fileSignature'
@@ -523,13 +524,14 @@ export async function createAiResponse({
   inputAssets,
   params,
   modelVersionId,
+  idempotencyKey: providedIdempotencyKey,
   modelPlanCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
   stream = false,
   signal,
 }: any) {
   if (modelVersionId) {
     // 同一次显式模型调用的非流式重试必须复用幂等键，防止首请求已被供应商接收后重复计费。
-    const idempotencyKey = createIdempotencyKey('resp')
+    const idempotencyKey = providedIdempotencyKey || createIdempotencyKey('resp')
     let lastError = null
     for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
       try {
@@ -1399,6 +1401,7 @@ async function submitAiTask({
   signal,
   onImagePartial,
 }) {
+  prompt = normalizeCanvasToolPrompt(prompt, params)
   if (String(operationCode || '').startsWith('video.') && !String(prompt || '').trim()) {
     throw new Error('请输入视频描述后再生成；仅连接图片或音频仍需要文字描述')
   }
@@ -1741,7 +1744,7 @@ export function estimateAiTaskCost({
         workspace_id: wsId,
         model_version_id: modelId,
         operation_code: op,
-        prompt: String(prompt || ''),
+        prompt: normalizeCanvasToolPrompt(String(prompt || ''), params),
         params: params && typeof params === 'object' ? params : {},
         input_assets: Array.isArray(inputAssets) ? inputAssets : [],
       }),

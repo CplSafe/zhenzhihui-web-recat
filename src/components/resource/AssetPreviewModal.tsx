@@ -14,6 +14,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { getAssetDownloadUrl } from '@/api/business'
 import SeekableVideo from '@/components/common/SeekableVideo'
 import './AssetPreviewModal.css'
+import ImageViewport from '@/components/common/ImageViewport'
 
 /** 预览队列状态及关闭、前后切换回调。 */
 interface AssetPreviewModalProps {
@@ -73,7 +74,7 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
   }, [assetId, workspaceId])
 
   if (item?.mediaKind === 'image' && src) {
-    return <img src={src} alt={item.title} className="asset-preview-image" onError={handleError} />
+    return <ImageViewport key={src} src={src} alt={item.title || '素材图片'} onError={handleError} />
   }
   if ((item?.mediaKind === 'audio' || item?.kind === 'audio') && src) {
     return (

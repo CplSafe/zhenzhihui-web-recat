@@ -737,16 +737,6 @@ function ResourceCard({
             </svg>
             下载
           </button>
-          {favoriteActions.onPublish ? (
-            <button
-              type="button"
-              className="resource-favorite-action-btn"
-              onClick={favoriteActions.onPublish}
-              aria-label={`将${card.title}发布到作品展示`}
-            >
-              发布作品
-            </button>
-          ) : null}
           {/* 去创作：直接把素材带进创作流程，省去「先下载到本地再上传」。
               原来的「做同款」已并入本菜单——它本质上就是「视频 → 爆款复制」这一个去向。 */}
           {createTargets.length ? (

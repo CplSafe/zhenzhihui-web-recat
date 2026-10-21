@@ -27,6 +27,7 @@ export interface CanvasSelectionToolbarProps {
   /** 其中有素材可下载的节点数；为 0 或不传 onDownload 时隐藏该动作 */
   downloadableCount?: number
   onDownload?: () => void
+  onHd?: () => void
 }
 
 export default function CanvasSelectionToolbar({
@@ -42,6 +43,7 @@ export default function CanvasSelectionToolbar({
   onArrange,
   downloadableCount = 0,
   onDownload,
+  onHd,
 }: CanvasSelectionToolbarProps) {
   return (
     <div
@@ -109,6 +111,11 @@ export default function CanvasSelectionToolbar({
         </button>
       )}
 
+      {onHd && (
+        <button type="button" className={styles.action} onClick={onHd}>
+          超分
+        </button>
+      )}
       <button type="button" className={`${styles.action} ${styles.danger}`} onClick={onDelete} title="删除选中的节点">
         <TrashIcon />
         删除

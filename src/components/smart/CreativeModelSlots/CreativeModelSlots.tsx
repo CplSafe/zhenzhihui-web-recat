@@ -180,6 +180,12 @@ export default function CreativeModelSlots({
           {slots.map((slot) => (
             <div className={`${barStyles.field} ${styles.slotSection}`} key={slot.key}>
               <span className={`${barStyles.label} ${styles.slotLabel}`}>{slot.label}</span>
+              {!slot.models.some((model) => !model.disabled) && (
+                <span role="status">
+                  {slot.models.find((model) => model.unavailableReason)?.unavailableReason ||
+                    `${slot.label}暂无可用模型`}
+                </span>
+              )}
               <div
                 className={`${styles.optionList}${slot.models.filter((model) => !model.disabled).length === 1 ? ` ${styles.optionListSingle}` : ''}`}
                 role="listbox"

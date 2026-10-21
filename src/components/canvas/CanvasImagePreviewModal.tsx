@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './CanvasImagePreviewModal.module.css'
+import ImageViewport from '@/components/common/ImageViewport'
 
 /** 画廊中的一张图片：画布上每个有素材的图片节点对应一项。 */
 export interface CanvasImagePreviewItem {
@@ -17,6 +18,7 @@ export interface CanvasImagePreviewItem {
   url: string
   /** 节点标题，展示在预览左上角 */
   title?: string
+  panorama?: boolean
 }
 
 interface CanvasImagePreviewModalProps {
@@ -27,9 +29,21 @@ interface CanvasImagePreviewModalProps {
   /** 切换到另一张图片 */
   onSelect: (id: string) => void
   onClose: () => void
+  /** 当前图片节点的“高清处理”入口。 */
+  onHd?: () => void
+  hdDisabled?: boolean
+  onPanorama?: (nodeId: string) => void
 }
 
-export default function CanvasImagePreviewModal({ items, activeId, onSelect, onClose }: CanvasImagePreviewModalProps) {
+export default function CanvasImagePreviewModal({
+  items,
+  activeId,
+  onSelect,
+  onClose,
+  onHd,
+  hdDisabled = false,
+  onPanorama,
+}: CanvasImagePreviewModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const activeThumbRef = useRef<HTMLButtonElement>(null)
   const onCloseRef = useRef(onClose)
@@ -58,6 +72,12 @@ export default function CanvasImagePreviewModal({ items, activeId, onSelect, onC
     document.body.style.overflow = 'hidden'
     const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== 'Escape' &&
+        event.target instanceof HTMLElement &&
+        event.target.matches('input, select, textarea')
+      )
+        return
       if (event.key === 'Escape') {
         event.preventDefault()
         onCloseRef.current()
@@ -110,6 +130,12 @@ export default function CanvasImagePreviewModal({ items, activeId, onSelect, onC
           ✕
         </button>
 
+        {onHd && (
+          <button type="button" className={styles.hdAction} onClick={onHd} disabled={hdDisabled}>
+            高清处理
+          </button>
+        )}
+
         {(title || items.length > 1) && (
           <div className={styles.caption}>
             {title ? <span className={styles.captionTitle}>{title}</span> : null}
@@ -119,6 +145,11 @@ export default function CanvasImagePreviewModal({ items, activeId, onSelect, onC
               </span>
             ) : null}
           </div>
+        )}
+        {current.panorama && onPanorama && (
+          <button type="button" className={styles.panoramaAction} onClick={() => onPanorama(current.id)}>
+            360° 沉浸浏览／取景
+          </button>
         )}
 
         <div className={styles.stage}>
@@ -136,7 +167,7 @@ export default function CanvasImagePreviewModal({ items, activeId, onSelect, onC
             </button>
           )}
           {/* key 强制换图时重挂载：上一张的画面不会在新图加载期间残留 */}
-          <img key={current.id} className={styles.image} src={current.url} alt={title || '画布图片'} />
+          <ImageViewport key={current.id + current.url} src={current.url} alt={title || '画布图片'} />
           {items.length > 1 && (
             <button
               type="button"

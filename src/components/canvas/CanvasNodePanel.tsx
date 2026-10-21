@@ -7,10 +7,13 @@
  */
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
+import RatioLabel from '@/components/common/RatioLabel'
+import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
 import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
 export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
+import { buildCanvasStoryboardPrompt, toCanvasPromptContext } from '@/utils/canvasStructuredText'
 import type {
   GenerationModelOption,
   GenerationModelOperationStateMap,
@@ -25,6 +28,7 @@ import {
   buildPolishImageRefs,
   canvasVideoReferenceMode,
   isCanvasVideoSourceKind,
+  validateCanvasGenerationPrompt,
   validateCanvasImageInputs,
   validateCanvasVideoInputs,
   type CanvasInputAsset,
@@ -517,6 +521,8 @@ interface CanvasNodePanelProps {
    * 以前只有前者，导致「素材在库里但画布上没有」时只能先手动加节点再连线。
    */
   onPickRefFromLibrary?: (slotIndex?: number) => void
+  onPickRealPerson?: (slotIndex?: number) => void
+  currentUserId?: string | number
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
   /** 当前节点的历次生成结果（最新在后），用于节点级生成历史回看（反馈 #8）。 */
@@ -556,6 +562,7 @@ interface CanvasNodePanelProps {
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
+  onCreateVideoFromText?: () => void
   /** 图片/视频节点输入框内容变更：由页面写回节点并持久化，切换节点/刷新后可回显。 */
   onPromptChange?: (prompt: string) => void
   /**
@@ -605,13 +612,27 @@ function RefAddButton({
   title,
   onPickFromCanvas,
   onPickFromLibrary,
+  onPickRealPerson,
+  hintUserId,
 }: {
   disabled?: boolean
   title: string
   onPickFromCanvas: () => void
   onPickFromLibrary?: () => void
+  onPickRealPerson?: () => void
+  hintUserId?: string | number
 }) {
   const [open, setOpen] = useState(false)
+  const userId = String(hintUserId || '')
+  const [hintOwner, setHintOwner] = useState('')
+  const hintEligible = Boolean(onPickRealPerson)
+  useEffect(() => {
+    if (!hintEligible || disabled) {
+      setHintOwner('')
+      return
+    }
+    if (claimCanvasRealPersonHint(userId)) setHintOwner(userId)
+  }, [hintEligible, disabled, userId])
   const wrapRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
@@ -642,13 +663,29 @@ function RefAddButton({
 
   return (
     <span className={styles.refAddWrap} ref={wrapRef}>
+      {hintOwner === userId && userId && onPickRealPerson && !disabled && (
+        <button
+          type="button"
+          className={styles.realPersonHint}
+          onClick={() => {
+            setHintOwner('')
+            setOpen(false)
+            onPickRealPerson()
+          }}
+        >
+          使用已认证真人素材
+        </button>
+      )}
       <button
         className={styles.refAddBtn}
         disabled={disabled}
         title={title}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setHintOwner('')
+          setOpen((value) => !value)
+        }}
       >
         <PlusSmIcon />
       </button>
@@ -692,8 +729,10 @@ const readPromptHistory = (nodeId?: string): string[] => (nodeId && promptHistor
 export default function CanvasNodePanel({
   node,
   workspaceId,
+  currentUserId,
   onStartPickRef,
   onPickRefFromLibrary,
+  onPickRealPerson,
   onRemoveRef,
   resultHistory,
   onRevertToHistory,
@@ -708,6 +747,7 @@ export default function CanvasNodePanel({
   onPreflightAssets,
   onInsufficientCredits,
   onSaveText,
+  onCreateVideoFromText,
   onPromptChange,
   onParamsChange,
   inheritedTexts,
@@ -735,7 +775,7 @@ export default function CanvasNodePanel({
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
-  const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
+  const [prompt, setPrompt] = useState(() => String(node?.prompt ?? (kind === 'text' ? node?.text : '') ?? ''))
   const [polishing, setPolishing] = useState(false)
   const [promptHistory, setPromptHistory] = useState<string[]>(() => readPromptHistory(node?.id))
   const nodeIdRef = useRef(node?.id)
@@ -759,7 +799,7 @@ export default function CanvasNodePanel({
     const switchedNode = restoredNodeIdRef.current !== node?.id
     if (kind === 'text') {
       if (switchedNode) setPromptHistory(readPromptHistory(node?.id))
-      setPrompt(String(node?.text || ''))
+      if (switchedNode) setPrompt(String(node?.prompt ?? node?.text ?? ''))
       setPolishError('')
       restoredNodeIdRef.current = node?.id
       return
@@ -877,7 +917,6 @@ export default function CanvasNodePanel({
     (next: string, options: { immediate?: boolean } = {}) => {
       setPrompt(next)
       if (polishError) setPolishError('')
-      if (kind === 'text') return
       if (options.immediate) {
         pendingWriteBackRef.current = null
         if (promptWriteBackTimerRef.current !== null) {
@@ -889,7 +928,7 @@ export default function CanvasNodePanel({
         schedulePromptWriteBack(next, onPromptChange)
       }
     },
-    [kind, onPromptChange, polishError, schedulePromptWriteBack],
+    [onPromptChange, polishError, schedulePromptWriteBack],
   )
 
   // 用一段文本替换提示词的 [from, to) 区间，光标落到替换文本之后并回焦。
@@ -1006,6 +1045,12 @@ export default function CanvasNodePanel({
       return !query || label.includes(query)
     })
   }, [atAnchor, atQuery, mentionableRefs, refLabelByEdge])
+  useEffect(() => {
+    if (atAnchor !== null)
+      document
+        .querySelector('[aria-label="选择要 @ 的参考素材"] [aria-selected="true"]')
+        ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [atAnchor, atActive])
   // 选中一条：把「@ + 已输入的筛选词」整段替换成完整引用
   const pickAtCandidate = useCallback(
     (ref: CanvasSourceRef | undefined) => {
@@ -1137,6 +1182,18 @@ export default function CanvasNodePanel({
     return usable[0]
   }, [availableModels, node?.modelVersionId, kind, targetOperationCode])
 
+  const isSeedanceModel =
+    kind === 'video' &&
+    selectedModel &&
+    [
+      selectedModel.displayName,
+      selectedModel.source?.model_code,
+      selectedModel.source?.modelCode,
+      selectedModel.source?.model_name,
+      selectedModel.source?.modelName,
+      selectedModel.source?.name,
+    ].some((value) => /s(?:ee|ea)dance/i.test(String(value || '').replace(/[\s._-]/g, '')))
+
   /**
    * 素材来源数量上限：跟随所选模型在 params schema 里声明的参考图上限。
    *
@@ -1220,6 +1277,7 @@ export default function CanvasNodePanel({
 
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
+  const hasAudioInput = kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio')
 
   // 节点自己已有的视频（上传或生成的）可作为编辑 / 延长的源视频。
   const hasSelfVideo = kind === 'video' && Boolean(node?.resultUrl) && Number(node?.assetId || 0) > 0
@@ -1297,11 +1355,15 @@ export default function CanvasNodePanel({
         }
         const value = values[f.name] !== undefined ? values[f.name] : f.default
         params[f.name] =
-          kind === 'image' && isImageCountField(f) ? normalizeImageCountValue(value) : normalizeFieldValue(f, value)
+          hasAudioInput && isAudioField(f)
+            ? false
+            : kind === 'image' && isImageCountField(f)
+              ? normalizeImageCountValue(value)
+              : normalizeFieldValue(f, value)
       }
       return params
     },
-    [schemaFields, kind, maskAssetId],
+    [schemaFields, kind, maskAssetId, hasAudioInput],
   )
 
   // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
@@ -1406,7 +1468,7 @@ export default function CanvasNodePanel({
    * 用户就会对着一段显示正常的文本却拿到另一种结果，这类问题几乎无法排查。
    */
   const inheritedPromptText = useMemo(
-    () => stableInheritedTexts.map((item) => item.text.trim()).filter(Boolean),
+    () => stableInheritedTexts.map((item) => toCanvasPromptContext(item.text)).filter(Boolean),
     [stableInheritedTexts],
   )
   /**
@@ -1428,21 +1490,21 @@ export default function CanvasNodePanel({
    * 输入框里那份才是用户看得见、改得动的，展示两份只会让人分不清最终发出去的是哪个。
    */
   const pendingInheritedText = useMemo(
-    () => inheritedPromptText.filter((text) => !prompt.includes(text)),
-    [inheritedPromptText, prompt],
+    () => (kind === 'video' ? [] : inheritedPromptText.filter((text) => !prompt.includes(text))),
+    [inheritedPromptText, prompt, kind],
   )
 
   const buildFullPrompt = useCallback(
     (userPrompt: string): string => {
       const userText = userPrompt.trim()
-      const assembled = [...inheritedPromptText.filter((text) => !userText.includes(text)), userText]
-        .filter(Boolean)
-        .join('\n\n')
+      const inherited = kind === 'video' ? [] : inheritedPromptText.filter((text) => !userText.includes(text))
+      const assembled = [...inherited, userText].filter(Boolean).join('\n\n')
       // 出门前把名字型引用（@天安门）翻成模型认得的位置号（@图片1）：模型只按附图顺序理解"第几张"，
       // 名字只活在界面。位置号本身原样保留；匹配不到的不硬猜。
-      return translateMentionsToPositional(assembled, sourceRefs)
+      const translated = translateMentionsToPositional(assembled, sourceRefs)
+      return kind === 'text' && translated ? buildCanvasStoryboardPrompt(translated) : translated
     },
-    [inheritedPromptText, sourceRefs],
+    [inheritedPromptText, sourceRefs, kind],
   )
 
   // 估价必须和提交用同一份 input_assets：节点自己的视频是否计入见上方 selfVideoAssetId，
@@ -1505,11 +1567,12 @@ export default function CanvasNodePanel({
     if (kind === 'image' && sourceRefs.some((ref) => ref.source === 'real_person')) {
       return '真人素材图片节点仅用于素材展示/中转，不能直接生成图片；请连接到视频节点生成视频'
     }
+    const promptError = validateCanvasGenerationPrompt(kind, buildFullPrompt(prompt))
+    if (promptError) return promptError
     if (kind === 'image') {
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
     if (kind === 'video') {
-      if (!buildFullPrompt(prompt).trim()) return '请输入视频描述后再生成；仅连接图片或音频仍需要文字描述'
       return (
         getVideoEditModeConflict({
           prompt: buildFullPrompt(prompt),
@@ -1578,10 +1641,6 @@ export default function CanvasNodePanel({
 
   useEffect(() => {
     if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
-    if (kind === 'text') {
-      setCostEstimate({ loading: false })
-      return
-    }
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode || !workspaceId) {
       setCostEstimate({ loading: false })
@@ -1627,12 +1686,6 @@ export default function CanvasNodePanel({
   // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交；图片/视频来源以 sourceRefs(含 assetId) 交给调用方组装 input_assets
   // 视频生成前要等用户确认积分消耗，因此是异步的
   const handleGenerate = async () => {
-    if (kind === 'text') {
-      const value = prompt.trim()
-      if (!value) return
-      onSaveText?.(value)
-      return
-    }
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode || inputValidationError) return
     if (costEstimate.can_afford === false) {
@@ -1747,8 +1800,7 @@ export default function CanvasNodePanel({
     <div className={styles.panel} data-canvas-node-panel>
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
-        {kind !== 'text' &&
-          catalogOperationState &&
+        {catalogOperationState &&
           (modelsLoading || ['error', 'empty', 'configuration-error'].includes(catalogOperationState.status)) && (
             <div className={styles.catalogNotice} role={catalogOperationState.status === 'error' ? 'alert' : 'status'}>
               <span>
@@ -1811,10 +1863,14 @@ export default function CanvasNodePanel({
                       </>
                     ) : (
                       <RefAddButton
+                        hintUserId={currentUserId}
                         disabled={taskRunning}
                         title={taskRunning ? '生成中不可修改素材' : title}
                         onPickFromCanvas={() => onStartPickRef?.(slot)}
                         onPickFromLibrary={onPickRefFromLibrary ? () => onPickRefFromLibrary(slot) : undefined}
+                        onPickRealPerson={
+                          isSeedanceModel && onPickRealPerson ? () => onPickRealPerson(slot) : undefined
+                        }
                       />
                     )}
                   </div>
@@ -1862,8 +1918,14 @@ export default function CanvasNodePanel({
               ))}
             {mediaRefCount < maxRefs && (
               <RefAddButton
+                hintUserId={currentUserId}
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
+                onPickRealPerson={
+                  isSeedanceModel && onPickRealPerson
+                    ? () => onPickRealPerson(refSlots.find((slot) => !findRefBySlot(sourceRefs, slot)) ?? mediaRefCount)
+                    : undefined
+                }
                 onPickFromCanvas={() => {
                   const nextSlot = refSlots.find((slot) => !findRefBySlot(sourceRefs, slot)) ?? mediaRefCount
                   onStartPickRef?.(nextSlot)
@@ -1917,6 +1979,7 @@ export default function CanvasNodePanel({
               ))}
             {mediaRefCount < maxRefs && (
               <RefAddButton
+                hintUserId={currentUserId}
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
                 onPickFromCanvas={() => onStartPickRef?.(sourceRefs.length)}
@@ -1926,6 +1989,7 @@ export default function CanvasNodePanel({
           </div>
         ) : (
           <RefAddButton
+            hintUserId={currentUserId}
             disabled={taskRunning}
             title={taskRunning ? '生成中不可修改素材' : '添加参考'}
             onPickFromCanvas={() => onStartPickRef?.(0)}
@@ -2011,6 +2075,20 @@ export default function CanvasNodePanel({
         </div>
       )}
 
+      {kind === 'video' && inheritedPromptText.length > 0 && (
+        <button
+          type="button"
+          className={styles.inheritedPromptBtn}
+          disabled={taskRunning}
+          onClick={() => {
+            userEditedPromptRef.current = true
+            commitPrompt(inheritedPromptText.join('\n\n'), { immediate: true })
+          }}
+        >
+          用最新分镜替换提示词
+        </button>
+      )}
+
       {kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio') && (
         <p className={styles.audioReferenceHint}>
           已连接的音频作为视频生成参考；是否能使用取决于所选模型的音频输入能力。若要把配音或音乐直接加入成片，请连接到视频剪辑节点的音轨。
@@ -2065,7 +2143,7 @@ export default function CanvasNodePanel({
           className={`${styles.textarea} ${styles.textareaOverlay}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
           placeholder={
             kind === 'text'
-              ? '输入主题或完整的生图提示词...'
+              ? '输入视频主题、场景、风格和时长，生成分镜提示词...'
               : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...${mentionableRefs.length || atPickerHasActions ? '（输入 @ 可引用参考素材）' : ''}`
           }
           value={prompt}
@@ -2121,7 +2199,16 @@ export default function CanvasNodePanel({
                 }
               }
             }
-            if (atAnchor === null) return
+            if (
+              atAnchor === null ||
+              e.nativeEvent.isComposing ||
+              e.keyCode === 229 ||
+              e.ctrlKey ||
+              e.metaKey ||
+              e.altKey ||
+              e.shiftKey
+            )
+              return
             if (!atCandidates.length) {
               // 没有可 @ 的参考:Enter 直接去素材库取图,Esc 关掉选择器
               if (e.key === 'Enter' && atPickFromLibrary) {
@@ -2133,10 +2220,10 @@ export default function CanvasNodePanel({
               }
               return
             }
-            if (e.key === 'ArrowDown') {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
               e.preventDefault()
               setAtActive((index) => (index + 1) % atCandidates.length)
-            } else if (e.key === 'ArrowUp') {
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
               e.preventDefault()
               setAtActive((index) => (index - 1 + atCandidates.length) % atCandidates.length)
             } else if (e.key === 'Enter' || e.key === 'Tab') {
@@ -2214,7 +2301,7 @@ export default function CanvasNodePanel({
             ? '当前节点正在生成，模型、提示词和素材已锁定；如需更换模型，请添加新的节点。'
             : polishError ||
               (kind === 'text'
-                ? '保存后将原文直接作为下游图片、视频的生成提示词'
+                ? '生成分镜后可编辑节点内容，再连接视频节点调整提示词并生成视频'
                 : kind === 'video'
                   ? minRefs > 0
                     ? `${selectedModel?.displayName || '当前模型'} 是参考生视频模型，至少需要 ${minRefs} 张参考图片`
@@ -2262,7 +2349,7 @@ export default function CanvasNodePanel({
             className={styles.polishBtn}
             onClick={handlePolishText}
             disabled={taskRunning || !prompt.trim() || !onPolishText || polishing}
-            title={`扩写为更完整的${kind === 'video' ? '视频' : '图片'}生成提示词`}
+            title={`扩写为更完整的${kind === 'text' ? '分镜创作需求' : kind === 'video' ? '视频生成提示词' : '图片生成提示词'}`}
           >
             <span aria-hidden="true">✦</span>
             {polishing ? '润色中...' : '我帮你写'}
@@ -2273,7 +2360,27 @@ export default function CanvasNodePanel({
       {/* 底部操作栏 */}
       <div className={styles.actions}>
         <div className={styles.selectors}>
-          {kind !== 'text' && (
+          {kind === 'text' && (
+            <>
+              <button
+                className={styles.selector}
+                type="button"
+                disabled={taskRunning || !prompt.trim()}
+                onClick={() => onSaveText?.(prompt.trim())}
+              >
+                保存为文本
+              </button>
+              <button
+                className={styles.selector}
+                type="button"
+                disabled={taskRunning || !node?.text?.trim()}
+                onClick={onCreateVideoFromText}
+              >
+                创建视频节点
+              </button>
+            </>
+          )}
+          {
             <ModelSelector
               models={availableModels}
               // 与实际提交用的 selectedModel 同源，默认模型（含「上次使用」）才不会显示一个、提交另一个
@@ -2288,16 +2395,24 @@ export default function CanvasNodePanel({
                 if (!taskRunning) onModelChange?.(value)
               }}
             />
-          )}
+          }
 
           {/* 模型 params_schema 参数菜单：所有节点类型通用；视频额外含生成方式组 */}
-          {kind !== 'text' && schemaFields.length > 0 && (
+          {schemaFields.length > 0 && (
             <SchemaFieldMenu
               kind={kind}
               mode={kind === 'video' ? videoMode : undefined}
               followSourceVideo={followSourceVideo}
               fields={schemaFields}
-              values={fieldValues}
+              values={
+                hasAudioInput
+                  ? {
+                      ...fieldValues,
+                      ...Object.fromEntries(schemaFields.filter(isAudioField).map((field) => [field.name, false])),
+                    }
+                  : fieldValues
+              }
+              hasAudioInput={hasAudioInput}
               onModeChange={taskRunning ? undefined : onVideoModeChange}
               onFieldChange={taskRunning ? () => undefined : handleFieldChange}
             />
@@ -2306,7 +2421,7 @@ export default function CanvasNodePanel({
 
         <div className={styles.generateActions}>
           {/* 预估费用是说明文字，不与右侧生成按钮共用点击区域。 */}
-          {kind !== 'text' && (
+          {
             <span
               className={`${styles.costText} ${
                 costEstimate.loading
@@ -2324,16 +2439,14 @@ export default function CanvasNodePanel({
                     ? creditsYuanHint(costEstimate.estimated_cost)
                     : '—'}
             </span>
-          )}
+          }
           <button
             type="button"
             className={styles.generateBtn}
             data-canvas-generate
             onClick={handleGenerate}
             disabled={
-              taskRunning ||
-              checkingAssets ||
-              (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode || Boolean(inputValidationError))
+              taskRunning || checkingAssets || !selectedModel || !operationCode || Boolean(inputValidationError)
             }
             // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事。
             title={
@@ -2341,14 +2454,12 @@ export default function CanvasNodePanel({
                 ? '正在检查参考素材…'
                 : taskRunning
                   ? '生成过程中不能修改，请添加新的节点使用其他模型'
-                  : kind === 'text'
-                    ? '保存提示词'
-                    : !selectedModel
-                      ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                      : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
+                  : !selectedModel
+                    ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                    : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
             }
           >
-            {checkingAssets ? '检查素材中…' : kind === 'text' ? '保存提示词' : generateActionLabel}
+            {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}
           </button>
         </div>
       </div>
@@ -2419,15 +2530,38 @@ function ModelSelector({
     : selected?.displayName || (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')
   // 有被挡住的模型时仍然允许展开：列表里逐条写明为什么用不了
   const canOpen = !disabled && (availableModels.length > 0 || blockedModels.length > 0)
+  const hoverCloseTimerRef = useRef<number | null>(null)
+  const openOnHover = () => {
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverCloseTimerRef.current = null
+    if (canOpen) setOpen(true)
+  }
+  const scheduleHoverClose = () => {
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      setOpen(false)
+      hoverCloseTimerRef.current = null
+    }, 80)
+  }
+  useEffect(
+    () => () => {
+      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    },
+    [],
+  )
 
   return (
-    <div className={styles.selectorWrap}>
+    <div className={styles.selectorWrap} onMouseEnter={openOnHover} onMouseLeave={scheduleHoverClose}>
       <button
         className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
         title={selected ? undefined : blockedReason || emptyLabel || undefined}
         onClick={() => {
           if (!canOpen) return
-          setOpen((v) => !v)
+          openOnHover()
+        }}
+        aria-expanded={open && canOpen}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false)
         }}
       >
         {display}
@@ -2590,6 +2724,7 @@ function LockIcon() {
 /* ── 模型参数菜单（生成方式[视频] + params_schema 动态参数，所有节点类型通用） ── */
 function SchemaFieldMenu({
   kind,
+  hasAudioInput,
   mode,
   followSourceVideo,
   fields,
@@ -2598,6 +2733,7 @@ function SchemaFieldMenu({
   onFieldChange,
 }: {
   kind: string
+  hasAudioInput?: boolean
   mode?: VideoMode
   /** 编辑 / 延长：比例与时长跟随原视频，这两项只展示说明、不可选。 */
   followSourceVideo?: boolean
@@ -2664,7 +2800,9 @@ function SchemaFieldMenu({
       <Popover
         open={open}
         onOpenChange={setOpen}
-        trigger="click"
+        trigger={['hover', 'click']}
+        mouseEnterDelay={0}
+        mouseLeaveDelay={0.08}
         placement="top"
         align={{ offset: [centerOffset, 0] }}
         arrow={false}
@@ -2737,12 +2875,15 @@ function SchemaFieldMenu({
                       <div className={styles.videoBtnGroup}>
                         <button
                           className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
+                          disabled={hasAudioInput && isAudioField(f)}
+                          title={hasAudioInput && isAudioField(f) ? '已接入音频，自动生成背景音已关闭' : undefined}
                           onClick={() => onFieldChange?.(f.name, true)}
                         >
                           {formatBooleanValue(f, true)}
                         </button>
                         <button
                           className={`${styles.videoBtnGroupItem} ${!current ? styles.videoBtnGroupItemActive : ''}`}
+                          disabled={hasAudioInput && isAudioField(f)}
                           onClick={() => onFieldChange?.(f.name, false)}
                         >
                           {formatBooleanValue(f, false)}
@@ -2810,7 +2951,13 @@ function SchemaFieldMenu({
                             className={`${styles.videoBtnGroupItem} ${isActive(o) ? styles.videoBtnGroupItemActive : ''}`}
                             onClick={() => onFieldChange?.(f.name, o)}
                           >
-                            {formatFieldValue(f, o, kind)}
+                            {isRatioField(f) ? (
+                              <RatioLabel ratio={String(o)} stacked>
+                                {formatFieldValue(f, o, kind)}
+                              </RatioLabel>
+                            ) : (
+                              formatFieldValue(f, o, kind)
+                            )}
                           </button>
                         ))}
                       </div>
@@ -2827,6 +2974,7 @@ function SchemaFieldMenu({
           className={styles.selector}
           title={display}
           aria-expanded={open}
+          onClick={() => setOpen(true)}
           onKeyDown={(event) => {
             if (event.key === 'Escape') setOpen(false)
           }}

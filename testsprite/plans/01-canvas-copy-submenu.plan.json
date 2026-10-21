@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "type": "frontend",
+  "name": "无限画布：节点右键「创建副本」有两个子选项",
+  "description": "需求 recvw1s5he1Vzy：右键创建副本应有子选项列表——只含当前节点 / 包含之前所有节点，两项始终都给。",
+  "priority": "p0",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "打开 /login，切换到「密码登录」标签，用项目里保存的测试账号的手机号和密码登录，勾选同意用户协议后点击「登录」"
+    },
+    {
+      "type": "action",
+      "description": "点击左侧边栏的「无限画布」，在画布列表里点击「新建画布」，名称填写 testsprite-复制测试，确认创建并进入画布"
+    },
+    {
+      "type": "action",
+      "description": "在画布空白处点击鼠标右键，在菜单的「添加节点」分组里点击「文本节点」"
+    },
+    {
+      "type": "action",
+      "description": "在刚创建的文本节点上点击鼠标右键，然后把鼠标悬停在菜单第一项「创建副本」上"
+    },
+    {
+      "type": "assertion",
+      "description": "「创建副本」右侧展开一个子菜单，子菜单里同时显示「只含当前节点」和「包含之前所有节点」两项"
+    },
+    {
+      "type": "action",
+      "description": "点击子菜单里的「包含之前所有节点」"
+    },
+    {
+      "type": "assertion",
+      "description": "画布上多出一个文本节点副本，页面出现「已复制 1 个节点及其连线」之类的成功提示"
+    }
+  ]
+}

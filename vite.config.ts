@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { ProxyOptions } from 'vite'
 import type { IncomingMessage } from 'node:http'
 import { resolveProxyTarget } from './src/build/proxyTarget'
+import { rewriteBusinessAuthCallback } from './src/build/authCallbackProxy'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -15,6 +16,8 @@ export default defineConfig(({ mode }) => {
   const deepAuthOrigin = env.DEEPAUTH_REMOTE_ORIGIN || env.VITE_DEEPAUTH_REMOTE_ORIGIN
   const ssoOrigin = env.SSO_REMOTE_ORIGIN || env.VITE_SSO_REMOTE_ORIGIN
   const businessTarget = resolveProxyTarget(businessOrigin, 'http://localhost:9000', 'ZZH_REMOTE_ORIGIN')
+  const businessPublicOrigin = resolveProxyTarget(env.ZZH_PUBLIC_ORIGIN, businessTarget, 'ZZH_PUBLIC_ORIGIN')
+  const businessOrigins = new Set([businessTarget, businessPublicOrigin])
   const deepAuthTarget = resolveProxyTarget(deepAuthOrigin, 'http://localhost:8080', 'DEEPAUTH_REMOTE_ORIGIN')
   const ssoTarget = resolveProxyTarget(ssoOrigin, 'http://localhost:8001', 'SSO_REMOTE_ORIGIN')
   // AI 润色/文本:本地部署的 vLLM(OpenAI 兼容)模型,后端就绪后改 AI_MODEL_ORIGIN 即可
@@ -43,7 +46,6 @@ export default defineConfig(({ mode }) => {
     'https://zzh-zhongdahengrui.oss-accelerate.aliyuncs.com',
     'TEMPLATE_MEDIA_ORIGIN',
   )
-  const businessCallbackUrl = `${normalizeBaseUrl(businessTarget)}/auth/callback`
 
   return {
     plugins: [react()],
@@ -69,6 +71,16 @@ export default defineConfig(({ mode }) => {
           manualChunks(id) {
             const normalizedId = id.replaceAll('\\', '/')
             if (!normalizedId.includes('/node_modules/')) return undefined
+            // 图片工具按需加载；渲染器与场景基础类分块，保持现有单 chunk 上限。
+            if (normalizedId.includes('/node_modules/three/src/')) {
+              const rendererOnly = /\/renderers\/(?:WebGLRenderer\.js|webgl\/|webxr\/WebXRManager\.js|shaders\/)/.test(
+                normalizedId,
+              )
+              const sharedShader = /\/(?:UniformsUtils\.js|default_vertex\.glsl\.js|default_fragment\.glsl\.js)$/.test(
+                normalizedId,
+              )
+              return rendererOnly && !sharedShader ? 'canvas-three-renderer' : 'canvas-three-core'
+            }
             if (/\/node_modules\/(?:react|react-dom|react-router|react-router-dom|scheduler)\//.test(normalizedId)) {
               return 'vendor-react'
             }
@@ -114,7 +126,7 @@ export default defineConfig(({ mode }) => {
               try {
                 const url = new URL(location)
                 const locOrigin = normalizeBaseUrl(url.origin)
-                if (locOrigin === normalizeBaseUrl(businessTarget)) {
+                if (businessOrigins.has(locOrigin)) {
                   proxyRes.headers.location = url.pathname + url.search + url.hash || '/'
                 } else if (locOrigin === normalizeBaseUrl(ssoTarget)) {
                   proxyRes.headers.location = '/sso' + url.pathname + url.search + url.hash
@@ -191,7 +203,7 @@ export default defineConfig(({ mode }) => {
                   // SSO 自身的回跳 → 保留在 /sso 代理内
                   if (locOrigin === normalizeBaseUrl(ssoTarget)) {
                     proxyRes.headers.location = '/sso' + url.pathname + url.search + url.hash
-                  } else if (locOrigin === normalizeBaseUrl(businessTarget)) {
+                  } else if (businessOrigins.has(locOrigin)) {
                     proxyRes.headers.location = url.pathname + url.search + url.hash || '/'
                   } else if (locOrigin === normalizeBaseUrl(deepAuthTarget)) {
                     proxyRes.headers.location = '/deepauth' + url.pathname + url.search + url.hash
@@ -215,12 +227,11 @@ export default defineConfig(({ mode }) => {
             proxy.on('proxyReq', (proxyReq) => {
               proxyReq.removeHeader('origin')
             })
-            proxy.on('proxyRes', (proxyRes, req) => {
+            proxy.on('proxyRes', (proxyRes) => {
               const location = proxyRes.headers.location
-              const devOrigin = getDevOrigin(req)
-
-              if (location?.startsWith(businessCallbackUrl)) {
-                proxyRes.headers.location = location.replace(businessCallbackUrl, `${devOrigin}/auth/callback`)
+              const callback = rewriteBusinessAuthCallback(location, businessOrigins)
+              if (callback) {
+                proxyRes.headers.location = callback
               } else if (location && (location.startsWith('http://') || location.startsWith('https://'))) {
                 try {
                   const url = new URL(location)

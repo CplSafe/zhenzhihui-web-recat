@@ -34,6 +34,10 @@ export interface CanvasNodeToolbarProps {
   onPreview?: () => void
   onCapture?: (position: CanvasCapturePosition) => void
   onDelete: () => void
+  onHd?: () => void
+  onCompareHd?: () => void
+  hdDisabledReason?: string
+  onImageTool?: (code: string) => void
 }
 
 const CAPTURE_ITEMS: Array<{ position: CanvasCapturePosition; label: string; hint?: string }> = [
@@ -56,6 +60,10 @@ export default function CanvasNodeToolbar({
   onPreview,
   onCapture,
   onDelete,
+  onHd,
+  onCompareHd,
+  hdDisabledReason,
+  onImageTool,
 }: CanvasNodeToolbarProps) {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const captureWrapRef = useRef<HTMLSpanElement | null>(null)
@@ -93,7 +101,7 @@ export default function CanvasNodeToolbar({
 
   return (
     <div
-      className={`${styles.bar} nodrag nopan`}
+      className={`${styles.bar} ${kind === 'image' ? styles.imageBar : ''} nodrag nopan`}
       style={{ left: anchor.centerX, bottom: anchor.bottom }}
       role="toolbar"
       aria-label="节点操作"
@@ -162,6 +170,50 @@ export default function CanvasNodeToolbar({
         </button>
       )}
 
+      {kind === 'image' && hasContent && !uploading && onImageTool && (
+        <>
+          <button
+            type="button"
+            className={`${styles.action} ${styles.textAction}`}
+            onClick={() => onImageTool('image.multi_angle')}
+          >
+            多角度
+          </button>
+          <button
+            type="button"
+            className={`${styles.action} ${styles.textAction}`}
+            onClick={() => onImageTool('image.relight')}
+          >
+            打光
+          </button>
+          <button
+            type="button"
+            className={`${styles.action} ${styles.textAction}`}
+            onClick={() => onImageTool('image.panorama')}
+          >
+            全景
+          </button>
+        </>
+      )}
+
+      {onHd && (isMedia || kind === 'timeline') && (
+        <span title={hdDisabledReason || '提升画质，保留原文件'}>
+          <button
+            type="button"
+            className={styles.action}
+            onClick={onHd}
+            disabled={Boolean(hdDisabledReason)}
+            aria-label="超分"
+          >
+            超分
+          </button>
+        </span>
+      )}
+      {onCompareHd && (
+        <button type="button" className={styles.action} onClick={onCompareHd} aria-label="对比高清版">
+          对比
+        </button>
+      )}
       <span className={styles.divider} aria-hidden="true" />
 
       <button

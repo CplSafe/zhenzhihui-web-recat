@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
+import RatioLabel from '@/components/common/RatioLabel'
 import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES } from '@/data/demoTemplates'
 import { loadTemplateCatalog, type TemplateCatalogSource } from '@/utils/templateCatalog'
@@ -232,7 +233,7 @@ export default function TemplatesView() {
                     className={`home__ratio-chip${ratioFilter === r ? ' is-active' : ''}`}
                     onClick={() => setRatioFilter(r)}
                   >
-                    {RATIO_LABELS[r] || r}
+                    {r ? <RatioLabel ratio={r}>{RATIO_LABELS[r] || r}</RatioLabel> : RATIO_LABELS[r]}
                   </button>
                 ))}
               </div>

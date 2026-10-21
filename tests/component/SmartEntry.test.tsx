@@ -1,7 +1,8 @@
-﻿import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { waitFor } from '@testing-library/react'
-import type { ComponentProps } from 'react'
+import { useMemo, type ComponentProps } from 'react'
+import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SmartEntry from '@/components/smart/SmartEntry/SmartEntry'
 import { createGenerationModelOperationStateMap } from '@/utils/generationModelCatalog'
@@ -53,7 +54,8 @@ async function pickModel(user: ReturnType<typeof userEvent.setup>, modelName: st
 
 /** 统一挂载入口组件，便于各用例按需覆盖回调与初始值。 */
 function TestSmartEntry(props: ComponentProps<typeof SmartEntry>) {
-  return <SmartEntry {...props} />
+  const router = useMemo(() => createMemoryRouter([{ path: '*', element: <SmartEntry {...props} /> }]), [props])
+  return <RouterProvider router={router} />
 }
 
 /**
@@ -539,6 +541,38 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
+  it('shows an explicit reason when the script catalog has no available model', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        modelGroups={[
+          {
+            key: 'script',
+            label: '生成脚本',
+            subgroups: [
+              {
+                key: 'responses.multimodal',
+                label: '脚本生成模型',
+                models: [
+                  {
+                    id: '__unavailable_script__',
+                    name: '暂无可用模型',
+                    disabled: true,
+                    unavailableReason: '当前空间暂无可用脚本模型',
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+    expect(screen.getByRole('status')).toHaveTextContent('当前空间暂无可用脚本模型')
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+  })
+
   it('requires every homepage model slot and submits the backend model ids after dropdown selection', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
@@ -858,7 +892,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     const user = userEvent.setup()
     render(<TestSmartEntry onSubmit={vi.fn()} />)
 
-    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    await user.click(screen.getByRole('button', { name: '选择爆款脚本' }))
     const options = screen.getAllByRole('option')
     expect(options.map((option) => option.textContent)).toEqual(['不使用脚本', '电商广告', '本地生活广告'])
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
@@ -868,16 +902,16 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     const user = userEvent.setup()
     render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '推广新品咖啡' }} />)
 
-    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    await user.click(screen.getByRole('button', { name: '选择爆款脚本' }))
     await user.click(screen.getByRole('option', { name: '电商广告' }))
     expect(screen.getByRole('button', { name: /电商广告/ })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('推广新品咖啡\n\n使用电商广告帮我优化')
 
     await user.click(screen.getByRole('button', { name: /电商广告/ }))
     await user.click(screen.getByRole('option', { name: '不使用脚本' }))
-    expect(screen.getByRole('button', { name: '爆款脚本自动生成' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '选择爆款脚本' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('推广新品咖啡')
-    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    await user.click(screen.getByRole('button', { name: '选择爆款脚本' }))
     expect(screen.getByRole('option', { name: '不使用脚本' })).toHaveAttribute('aria-selected', 'true')
   })
 
@@ -904,7 +938,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     await pickModel(user, '不限时长的视频模型')
     await pickCreativeParam(user, '9:16')
     await pickCreativeParam(user, '7s')
-    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    await user.click(screen.getByRole('button', { name: '选择爆款脚本' }))
     expect(screen.getByRole('option', { name: '本地生活广告' })).toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '电商广告' }))
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('推广新品咖啡\n\n使用电商广告帮我优化')

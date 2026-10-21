@@ -175,6 +175,10 @@
   cursor: pointer;
 }
 
+.ratioSelect {
+  min-width: 104px;
+}
+
 /* 产品素材 */
 .materials {
   display: flex;

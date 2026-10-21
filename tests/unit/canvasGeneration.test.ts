@@ -5,11 +5,21 @@ import {
   canvasVideoReferenceMode,
   inferCanvasConnectionRole,
   normalizeCanvasAssetSource,
+  validateCanvasGenerationPrompt,
   validateCanvasImageInputs,
   validateCanvasVideoInputs,
 } from '@/utils/canvasGeneration'
 
 describe('canvas image generation source validation', () => {
+  it('blocks empty descriptions for every generative node before a request is assembled', () => {
+    expect(validateCanvasGenerationPrompt('text', '   ')).toContain('生成分镜')
+    expect(validateCanvasGenerationPrompt('image', '')).toContain('图片描述')
+    expect(validateCanvasGenerationPrompt('video', '\n')).toContain('视频描述')
+    expect(validateCanvasGenerationPrompt('audio', null)).toContain('音频描述')
+    expect(validateCanvasGenerationPrompt('timeline', '')).toBeNull()
+    expect(validateCanvasGenerationPrompt('image', '一只猫')).toBeNull()
+  })
+
   it('音频参考只用于声明支持的模型，按实际 role 下发', () => {
     const sourceRefs = [{ kind: 'audio', assetId: 91, workspaceId: 21 }]
     expect(buildCanvasInputAssets(sourceRefs, 'video.text_to_video', undefined, 'image', 'reference_audio')).toEqual([

@@ -13,6 +13,7 @@
  * 与 localStorage 草稿（canvasDraft.ts）字段结构保持一致，保证两种存储可互相迁移。
  */
 import type { Node, Edge } from '@xyflow/react'
+import { assetStreamUrl } from './assetUrl'
 import type { CanvasElementMutation } from '@/api/canvasApi'
 import {
   inferCanvasConnectionRole,
@@ -78,7 +79,9 @@ interface SerializableNodeData {
   operationCode?: string
   /** 节点 params_schema 参数（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
+  panoramaView?: Record<string, unknown>
   audioReferences?: Array<{ assetId: number; workspaceId: number; title: string }>
+  croppedInputAssets?: Record<string, { originalAssetId: number; assetId: number; workspaceId: number }>
   /** 最近一次生成任务 ID（在途/已完成均可，用于刷新后续轮询） */
   taskId?: number
   taskFailure?: import('./generationFailure').GenerationFailure
@@ -87,6 +90,7 @@ interface SerializableNodeData {
   taskSubmissionFingerprint?: string
   taskSubmitInterrupted?: boolean
   taskRunId?: string
+  textGenerationMode?: 'storyboard'
   /** 最近一次任务状态 */
   taskStatus?: string
   /** 最近一次任务进度（0-100，后端未提供时可为空） */
@@ -114,6 +118,15 @@ interface SerializableNodeData {
   groupId?: string
   /** 分组名；与 groupId 一样冗余存在每个成员上（画布只按节点持久化，没有分组实体） */
   groupName?: string
+  /** 高清结果的耐久来源信息，禁止写入签名 URL。 */
+  hd?: {
+    taskId: string
+    sourceNodeId: string
+    sourceAssetId: number
+    sourceSpec: string
+    spec: string
+    reviewPolicy: string
+  }
 }
 
 /**
@@ -139,7 +152,9 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'prompt',
   'operationCode',
   'params',
+  'panoramaView',
   'audioReferences',
+  'croppedInputAssets',
   'taskId',
   'taskFailure',
   'taskFailureHistory',
@@ -147,6 +162,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'taskSubmissionFingerprint',
   'taskSubmitInterrupted',
   'taskRunId',
+  'textGenerationMode',
   'taskStatus',
   'taskProgress',
   'taskError',
@@ -159,6 +175,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'sourceAudioNodeId',
   'groupId',
   'groupName',
+  'hd',
 ] as const satisfies readonly (keyof SerializableNodeData)[]
 
 /**
@@ -333,7 +350,18 @@ export function collectCanvasSourceRefs(
   }
 
   visit(targetNodeId, false)
-  return refs
+  const overrides = nodeById.get(targetNodeId)?.data?.croppedInputAssets as SerializableNodeData['croppedInputAssets']
+  return refs.map((ref) => {
+    const crop = overrides?.[ref.edgeId]
+    return crop && crop.originalAssetId === ref.assetId
+      ? {
+          ...ref,
+          assetId: crop.assetId,
+          workspaceId: crop.workspaceId,
+          thumbnailUrl: assetStreamUrl(crop.assetId, crop.workspaceId),
+        }
+      : ref
+  })
 }
 
 /**
@@ -510,6 +538,8 @@ export function collectCanvasElementAssetIds(elements: CanvasElementMutation[]):
     const data = (node.data || {}) as Record<string, unknown>
     add(data.assetId)
     add(data.posterAssetId)
+    const cropped = data.croppedInputAssets as SerializableNodeData['croppedInputAssets']
+    for (const reference of Object.values(cropped || {})) add(reference.assetId)
     if (Array.isArray(data.audioReferences)) data.audioReferences.forEach((reference) => add(reference?.assetId))
     if (Array.isArray(data.imageResultAssetIds)) data.imageResultAssetIds.forEach(add)
     const timeline = data.timeline as

@@ -6,6 +6,21 @@ export interface CanvasGenerationSourceRef {
   workspaceId?: number
 }
 
+/**
+ * 所有可提交生成节点共用的提示词校验。
+ *
+ * 参考素材只决定模型的视觉输入，不能替代任务描述；空文本继续下发会被部分供应商
+ * 解析为无效请求（甚至返回“JSON 非法”），因此必须在面板和最终提交层同时拦截。
+ */
+export function validateCanvasGenerationPrompt(kind: string | undefined, prompt: unknown): string | null {
+  if (String(prompt || '').trim()) return null
+  if (kind === 'image') return '请输入图片描述后再生成；仅连接图片仍需要文字描述'
+  if (kind === 'video') return '请输入视频描述后再生成；仅连接图片或音频仍需要文字描述'
+  if (kind === 'audio') return '请输入音频描述后再生成'
+  if (kind === 'text') return '请输入视频创作需求后再生成分镜'
+  return null
+}
+
 export type CanvasAssetSource = 'canvas' | 'upload' | 'materials' | 'generated' | 'real_person' | 'unknown'
 
 export function normalizeCanvasAssetSource(value: unknown): CanvasAssetSource {

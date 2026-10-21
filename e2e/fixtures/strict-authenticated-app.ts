@@ -514,6 +514,11 @@ export async function installStrictAuthenticatedApp(
       })
       return
     }
+    // 高清服务尚未部署；画布只读探测允许 404，专用超分测试显式覆盖完整协议。
+    if (method === 'GET' && path === '/api/v1/ai/hd/tasks') {
+      await route.fulfill({ status: 404, json: { message: '高清处理服务暂未接入' } })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/ai/tasks') {
       const operation = url.searchParams.get('operation_code') || ''
       const items =

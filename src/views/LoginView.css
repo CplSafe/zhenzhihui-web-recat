@@ -345,8 +345,27 @@
 
 .zlogin-foot {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
   margin-top: 16px;
+}
+
+.zlogin-remember {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.zlogin-remember input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #5767e5;
+  cursor: pointer;
 }
 
 .zlogin-forgot {

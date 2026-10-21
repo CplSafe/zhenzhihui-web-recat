@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "type": "frontend",
+  "name": "无限画布：Ctrl+C 后在空白处 Ctrl+V 弹出二选一",
+  "description": "需求 recvw1s5he1Vzy：复制节点后粘贴到画布背景，先弹「只含当前节点 / 包含之前所有节点」二选一框。",
+  "priority": "p0",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "打开 /login，切换到「密码登录」标签，用项目里保存的测试账号登录（勾选同意协议后点击「登录」）"
+    },
+    {
+      "type": "action",
+      "description": "点击左侧边栏的「无限画布」，新建一个名为 testsprite-粘贴测试 的画布并进入"
+    },
+    {
+      "type": "action",
+      "description": "在画布空白处右键，选择「添加节点」下的「文本节点」，然后在空白处单击一下取消选中"
+    },
+    {
+      "type": "action",
+      "description": "单击选中这个文本节点（不要双击进入编辑），按下 Ctrl+C"
+    },
+    {
+      "type": "assertion",
+      "description": "页面顶部出现「已复制 1 个节点」的提示"
+    },
+    {
+      "type": "action",
+      "description": "在画布上远离该节点的空白处单击一下，然后按下 Ctrl+V"
+    },
+    {
+      "type": "assertion",
+      "description": "出现一个标题为「粘贴哪些节点？」的小框，里面有「只含当前节点」和「包含之前所有节点」两个选项，每项后面标有节点数量"
+    },
+    {
+      "type": "action",
+      "description": "点击小框里的「只含当前节点」"
+    },
+    {
+      "type": "assertion",
+      "description": "小框关闭，画布上出现第二个文本节点"
+    }
+  ]
+}

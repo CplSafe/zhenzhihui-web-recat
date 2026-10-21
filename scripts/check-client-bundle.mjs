@@ -27,7 +27,11 @@ const MAX_SINGLE_JS_BYTES = 460 * 1024
 // 其余都在 0～2 KiB；sourcemap 归因也确认无模块被重复打进多个 chunk）。
 // 这里按实测值重新留约 22 KiB 余量。可回收的大头只有 antd DatePicker（rc-picker，约 25 KiB，
 // 仅团队看板的月份选择与邀请返利的日期区间在用），替换后应把本上限一并收回。
-const MAX_TOTAL_JS_GZIP_BYTES = 1024 * 1024
+// 2026-10-20：画布音频/高清与图片工具扩展了完整产品面；多角度相机、灯球和全景
+// 取景共用按需加载的 Three.js，核心与渲染器分别缓存，首屏不加载。
+// 当前完整生产构建实测约 1248 KiB，保留约 32 KiB 余量；单 JS 460 KiB 上限、
+// 图片预算以及服务端环境泄漏检测均保持原值。
+const MAX_TOTAL_JS_GZIP_BYTES = 1280 * 1024
 const MAX_IMAGE_BYTES = 450 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const FORBIDDEN_CLIENT_ENV_KEY =

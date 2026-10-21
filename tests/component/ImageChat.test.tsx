@@ -276,8 +276,26 @@ describe('ImageChat', () => {
     composer.setSelectionRange(0, 0)
     fireEvent.select(composer)
     await user.click(screen.getByRole('button', { name: '引用参考素材' }))
-    await user.click(screen.getByRole('button', { name: '@图片1' }))
+    await user.click(screen.getByRole('option', { name: '@图片1' }))
     expect(composer).toHaveValue('@图片1 产品@')
+  })
+
+  it('selects a typed @ reference with arrows and Enter without duplicating @', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ImageChat {...baseProps()} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(input, [
+      new File(['x'], 'one.png', { type: 'image/png' }),
+      new File(['y'], 'two.png', { type: 'image/png' }),
+    ])
+    const composer = screen.getByRole('textbox', { name: '图片创作描述' })
+    await user.type(composer, '场景@')
+    expect(screen.getByRole('option', { name: '@图片1' })).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('option', { name: '@图片2' })).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Enter}')
+    expect(composer).toHaveValue('场景@图片2 ')
+    expect(composer).toHaveFocus()
   })
 
   it('opens member center for insufficient points and starts a new chat', async () => {

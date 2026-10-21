@@ -116,6 +116,68 @@ describe('LoginView behavior', () => {
     mocks.startOAuth.mockResolvedValue({ authorize_url: '/auth/continue', state: 'oauth-state' })
   })
 
+  it('remembers the account across login tabs and remounts without storing credentials', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<LoginView />)
+    const phone = screen.getByRole('textbox', { name: '手机号' })
+    expect(screen.getByRole('checkbox', { name: '记住账号' })).not.toBeChecked()
+    await user.type(phone, '13800138000')
+    expect(localStorage.getItem('zzh_remembered_login_account')).toBeNull()
+    await user.click(screen.getByRole('checkbox', { name: '记住账号' }))
+    await selectPasswordLogin(user)
+    expect(screen.getByRole('checkbox', { name: '记住账号' })).toBeChecked()
+    await user.type(screen.getByLabelText('密码'), 'Secret-987!')
+    await user.clear(phone)
+    await user.type(phone, '13900139000')
+    expect(localStorage.getItem('zzh_remembered_login_account')).toBe('13900139000')
+    unmount()
+    render(<LoginView />)
+    expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue('13900139000')
+    expect(screen.getByRole('checkbox', { name: '记住账号' })).toBeChecked()
+    expect(screen.getByRole('textbox', { name: '短信验证码' })).toHaveValue('')
+    await selectPasswordLogin(user)
+    expect(screen.getByLabelText('密码')).toHaveValue('')
+  })
+
+  it('clears the saved account when unchecked and after browser storage is cleared', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('zzh_remembered_login_account', '13800138000')
+    const first = render(<LoginView />)
+    await user.click(screen.getByRole('checkbox', { name: '记住账号' }))
+    expect(localStorage.getItem('zzh_remembered_login_account')).toBeNull()
+    expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue('13800138000')
+    first.unmount()
+    const second = render(<LoginView />)
+    expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue('')
+    expect(screen.getByRole('checkbox', { name: '记住账号' })).not.toBeChecked()
+    second.unmount()
+    localStorage.setItem('zzh_remembered_login_account', '13800138000')
+    localStorage.clear()
+    render(<LoginView />)
+    expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue('')
+    expect(screen.getByRole('checkbox', { name: '记住账号' })).not.toBeChecked()
+  })
+
+  it('keeps login usable when local storage is unavailable', async () => {
+    const read = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    try {
+      const user = userEvent.setup()
+      render(<LoginView />)
+      await user.type(screen.getByRole('textbox', { name: '手机号' }), '13800138000')
+      await user.click(screen.getByRole('checkbox', { name: '记住账号' }))
+      expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue('13800138000')
+      expect(screen.getByRole('checkbox', { name: '记住账号' })).toBeChecked()
+    } finally {
+      read.mockRestore()
+      write.mockRestore()
+    }
+  })
+
   it('keeps the current banner visible until the selected video has decoded its first frame', async () => {
     const user = userEvent.setup()
     mocks.banners = [
@@ -204,7 +266,7 @@ describe('LoginView behavior', () => {
 
     await user.type(screen.getByRole('textbox', { name: '手机号' }), '123')
     await user.type(screen.getByRole('textbox', { name: '短信验证码' }), '592442')
-    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('checkbox', { name: /已经阅读并同意/ }))
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     expect(screen.getByText('请输入正确的手机号')).toBeInTheDocument()
@@ -231,7 +293,7 @@ describe('LoginView behavior', () => {
     await user.click(screen.getByRole('button', { name: '登录' }))
     await user.click(screen.getByRole('button', { name: '同意并继续' }))
     await waitFor(() => expect(mocks.loginWithPassword).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('checkbox')).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /已经阅读并同意/ })).toBeChecked()
 
     await act(async () => {
       login.resolve({ ok: true })
@@ -245,7 +307,7 @@ describe('LoginView behavior', () => {
     mocks.clearExistingSession.mockReturnValue(clearing.promise)
     render(<LoginView />)
     await fillPasswordLogin(user)
-    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('checkbox', { name: /已经阅读并同意/ }))
 
     const password = screen.getByLabelText('密码')
     password.focus()
@@ -270,7 +332,7 @@ describe('LoginView behavior', () => {
     mocks.loginWithPassword.mockRejectedValue(new Error('认证失败'))
     render(<LoginView />)
     await fillPasswordLogin(user, { mobile, password: secret })
-    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('checkbox', { name: /已经阅读并同意/ }))
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('认证失败', 'error', 5000))
@@ -289,7 +351,7 @@ describe('LoginView behavior', () => {
     render(<LoginView />)
     await user.type(screen.getByRole('textbox', { name: '手机号' }), '176 3312 5265')
     await user.type(screen.getByRole('textbox', { name: '短信验证码' }), ' 592442 ')
-    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('checkbox', { name: /已经阅读并同意/ }))
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     await waitFor(() =>
@@ -310,7 +372,7 @@ describe('LoginView behavior', () => {
     mocks.loginWithPassword.mockResolvedValueOnce({ attempt: 'old' }).mockResolvedValueOnce({ attempt: 'new' })
     render(<LoginView />)
     await fillPasswordLogin(user, { password: 'Old-Password-1!' })
-    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('checkbox', { name: /已经阅读并同意/ }))
 
     await user.click(screen.getByRole('button', { name: '登录' }))
     await waitFor(() => expect(mocks.getAuthenticatedSession).toHaveBeenCalledTimes(1))
@@ -345,7 +407,7 @@ describe('LoginView behavior', () => {
     try {
       render(<LoginView />)
       await fillPasswordLogin(user, { password: 'Some-Password-1!' })
-      await user.click(screen.getByRole('checkbox'))
+      await user.click(screen.getByRole('checkbox', { name: /已经阅读并同意/ }))
       await user.click(screen.getByRole('button', { name: '登录' }))
       await waitFor(() => expect(mocks.handleLoginSuccess).toHaveBeenCalledWith(session, '/projects/12/videos?x=1'))
     } finally {

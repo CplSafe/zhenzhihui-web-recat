@@ -99,6 +99,21 @@ function CanvasFloatingToolbar({
                 </div>
               </button>
             )}
+            {CANVAS_AUDIO_NODES_ENABLED && (
+              <button
+                className={styles.addMenuItem}
+                onClick={() => {
+                  onAddNode('audio-editor')
+                  setMenuOpen(false)
+                }}
+              >
+                <span className={styles.addMenuIcon}>♫</span>
+                <div className={styles.addMenuText}>
+                  <span className={styles.addMenuLabel}>音频编辑</span>
+                  <span className={styles.addMenuDesc}>裁剪、音量、淡入淡出</span>
+                </div>
+              </button>
+            )}
             <button
               className={styles.addMenuItem}
               onClick={() => {

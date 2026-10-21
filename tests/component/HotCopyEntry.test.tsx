@@ -179,6 +179,129 @@ describe('HotCopyEntry project asset access', () => {
     expect(screen.queryByRole('button', { name: '返回下一步' })).not.toBeInTheDocument()
   })
 
+  function mountMentions(text = '') {
+    const onSubmit = vi.fn()
+    const onDraftChange = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        onDraftChange={onDraftChange}
+        initial={{
+          tab: 'remake',
+          text,
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          duration: '7s',
+          modelVersionId: 220,
+          products: [201, 202, 203].map((id) => ({ assetId: id, url: `/${id}.png`, file: null, isVideo: false })),
+        }}
+        modelGroups={modelGroupsWith([{ id: 220, name: '复制模型' }])}
+        modelReady
+      />,
+    )
+    return { input: screen.getByRole('textbox') as HTMLTextAreaElement, onSubmit, onDraftChange }
+  }
+
+  it('filters typed mentions and replaces the entire query without trailing fragments', async () => {
+    const user = userEvent.setup()
+    const { input } = mountMentions('前 后')
+    input.focus()
+    input.setSelectionRange(2, 2)
+    await user.keyboard('@图片2')
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option', { name: '@图片2' })).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Enter}')
+    expect(input).toHaveValue('前 @图片2 后')
+    expect(input).toHaveFocus()
+    await waitFor(() => expect(input.selectionStart).toBe(7))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('supports keyboard navigation after clicking @ and replaces selected text', async () => {
+    const user = userEvent.setup()
+    const { input } = mountMentions('前 替换 后')
+    input.focus()
+    input.setSelectionRange(2, 4)
+    await user.click(screen.getByRole('button', { name: '引用替换素材' }))
+    expect(input).toHaveFocus()
+    await user.keyboard('{ArrowRight}{Enter}')
+    expect(input).toHaveValue('前 @图片2  后')
+    await user.keyboard('@{Escape}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('deletes mentions atomically with Backspace and Delete while preserving ordinary text', async () => {
+    const user = userEvent.setup()
+    const { input } = mountMentions('前 @图片1 后')
+    input.focus()
+    input.setSelectionRange(7, 7)
+    await user.keyboard('{Backspace}')
+    expect(input).toHaveValue('前 @图片1后')
+    await user.keyboard('{Backspace}')
+    expect(input).toHaveValue('前 后')
+    fireEvent.change(input, { target: { value: '前 @图片2 后' } })
+    input.setSelectionRange(2, 2)
+    await user.keyboard('{Delete}')
+    expect(input).toHaveValue('前 后')
+  })
+
+  it('removes deleted material references and renumbers surviving references without cascading', async () => {
+    const { input, onDraftChange } = mountMentions('@图片1 与 @图片2 和 @图片3，保留 @图片10')
+    const firstImage = screen.getByRole('button', { name: '查看替换素材 1' }).parentElement!
+    await userEvent.click(within(firstImage).getByRole('button', { name: '移除' }))
+    expect(input).toHaveValue(' 与 @图片1 和 @图片2，保留 @图片10')
+    await waitFor(() =>
+      expect(onDraftChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          products: [expect.objectContaining({ assetId: 202 }), expect.objectContaining({ assetId: 203 })],
+          text: ' 与 @图片1 和 @图片2，保留 @图片10',
+        }),
+      ),
+    )
+  })
+
+  it('shows empty search results, leaves unknown references unhighlighted and blocks submission', async () => {
+    const user = userEvent.setup()
+    const { input, onSubmit } = mountMentions()
+    await user.type(input, '@图片9')
+    expect(screen.getByText('没有匹配的替换素材')).toBeInTheDocument()
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
+    expect(document.querySelector('.hotcopy__refTag')).toBeNull()
+    await user.keyboard('{Backspace}')
+    expect(input).toHaveValue('@图片')
+    expect(screen.getAllByRole('option')).toHaveLength(3)
+    await user.keyboard('9')
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('@图片9 对应的素材不存在，请重新选择引用素材', 'error')
+  })
+
+  it('does not trigger mention selection or submission during IME composition', () => {
+    const { input, onSubmit } = mountMentions('@图片1')
+    input.focus()
+    fireEvent.input(input, { target: { value: '@' }, isComposing: true })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true, isComposing: true })
+    fireEvent.keyDown(input, { key: 'Backspace', isComposing: true })
+    expect(input).toHaveValue('@')
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('submits selected mentions in the same image order as the saved materials', async () => {
+    const user = userEvent.setup()
+    const { input, onSubmit } = mountMentions('使用 ')
+    await user.click(input)
+    await user.keyboard('@图片3{Enter}')
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '使用 @图片3 ',
+        products: [201, 202, 203].map((assetId) => expect.objectContaining({ assetId })),
+      }),
+    )
+  })
+
   it('shows unlinked and accessible-project videos but hides restricted and unknown linked videos', async () => {
     mocks.listCreativeProjects.mockResolvedValue([project(1, [7]), project(2, [9])])
     mocks.listAssets.mockResolvedValue({

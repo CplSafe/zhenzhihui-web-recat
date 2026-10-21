@@ -1,0 +1,95 @@
+.root {
+  position: relative;
+  width: min(1100px, calc(100vw - 120px));
+  max-width: 100%;
+  height: min(740px, calc(100dvh - 200px));
+  min-height: 180px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #13151a;
+  color: #fff;
+}
+.viewport {
+  position: absolute;
+  inset: 0 0 72px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  outline-offset: -3px;
+}
+.viewport[data-dragging='true'] {
+  cursor: grabbing;
+}
+.viewport .image {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  object-fit: contain;
+  transform-origin: center;
+  user-select: none;
+  border-radius: 0;
+}
+.toolbar {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #30333c;
+  white-space: nowrap;
+}
+.toolbar button,
+.toolbar input {
+  background: #424651;
+  color: white;
+  border: 1px solid #626778;
+  border-radius: 5px;
+  min-height: 30px;
+}
+.toolbar button {
+  cursor: pointer;
+  padding: 3px 10px;
+}
+.toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.toolbar input {
+  width: 62px;
+  text-align: right;
+  padding: 2px;
+}
+.toolbar button:focus-visible,
+.toolbar input:focus-visible {
+  outline: 2px solid #9da7ff;
+  outline-offset: 2px;
+}
+.hint {
+  position: absolute;
+  bottom: 6px;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: #bbc0cd;
+  pointer-events: none;
+}
+@media (max-width: 600px) {
+  .root {
+    width: calc(100vw - 32px);
+    height: calc(100dvh - 220px);
+  }
+  .toolbar {
+    gap: 3px;
+  }
+  .toolbar button {
+    padding: 3px 6px;
+  }
+}

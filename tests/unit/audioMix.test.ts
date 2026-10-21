@@ -34,6 +34,44 @@ describe('混音 WAV 导出', () => {
     await expect(renderAudioMix([], 0, 21)).rejects.toThrow('混音时长')
     await expect(renderAudioMix([], 301, 21)).rejects.toThrow('混音时长')
   })
+  it('会话缓存复用解码结果，取消时不读取音频', async () => {
+    const decoded = { duration: 5, length: 240000, numberOfChannels: 2 } as AudioBuffer
+    const decode = vi.fn(async () => decoded)
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        destination = {}
+        decodeAudioData = decode
+        createBufferSource() {
+          return { connect: (gain: any) => gain, start: vi.fn() }
+        }
+        createGain() {
+          return { gain: { setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() }, connect: vi.fn() }
+        }
+        startRendering = async () => decoded
+      },
+    )
+    const fetchAudio = vi.fn(async () => ({
+      ok: true,
+      headers: new Headers(),
+      arrayBuffer: async () => new ArrayBuffer(8),
+    }))
+    vi.stubGlobal('fetch', fetchAudio)
+    const clip = { ...normalizeAudioSettings({ durationSec: 5 }), assetId: 88, sourceNodeId: 'a', title: '声音' }
+    const cache = new Map<string, AudioBuffer>()
+    await renderAudioMix([clip], 5, 21, undefined, 1, { cache })
+    await renderAudioMix([{ ...clip, volume: 0.4 }], 5, 21, undefined, 1, { cache })
+    expect(fetchAudio).toHaveBeenCalledTimes(1)
+    expect(decode).toHaveBeenCalledTimes(1)
+    const controller = new AbortController()
+    controller.abort()
+    await expect(renderAudioMix([clip], 5, 21, undefined, 1, { signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+    expect(fetchAudio).toHaveBeenCalledTimes(1)
+    await renderAudioMix([clip], 5, 22, undefined, 1, { cache })
+    expect(fetchAudio).toHaveBeenCalledTimes(2)
+  })
   it('BGM 循环铺满、人声裁断、静音不下载，独立淡入淡出', async () => {
     const sources: any[] = []
     const gains: any[] = []

@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
+  ArrowLeftOutlined,
   CheckCircleFilled,
   CheckOutlined,
   ClockCircleOutlined,
@@ -45,6 +46,7 @@ import realPersonMoreIcon from '@/assets/resource/figma-real-person-more.svg'
 import realPersonPlusIcon from '@/assets/resource/figma-real-person-plus.svg'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import './RealPersonLibrary.css'
+import RealPersonNoticeModal from './RealPersonNoticeModal'
 
 /** 普通素材上传时写入的来源标记，便于素材中心识别真人素材。 */
 export const REAL_PERSON_ASSET_SOURCE = 'real_person'
@@ -210,34 +212,11 @@ function safeKycUrl(value: unknown): string {
   return ''
 }
 
-function openVerificationWindow(): Window | null {
-  try {
-    const verificationWindow = window.open('about:blank', '_blank')
-    if (verificationWindow) verificationWindow.opener = null
-    return verificationWindow
-  } catch {
-    return null
-  }
-}
-
-function closeVerificationWindow(verificationWindow: Window | null): void {
-  try {
-    verificationWindow?.close()
-  } catch {
-    // The manual QR/link entry remains available if the browser owns the popup.
-  }
-}
-
-function navigateVerificationWindow(verificationWindow: Window | null, h5Link: unknown): void {
-  const verificationUrl = safeKycUrl(h5Link)
-  if (!verificationUrl) {
-    closeVerificationWindow(verificationWindow)
-    return
-  }
-  try {
-    verificationWindow?.location.replace(verificationUrl)
-  } catch {
-    closeVerificationWindow(verificationWindow)
+function withQrExpiry(session: RealPersonSession): RealPersonSession {
+  const serverExpiry = toTimestamp(session.expires_at || session.person.verification_expires_at)
+  return {
+    ...session,
+    expires_at: new Date(Math.min(serverExpiry || Infinity, Date.now() + KYC_SYNC_MAX_DURATION_MS)).toISOString(),
   }
 }
 
@@ -447,7 +426,7 @@ function VerificationStep({
         <div className="real-person-methods">
           {!person ? (
             <>
-              <h3>创建真人档案</h3>
+              <h3>真人认证授权</h3>
               <p>填写形象名称并确认已获得本人授权后开始认证</p>
               <div className="real-person-profile-form">
                 <label>
@@ -490,6 +469,46 @@ function VerificationStep({
                 </button>
               </div>
             </>
+          ) : usableLink ? (
+            <div className="real-person-qr-transition">
+              <h3>扫码认证</h3>
+              <p>请使用手机扫描二维码完成真人认证</p>
+              <div className="real-person-transition-qr">
+                <LocalQrCode value={usableLink} />
+              </div>
+              <p>二维码有效期为 30 分钟</p>
+              <div role={sessionExpired || verificationFailed ? 'alert' : 'status'} aria-live="polite">
+                {verified
+                  ? '认证成功，3 秒后自动返回素材上传页'
+                  : sessionExpired
+                    ? '二维码已失效，请刷新二维码后重新扫码'
+                    : verificationFailed
+                      ? `认证失败，${firstText(person.last_error) || '请刷新二维码后重试'}`
+                      : '等待扫码认证，认证结果将在此处显示'}
+              </div>
+              {!verified && (
+                <>
+                  <button
+                    type="button"
+                    className="real-person-primary-action"
+                    disabled={busy || syncing}
+                    onClick={onRestart}
+                  >
+                    {busy ? <LoadingOutlined spin /> : <ReloadOutlined />} 刷新二维码
+                  </button>
+                  {!sessionExpired && !verificationFailed && (
+                    <button
+                      type="button"
+                      className="real-person-sync-action"
+                      disabled={syncing || busy}
+                      onClick={onSync}
+                    >
+                      我已完成认证，同步状态
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           ) : verified ? (
             <div className="real-person-inline-success" role="status">
               <CheckCircleFilled />
@@ -513,35 +532,6 @@ function VerificationStep({
               </button>
               <button type="button" className="real-person-sync-action" disabled={syncing || busy} onClick={onSync}>
                 {syncing ? <LoadingOutlined spin /> : <ReloadOutlined />} 同步认证状态
-              </button>
-            </>
-          ) : usableLink ? (
-            <>
-              <h3>认证方式</h3>
-              <p>支持以下方式完成真人验证，完成后页面会自动同步</p>
-              <a className="real-person-method-card" href={usableLink} target="_blank" rel="noreferrer">
-                <span className="real-person-method-visual real-person-method-qr">
-                  <LocalQrCode value={usableLink} />
-                </span>
-                <span className="real-person-method-copy">
-                  <strong>扫码认证</strong>
-                  <small>使用手机扫描二维码进入认证页面</small>
-                </span>
-                <span aria-hidden="true">›</span>
-              </a>
-              <a className="real-person-method-card" href={usableLink} target="_blank" rel="noreferrer">
-                <span className="real-person-method-visual real-person-method-face">
-                  <ScanOutlined />
-                </span>
-                <span className="real-person-method-copy">
-                  <strong>人脸认证</strong>
-                  <small>在新窗口中打开认证页面并完成人脸识别</small>
-                </span>
-                <span aria-hidden="true">›</span>
-              </a>
-              <button type="button" className="real-person-sync-action" disabled={syncing || busy} onClick={onSync}>
-                {syncing ? <LoadingOutlined spin /> : <ReloadOutlined />}
-                我已完成认证，同步状态
               </button>
             </>
           ) : (
@@ -788,6 +778,7 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
   const [profileName, setProfileName] = useState('')
   const [profileDescription, setProfileDescription] = useState('')
   const [consentConfirmed, setConsentConfirmed] = useState(false)
+  const [showReadingNotice, setShowReadingNotice] = useState(false)
   const [activePerson, setActivePerson] = useState<RealPerson | null>(null)
   const [verificationSession, setVerificationSession] = useState<RealPersonSession | null>(null)
   const [creatingProfile, setCreatingProfile] = useState(false)
@@ -1044,6 +1035,7 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       writeCreationDraft(workspaceId, userId, null)
     }
     setCreating(false)
+    setShowReadingNotice(false)
     setRestoringFlow(false)
     setStep(1)
     setVerificationSession(null)
@@ -1073,7 +1065,7 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       flowRootRef.current?.querySelector<HTMLElement>('.real-person-flow-exit')?.focus()
     }, 0)
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || showReadingNotice) return
       event.preventDefault()
       leaveCreating()
     }
@@ -1083,7 +1075,7 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = previousOverflow
     }
-  }, [creating, leaveCreating])
+  }, [creating, leaveCreating, showReadingNotice])
 
   const finishCreating = useCallback(() => {
     writeCreationDraft(workspaceId, userId, null)
@@ -1095,26 +1087,23 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
     if (!name || !consentConfirmed || creatingProfile) return
     const signal = flowAbortRef.current?.signal
     const existingPersonIds = new Set(people.map((record) => record.id))
-    // Open synchronously from the user's click so browsers do not block the
-    // provider page after the asynchronous profile request resolves.
-    const verificationWindow = openVerificationWindow()
     setCreatingProfile(true)
     try {
-      const session = await createRealPerson({
-        workspaceId,
-        name,
-        consentConfirmed: true,
-        description: profileDescription.trim() || undefined,
-        signal,
-      })
+      const session = withQrExpiry(
+        await createRealPerson({
+          workspaceId,
+          name,
+          consentConfirmed: true,
+          description: profileDescription.trim() || undefined,
+          signal,
+        }),
+      )
       kycPollingDeadlineRef.current = null
       setActivePerson(session.person)
       setVerificationSession(session)
       persistFlow(session.person, session, null, null)
       showToast('真人档案已创建，请完成真人认证', 'success')
-      navigateVerificationWindow(verificationWindow, session.h5_link)
     } catch (error: unknown) {
-      closeVerificationWindow(verificationWindow)
       if (!isAbortError(error)) {
         let recoveredPerson: RealPerson | null = null
         try {
@@ -1143,25 +1132,21 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
   const handleRestartVerification = useCallback(async () => {
     if (!activePerson?.id || creatingProfile || syncingKyc) return
     const signal = flowAbortRef.current?.signal
-    // Keep the restart flow consistent with initial creation: reserve a window
-    // during the click event, then navigate it after the API returns the new
-    // short-lived H5 link.
-    const verificationWindow = openVerificationWindow()
     setCreatingProfile(true)
     try {
-      const session = await restartRealPersonVerification({
-        workspaceId,
-        personId: activePerson.id,
-        signal,
-      })
+      const session = withQrExpiry(
+        await restartRealPersonVerification({
+          workspaceId,
+          personId: activePerson.id,
+          signal,
+        }),
+      )
       kycPollingDeadlineRef.current = null
       setActivePerson(session.person)
       setVerificationSession(session)
       persistFlow(session.person, session, pendingLocalAsset, pendingMapping)
       showToast('已生成新的认证链接', 'success')
-      navigateVerificationWindow(verificationWindow, session.h5_link)
     } catch (error: unknown) {
-      closeVerificationWindow(verificationWindow)
       if (!isAbortError(error)) {
         showToast(getRealPeopleErrorMessage(error, '重新发起认证失败，请稍后重试'), 'error')
       }
@@ -1189,9 +1174,7 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
         const person = await syncRealPerson({ workspaceId, personId, signal })
         setActivePerson(person)
         if (isRealPersonVerified(person)) {
-          setStep(2)
-          setVerificationSession(null)
-          persistFlow(person, null, pendingLocalAsset, pendingMapping)
+          persistFlow(person, verificationSession, pendingLocalAsset, pendingMapping)
           if (feedback) showToast('真人认证已通过，可以上传素材', 'success')
           void loadPeople()
         } else {
@@ -1250,7 +1233,15 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       void synchronizeKyc(personId, false)
     }
     const timer = window.setInterval(syncSilently, KYC_SYNC_INTERVAL_MS)
-    const deadlineTimer = window.setTimeout(() => window.clearInterval(timer), Math.max(0, pollDeadline - Date.now()))
+    const deadlineTimer = window.setTimeout(
+      () => {
+        window.clearInterval(timer)
+        setVerificationSession((session) =>
+          session ? { ...session, expires_at: new Date(pollDeadline).toISOString() } : session,
+        )
+      },
+      Math.max(0, pollDeadline - Date.now()),
+    )
     window.addEventListener('focus', syncSilently)
     document.addEventListener('visibilitychange', syncSilently)
     return () => {
@@ -1260,6 +1251,16 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       document.removeEventListener('visibilitychange', syncSilently)
     }
   }, [activePerson, creating, step, synchronizeKyc, verificationSession])
+
+  const verificationSucceeded = isRealPersonVerified(activePerson)
+  useEffect(() => {
+    if (!creating || step !== 1 || !verificationSucceeded) return
+    const timer = window.setTimeout(() => {
+      setStep(2)
+      setVerificationSession(null)
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [creating, step, activePerson?.id, verificationSucceeded])
 
   const completeAssetFlow = useCallback(
     async (mapping: RealPersonAsset) => {
@@ -1618,12 +1619,23 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
         <button
           type="button"
           className="real-person-flow-exit"
+          aria-label="返回"
           disabled={uploading || creatingProfile || syncingKyc || Boolean(syncingAssetId)}
           onClick={leaveCreating}
         >
-          返回真人素材库
+          <ArrowLeftOutlined />
+          返回
         </button>
         <CreationSteps step={step} />
+        {showReadingNotice && (
+          <RealPersonNoticeModal
+            onCancel={() => setShowReadingNotice(false)}
+            onAgree={() => {
+              setShowReadingNotice(false)
+              void handleCreateProfile()
+            }}
+          />
+        )}
         {restoringFlow ? (
           <p className="real-person-flow-loading" role="status">
             <LoadingOutlined spin /> 正在恢复真人档案…
@@ -1640,7 +1652,7 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
             onNameChange={setProfileName}
             onDescriptionChange={setProfileDescription}
             onConsentChange={setConsentConfirmed}
-            onCreate={() => void handleCreateProfile()}
+            onCreate={() => setShowReadingNotice(true)}
             onRestart={() => void handleRestartVerification()}
             onSync={() => void synchronizeKyc(activePerson?.id || 0, true)}
           />

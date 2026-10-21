@@ -227,6 +227,31 @@
   display: inline-flex;
 }
 
+.realPersonHint {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 31;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #5767e5;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 4px 14px #5767e533;
+}
+
+.realPersonHint::after {
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  border: 5px solid transparent;
+  border-top-color: #5767e5;
+  content: '';
+}
+
 .refAddMenu {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -765,10 +790,13 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .selectorWrap {
   position: relative;
+  min-width: 0;
 }
 
 .selector {
@@ -781,7 +809,7 @@
   cursor: pointer;
   white-space: nowrap;
   font-family: 'PingFang SC', sans-serif;
-  max-width: 240px;
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

@@ -66,6 +66,41 @@ describe('copyCanvasNodes', () => {
 })
 
 describe('materializeCanvasClipboard', () => {
+  it('音频节点复制粘贴保留素材、时长与混音设置，不复制生成任务', () => {
+    const audio = { durationSec: 8, inSec: 1, outSec: 7, volume: 0.6, origin: 'upload' }
+    const payload = copyCanvasNodes({
+      nodes: [
+        {
+          id: 'audio-1',
+          position: { x: 20, y: 30 },
+          data: {
+            kind: 'audio',
+            title: '旁白.mp3',
+            assetId: 42,
+            assetWorkspaceId: 21,
+            audio,
+            taskId: 9,
+            taskStatus: 'running',
+          },
+        },
+      ],
+      edges: [],
+      selectedIds: ['audio-1'],
+      runtimeKeys,
+    })!
+    const result = materializeCanvasClipboard(payload, {
+      origin: { x: 500, y: 600 },
+      createNodeId: () => 'audio-new',
+      buildEdgeId: () => 'edge',
+    })
+    expect(result.nodes[0]).toMatchObject({
+      id: 'audio-new',
+      position: { x: 500, y: 600 },
+      data: { kind: 'audio', title: '旁白.mp3', assetId: 42, assetWorkspaceId: 21, audio },
+    })
+    expect(result.nodes[0].data).not.toHaveProperty('taskId')
+    expect(result.nodes[0].data).not.toHaveProperty('taskStatus')
+  })
   it('换上新 id、按落点摆放，连线与 handle 里的旧 id 一并替换', () => {
     const payload = copyCanvasNodes({ nodes, edges, selectedIds: ['img-1', 'vid-1'], runtimeKeys })!
     let seq = 0

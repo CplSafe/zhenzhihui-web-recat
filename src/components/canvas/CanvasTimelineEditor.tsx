@@ -16,6 +16,7 @@
  * 合成本身由 onCompose 交给上层的合成引擎执行。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import CanvasTimelineAudioWaveform from './CanvasTimelineAudioWaveform'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { buildFilmstrip, getCachedFilmstrip } from '@/utils/videoFilmstrip'
 import {
@@ -42,6 +43,12 @@ import {
   type TimelineClip,
   type TimelineState,
 } from '@/utils/timelineClips'
+import {
+  getTimelinePixelsPerSecond,
+  MAX_TIMELINE_PX_PER_SEC,
+  MIN_TIMELINE_PX_PER_SEC,
+  TIMELINE_AUTO_FIT_MAX_SEC,
+} from '@/utils/timelineScale'
 import CanvasTimelinePlayer from './CanvasTimelinePlayer'
 import CanvasAudioMixer from './CanvasAudioMixer'
 import { parseTimelineAudio } from '@/utils/canvasAudio'
@@ -76,10 +83,6 @@ interface CanvasTimelineEditorProps {
   onAddClipToCanvas?: (clip: TimelineClip) => void
 }
 
-/** 缩放下限：再小片段就细成一条线，认不出也点不中。 */
-const MIN_PX_PER_SEC = 6
-/** 缩放上限：1 秒占满半屏已经够做逐帧微调了，再放大只是空转。 */
-const MAX_PX_PER_SEC = 480
 /** 吸附半径（像素）。用像素而不是秒：不管缩放到哪一档，手感都一样。 */
 const SNAP_THRESHOLD_PX = 8
 /** 位移小于这个像素数按「点击」处理，否则轻微抖动会把点选变成一次排序。 */
@@ -153,7 +156,23 @@ export default function CanvasTimelineEditor({
 }: CanvasTimelineEditorProps) {
   const [playheadSec, setPlayheadSec] = useState(0)
   const [previewPlaying, setPreviewPlaying] = useState(false)
+  const [audioPreviewReady, setAudioPreviewReady] = useState(false)
+  const [audioSolo, setAudioSolo] = useState(false)
+  const audioStartRef = useRef<(() => Promise<boolean>) | null>(null)
+  const registerAudioStart = useCallback((start: (() => Promise<boolean>) | null) => {
+    audioStartRef.current = start
+  }, [])
+  const startPreviewAudio = useCallback(() => audioStartRef.current?.() ?? Promise.resolve(false), [])
   const audioClips = useMemo(() => parseTimelineAudio(state.audioClips), [state.audioClips])
+  const audioDragRef = useRef<{
+    id: string
+    pointerId: number
+    x: number
+    startSec: number
+    nextSec: number
+    scale: number
+  } | null>(null)
+  const [audioDragPosition, setAudioDragPosition] = useState<{ id: string; startSec: number } | null>(null)
   const [selectedClipId, setSelectedClipId] = useState('')
   const [addOpen, setAddOpen] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -235,15 +254,18 @@ export default function CanvasTimelineEditor({
   useEffect(() => {
     const element = scrollRef.current
     if (!element) return
-    setViewportWidth(element.getBoundingClientRect().width || 0)
+    setViewportWidth(element.clientWidth || 0)
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver((entries) => setViewportWidth(entries[0]?.contentRect?.width || 0))
     observer.observe(element)
     return () => observer.disconnect()
   }, [open])
 
-  const fitPxPerSec = draftTotalSec > 0 && viewportWidth > 0 ? viewportWidth / draftTotalSec : 60
-  const livePxPerSec = Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, zoomPxPerSec || fitPxPerSec))
+  useEffect(() => {
+    if (totalSec <= TIMELINE_AUTO_FIT_MAX_SEC && zoomPxPerSec !== 0) setZoomPxPerSec(0)
+  }, [totalSec, zoomPxPerSec])
+
+  const livePxPerSec = getTimelinePixelsPerSecond(draftTotalSec, viewportWidth, zoomPxPerSec)
 
   /**
    * 拖动期间冻结缩放比例。
@@ -770,7 +792,9 @@ export default function CanvasTimelineEditor({
               clips={draftClips}
               workspaceId={workspaceId}
               hideTimeline
-              originalAudioVolume={state.originalAudioVolume ?? 1}
+              originalAudioVolume={audioSolo ? 0 : (state.originalAudioVolume ?? 1)}
+              playbackBlocked={CANVAS_AUDIO_NODES_ENABLED && audioClips.length > 0 && !audioPreviewReady}
+              beforePlay={CANVAS_AUDIO_NODES_ENABLED && audioClips.length > 0 ? startPreviewAudio : undefined}
               playheadSec={previewPlayheadSec}
               onPlayingChange={setPreviewPlaying}
               onPlayheadChange={(next) => {
@@ -1004,16 +1028,20 @@ export default function CanvasTimelineEditor({
           <div className={styles.toolGroup}>
             <button
               type="button"
-              onClick={() => setZoomPxPerSec(Math.max(MIN_PX_PER_SEC, pxPerSec / 1.5))}
+              onClick={() => setZoomPxPerSec(Math.max(MIN_TIMELINE_PX_PER_SEC, pxPerSec / 1.5))}
+              disabled={draftTotalSec <= TIMELINE_AUTO_FIT_MAX_SEC}
               aria-label="缩小时间轴"
+              title={draftTotalSec <= TIMELINE_AUTO_FIT_MAX_SEC ? '30 秒内自动完整展示' : '缩小时间轴'}
             >
               −
             </button>
             <span className={styles.zoomValue}>{Math.round(pxPerSec)} px/s</span>
             <button
               type="button"
-              onClick={() => setZoomPxPerSec(Math.min(MAX_PX_PER_SEC, pxPerSec * 1.5))}
+              onClick={() => setZoomPxPerSec(Math.min(MAX_TIMELINE_PX_PER_SEC, pxPerSec * 1.5))}
+              disabled={draftTotalSec <= TIMELINE_AUTO_FIT_MAX_SEC}
               aria-label="放大时间轴"
+              title={draftTotalSec <= TIMELINE_AUTO_FIT_MAX_SEC ? '30 秒内自动完整展示' : '放大时间轴'}
             >
               +
             </button>
@@ -1024,7 +1052,19 @@ export default function CanvasTimelineEditor({
         </div>
 
         {/* 时间轴：刻度尺 + 一条主视频轨道，播放头贯穿两者 */}
-        <div className={styles.timelineScroll} ref={scrollRef}>
+        <div
+          className={styles.timelineScroll}
+          ref={scrollRef}
+          role="region"
+          aria-label="时间轴滚动区域"
+          tabIndex={0}
+          onWheel={(event) => {
+            const element = event.currentTarget
+            if (element.scrollWidth <= element.clientWidth || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+            element.scrollLeft += event.deltaY
+            event.preventDefault()
+          }}
+        >
           <div className={styles.timelineContent} ref={contentRef} style={{ width: `${contentWidth}px` }}>
             <div
               className={styles.ruler}
@@ -1154,38 +1194,94 @@ export default function CanvasTimelineEditor({
 
             {CANVAS_AUDIO_NODES_ENABLED && (
               <div className={styles.audioTracks} aria-label="同步音轨">
-                {(['voice', 'bgm'] as const).map((lane) => (
-                  <div
-                    key={lane}
-                    className={`${styles.audioTrack} ${lane === 'voice' ? styles.voiceTrack : styles.bgmTrack}`}
-                    aria-label={lane === 'voice' ? '人声轨' : 'BGM 轨'}
-                  >
-                    <span className={styles.audioTrackName}>{lane === 'voice' ? '人声' : 'BGM'}</span>
-                    {audioClips
-                      .filter((clip) => clip.lane === lane)
-                      .map((clip) => {
-                        const remaining = Math.max(0, draftTotalSec - clip.startSec)
-                        const length = clip.loop ? remaining : Math.min(remaining, clip.outSec - clip.inSec)
-                        return (
-                          <span
-                            key={clip.sourceNodeId}
-                            className={styles.audioTrackClip}
-                            style={{
-                              left: `${clip.startSec * pxPerSec}px`,
-                              width: `${Math.max(2, length * pxPerSec)}px`,
-                              opacity: clip.muted ? 0.38 : 1,
-                            }}
-                            title={`${clip.title} · ${length.toFixed(1)} 秒${clip.loop ? ' · 循环' : ''}`}
-                          >
-                            {clip.title}{' '}
-                            <small>
-                              {length.toFixed(1)}s{clip.loop ? ' ↻' : ''}
-                            </small>
-                          </span>
-                        )
-                      })}
-                  </div>
-                ))}
+                {audioClips.map((clip, index) => {
+                  const startSec =
+                    audioDragPosition?.id === clip.sourceNodeId ? audioDragPosition.startSec : clip.startSec
+                  const remaining = Math.max(0, draftTotalSec - startSec)
+                  const length = clip.loop ? remaining : Math.min(remaining, clip.outSec - clip.inSec)
+                  return (
+                    <div
+                      key={clip.sourceNodeId}
+                      className={`${styles.audioTrack} ${clip.lane === 'bgm' ? styles.bgmTrack : styles.voiceTrack}`}
+                      role="group"
+                      aria-label={`音轨 ${index + 1}：${clip.title}`}
+                    >
+                      <span className={styles.audioTrackName}>
+                        {index + 1} · {clip.lane === 'voice' ? '人声' : 'BGM'} · {clip.title}
+                      </span>
+                      <span
+                        key={clip.sourceNodeId}
+                        className={styles.audioTrackClip}
+                        onPointerDown={(event) => {
+                          if (event.button !== 0) return
+                          event.stopPropagation()
+                          event.preventDefault()
+                          capturePointer(event.currentTarget, event.pointerId)
+                          audioDragRef.current = {
+                            id: clip.sourceNodeId,
+                            pointerId: event.pointerId,
+                            x: event.clientX,
+                            startSec: clip.startSec,
+                            nextSec: clip.startSec,
+                            scale: pxPerSec,
+                          }
+                        }}
+                        onPointerMove={(event) => {
+                          const drag = audioDragRef.current
+                          if (!drag || drag.pointerId !== event.pointerId) return
+                          event.stopPropagation()
+                          drag.nextSec = Math.max(
+                            0,
+                            Math.min(
+                              Math.max(0, draftTotalSec - 0.1),
+                              Math.round((drag.startSec + (event.clientX - drag.x) / drag.scale) * 100) / 100,
+                            ),
+                          )
+                          setAudioDragPosition({ id: drag.id, startSec: drag.nextSec })
+                        }}
+                        onPointerUp={(event) => {
+                          const drag = audioDragRef.current
+                          if (!drag || drag.pointerId !== event.pointerId) return
+                          event.stopPropagation()
+                          audioDragRef.current = null
+                          setAudioDragPosition(null)
+                          releasePointer(event.currentTarget, event.pointerId)
+                          if (drag.nextSec !== drag.startSec)
+                            update({
+                              ...state,
+                              audioClips: audioClips.map((item) =>
+                                item.sourceNodeId === drag.id ? { ...item, startSec: drag.nextSec } : item,
+                              ),
+                            })
+                        }}
+                        onPointerCancel={(event) => {
+                          audioDragRef.current = null
+                          setAudioDragPosition(null)
+                          releasePointer(event.currentTarget, event.pointerId)
+                        }}
+                        style={{
+                          left: `${startSec * pxPerSec}px`,
+                          width: `${Math.max(2, length * pxPerSec)}px`,
+                          opacity: clip.muted ? 0.38 : 1,
+                        }}
+                        title={`${clip.title} · ${length.toFixed(1)} 秒${clip.loop ? ' · 循环' : ''}`}
+                      >
+                        <CanvasTimelineAudioWaveform
+                          clip={clip}
+                          workspaceId={workspaceId}
+                          length={length}
+                          width={length * pxPerSec}
+                        />
+                        <span className={styles.audioClipLabel}>
+                          {clip.title}{' '}
+                          <small>
+                            {length.toFixed(1)}s{clip.loop ? ' ↻' : ''}
+                          </small>
+                        </span>
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             )}
 
@@ -1240,6 +1336,9 @@ export default function CanvasTimelineEditor({
             playheadSec={previewPlayheadSec}
             playing={previewPlaying}
             onChange={(next) => update({ ...state, audioClips: next })}
+            onPreviewReadyChange={setAudioPreviewReady}
+            onSoloChange={setAudioSolo}
+            onPreviewPlay={registerAudioStart}
             originalAudioVolume={state.originalAudioVolume ?? 1}
             onOriginalAudioVolumeChange={(volume) => update({ ...state, originalAudioVolume: volume })}
             addableSources={addableAudioSources}

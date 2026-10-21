@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "type": "frontend",
+  "name": "无限画布：新建视频节点默认画面比例为 9:16",
+  "description": "投放以竖屏为主：新建视频节点、模型支持 9:16 时，参数里的画面比例默认就是 9:16，不再默认 16:9 或自适应。只看参数，不点生成。",
+  "priority": "p0",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "打开 /login，切换到「密码登录」标签，用项目里保存的测试账号登录（勾选同意协议后点击「登录」）"
+    },
+    {
+      "type": "action",
+      "description": "点击左侧边栏的「无限画布」，新建一个名为 testsprite-比例测试 的画布并进入"
+    },
+    {
+      "type": "action",
+      "description": "在画布空白处右键，选择「添加节点」下的「视频节点」，然后单击这个视频节点，使下方出现它的编辑面板"
+    },
+    {
+      "type": "action",
+      "description": "在编辑面板底部的模型选择按钮中选择 Framora 1.0（若列表里没有 Framora，就选择任意一个支持 9:16 的视频模型）"
+    },
+    {
+      "type": "assertion",
+      "description": "编辑面板底部的参数按钮文字里包含「9:16」，例如「全能参考 · 10秒 · 2K · 9:16」"
+    },
+    {
+      "type": "action",
+      "description": "点击这个参数按钮展开参数菜单"
+    },
+    {
+      "type": "assertion",
+      "description": "参数菜单的「画面比例」一组里，当前选中（高亮）的是 9:16"
+    },
+    {
+      "type": "action",
+      "description": "按 Esc 或点击空白处关闭参数菜单，不要点击生成按钮"
+    }
+  ]
+}

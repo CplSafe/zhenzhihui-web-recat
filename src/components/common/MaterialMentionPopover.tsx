@@ -1,5 +1,6 @@
+import { useMentionNavigation } from '@/composables/useMentionNavigation'
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject, type CSSProperties } from 'react'
 import styles from './MaterialMentionPopover.module.css'
 
 export interface MaterialMentionItem {
@@ -10,9 +11,11 @@ export interface MaterialMentionItem {
 }
 
 interface MaterialMentionPopoverProps {
+  inputRef: RefObject<HTMLTextAreaElement>
   open: boolean
   title: string
   items: MaterialMentionItem[]
+  emptyMessage?: string
   layout?: 'strip' | 'grid'
   getAnchorRect: () => DOMRect | null
   onSelect: (index: number) => void
@@ -26,14 +29,29 @@ const GRID_PANEL_WIDTH = 252
 
 /** 素材提及面板：既可锚定 textarea 内的 @，也可锚定工具栏按钮。 */
 export default function MaterialMentionPopover({
+  inputRef,
   open,
   title,
   items,
+  emptyMessage,
   layout = 'strip',
   getAnchorRect,
   onSelect,
   onClose,
 }: MaterialMentionPopoverProps) {
+  const { activeIndex, setActiveIndex } = useMentionNavigation(
+    open,
+    items.map((item) => item.key),
+    inputRef,
+    onSelect,
+    onClose,
+  )
+  useEffect(() => {
+    if (open)
+      panelRef.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [open, activeIndex])
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [style, setStyle] = useState<CSSProperties>({ visibility: 'hidden' })
 
@@ -88,9 +106,11 @@ export default function MaterialMentionPopover({
     }
   }, [onClose, open, place])
 
-  if (!open || !items.length) return null
+  if (!open || (!items.length && !emptyMessage)) return null
   const desiredWidth =
-    layout === 'grid' ? GRID_PANEL_WIDTH : Math.min(MAX_PANEL_WIDTH, Math.max(96, items.length * 80 + 20))
+    layout === 'grid'
+      ? GRID_PANEL_WIDTH
+      : Math.min(MAX_PANEL_WIDTH, Math.max(emptyMessage ? 200 : 96, items.length * 80 + 20))
 
   return createPortal(
     <div
@@ -101,6 +121,11 @@ export default function MaterialMentionPopover({
       aria-label={title}
     >
       <div className={styles.title}>{title}</div>
+      {!items.length && (
+        <div role="status" className={styles.title}>
+          {emptyMessage}
+        </div>
+      )}
       <div
         className={`${styles.scroller}${layout === 'grid' ? ` ${styles.grid}` : ''}`}
         onWheel={(event) => {
@@ -115,8 +140,10 @@ export default function MaterialMentionPopover({
             key={item.key}
             type="button"
             role="option"
-            aria-selected="false"
+            aria-selected={index === activeIndex}
             className={styles.item}
+            onMouseDown={(event) => event.preventDefault()}
+            onMouseEnter={() => setActiveIndex(index)}
             onClick={() => onSelect(index)}
           >
             {item.kind === 'video' ? (

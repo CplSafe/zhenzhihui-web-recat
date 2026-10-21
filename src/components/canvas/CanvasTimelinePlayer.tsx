@@ -1,3 +1,4 @@
+import CanvasNodeFailure from './CanvasNodeFailure'
 /**
  * 时间线播放器：把多段视频当成一条连续的片子播放。
  *
@@ -33,6 +34,8 @@ interface CanvasTimelinePlayerProps {
   playheadSec?: number
   onPlayheadChange?: (seconds: number) => void
   onPlayingChange?: (playing: boolean) => void
+  playbackBlocked?: boolean
+  beforePlay?: () => Promise<boolean>
   /** 提供后片段块上出现移除按钮；不提供则轨道是只读的。 */
   onRemoveClip?: (clipId: string) => void
   /** 提供后轨道末尾出现「+」，空时间线也显示居中的添加入口。 */
@@ -82,6 +85,8 @@ export default function CanvasTimelinePlayer({
   playheadSec: controlledPlayheadSec,
   onPlayheadChange,
   onPlayingChange,
+  playbackBlocked = false,
+  beforePlay,
   onRemoveClip,
   onAddClip,
   hideTimeline = false,
@@ -91,6 +96,10 @@ export default function CanvasTimelinePlayer({
   const [activeSlot, setActiveSlot] = useState(0)
   const [innerPlayheadSec, setInnerPlayheadSec] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const startRequestRef = useRef(0)
+  const blockedRef = useRef(playbackBlocked)
+  blockedRef.current = playbackBlocked
   useEffect(() => {
     onPlayingChange?.(playing)
   }, [playing, onPlayingChange])
@@ -301,18 +310,58 @@ export default function CanvasTimelinePlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const togglePlay = useCallback(() => {
+  useEffect(() => {
+    if (playbackBlocked) {
+      startRequestRef.current += 1
+      setStarting(false)
+      setPlaying(false)
+      pauseAll()
+    }
+  }, [playbackBlocked, pauseAll])
+  useEffect(
+    () => () => {
+      startRequestRef.current += 1
+    },
+    [],
+  )
+
+  const togglePlay = useCallback(async () => {
     if (!state.clips.length) return
     if (playing) {
       setPlaying(false)
       pauseAll()
       return
     }
+    if (playbackBlocked || starting) return
+    const request = ++startRequestRef.current
+    if (beforePlay) {
+      setStarting(true)
+      let ready = false
+      try {
+        ready = await beforePlay()
+      } catch {
+        ready = false
+      } finally {
+        if (request === startRequestRef.current) setStarting(false)
+      }
+      if (!ready || blockedRef.current || request !== startRequestRef.current) return
+    }
     // 已经放到结尾时再点播放：从头开始
     if (playheadSec >= totalSec) setPlayheadSec(0)
     setPlaying(true)
     playActive()
-  }, [playing, playheadSec, totalSec, state.clips.length, pauseAll, playActive, setPlayheadSec])
+  }, [
+    playing,
+    playheadSec,
+    totalSec,
+    state.clips.length,
+    pauseAll,
+    playActive,
+    setPlayheadSec,
+    playbackBlocked,
+    starting,
+    beforePlay,
+  ])
 
   /** 当前段播到尾：切到备用槽位继续，最后一段则停在结尾。 */
   const handleTimeUpdate = useCallback(() => {
@@ -564,16 +613,26 @@ export default function CanvasTimelinePlayer({
         ))}
         {/* 故障说明盖在画面上：黑屏本身不传达任何信息，必须说出到底怎么了 */}
         {mediaError ? (
-          <div className={styles.mediaError} role="alert">
-            {mediaError}
-          </div>
+          compact ? (
+            <CanvasNodeFailure reason={mediaError} />
+          ) : (
+            <div className={styles.mediaError} role="alert">
+              {mediaError}
+            </div>
+          )
         ) : null}
       </div>
 
       {/* 控制区与画面同处一块深色面板，中间不留缝——分成两块不同底色的区域会显得是拼上去的 */}
       <div className={`${styles.bar} nodrag nopan`}>
         <div className={styles.transport}>
-          <button type="button" className={styles.play} onClick={togglePlay} aria-label={playing ? '暂停' : '播放'}>
+          <button
+            type="button"
+            className={styles.play}
+            onClick={() => void togglePlay()}
+            disabled={playbackBlocked || starting}
+            aria-label={playing ? '暂停' : '播放'}
+          >
             {playing ? '❚❚' : '▶'}
           </button>
           <span className={styles.time}>

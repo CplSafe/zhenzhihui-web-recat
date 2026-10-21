@@ -1,9 +1,6 @@
 /**
- * RatioIcon — 画一个「朝向随比例变化、整体视觉大小恒定」的矩形图标(供比例下拉的左侧图标用)。
- * 解析 ratio(如 16:9 / 9:16 / 1:1 / 4:3),在 24×24 画布内居中画保持该比值的矩形。
- * 按「面积恒定(几何均值 g 固定)」算宽高:w=g·√(a/b)、h=g·√(b/a) ——
- *   横屏(16:9)→ 约 18 宽的扁矩形(与原图标一样大)、竖屏(9:16)→ 高窄、1:1 → 中等方块,各比例视觉大小一致。
- * 图标宽随比例变化无妨:外层 pill 宽已由 valueMinWidth 固定,SVG 外框恒为 size×size,图标居中不推动布局。
+ * 全站比例选择图标：固定 SVG 外框，内部矩形保持真实宽高比并居中。
+ * 自动或跟随素材等非固定比例显示虚线框与自适应箭头。
  */
 import { parseRatio } from '@/utils/aspectRatio'
 
@@ -13,21 +10,28 @@ interface RatioIconProps {
   size?: number
 }
 
-/** 固定矩形面积的几何均值，使不同宽高比保持接近的视觉重量。 */
-const G = 14
-
-/** 将任意合法宽高比换算为画布内面积近似恒定的居中矩形。 */
+/** 保持真实宽高比，最长边限制在图标画布内。非固定比例使用虚线自适应标记。 */
 export default function RatioIcon({ ratio = '16:9', size = 20 }: RatioIconProps) {
-  const parsed = parseRatio(ratio) || { width: 16, height: 9 }
-  const k = Math.sqrt(parsed.width / parsed.height)
-  const clamp = (v: number) => Math.max(7, Math.min(19, v)) // 防极端比例超出画布/过小
-  const rw = clamp(G * k)
-  const rh = clamp(G / k)
+  const parsed = parseRatio(ratio)
+  const scale = parsed ? 19 / Math.max(parsed.width, parsed.height) : 1
+  const rw = parsed ? parsed.width * scale : 17
+  const rh = parsed ? parsed.height * scale : 17
   const x = (24 - rw) / 2
   const y = (24 - rh) / 2
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.7}>
-      <rect x={x} y={y} width={rw} height={rh} rx={2} />
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      aria-hidden="true"
+      focusable="false"
+      style={{ flexShrink: 0, verticalAlign: 'middle' }}
+    >
+      <rect x={x} y={y} width={rw} height={rh} rx={1.5} strokeDasharray={parsed ? undefined : '3 2'} />
+      {!parsed && <path d="M9 15l6-6M10 9h5v5" strokeLinecap="round" strokeLinejoin="round" />}
     </svg>
   )
 }

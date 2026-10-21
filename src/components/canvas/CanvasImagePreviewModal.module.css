@@ -11,6 +11,21 @@
   animation: canvas-image-preview-fade 0.16s ease-out;
 }
 
+.panoramaAction {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  padding: 8px 18px;
+  background: #119c80;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.panoramaAction:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 3px;
+}
+
 .dialog {
   position: relative;
   display: flex;
@@ -190,6 +205,25 @@
     border-color 0.18s ease,
     color 0.18s ease,
     transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.hdAction {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 54px;
+  padding: 8px 16px;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 999px;
+  background: rgb(38 40 47 / 88%);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.hdAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .close:hover {

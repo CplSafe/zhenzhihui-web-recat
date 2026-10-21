@@ -42,6 +42,7 @@ interface EntryDropdownProps {
    * 滚轮只适合时长这类有序连续档位,且仅支持单选。
    */
   variant?: 'list' | 'wheel'
+  renderOption?: (value: string) => React.ReactNode
 }
 
 /** 渲染入口工具栏统一下拉，并支持外部点击关闭和连续多选。 */
@@ -62,6 +63,7 @@ export default function EntryDropdown({
   clearable = false,
   valueMinWidth,
   variant = 'list',
+  renderOption,
 }: EntryDropdownProps) {
   // 滚轮是单选形态：多选语义（连续勾选、复选标记）在滚轮里没有对应交互，退回平铺列表。
   const useWheel = variant === 'wheel' && !multiple
@@ -194,7 +196,7 @@ export default function EntryDropdown({
                   )}
                 </span>
               )}
-              <span>{o}</span>
+              <span>{renderOption ? renderOption(o) : o}</span>
             </button>
           ))}
         </div>

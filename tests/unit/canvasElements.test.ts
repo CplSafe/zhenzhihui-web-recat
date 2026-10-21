@@ -15,6 +15,24 @@ import {
 } from '@/utils/canvasElements'
 
 describe('canvasElements', () => {
+  it('文本节点独立保存需求和编辑后的分镜，并恢复生成任务', () => {
+    const mutation = nodeToMutation(
+      {
+        id: 'script',
+        type: 'text',
+        position: { x: 0, y: 0 },
+        data: { kind: 'text', prompt: '咖啡广告', taskId: 35, taskStatus: 'processing', modelVersionId: 8 },
+      } as Node,
+      new Map([['script', '[{"title":"开场","prompt":"编辑后的咖啡杯特写"}]']]),
+    )
+    expect(elementsToGraph([mutation]).nodes[0].data).toMatchObject({
+      prompt: '咖啡广告',
+      text: '[{"title":"开场","prompt":"编辑后的咖啡杯特写"}]',
+      taskId: 35,
+      taskStatus: 'processing',
+      modelVersionId: 8,
+    })
+  })
   it('音频编辑节点与源节点关系在画布保存后仍可恢复', () => {
     const mutation = nodeToMutation({
       id: 'audio-editor',

@@ -2,11 +2,12 @@
  * 无限画布 · 本地素材导入的纯逻辑层
  *
  * 供三个入口共用：左侧工具栏「本地素材」、剪贴板粘贴（Ctrl+V）、文件拖拽到画布。
- * 负责从 FileList / DataTransfer 中挑出图片与视频文件，并把原图长宽比就近吸附到图片节点可选比例。
+ * 负责从 FileList / DataTransfer 中挑出图片、视频与音频文件，并把原图长宽比就近吸附到图片节点可选比例。
  *
- * 三个入口必须收同一套文件类型：只在其中一个放行视频，用户会得出「粘贴不支持视频」
- * 这种与实际不符的结论，而这三条路最终走的是同一个导入函数。
+ * 三个入口必须收同一套文件类型，最终走同一个导入函数。
  */
+
+import { isAudioFile } from './canvasAudio'
 
 /** 图片节点可选比例（与 CanvasNodePanel 的 aspectRatios 保持一致） */
 export const IMAGE_NODE_RATIOS = ['2:3', '1:1', '4:3', '16:9', '9:16'] as const
@@ -54,24 +55,29 @@ export function pickVideoFiles(files: ArrayLike<File | null> | null | undefined)
 export interface LocalMediaFiles {
   images: File[]
   videos: File[]
+  audios: File[]
 }
 
 /**
- * 从拖拽 / 剪贴板的 DataTransfer 中提取图片与视频文件。
+ * 从拖拽 / 剪贴板的 DataTransfer 中提取图片、视频与音频文件。
  *
  * 与 extractImageFiles 同样要兼顾 files 为空、只有 items 的情况（粘贴截图、
  * 部分浏览器复制视频文件时走的就是 items）。
- * 判定「files 里有没有东西」必须同时看图片和视频：只看图片的话，
- * 复制单个视频文件时 files 非空但图片为空，会被误判成「没有文件」而去翻 items。
+ * files 包含任一支持的素材时直接使用，避免又从 items 重复导入。
  */
 export function extractMediaFiles(data: DataTransfer | null | undefined): LocalMediaFiles {
-  if (!data) return { images: [], videos: [] }
+  if (!data) return { images: [], videos: [], audios: [] }
   const images = pickImageFiles(data.files)
   const videos = pickVideoFiles(data.files)
-  if (images.length > 0 || videos.length > 0) return { images, videos }
+  const audios = Array.from(data.files || []).filter(isAudioFile)
+  if (images.length > 0 || videos.length > 0 || audios.length > 0) return { images, videos, audios }
   const items = Array.from(data.items || [])
   const fromItems = items.filter((item) => item && item.kind === 'file').map((item) => item.getAsFile())
-  return { images: pickImageFiles(fromItems), videos: pickVideoFiles(fromItems) }
+  return {
+    images: pickImageFiles(fromItems),
+    videos: pickVideoFiles(fromItems),
+    audios: fromItems.filter((file): file is File => Boolean(file) && isAudioFile(file!)),
+  }
 }
 
 /** DataTransfer 中是否携带文件（拖拽画布节点、选中文本时不应触发导入提示） */

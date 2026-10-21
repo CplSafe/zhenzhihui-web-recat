@@ -87,9 +87,8 @@ const TABS = [
   { k: 'upload', l: '我上传的' },
   { k: 'generated', l: '我生成的' },
   { k: 'collected', l: '我收藏的' },
-  { k: 'real_person', l: '真人素材库' },
 ] as const
-type TabKey = (typeof TABS)[number]['k']
+type TabKey = (typeof TABS)[number]['k'] | 'real_person'
 
 /** tab → listAssets source 参数（收藏 tab 走本地收藏，无服务端 source） */
 function tabAssetSource(tab: TabKey): string {
@@ -693,7 +692,8 @@ export default function CanvasMaterialPicker({
           {/* 工具栏：Tab（左）+ 模糊搜索框（最右），无标题无关闭按钮 */}
           <div className={styles.modalToolbar}>
             <div className={styles.modalTabs}>
-              {TABS.map((t) => (
+              {tab === 'real_person' && <span className={styles.modalTabActive}>真人素材库</span>}
+              {(tab === 'real_person' ? [] : TABS).map((t) => (
                 <button
                   key={t.k}
                   className={`${styles.modalTab} ${tab === t.k ? styles.modalTabActive : ''}`}
@@ -841,7 +841,8 @@ export default function CanvasMaterialPicker({
 
       {/* Tab 切换 + 搜索框 */}
       <div className={styles.tabs}>
-        {TABS.map((t) => (
+        {tab === 'real_person' && <span className={styles.tabActive}>真人素材库</span>}
+        {(tab === 'real_person' ? [] : TABS).map((t) => (
           <button
             key={t.k}
             className={`${styles.tab} ${tab === t.k ? styles.tabActive : ''}`}

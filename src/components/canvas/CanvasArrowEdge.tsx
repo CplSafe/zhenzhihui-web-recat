@@ -85,7 +85,7 @@ export default function CanvasArrowEdge({
   })
   const color = (style?.stroke as string) || CANVAS_EDGE_ARROW_COLOR
   const rotation = ARROW_ROTATION[targetPosition] ?? 0
-  const roleLabel = canvasConnectionRoleLabel(data?.displayRole || data?.role)
+  const roleLabel = data?.hdLineage ? '高清处理' : canvasConnectionRoleLabel(data?.displayRole || data?.role)
 
   return (
     <>
