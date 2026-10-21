@@ -20,6 +20,7 @@ vi.mock('@/api/auth', () => ({
 }))
 
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
+import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { releaseLogoutDraftWriteBarrier } from '@/utils/logoutBarrier'
 import { saveSmartEntryDraft, setSmartEntryDraftScope } from '@/utils/smartEntryDraft'
 
@@ -58,6 +59,7 @@ describe('AuthProvider login refresh scheduling', () => {
     vi.useFakeTimers()
     window.localStorage.clear()
     window.sessionStorage.clear()
+    useWorkspaceSessionStore.getState().setAuthSession(null)
     releaseLogoutDraftWriteBarrier('9')
     releaseLogoutDraftWriteBarrier('anon')
     vi.clearAllMocks()
@@ -184,6 +186,43 @@ describe('AuthProvider login refresh scheduling', () => {
     saveSmartEntryDraft({ text: 'must stay cleared after expiry' })
     expect(window.sessionStorage.getItem('zzh.smart-entry.draft.v2_uanon_ws1')).toBeNull()
   })
+
+  it.each([{ status: 500 }, { cause: 'timeout' }, new TypeError('Failed to fetch')])(
+    'preserves login and drafts on transient session errors and recovers on retry: %o',
+    async (error) => {
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <LoginProbe />
+          </AuthProvider>
+        </MemoryRouter>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
+      window.sessionStorage.setItem('zzh.smart-entry.draft.v2_u9_ws1', '{"text":"keep me"}')
+      authMocks.getAuthenticatedSession.mockRejectedValueOnce(error).mockResolvedValueOnce({
+        user: { id: 9 },
+        workspaces: [{ id: 1, type: 'personal' }],
+        expires_in: 120,
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'reload session' }))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(screen.getByLabelText('authenticated')).toHaveTextContent('true')
+      expect(window.sessionStorage.getItem('zzh.smart-entry.draft.v2_u9_ws1')).toContain('keep me')
+      expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.9')).toBeNull()
+      const calls = authMocks.getAuthenticatedSession.mock.calls.length
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(authMocks.getAuthenticatedSession).toHaveBeenCalledTimes(calls + 1)
+      expect(screen.getByLabelText('authenticated')).toHaveTextContent('true')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(84_000)
+      })
+      expect(authMocks.refreshSession).toHaveBeenCalledOnce()
+    },
+  )
 
   it('does not block anonymous drafts when the initial session probe is unauthorized', async () => {
     authMocks.getAuthenticatedSession.mockRejectedValueOnce({ status: 401 })

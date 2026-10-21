@@ -30,7 +30,6 @@ import {
 } from '@/utils/generationFailure'
 import CanvasFailureDetails from './CanvasFailureDetails'
 import {
-  AUDIO_GENERATION_MODE_LABELS,
   getAudioGenerationMode,
   getModelAudioGenerationLabel,
   type AudioGenerationMode,
@@ -102,8 +101,6 @@ export default function CanvasAudioGenerator({
   const settingsTrigger = useRef<HTMLButtonElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const hydratedModel = useRef('')
-  const [modeMenuOpen, setModeMenuOpen] = useState(false)
-  const modeMenuRef = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<AudioGenerationMode | ''>(
     data.operationCode ? getAudioGenerationMode(String(data.operationCode)) : '',
   )
@@ -210,14 +207,13 @@ export default function CanvasAudioGenerator({
   }, [workspaceId, catalogRetry, userId])
   const selected = models.find((m) => m.key === modelKey)
   useEffect(() => {
-    if (!modelMenuOpen && !modeMenuOpen) return
+    if (!modelMenuOpen) return
     const closeOnOutsideClick = (event: MouseEvent) => {
       if (!modelMenuRef.current?.contains(event.target as Node)) setModelMenuOpen(false)
-      if (!modeMenuRef.current?.contains(event.target as Node)) setModeMenuOpen(false)
     }
     document.addEventListener('mousedown', closeOnOutsideClick)
     return () => document.removeEventListener('mousedown', closeOnOutsideClick)
-  }, [modelMenuOpen, modeMenuOpen])
+  }, [modelMenuOpen])
   const selectedAudioConstraint = selected
     ? getModelInputConstraints(selected.model, selected.operationCode).roles.find(
         (role) => /audio/i.test(role.role) && role.maxCount > 0,
@@ -294,16 +290,6 @@ export default function CanvasAudioGenerator({
       modelVersionId: next ? getBackendGenerationModelVersionId(next.model) : null,
       operationCode: next?.operationCode || '',
     })
-  }
-  const selectMode = (nextMode: AudioGenerationMode) => {
-    if (uploadingReference) return
-    setSettingsOpen(false)
-    setMode(nextMode)
-    setModeMenuOpen(false)
-    setModelKey('')
-    setAuthorized(false)
-    changeParams({})
-    updateNodeData(nodeId, { modelVersionId: null, operationCode: '' })
   }
   const fields = useMemo(
     () =>
@@ -759,85 +745,6 @@ export default function CanvasAudioGenerator({
   }
   return (
     <div className={`${styles.generator} canvas-audio-generator`}>
-      {availableModes.length > 1 && (
-        <div className={`${styles.mode} nodrag nopan`} data-audio-section="mode" ref={modeMenuRef}>
-          <button
-            type="button"
-            className={styles.modelTrigger}
-            aria-label="音频生成方式"
-            aria-haspopup="listbox"
-            aria-expanded={modeMenuOpen}
-            disabled={running || loadingModels}
-            onClick={() => {
-              setModelMenuOpen(false)
-              setModeMenuOpen((open) => !open)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault()
-                setModeMenuOpen(true)
-                requestAnimationFrame(() =>
-                  modeMenuRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(),
-                )
-              }
-              if (event.key === 'Escape') setModeMenuOpen(false)
-            }}
-          >
-            <span className={styles.modelTriggerText}>
-              {mode ? AUDIO_GENERATION_MODE_LABELS[mode] : '请选择配音类型'}
-            </span>
-            <svg className={styles.modelChevron} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path
-                d="m4 6 4 4 4-4"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-          {modeMenuOpen && (
-            <div
-              className={styles.modelMenu}
-              role="listbox"
-              aria-label="配音类型列表"
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  setModeMenuOpen(false)
-                  modeMenuRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')?.focus()
-                }
-                if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-                event.preventDefault()
-                const options = Array.from(
-                  modeMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || [],
-                )
-                const index = options.indexOf(document.activeElement as HTMLButtonElement)
-                options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus()
-              }}
-            >
-              {availableModes.map((entry) => (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={entry === mode}
-                  className={`${styles.modelOption} ${entry === mode ? styles.modelOptionSelected : ''}`}
-                  key={entry}
-                  onClick={() => selectMode(entry)}
-                >
-                  <span className={styles.modelOptionDetails}>
-                    <strong>{AUDIO_GENERATION_MODE_LABELS[entry]}</strong>
-                  </span>
-                  {entry === mode && (
-                    <span className={styles.modelCheck} aria-hidden="true">
-                      ✓
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
       <div
         className={`${styles.references} ${draggingReference ? styles.referencesDragging : ''} nodrag nopan`}
         data-audio-section="references"
@@ -941,7 +848,6 @@ export default function CanvasAudioGenerator({
               setSampleLibraryOpen(true)
               setSettingsOpen(false)
               setModelMenuOpen(false)
-              setModeMenuOpen(false)
             }}
           >
             音色库
@@ -1075,7 +981,6 @@ export default function CanvasAudioGenerator({
           aria-expanded={modelMenuOpen}
           disabled={running || loadingModels || models.length === 0}
           onClick={() => {
-            setModeMenuOpen(false)
             setModelMenuOpen((open) => !open)
           }}
           onKeyDown={(event) => {
@@ -1179,7 +1084,6 @@ export default function CanvasAudioGenerator({
                 aria-expanded={settingsOpen}
                 onClick={() => {
                   setModelMenuOpen(false)
-                  setModeMenuOpen(false)
                   setSettingsOpen((value) => !value)
                 }}
               >
@@ -1225,7 +1129,7 @@ export default function CanvasAudioGenerator({
               </span>
             )}
             {quoting && <span role="status">预估中…</span>}
-            {quoteError && <span role="alert">{quoteError}</span>}
+            {quoteError && quoteError !== '请填写voice_id' && <span role="alert">{quoteError}</span>}
           </div>
         </>
       )}

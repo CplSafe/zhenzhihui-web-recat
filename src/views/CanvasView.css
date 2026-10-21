@@ -1990,8 +1990,8 @@
 }
 .canvas-default-node.is-audio .canvas-audio-generator {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(100px, 130px) auto;
-  grid-template-rows: 34px minmax(118px, auto) minmax(40px, auto) minmax(40px, auto);
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-rows: 34px minmax(118px, auto) minmax(40px, auto);
   align-items: center;
   gap: 8px 10px;
   padding: 14px 18px 16px;
@@ -2080,10 +2080,14 @@
   border: 0;
   font-size: 0;
 }
-.canvas-default-node.is-audio
-  .canvas-audio-generator:not(:has([data-audio-section='mode']))
-  [data-audio-section='model'] {
-  grid-column: 1 / 3;
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='model'] > button {
+  height: 40px;
+  padding: 0 12px;
+  border-color: #e4e9ef;
+  border-radius: 10px;
+  background: #f8faf9;
+  font-size: 12px;
+  font-weight: 500;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='mode'] {
   grid-area: 3 / 2 / 4 / 3;
@@ -2112,7 +2116,7 @@
   color: #344054;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] {
-  grid-area: 3 / 3 / 4 / 4;
+  grid-area: 3 / 2 / 4 / 3;
   margin: 0;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] summary {
@@ -2134,7 +2138,7 @@
   color: #344054;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'] {
-  grid-area: 4 / 2 / 5 / 3;
+  grid-area: 4 / 1 / 5 / 4;
   justify-content: flex-end;
   min-width: 0;
   display: flex;
@@ -2172,7 +2176,7 @@
   display: none;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-action='generate'] {
-  grid-area: 4 / 3 / 5 / 4;
+  grid-area: 3 / 3 / 4 / 4;
   width: auto;
   height: 40px;
   min-width: 88px;
@@ -2230,14 +2234,14 @@
 }
 @media (max-width: 620px) {
   .canvas-default-node.is-audio .canvas-audio-generator {
-    grid-template-columns: minmax(0, 1fr) minmax(80px, 100px) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     column-gap: 6px;
   }
   .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='mode'] {
     grid-column: 2;
   }
   .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] {
-    grid-column: 3;
+    grid-column: 2;
   }
   .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'] {
     font-size: 10px;
