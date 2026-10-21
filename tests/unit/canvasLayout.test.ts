@@ -37,10 +37,10 @@ describe('computeLayeredLayout', () => {
     expect(layout.get('bottom')).toEqual({ x: 0, y: 70 })
   })
 
-  it('孤立节点单独放到最后一列，不夹在流程中间', () => {
+  it('孤立节点放在流程下方，不夹在流程中间', () => {
     const nodes = [node('a', 0, 0), node('b', 200, 0), node('lonely', 100, 300)]
     const layout = computeLayeredLayout(nodes, [{ source: 'a', target: 'b' }], { hGap: 10 })
-    expect(layout.get('lonely')!.x).toBeGreaterThan(layout.get('b')!.x)
+    expect(layout.get('lonely')!.y).toBeGreaterThan(layout.get('b')!.y + 50)
   })
 
   it('层号取最长路径：菱形依赖里汇点排在两条支路之后', () => {
@@ -70,9 +70,125 @@ describe('computeLayeredLayout', () => {
     expect(layout.size).toBe(2)
     // 回边被忽略后两者仍分在不同列，而不是叠在一起
     expect(layout.get('a')!.x).not.toBe(layout.get('b')!.x)
+    expect(
+      computeLayeredLayout(
+        nodes.map((n) => ({ ...n, ...layout.get(n.id)! })),
+        [
+          { source: 'a', target: 'b' },
+          { source: 'b', target: 'a' },
+          { source: 'outside', target: 'a' },
+        ],
+      ),
+    ).toEqual(layout)
   })
 
   it('空输入返回空表', () => {
     expect(computeLayeredLayout([], []).size).toBe(0)
+  })
+
+  it('不同工作流各占完整区域，连线不再跨过另一条流程', () => {
+    const nodes = [node('a', 0, 0), node('d', 200, 10), node('c', 0, 50), node('b', 200, 100)]
+    const layout = computeLayeredLayout(nodes, [
+      { source: 'a', target: 'b' },
+      { source: 'c', target: 'd' },
+    ])
+    expect(layout.get('a')!.y).toBe(layout.get('b')!.y)
+    expect(layout.get('c')!.y).toBe(layout.get('d')!.y)
+    const first = [layout.get('a')!, layout.get('b')!]
+    const second = [layout.get('c')!, layout.get('d')!]
+    expect(
+      Math.max(...first.map((p) => p.y + 50)) < Math.min(...second.map((p) => p.y)) ||
+        Math.max(...first.map((p) => p.x + 100)) < Math.min(...second.map((p) => p.x)),
+    ).toBe(true)
+  })
+
+  it('孤立素材按网格换行，不会排成长列', () => {
+    const layout = computeLayeredLayout(
+      Array.from({ length: 16 }, (_, i) => node(String(i), i * 40, i * 20)),
+      [],
+    )
+    const xs = new Set(Array.from(layout.values(), (p) => p.x))
+    const ys = new Set(Array.from(layout.values(), (p) => p.y))
+    expect(xs.size).toBeGreaterThan(1)
+    expect(ys.size).toBeGreaterThan(1)
+    expect(ys.size).toBeLessThan(16)
+  })
+
+  it('父节点围绕分支居中，分支和汇点减少交叉', () => {
+    const nodes = [
+      node('s', 0, 0),
+      node('a', 200, 0),
+      node('b', 200, 100),
+      node('c', 400, 0),
+      node('d', 400, 100),
+      node('t', 600, 0),
+    ]
+    const edges = [
+      { source: 's', target: 'a' },
+      { source: 's', target: 'b' },
+      { source: 'a', target: 'd' },
+      { source: 'b', target: 'c' },
+      { source: 'd', target: 't' },
+      { source: 'c', target: 't' },
+    ]
+    const layout = computeLayeredLayout(nodes, edges)
+    expect((layout.get('a')!.y - layout.get('b')!.y) * (layout.get('d')!.y - layout.get('c')!.y)).toBeGreaterThan(0)
+    expect(Math.abs(layout.get('s')!.y - (layout.get('a')!.y + layout.get('b')!.y) / 2)).toBeLessThanOrEqual(1)
+    expect(Math.abs(layout.get('t')!.y - layout.get('s')!.y)).toBeLessThanOrEqual(1)
+  })
+
+  it('分组整体参与布局，组内节点排列后不会夹入外部节点', () => {
+    const nodes = [
+      { ...node('a', 40, 20), groupId: 'g' },
+      node('other', 0, 50),
+      { ...node('b', 400, 200), groupId: 'g' },
+      node('out', 600, 70),
+    ]
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'out' },
+    ]
+    const layout = computeLayeredLayout(nodes, edges)
+    expect(layout.get('b')!.x).toBeGreaterThan(layout.get('a')!.x)
+    expect(layout.get('out')!.x).toBeGreaterThan(layout.get('b')!.x + 100)
+    expect(layout.get('other')!.y).toBeGreaterThan(layout.get('a')!.y + 50)
+    const again = computeLayeredLayout(
+      nodes.map((n) => ({ ...n, ...layout.get(n.id)! })),
+      edges,
+    )
+    expect(again).toEqual(layout)
+  })
+
+  it('混合尺寸的节点和分组不重叠，重复整理保持稳定', () => {
+    const nodes = [
+      node('a', -200, -100, 320, 500),
+      node('b', 600, 5, 520, 160),
+      node('c', 400, 30, 150, 600),
+      { ...node('d', 50, 100, 220, 100), groupId: 'g' },
+      { ...node('e', 50, 300, 440, 300), groupId: 'g' },
+      node('f', 0, 300, 100, 50),
+    ]
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'a', target: 'c' },
+      { source: 'd', target: 'e' },
+    ]
+    const layout = computeLayeredLayout(nodes, edges)
+    for (let i = 0; i < nodes.length; i++)
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = { ...nodes[i], ...layout.get(nodes[i].id)! }
+        const b = { ...nodes[j], ...layout.get(nodes[j].id)! }
+        expect(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y).toBe(
+          true,
+        )
+      }
+    expect(Math.min(...Array.from(layout.values(), (p) => p.x))).toBe(-200)
+    expect(Math.min(...Array.from(layout.values(), (p) => p.y))).toBe(-100)
+    expect(
+      computeLayeredLayout(
+        nodes.map((n) => ({ ...n, ...layout.get(n.id)! })),
+        edges,
+      ),
+    ).toEqual(layout)
   })
 })

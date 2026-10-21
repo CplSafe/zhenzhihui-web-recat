@@ -90,7 +90,6 @@ import {
   type CanvasPreferences,
 } from '@/utils/canvasPreferences'
 import { computeAlignment, type AlignRect, type AlignmentGuide } from '@/utils/canvasAlignment'
-import { computeLayeredLayout } from '@/utils/canvasLayout'
 import { rememberCanvasModel } from '@/utils/canvasLastModel'
 import {
   boundsOrigin,
@@ -7500,19 +7499,25 @@ function CanvasInner() {
    * 不传 ids 就整理整张画布。只改位置：连线、内容、分组都不动，撤销一步还原。
    */
   const arrangeNodes = useCallback(
-    (ids?: string[]) => {
-      const wanted = ids ? new Set(ids) : null
-      const targets = latestRef.current.nodes.filter((node) => !wanted || wanted.has(node.id))
+    async (ids?: string[]) => {
+      const layoutModule = await import('@/utils/canvasLayout').catch(() => null)
+      if (!layoutModule) {
+        showToast('布局工具加载失败，请重试', 'error')
+        return
+      }
+      const wanted = ids ? new Set(expandSelectionToGroups(latestRef.current.nodes as GroupableNode[], ids)) : null
+      const targets = latestRef.current.nodes.filter((node) => !node.hidden && (!wanted || wanted.has(node.id)))
       if (targets.length < 2) return
-      const layout = computeLayeredLayout(
+      const layout = layoutModule.computeLayeredLayout(
         targets.map((node) => {
           const style = (node.style || {}) as CSSProperties
           return {
             id: node.id,
             x: node.position.x,
             y: node.position.y,
-            width: Number(style.width) || node.measured?.width || 250,
-            height: Number(style.height) || node.measured?.height || 250,
+            width: node.measured?.width || Number(style.width) || 250,
+            height: node.measured?.height || Number(style.height) || 250,
+            groupId: getNodeGroupId(node as GroupableNode) || undefined,
           }
         }),
         latestRef.current.edges.map((edge) => ({ source: edge.source, target: edge.target })),
