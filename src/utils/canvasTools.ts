@@ -106,7 +106,9 @@ export function buildToolGeneration(args: {
   if (assetIds.some((id) => !Number.isSafeInteger(id) || id <= 0) || new Set(assetIds).size !== assetIds.length)
     throw new Error('请选择不同且已上传完成的图片')
   const fields = tool.params_schema?.fields || []
-  const error = validateToolFields(fields, values) || validateToolFields(args.modelFields, args.modelValues)
+  // 打光不提供输出尺寸；旧值和目录默认值同样不参与校验或请求。
+  const modelFields = args.modelFields.filter((field) => tool.code !== 'image.relight' || field.name !== 'size')
+  const error = validateToolFields(fields, values) || validateToolFields(modelFields, args.modelValues)
   if (error) throw new Error(error)
   const prompt = normalizeCanvasToolPrompt(composeStudioPrompt(tool.code, args.prompt, values), { tool: tool.code })
   // 为后端多角度v2模板预留空间，避免拼接后超过模型提示词长度限制。
@@ -121,7 +123,7 @@ export function buildToolGeneration(args: {
     modelVersionId: modelId,
     operationCode: tool.operation_code,
     params: {
-      ...activeToolParams(args.modelFields, args.modelValues),
+      ...activeToolParams(modelFields, args.modelValues),
       // 工具身份与目录版本成对发送，兼容仍按 params.tool 解析模板的后端。
       tool: tool.code,
       tool_version: tool.version,

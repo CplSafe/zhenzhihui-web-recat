@@ -3677,6 +3677,8 @@ function CanvasInner() {
         size?: { width: number; height: number }
         /** 跳过历史快照：批量创建（一次导入多张图片）时由调用方先统一记录一次，撤销才是一步到位 */
         skipHistory?: boolean
+        /** 取景批量添加时保留原节点选区，避免关闭仍在使用的全景预览。 */
+        select?: boolean
       },
     ) => {
       if (type === 'audio-editor') {
@@ -3712,23 +3714,24 @@ function CanvasInner() {
           ...options?.extraData,
         },
         style: { width: nodeW, height: nodeH },
-        selected: true,
+        selected: options?.select !== false,
         className: 'is-node-entering',
       }
       setNodes((nds) => [
         // 清除其他节点的选中态，保证同一时刻只有一个节点被选中
-        ...nds.map((n) => (n.selected ? { ...n, selected: false } : n)),
+        ...nds.map((n) => (options?.select !== false && n.selected ? { ...n, selected: false } : n)),
         newNode,
       ])
       // 同步选中态回显：新节点默认选中，立即显示节点编辑面板（首个节点同样弹出）
-      setSelectedNode({
-        id,
-        kind: type,
-        sourceRefs: [],
-        ratio,
-        videoMode,
-        modelVersionId: undefined,
-      })
+      if (options?.select !== false)
+        setSelectedNode({
+          id,
+          kind: type,
+          sourceRefs: [],
+          ratio,
+          videoMode,
+          modelVersionId: undefined,
+        })
       setSaveStatus('dirty')
       // 动画结束后移除渐入类，避免节点被持久化后再恢复时重复播放动画
       window.setTimeout(() => {
@@ -6244,6 +6247,7 @@ function CanvasInner() {
       })),
     })
     const id = appendNewNode('image', position, {
+      select: false,
       extraData: {
         assetId,
         assetWorkspaceId: workspaceId,

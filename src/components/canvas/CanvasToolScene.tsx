@@ -353,9 +353,8 @@ export default function CanvasToolScene({
         const url = URL.createObjectURL(blob)
         pending.push({ blob, url, view, selected: true, saved: false })
       }
-      frameUrls.current.forEach((url) => URL.revokeObjectURL(url))
-      frameUrls.current = pending.map((frame) => frame.url)
-      setFrames(pending)
+      frameUrls.current.push(...pending.map((frame) => frame.url))
+      setFrames((old) => [...old, ...pending])
     } catch (err) {
       pending.forEach((frame) => URL.revokeObjectURL(frame.url))
       setCaptureError(err instanceof Error ? err.message : '取景失败')
@@ -537,27 +536,52 @@ export default function CanvasToolScene({
             <span role="status">{capturing ? '正在处理截图…' : '本地取景，不消耗生成积分'}</span>
           </div>
           {frames.length > 0 && (
-            <div className={styles.captureResults}>
-              {frames.map((frame, index) => (
-                <label key={frame.url}>
-                  <img src={frame.url} alt={`视角 ${index + 1}`} />
-                  <input
-                    type="checkbox"
-                    checked={frame.selected}
-                    disabled={capturing || frame.saved}
-                    onChange={(event) =>
-                      setFrames((old) =>
-                        old.map((item, i) => (i === index ? { ...item, selected: event.target.checked } : item)),
-                      )
-                    }
-                  />
-                  {frame.saved ? '已加入画布' : `视角 ${index + 1}`}
-                  <a href={frame.url} download={`全景视角-${index + 1}.png`}>
-                    下载
-                  </a>
-                </label>
-              ))}
+            <section className={styles.captureCollection} aria-label="截图预览">
+              <div className={styles.captureSummary}>
+                <strong>截图预览</strong>
+                <span role="status">
+                  共 {frames.length} 张 · 已选 {frames.filter((frame) => frame.selected && !frame.saved).length} 张
+                </span>
+                <Button
+                  size="small"
+                  disabled={disabled || capturing || frames.every((frame) => frame.saved)}
+                  onClick={() => setFrames((old) => old.map((frame) => ({ ...frame, selected: !frame.saved })))}
+                >
+                  全选未添加截图
+                </Button>
+                <Button
+                  size="small"
+                  disabled={disabled || capturing || !frames.some((frame) => frame.selected)}
+                  onClick={() => setFrames((old) => old.map((frame) => ({ ...frame, selected: false })))}
+                >
+                  取消全选
+                </Button>
+              </div>
+              <p className={styles.hint}>截图会保留在此处，确认选好后再统一加入画布。关闭窗口将清除未添加的截图。</p>
+              <div className={styles.captureResults}>
+                {frames.map((frame, index) => (
+                  <label key={frame.url}>
+                    <img src={frame.url} alt={`视角 ${index + 1}`} />
+                    <input
+                      type="checkbox"
+                      checked={frame.selected}
+                      disabled={disabled || capturing || frame.saved}
+                      aria-label={`选择视角 ${index + 1}`}
+                      onChange={(event) =>
+                        setFrames((old) =>
+                          old.map((item, i) => (i === index ? { ...item, selected: event.target.checked } : item)),
+                        )
+                      }
+                    />
+                    {frame.saved ? '已加入画布' : `视角 ${index + 1}`}
+                    <a href={frame.url} download={`全景视角-${index + 1}.png`}>
+                      下载
+                    </a>
+                  </label>
+                ))}
+              </div>
               <Button
+                type="primary"
                 disabled={disabled || capturing || !frames.some((frame) => frame.selected && !frame.saved)}
                 onClick={async () => {
                   if (captureLock.current) return
@@ -581,7 +605,7 @@ export default function CanvasToolScene({
               >
                 将选中截图加入画布
               </Button>
-            </div>
+            </section>
           )}
         </>
       )}
