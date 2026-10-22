@@ -9453,7 +9453,7 @@ function CanvasInner() {
             onRename={() => setRenamingNodeId(selectedNode.id)}
             onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
             onHd={
-              ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
+              ['video', 'timeline'].includes(selectedNodeToolbarState.kind)
                 ? () => {
                     setImageTool(null)
                     setHdRequest({ ids: [selectedNode.id], key: Date.now() })
