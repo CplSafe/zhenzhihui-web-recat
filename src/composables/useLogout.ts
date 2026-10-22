@@ -7,7 +7,7 @@ import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
-import { markDevLogout } from '@/App'
+import { markDevLogout } from '@/utils/devAuth'
 
 /** 返回统一的登出动作及进行中状态。 */
 export function useLogout() {

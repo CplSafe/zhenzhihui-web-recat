@@ -16,6 +16,29 @@ it('阻止同模型在途超分，排除自身、其他模型和历史失败', (
   ).toBe(true)
 })
 
+it('刷新恢复的提交尚未返回任务 ID 时仍占用同模型名额', () => {
+  const node = {
+    id: 'submitting',
+    data: { operationCode: 'video.upscale', modelVersionId: 8, taskId: 0, taskStatus: 'submitting' },
+  }
+  expect(hasActiveVideoUpscale([node], 8)).toBe(true)
+  expect(hasActiveVideoUpscale([node], 9)).toBe(false)
+  expect(hasActiveVideoUpscale([node], 8, node.id)).toBe(false)
+  expect(hasActiveVideoUpscale([{ ...node, data: { ...node.data, operationCode: 'image.upscale' } }], 8)).toBe(false)
+})
+
+it.each(['queued', 'pending', 'running', 'reconnecting', 'status_query_failed', 'result_pending'])(
+  '%s 期间不允许同模型超分再次提交',
+  (taskStatus) => {
+    expect(
+      hasActiveVideoUpscale(
+        [{ id: 'task', data: { operationCode: 'video.upscale', modelVersionId: 8, taskId: 12, taskStatus } }],
+        8,
+      ),
+    ).toBe(true)
+  },
+)
+
 it('增强策略显示中文，保留后端英文值和倍率约束', () => {
   const fields = [
     { name: 'generative_enhance_mode', type: 'string', options: ['generative_first', 'fidelity_first', 'future_mode'] },

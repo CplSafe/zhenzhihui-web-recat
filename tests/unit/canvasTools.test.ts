@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CreativeTool, ToolField } from '@/api/canvasTools'
 import {
   activeToolParams,
+  availableCanvasImageTools,
   buildToolGeneration,
   fieldOptions,
   fieldVisible,
@@ -38,6 +39,22 @@ const input = {
 }
 
 describe('canvas tools backend contract', () => {
+  it('按后端工具目录判断可用性，不要求工具使用独立操作码', () => {
+    const browser = { ...tool, code: 'panorama.view', execution: 'browser', model_version_ids: [], operation_code: '' }
+    const independent = { ...tool, code: 'image.multi_angle', operation_code: 'backend.custom_operation' }
+    expect(
+      availableCanvasImageTools([
+        tool,
+        independent,
+        browser,
+        { ...tool, model_version_ids: [] },
+        { ...tool, operation_code: '' },
+        { ...tool, execution: 'unsupported' },
+        { ...tool, code: 'unknown.tool' },
+      ]),
+    ).toEqual([tool, independent, browser])
+  })
+
   it('loads the workspace-scoped catalog, preserves versions and rejects invalid responses', async () => {
     const signal = new AbortController().signal
     request.mockResolvedValueOnce([null, {}, tool])
@@ -79,6 +96,14 @@ describe('canvas tools backend contract', () => {
     expect(angle.prompt).toContain('test')
     expect(angle.prompt).toContain('不要用平移裁切')
   })
+  it.each(['image.relight', 'studio.lighting.custom'])('独立操作 %s 交由后端绑定模板版本', (operationCode) => {
+    const result = buildToolGeneration({ ...input, tool: { ...tool, operation_code: operationCode } })
+    expect(result.operationCode).toBe(operationCode)
+    expect(result.params.tool).toBe('image.relight')
+    expect(result.params.tool_params).toEqual({ mode: 'manual', brightness: 50 })
+    expect(result.params).not.toHaveProperty('tool_version')
+  })
+
   it('drops hidden fields on smart/reference modes and requires two different reference images', () => {
     const values = { mode: 'reference', brightness: 99, preset: 'studio' }
     expect(buildToolGeneration({ ...input, values, assetIds: [501, 502] }).params.tool_params).toEqual({

@@ -15,19 +15,16 @@ function Editor({ disabled = false }: { disabled?: boolean }) {
 }
 
 describe('画布分镜阅读和展开编辑', () => {
-  it('长镜头可单独展开、收起，卡片内编辑不丢失其他镜头', () => {
+  it('长镜头输入框按内容完整撑开，卡片内编辑不丢失其他镜头', () => {
     vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(600)
     render(
       <ConfigProvider theme={{ token: { motion: false } }}>
         <Editor />
       </ConfigProvider>,
     )
-    const expand = screen.getAllByRole('button', { name: '展开本镜头' })[0]
-    fireEvent.click(expand)
-    expect(screen.getByRole('button', { name: '收起本镜头' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('textbox', { name: '镜头 1 提示词' })).toHaveStyle({ height: '602px' })
     fireEvent.change(screen.getByRole('textbox', { name: '镜头 1 提示词' }), { target: { value: '卡片内直接修改' } })
     expect(screen.getByRole('textbox', { name: '镜头 2 提示词' })).toHaveValue('温暖的灯光')
-    fireEvent.click(screen.getByRole('button', { name: '收起本镜头' }))
     expect(screen.getByRole('textbox', { name: '镜头 1 提示词' })).toHaveValue('卡片内直接修改')
   })
   it('卡片和展开窗口共用编辑内容，关闭后保留修改', async () => {

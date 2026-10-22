@@ -1,44 +1,57 @@
-import { useLayoutEffect, useRef, type HTMLAttributes } from 'react'
+import { useLayoutEffect, useRef, type HTMLAttributes, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 
-/** 保留浮层与触发器的 DOM 关系，同时让菜单在视口边缘可见。 */
-export default function ViewportFloatingPanel(props: HTMLAttributes<HTMLDivElement>) {
-  const ref = useRef<HTMLDivElement>(null)
+/** 页面层浮层使用屏幕坐标，避免编辑器滚动区域和画布缩放裁切菜单。 */
+export default function ViewportFloatingPanel({
+  panelRef,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & {
+  panelRef?: RefObject<HTMLDivElement>
+}) {
+  const anchor = useRef<HTMLSpanElement>(null)
+  const localRef = useRef<HTMLDivElement>(null)
+  const ref = panelRef || localRef
   useLayoutEffect(() => {
     const element = ref.current
-    if (!element) return
+    const target = anchor.current?.parentElement
+    if (!element || !target) return
     let frame = 0
-    let x = 0
-    let y = 0
     const update = () => {
-      const rect = element.getBoundingClientRect()
-      const scaleX = element.offsetWidth > 0 ? rect.width / element.offsetWidth || 1 : 1
-      const scaleY = element.offsetHeight > 0 ? rect.height / element.offsetHeight || 1 : 1
-      const left = rect.left - x * scaleX
-      const top = rect.top - y * scaleY
-      const nextX = (Math.max(12, Math.min(left, window.innerWidth - rect.width - 12)) - left) / scaleX
-      const nextY = (Math.max(12, Math.min(top, window.innerHeight - rect.height - 12)) - top) / scaleY
-      element.style.maxWidth = `${(window.innerWidth - 24) / scaleX}px`
-      element.style.maxHeight = `min(var(--floating-max-height, 320px), ${(window.innerHeight - 24) / scaleY}px)`
-      if (nextX !== x || nextY !== y) {
-        x = nextX
-        y = nextY
-        element.style.translate = `${x}px ${y}px`
-      }
+      const bounds = target.getBoundingClientRect()
+      const width = element.offsetWidth
+      const height = element.offsetHeight
+      const left = Math.max(12, Math.min(bounds.left, window.innerWidth - width - 12))
+      const above = bounds.top - height - 6
+      const top = Math.max(12, Math.min(above >= 12 ? above : bounds.bottom + 6, window.innerHeight - height - 12))
+      element.style.left = `${left}px`
+      element.style.top = `${top}px`
+      element.style.visibility = getComputedStyle(target).visibility
       frame = requestAnimationFrame(update)
     }
     update()
     return () => cancelAnimationFrame(frame)
-  }, [])
+  }, [ref])
   return (
-    <div
-      {...props}
-      ref={ref}
-      style={{
-        ...props.style,
-        boxSizing: 'border-box',
-        maxWidth: 'calc(100vw - 24px)',
-        maxHeight: 'min(var(--floating-max-height, 320px), calc(100dvh - 24px))',
-      }}
-    />
+    <>
+      <span ref={anchor} hidden />
+      {createPortal(
+        <div
+          {...props}
+          ref={ref}
+          style={{
+            ...props.style,
+            position: 'fixed',
+            bottom: 'auto',
+            width: 320,
+            minWidth: 0,
+            zIndex: 1400,
+            boxSizing: 'border-box',
+            maxWidth: 'calc(100vw - 24px)',
+            maxHeight: 'min(var(--floating-max-height, 320px), calc(100dvh - 24px))',
+          }}
+        />,
+        document.body,
+      )}
+    </>
   )
 }

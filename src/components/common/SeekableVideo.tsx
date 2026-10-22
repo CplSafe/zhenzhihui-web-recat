@@ -25,6 +25,10 @@ interface SeekableVideoProps extends VideoHTMLAttributes<HTMLVideoElement> {
   repairOnLoad?: boolean
   /** 挂载后立即准备本地可播放副本；用于后端下载接口无法渐进播放的放大预览。 */
   prepareImmediately?: boolean
+  /** 自动播放受阻时是否允许静音重试；需要默认有声的预览可关闭。 */
+  allowMutedAutoplayFallback?: boolean
+  /** 首次可播放时的起播位置；由播放器在播放前统一定位。 */
+  initialTime?: number
 }
 
 /** 跳转落点与目标差这么多秒以内算落住了。 */
@@ -93,6 +97,8 @@ function SeekableVideoImpl(
     quiet = false,
     repairOnLoad = true,
     prepareImmediately = false,
+    allowMutedAutoplayFallback = true,
+    initialTime = 0,
     autoPlay = false,
     onSeeking,
     onSeeked,
@@ -104,6 +110,7 @@ function SeekableVideoImpl(
   forwardedRef: React.ForwardedRef<HTMLVideoElement>,
 ) {
   const [localSrc, setLocalSrc] = useState('')
+  const [preparedFor, setPreparedFor] = useState('')
   const [preparing, setPreparing] = useState(false)
   const [percent, setPercent] = useState(0)
 
@@ -122,23 +129,28 @@ function SeekableVideoImpl(
   /** 用户想去的位置。换源之后要回到这里，而不是失败后被抹回的那个值。 */
   const pendingSeekRef = useRef(0)
   const resumeRef = useRef(false)
+  const initialTimeRef = useRef(initialTime)
+  const initialPositionAppliedRef = useRef(false)
   const verifyTimerRef = useRef(0)
   const seekabilityTimerRef = useRef(0)
 
   /** 带声音自动播放被浏览器拦截时，退回静音播放，至少保证画面立即开始。 */
-  const playWithMutedFallback = useCallback(async (video: HTMLVideoElement) => {
-    try {
-      await video.play()
-    } catch {
-      if (!aliveRef.current || videoRef.current !== video) return
-      video.muted = true
+  const playWithMutedFallback = useCallback(
+    async (video: HTMLVideoElement) => {
       try {
         await video.play()
       } catch {
-        // 浏览器仍拒绝时保留原生播放按钮，由用户手动开始，不制造未处理的 Promise。
+        if (!aliveRef.current || videoRef.current !== video || !allowMutedAutoplayFallback) return
+        video.muted = true
+        try {
+          await video.play()
+        } catch {
+          // 浏览器仍拒绝时保留原生播放按钮，由用户手动开始，不制造未处理的 Promise。
+        }
       }
-    }
-  }, [])
+    },
+    [allowMutedAutoplayFallback],
+  )
 
   const bindRef = useCallback(
     (element: HTMLVideoElement | null) => {
@@ -165,15 +177,22 @@ function SeekableVideoImpl(
     pendingSeekRef.current = 0
     resumeRef.current = false
     autoPlayAttemptedRef.current = false
+    initialTimeRef.current = initialTime
+    initialPositionAppliedRef.current = false
+    setPreparedFor('')
     setLocalSrc('')
     setPreparing(false)
     setPercent(0)
     return () => {
       window.clearTimeout(verifyTimerRef.current)
       window.clearTimeout(seekabilityTimerRef.current)
-      handleRef.current?.release()
+      const previousHandle = handleRef.current
       handleRef.current = null
+      // StrictMode 同步重挂载时先让新实例续用下载，避免中止后立刻重下整片。
+      queueMicrotask(() => previousHandle?.release())
     }
+    // 起播位置仅随素材切换重置，播放期间不接管用户的进度。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src])
 
   /**
@@ -226,7 +245,7 @@ function SeekableVideoImpl(
 
     void handle.ready
       .then(({ url, local }) => {
-        if (!aliveRef.current || srcRef.current !== source) return
+        if (!aliveRef.current || srcRef.current !== source || handleRef.current !== handle) return
         // local 为 false 表示没抓下来（鉴权/网络/跨域）：保持原地址，别把 src 换成同一个值触发重载
         if (local && url) {
           if (backgroundRef.current) {
@@ -238,8 +257,10 @@ function SeekableVideoImpl(
           localSrcRef.current = url
           setLocalSrc(url)
         }
+        setPreparedFor(source)
       })
       .finally(() => {
+        if (handleRef.current !== handle) return
         preparingRef.current = false
         backgroundRef.current = false
         if (aliveRef.current) setPreparing(false)
@@ -295,16 +316,24 @@ function SeekableVideoImpl(
   const handleLoadedMetadata = useCallback(
     (event: React.SyntheticEvent<HTMLVideoElement>) => {
       const video = event.currentTarget
+      if (!initialPositionAppliedRef.current) {
+        initialPositionAppliedRef.current = true
+        const start = Number(initialTimeRef.current)
+        if (start > 0 && start < video.duration) {
+          pendingSeekRef.current = start
+          video.currentTime = start
+        }
+      }
       if (localSrcRef.current) {
         // 换源后回到用户原本要去的位置，并接着播
-        if (pendingSeekRef.current > 0) {
+        if (pendingSeekRef.current > 0 && !prepareImmediately) {
           try {
             video.currentTime = pendingSeekRef.current
           } catch {
             /* 元素还没准备好接受定位，用户可以自己再拖一次 */
           }
         }
-        if (resumeRef.current) {
+        if (resumeRef.current && !prepareImmediately) {
           resumeRef.current = false
           void playWithMutedFallback(video)
         }
@@ -328,7 +357,7 @@ function SeekableVideoImpl(
       }
       onLoadedMetadata?.(event)
     },
-    [onLoadedMetadata, playWithMutedFallback, repair, repairOnLoad],
+    [onLoadedMetadata, playWithMutedFallback, repair, repairOnLoad, prepareImmediately],
   )
 
   const handleError = useCallback(
@@ -345,7 +374,13 @@ function SeekableVideoImpl(
       const video = event.currentTarget
       // 浏览器通常会拦截“带声音自动播放”。首次可播放时主动尝试，失败则静音重试，
       // 避免弹窗看起来像坏掉；用户仍可通过原生音量按钮恢复声音。
-      if (autoPlayRef.current && video.paused && !autoPlayAttemptedRef.current) {
+      if (
+        autoPlayRef.current &&
+        video.paused &&
+        !video.seeking &&
+        !preparingRef.current &&
+        !autoPlayAttemptedRef.current
+      ) {
         autoPlayAttemptedRef.current = true
         void playWithMutedFallback(video)
       }
@@ -358,9 +393,13 @@ function SeekableVideoImpl(
     <span style={wrapperStyle}>
       <video
         {...rest}
-        autoPlay={autoPlay}
+        autoPlay={autoPlay && !prepareImmediately}
         ref={bindRef}
-        src={localSrc || src}
+        src={
+          prepareImmediately && !src.startsWith('blob:') && !src.startsWith('data:') && preparedFor !== src
+            ? undefined
+            : localSrc || src
+        }
         onSeeking={handleSeeking}
         onSeeked={handleSeeked}
         onLoadedMetadata={handleLoadedMetadata}

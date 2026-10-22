@@ -6,7 +6,7 @@
   color: #263a35;
 }
 .intro {
-  margin: 4px 0 20px;
+  margin: 4px 0 16px;
   color: #697d76;
   font-size: 13px;
 }
@@ -36,11 +36,68 @@
 }
 .content {
   flex: 1 1 auto;
-  height: min(480px, 55dvh);
+  max-height: min(640px, 65dvh);
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 20px 2px;
+  padding: 6px 6px 16px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #b7cbc2 transparent;
+}
+.serverLibrary {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  font-size: 13px;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.toolbar > div {
+  min-width: 0;
+}
+.toolbar p {
+  margin: 0;
+  color: #52685f;
+  line-height: 1.7;
+}
+.toolbar > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.compatibility {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+}
+.compatibility input,
+.detail input[type='checkbox'] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: #098669;
+}
+.resultTools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.resultTools button {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: #15715a;
+  font: inherit;
+  cursor: pointer;
 }
 .languagePopup :global(.rc-virtual-list-holder) {
   overscroll-behavior: contain;
@@ -58,9 +115,12 @@
 }
 .heading p,
 .note {
-  color: #718079;
+  color: #52685f;
   font-size: 12px;
   line-height: 1.7;
+}
+.serverLibrary > .note {
+  margin: -8px 0 0;
 }
 .tag {
   padding: 3px 9px;
@@ -210,18 +270,22 @@
   cursor: not-allowed;
 }
 .filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 12px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 10px;
 }
 .filters .search {
-  flex: 1 1 200px;
-  width: auto;
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 40px;
 }
-.filters input,
-.filters select,
-.detail input,
+.myFilters .search {
+  grid-column: span 2;
+}
+.filters > input,
+.filters > select,
+.detail input:not([type='checkbox']),
 .detail select,
 .detail textarea {
   min-width: 0;
@@ -233,9 +297,24 @@
   font: inherit;
 }
 .languageFilter {
-  width: 200px;
+  width: 100%;
   min-height: 40px;
   max-width: 100%;
+}
+.languageFilter:global(.ant-select-single) {
+  height: 40px;
+}
+.languageFilter:global(.ant-select-multiple) :global(.ant-select-selector) {
+  min-height: 40px;
+}
+.filters > button {
+  min-height: 40px;
+}
+.search::placeholder {
+  color: #65786f;
+}
+.languageFilter :global(.ant-select-selection-placeholder) {
+  color: #65786f;
 }
 .serverCard {
   min-width: 0;
@@ -244,6 +323,17 @@
   padding: 16px;
   border: 1px solid #e2e9e5;
   border-radius: 12px;
+}
+.serverCard:only-child {
+  grid-column: 1 / -1;
+}
+.serverCard strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.serverCard small {
+  color: #52685f;
+  overflow-wrap: anywhere;
 }
 .serverCard p,
 .detail p {
@@ -260,6 +350,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  margin-top: 4px;
 }
 .actions button,
 .detail button,
@@ -270,6 +361,18 @@
   background: white;
   color: #15715a;
   cursor: pointer;
+  font: inherit;
+  min-height: 36px;
+}
+.actions .useVoice {
+  margin-left: auto;
+  order: 1;
+  background: #098669;
+  border-color: #098669;
+  color: white;
+}
+.library button:not(:disabled):hover {
+  filter: brightness(0.95);
 }
 .actions button:disabled,
 .tabs button:disabled {
@@ -322,11 +425,24 @@
   overflow-wrap: anywhere;
 }
 .library button:focus-visible,
-.search:focus-visible {
+.library input:focus-visible,
+.library select:focus-visible,
+.library textarea:focus-visible,
+.detail:focus-visible {
   outline: 2px solid #159e7e;
   outline-offset: 3px;
 }
 @media (max-width: 600px) {
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .myFilters .search,
+  .myFilters .languageFilter {
+    grid-column: 1 / -1;
+  }
+  .toolbar {
+    align-items: flex-start;
+  }
   .grid {
     grid-template-columns: 1fr;
   }
@@ -335,5 +451,10 @@
   }
   .footer span {
     width: 100%;
+  }
+}
+@media (max-width: 340px) {
+  .filters {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

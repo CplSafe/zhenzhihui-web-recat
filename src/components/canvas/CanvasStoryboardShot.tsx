@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import type { CanvasStoryboardItem } from '@/utils/canvasStructuredText'
 import styles from './CanvasStoryboard.module.css'
 
@@ -6,28 +6,25 @@ export default function CanvasStoryboardShot({
   item,
   index,
   disabled,
-  full = false,
   onChange,
 }: {
   item: CanvasStoryboardItem
   index: number
   disabled?: boolean
-  full?: boolean
   onChange: (prompt: string) => void
 }) {
   const input = useRef<HTMLTextAreaElement>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [long, setLong] = useState(false)
   useLayoutEffect(() => {
     const element = input.current
     if (!element) return
     const resize = () => {
       element.style.height = '0px'
-      const line = parseFloat(getComputedStyle(element).lineHeight) || 24
-      const max = line * 6 + 24
+      const style = getComputedStyle(element)
+      const line = parseFloat(style.lineHeight) || 24
+      const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+      const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0)
       const height = element.scrollHeight + 2
-      setLong(height > max)
-      element.style.height = `${Math.max(line * 3 + 24, full || expanded ? height : Math.min(height, max))}px`
+      element.style.height = `${Math.ceil(Math.max(line * 3 + padding + border, height))}px`
     }
     resize()
     const observer = new ResizeObserver(() => {
@@ -40,7 +37,7 @@ export default function CanvasStoryboardShot({
     let width = element.clientWidth
     observer.observe(element)
     return () => observer.disconnect()
-  }, [item.prompt, full, expanded])
+  }, [item.prompt])
   return (
     <article className={styles.shot}>
       <span className={styles.index}>{String(index + 1).padStart(2, '0')}</span>
@@ -61,11 +58,6 @@ export default function CanvasStoryboardShot({
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
-        {!full && long && (
-          <button type="button" className={styles.link} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-            {expanded ? '收起本镜头' : '展开本镜头'}
-          </button>
-        )}
       </div>
     </article>
   )

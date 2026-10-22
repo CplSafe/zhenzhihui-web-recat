@@ -74,7 +74,6 @@ export default function CanvasStoryboardModal({
               <CanvasStoryboardShot
                 item={item}
                 index={index}
-                full
                 disabled={disabled}
                 onChange={(prompt) => onChange(items.map((shot, i) => (i === index ? { ...shot, prompt } : shot)))}
               />

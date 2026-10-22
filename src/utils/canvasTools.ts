@@ -1,6 +1,19 @@
 import type { CreativeTool, ToolField } from '@/api/canvasTools'
 import { composeStudioPrompt } from './canvasStudioControls'
 
+/** 工具目录已按空间授权过滤；仅展示前端已接入且后端声明可用的工具。 */
+export function availableCanvasImageTools(tools: readonly CreativeTool[]): CreativeTool[] {
+  return tools.filter((tool) => {
+    if (tool.code === 'panorama.view') return tool.execution === 'browser'
+    return (
+      ['image.multi_angle', 'image.relight', 'image.panorama'].includes(tool.code) &&
+      tool.execution === 'prompt_workflow' &&
+      Boolean(tool.operation_code) &&
+      tool.model_version_ids?.length > 0
+    )
+  })
+}
+
 /** 同时覆盖工具面板新任务与旧画布保存的空描述重试请求。 */
 export function normalizeCanvasToolPrompt(prompt: unknown, params: unknown): string {
   const text = typeof prompt === 'string' ? prompt : ''
@@ -94,8 +107,9 @@ export function buildToolGeneration(args: {
     operationCode: tool.operation_code,
     params: {
       ...activeToolParams(args.modelFields, args.modelValues),
+      // 保留工具身份供结果节点识别；独立操作码的执行模板版本由后端绑定。
       tool: tool.code,
-      tool_version: tool.version,
+      ...(tool.operation_code === 'image.image_to_image' ? { tool_version: tool.version } : {}),
       tool_params: activeToolParams(fields, values),
     },
     inputAssets: assetIds.map((asset_id) => ({ asset_id, role: 'reference_image' })),

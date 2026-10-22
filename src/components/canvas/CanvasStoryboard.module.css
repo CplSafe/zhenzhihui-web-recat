@@ -75,7 +75,7 @@
 }
 .content h3 {
   margin: 0;
-  font-size: calc(15px * var(--canvas-readable-text-scale, 1));
+  font-size: 15px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -97,25 +97,15 @@
   background: #fff;
   color: #30423a;
   font-family: inherit;
-  font-size: calc(14px * var(--canvas-readable-text-scale, 1));
+  font-size: 14px;
   line-height: 1.7;
   resize: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* 输入框高度由内容测量，滚轮交给外层镜头列表。 */
+  overflow: hidden;
 }
 .content textarea:disabled {
   background: #f7f9f8;
   color: #718179;
-}
-.link {
-  margin-top: 6px;
-  border: 0;
-  padding: 4px 0;
-  background: transparent;
-  color: #168a70;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
 }
 .expanded {
   display: grid;
@@ -152,9 +142,6 @@
 }
 .fullList > div {
   scroll-margin-top: 8px;
-}
-.fullList .content textarea {
-  overflow: hidden;
 }
 .footer {
   display: flex;

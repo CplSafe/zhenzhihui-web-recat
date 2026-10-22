@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { installStrictAuthenticatedApp, expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
 
 const unauthorizedResponse = JSON.stringify({
   code: 'UNAUTHORIZED',
@@ -59,4 +60,52 @@ test.describe('游客访问边界', () => {
     await expect(page).toHaveURL(/\/hot-copy$/)
     await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible()
   })
+})
+
+test('过期会话下记住账号重新登录恢复受保护路由，无认证上下文白屏', async ({ page }, testInfo) => {
+  const api = await installStrictAuthenticatedApp(page)
+  let loggedIn = false
+  let loginPosts = 0
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  await page.route(
+    (url) => url.pathname === '/api/v1/auth/session' || url.pathname === '/api/v1/auth/refresh',
+    (route) => {
+      if (loggedIn) return route.fallback()
+      return route.fulfill({
+        status: 401,
+        json: { code: 10101, code_string: 'UNAUTHORIZED', message: 'session expired' },
+      })
+    },
+  )
+  await page.route('**/api/v1/auth/logout', (route) => route.fulfill({ json: { code: 0, data: null } }))
+  await page.route('**/api/v1/auth/oauth-start?**', (route) =>
+    route.fulfill({ json: { code: 0, data: { client_id: 'browser-test', return_to: '/auth/callback' } } }),
+  )
+  await page.route('**/deepauth/api/v1/public/auth/login', (route) => {
+    expect(route.request().method()).toBe('POST')
+    loginPosts++
+    loggedIn = true
+    return route.fulfill({ json: { code: 0, data: { success: true } } })
+  })
+  await page.route(
+    (url) => url.pathname.includes('/banners'),
+    (route) => route.fulfill({ json: { code: 0, data: [] } }),
+  )
+  await page.goto('/projects')
+  await expect(page).toHaveURL(/\/login$/)
+  await page.getByRole('tab', { name: '密码登录' }).click()
+  await page.getByRole('textbox', { name: '手机号' }).fill('13800000000')
+  await page.getByLabel('密码', { exact: true }).fill('test-password-only')
+  await page.getByRole('checkbox', { name: '记住账号' }).check()
+  await page.getByRole('checkbox', { name: /已经阅读并同意/ }).check()
+  await page.screenshot({ path: testInfo.outputPath('remembered-account-login.png') })
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/projects$/)
+  await expect(page.getByRole('heading', { name: '项目管理' })).toBeVisible()
+  await expect(page.getByText('页面加载失败', { exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('zzh_remembered_login_account'))).toBe('13800000000')
+  expect(loginPosts).toBe(1)
+  expect(pageErrors).toEqual([])
+  expectNoUnexpectedApi(api)
 })

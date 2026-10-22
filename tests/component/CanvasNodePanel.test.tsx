@@ -40,6 +40,19 @@ function renderPanel(imageModels: any[], node: any = imageNodeWithReference(), e
 }
 
 describe('CanvasNodePanel unified real-person material entry', () => {
+  it('预估失败时显示失败状态并提供具体原因', async () => {
+    vi.mocked(estimateAiTaskCost).mockRejectedValueOnce(new Error('模型参数无效，请检查参数后重试。'))
+    renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
+    const status = await screen.findByText('预估失败', {}, { timeout: 2000 })
+    expect(status).toHaveAttribute('title', '模型参数无效，请检查参数后重试。')
+  })
+
+  it('零费用预估也显示金额', async () => {
+    vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({ estimated_cost: 0, balance: 100, can_afford: true })
+    renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
+    expect(await screen.findByText('约0元', {}, { timeout: 2000 })).toBeInTheDocument()
+  })
+
   it('参考来源菜单脱离可滚动面板，并支持关闭和选用素材', async () => {
     const user = userEvent.setup()
     const onPickRefFromLibrary = vi.fn()
@@ -354,6 +367,60 @@ describe('CanvasNodePanel 模型选择器', () => {
       )
     },
   )
+
+  it.each([
+    { params: {}, expected: {} },
+    { params: { top_p: 0 }, expected: {} },
+    { params: { top_p: 0.8 }, expected: { top_p: 0.8 } },
+    { params: { top_p: 1 }, expected: { top_p: 1 } },
+    { params: { temperature: 2 }, expected: {} },
+    { params: { temperature: 0 }, expected: { temperature: 0 } },
+    { params: { top_p: '' }, expected: {} },
+  ])('分镜预估和提交遵守可选数字及排除边界：$params', async ({ params, expected }) => {
+    const onGenerate = vi.fn()
+    const expectedParams = { max_output_tokens: 4000, ...expected }
+    renderPanel(
+      [],
+      { id: 'optional-text-params', kind: 'text', prompt: '生成脚本', params },
+      {
+        models: {
+          text: [
+            {
+              modelVersionId: 21,
+              displayName: '文本模型',
+              operationCodes: ['responses.multimodal'],
+              source: {
+                params_schema: {
+                  fields: [
+                    { name: 'temperature', type: 'number', min: 0, max: 2, exclusive_max: true },
+                    { name: 'max_output_tokens', type: 'number', default: 4000, min: 1, max: 32000 },
+                    { name: 'top_p', type: 'number', min: 0, max: 1, exclusive_min: true },
+                  ],
+                },
+              },
+            },
+          ],
+          image: [],
+          video: [],
+        },
+        onGenerate,
+      },
+    )
+    vi.mocked(estimateAiTaskCost).mockClear()
+    await waitFor(
+      () =>
+        expect(estimateAiTaskCost).toHaveBeenCalledWith(
+          expect.objectContaining({
+            modelVersionId: 21,
+            operationCode: 'responses.multimodal',
+            params: expectedParams,
+          }),
+        ),
+      { timeout: 2000 },
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: '生成分镜' }))
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ params: expectedParams }))
+  })
 
   it('文本节点调用所选脚本模型生成分镜，而不是保存输入', async () => {
     const onGenerate = vi.fn()
@@ -1774,14 +1841,14 @@ it('保留 Seedream 的 size 分辨率档位', async () => {
   expect(onGenerate.mock.calls[0]![0].params).toEqual({ size: '4K' })
 })
 
-it('参数浮层挂在输入面板内部，层级高于真实画布的 1200 编辑面板', async () => {
+it('参数浮层脱离输入面板裁切，层级高于真实画布的 1200 编辑面板', async () => {
   const user = userEvent.setup()
   renderPanel([modelWithFields([{ name: 'quality', type: 'select', default: 'low', options: ['low', 'high'] }])])
   const trigger = screen.getByRole('button', { name: '低画质' })
   const panel = trigger.closest('[data-canvas-node-panel]')
   await user.click(trigger)
   const menu = screen.getByRole('region', { name: '生成参数' })
-  expect(panel).toContainElement(menu)
+  expect(panel).not.toContainElement(menu)
   expect(menu.closest('.ant-popover')).toHaveStyle({ zIndex: 1400 })
   await user.click(screen.getByRole('button', { name: '高画质' }))
   expect(screen.getByRole('button', { name: '高画质', expanded: true })).toBeInTheDocument()

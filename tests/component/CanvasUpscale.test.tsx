@@ -22,13 +22,6 @@ vi.mock('@/api/business', async (original) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.estimate.mockResolvedValue({ estimated_cost: 24, balance: 100, can_afford: true })
-  mocks.create.mockResolvedValue({ id: 55, status: 'queued' })
-  mocks.detail.mockReturnValue(new Promise(() => {}))
-})
-afterEach(() => vi.restoreAllMocks())
-
-it('中文策略保留英文提交值，倍率变化更新预计输出尺寸', async () => {
   const NativeImage = globalThis.Image
   vi.spyOn(globalThis, 'Image').mockImplementation(function () {
     const image = new NativeImage()
@@ -36,6 +29,13 @@ it('中文策略保留英文提交值，倍率变化更新预计输出尺寸', a
     queueMicrotask(() => image.dispatchEvent(new Event('load')))
     return image
   } as unknown as typeof Image)
+  mocks.estimate.mockResolvedValue({ estimated_cost: 24, balance: 100, can_afford: true })
+  mocks.create.mockResolvedValue({ id: 55, status: 'queued' })
+  mocks.detail.mockReturnValue(new Promise(() => {}))
+})
+afterEach(() => vi.restoreAllMocks())
+
+it('中文策略保留英文提交值，倍率变化更新预计输出尺寸', async () => {
   mocks.models.mockResolvedValue([
     {
       id: 8,
@@ -77,7 +77,7 @@ it('中文策略保留英文提交值，倍率变化更新预计输出尺寸', a
   expect(mocks.estimate.mock.lastCall![0].params).toEqual({ multiple: 2, generative_enhance_mode: 'generative_first' })
 })
 
-it.each(['image', 'video'])('%s 超分估价与确认使用相同非空描述、参数和源素材', async (kind) => {
+it.each(['image', 'video'])('%s 超分估价与确认使用相同参数和源素材，图片不传描述', async (kind) => {
   const operation = `${kind}.upscale`
   const model = {
     id: 8,
@@ -114,8 +114,8 @@ it.each(['image', 'video'])('%s 超分估价与确认使用相同非空描述、
     inputAssets: [{ asset_id: 99, role: kind }],
     params: { scale: 2 },
   })
-  expect(body.prompt.trim().length).toBeGreaterThan(0)
-  expect(body.prompt).toContain(kind === 'video' ? '参考视频' : '参考图片')
+  if (kind === 'image') expect(body).not.toHaveProperty('prompt')
+  else expect(body.prompt).toContain('参考视频')
   await user.click(confirm)
   await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce())
   expect(mocks.create).toHaveBeenCalledWith({

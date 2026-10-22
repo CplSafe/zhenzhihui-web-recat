@@ -14,6 +14,8 @@ import { showToast } from '@/stores/ui'
 import { extractOutputAssetId, findAssetIdByTaskId } from '@/utils/taskMedia'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { upscaleDisplayFields, upscaleImageSize } from '@/utils/canvasUpscale'
+import { uploadAssetFile } from '@/api/business'
+import { fitUpscaleInput, createUpscaleInputFile } from '@/utils/upscaleInput'
 import styles from './CanvasUpscale.module.css'
 
 interface Model {
@@ -80,6 +82,9 @@ export default function CanvasUpscale(props: {
   const [quoting, setQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState('')
   const [sourceSize, setSourceSize] = useState<{ key: string; width: number; height: number } | null>(null)
+  const [prepared, setPrepared] = useState<{ key: string; assetId: number } | null>(null)
+  const [sizeError, setSizeError] = useState('')
+  const prepareController = useRef<AbortController | null>(null)
   const lock = useRef(false)
   const tasks = useRef<HdTask[]>([])
   const key = useRef('')
@@ -94,6 +99,8 @@ export default function CanvasUpscale(props: {
   const mediaKind = source?.kind
   useEffect(() => {
     setSourceSize(null)
+    setSizeError('')
+    setPrepared(null)
     if (!mediaUrl || !mediaKind) return
     let active = true
     const media = mediaKind === 'image' ? new Image() : document.createElement('video')
@@ -106,9 +113,14 @@ export default function CanvasUpscale(props: {
       media.preload = 'metadata'
       media.onloadedmetadata = loaded
     } else media.onload = loaded
+    media.onerror = () => {
+      if (active) setSizeError('无法读取原图尺寸，请关闭面板后重试')
+    }
     media.src = mediaUrl
     return () => {
       active = false
+      prepareController.current?.abort()
+      media.onerror = null
       media.onload = null
       if (media instanceof HTMLVideoElement) {
         media.onloadedmetadata = null
@@ -124,9 +136,16 @@ export default function CanvasUpscale(props: {
   }, [])
   useEffect(() => {
     if (!open || !bodyRef.current) return
-    const observer = new ResizeObserver(([entry]) => setPanelHeight(entry.contentRect.height + 78))
+    let frame = 0
+    const observer = new ResizeObserver(([entry]) => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => setPanelHeight(Math.ceil(entry.contentRect.height) + 78))
+    })
     observer.observe(bodyRef.current)
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
   }, [open, loading, modelId])
   const { onModalChange } = props
   useEffect(() => {
@@ -193,21 +212,44 @@ export default function CanvasUpscale(props: {
   }
   const activeParams = activeToolParams(fields, values)
   const knownSize = sourceSize?.key === mediaUrl ? sourceSize : null
+  const inputSize = knownSize ? fitUpscaleInput(knownSize.width, knownSize.height) : null
+  const needsResize = source?.kind === 'image' && knownSize && (knownSize.width > 4096 || knownSize.height > 4096)
+  const preparedId = prepared?.key === mediaUrl ? prepared.assetId : 0
+  const inputReady = source?.kind !== 'image' || (knownSize && (!needsResize || preparedId > 0))
+  async function prepareInput() {
+    if (lock.current || !source || !needsResize) return
+    lock.current = true
+    setBusy(true)
+    setError('')
+    const abort = new AbortController()
+    prepareController.current = abort
+    try {
+      const file = await createUpscaleInputFile(mediaUrl, source.name, abort.signal)
+      const result = await uploadAssetFile({ workspaceId: props.workspaceId, file, signal: abort.signal })
+      const assetId = Number(result.asset?.id)
+      if (!(assetId > 0)) throw new Error('缩小副本上传失败，请重试')
+      if (!abort.signal.aborted) setPrepared({ key: mediaUrl, assetId })
+    } catch (err) {
+      if (!abort.signal.aborted) setError(err instanceof Error ? err.message : '缩小副本失败，请重试')
+    } finally {
+      lock.current = false
+      setBusy(false)
+    }
+  }
   const targetSize =
-    source?.kind === 'image' && knownSize ? upscaleImageSize(knownSize.width, knownSize.height, activeParams) : null
+    source?.kind === 'image' && inputSize ? upscaleImageSize(inputSize.width, inputSize.height, activeParams) : null
   const body =
-    source && model
+    source && model && inputReady
       ? {
           workspaceId: props.workspaceId,
           modelVersionId: modelId,
           operationCode: model.operation_codes!.find((op) => op === operation),
-          // 创建任务要求非空 prompt；与估价共用正文，素材处理无需用户另填描述。
-          prompt:
-            source.kind === 'video'
-              ? '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。'
-              : '请按超分参数提升参考图片的清晰度，保持原图内容、构图和主体不变。',
+          // 图片超分仅使用素材和模型参数；视频超分保留现有描述契约。
+          ...(source.kind === 'video'
+            ? { prompt: '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。' }
+            : {}),
           params: activeParams,
-          inputAssets: [{ asset_id: source.asset_id, role: source.kind }],
+          inputAssets: [{ asset_id: needsResize ? preparedId : source.asset_id, role: source.kind }],
         }
       : null
   const fingerprint = JSON.stringify(body)
@@ -488,6 +530,28 @@ export default function CanvasUpscale(props: {
             )}
             <small>最终输出尺寸以处理结果为准。</small>
           </div>
+          {source.kind === 'image' && sizeError && <Alert type="error" message={sizeError} />}
+          {needsResize && inputSize && (
+            <Alert
+              type="warning"
+              message="原图宽或高超过 4096 像素"
+              description={
+                <>
+                  <div>
+                    将等比缩小为 {inputSize.width} × {inputSize.height}{' '}
+                    像素的副本后提交，原图保留。预计输出按副本尺寸计算。
+                  </div>
+                  {preparedId ? (
+                    <div role="status">缩小副本已准备好</div>
+                  ) : (
+                    <Button loading={busy} onClick={() => void prepareInput()}>
+                      等比缩小并准备超分
+                    </Button>
+                  )}
+                </>
+              }
+            />
+          )}
           <details className={styles.details}>
             <summary>参数说明</summary>
             {upscaleDisplayFields(fields)

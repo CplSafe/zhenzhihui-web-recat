@@ -1125,9 +1125,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   font-size: calc(14px * var(--canvas-readable-text-scale));
   line-height: calc(22.4px * var(--canvas-readable-text-scale));
   color: #333;
-  overflow: hidden;
-  display: flex;
-  align-items: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #c8d8d2 transparent;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1497,11 +1499,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   color: #333;
   background: #fff;
   border-radius: 0 0 14px 14px;
-  scrollbar-width: none;
-}
-
-.canvas-node-editor::-webkit-scrollbar {
-  display: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #c8d8d2 transparent;
 }
 
 /* Handle 零尺寸锚点 */

@@ -1,9 +1,23 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 
 describe('CanvasVideoPreviewModal', () => {
+  it('StrictMode 重放挂载副作用后仍保持有声并保留视频源', () => {
+    render(
+      <StrictMode>
+        <CanvasVideoPreviewModal src="blob:strict" onClose={vi.fn()} />
+      </StrictMode>,
+    )
+    const video = screen.getByRole('dialog', { name: '视频预览' }).querySelector('video') as HTMLVideoElement
+    expect(video.muted).toBe(false)
+    expect(video.volume).toBe(1)
+    expect(video.getAttribute('src')).toBe('blob:strict')
+    expect(video.autoplay).toBe(false)
+  })
+
   it('renders nothing without a source', () => {
     const { container } = render(<CanvasVideoPreviewModal src="" onClose={vi.fn()} />)
     expect(container).toBeEmptyDOMElement()
@@ -20,7 +34,7 @@ describe('CanvasVideoPreviewModal', () => {
     expect(screen.getByText('时长')).toBeTruthy()
     expect(screen.getByText('00:05')).toBeTruthy()
     const video = dialog.querySelector('video')
-    expect(video?.getAttribute('src')).toBe('https://cdn.example.com/a.mp4')
+    expect(video?.hasAttribute('src')).toBe(false)
     expect(video?.hasAttribute('controls')).toBe(true)
     expect(video?.getAttribute('preload')).toBe('auto')
   })
@@ -99,7 +113,7 @@ describe('CanvasVideoPreviewModal', () => {
     const user = userEvent.setup()
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
     const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined)
-    render(<CanvasVideoPreviewModal src="/a.mp4" onClose={vi.fn()} />)
+    render(<CanvasVideoPreviewModal src="blob:closing" onClose={vi.fn()} />)
 
     const video = screen.getByRole('dialog', { name: '视频预览' }).querySelector('video') as HTMLVideoElement
     await user.click(screen.getByRole('button', { name: '关闭视频预览' }))

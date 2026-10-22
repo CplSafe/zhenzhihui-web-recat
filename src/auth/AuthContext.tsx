@@ -3,10 +3,11 @@
  * 由原 App.vue 的会话初始化/刷新/登录登出逻辑移植而来。
  * 在路由根（App）下提供，路由视图经 useAuth() 读取 authSession 及 login/logout 处理器。
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AuthContext, type AuthContextValue } from './authContextValue'
 import {
   clearAuthSessionMarker,
   getAuthErrorMessage,
@@ -110,29 +111,8 @@ function computeRefreshDelay(resp?: any): number {
   return REFRESH_DEFAULT_MS
 }
 
-/** 路由树可消费的鉴权状态与登录、登出处理器。 */
-export interface AuthContextValue {
-  authSession: any
-  isAuthenticated: boolean
-  isCheckingSession: boolean
-  authCheckError: string
-  loadAuthSession: () => Promise<void>
-  /** 登录成功;returnTo 为登录前被守卫拦下的站内路径(已校验),缺省落首页。 */
-  handleLoginSuccess: (session?: any, returnTo?: string) => void
-  handleLogoutStart: () => void
-  handleLogoutCancelled: () => void
-  handleLogoutSuccess: () => void
-}
-
-/** 鉴权上下文实例，null 用于识别组件被误用在 Provider 外部。 */
-const AuthContext = createContext<AuthContextValue | null>(null)
-
-/** 读取当前鉴权上下文，脱离 AuthProvider 使用时立即报错。 */
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth 必须在 <AuthProvider> 内使用')
-  return ctx
-}
+export type { AuthContextValue } from './authContextValue'
+export { useAuth } from './useAuth'
 
 /**
  * 统一管理会话初始化、单飞续期、跨标签登出与账号草稿隔离。

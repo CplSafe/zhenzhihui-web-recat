@@ -156,7 +156,7 @@ describe('画布音频节点波形加载', () => {
     expect(screen.getByText('裁剪起点')).toBeInTheDocument()
     expect(screen.getByText('裁剪终点')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '导出裁剪与音量设置 WAV' })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '下载音频' })).toHaveAttribute('download')
+    expect(screen.queryByRole('link', { name: '下载音频' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '下载源音频' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存为新素材并用于下游' })).toBeInTheDocument()
     expect(screen.queryByText('生成历史')).not.toBeInTheDocument()
