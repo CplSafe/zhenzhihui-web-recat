@@ -25,7 +25,7 @@ vi.mock('@/auth/AuthContext', () => ({
 }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: mocks.showToast }) }))
 vi.mock('@/utils/workflowGuards', () => ({ shouldClearSessionAfterLogoutFailure: mocks.shouldClear }))
-vi.mock('@/App', () => ({ markDevLogout: mocks.markDevLogout }))
+vi.mock('@/utils/devAuth', () => ({ markDevLogout: mocks.markDevLogout }))
 
 import { useLogout } from '@/composables/useLogout'
 

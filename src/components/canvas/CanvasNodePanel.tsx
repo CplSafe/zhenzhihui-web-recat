@@ -5,7 +5,7 @@
  * 图片：模型 + 比例 + 生成
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
-import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
 import RatioLabel from '@/components/common/RatioLabel'
@@ -22,7 +22,7 @@ import type {
 } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost, uploadAssetFile } from '@/api/business'
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
-import { creditsYuanHint, creditsYuanLabel } from '@/utils/creditsYuan'
+import { creditsYuanLabel } from '@/utils/creditsYuan'
 import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import {
   buildCanvasInputAssets,
@@ -181,6 +181,8 @@ export interface ParamsSchemaField {
   default?: unknown
   min?: number
   max?: number
+  exclusiveMin?: boolean
+  exclusiveMax?: boolean
   help?: string
 }
 
@@ -202,6 +204,8 @@ function parseFieldRecord(raw: unknown): ParamsSchemaField | null {
     ...(record.default !== undefined ? { default: record.default } : {}),
     ...(typeof record.min === 'number' ? { min: record.min } : {}),
     ...(typeof record.max === 'number' ? { max: record.max } : {}),
+    ...(record.exclusive_min === true ? { exclusiveMin: true } : {}),
+    ...(record.exclusive_max === true ? { exclusiveMax: true } : {}),
     ...(readText(record.help) ? { help: readText(record.help) } : {}),
   }
 }
@@ -273,10 +277,19 @@ function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown 
     )
   }
   if (isNumberField(field)) {
-    const n = Number(canonicalValue)
-    if (Number.isNaN(n)) return field.min ?? 0
-    if (field.min !== undefined && n < field.min) return field.min
-    if (field.max !== undefined && n > field.max) return field.max
+    // 未填写的可选数字不能补成 0；排除边界也不能按闭区间截断。
+    // 旧节点曾持久化的非法值同样省略，交给后端采用默认行为。
+    if (canonicalValue == null || (typeof canonicalValue === 'string' && !canonicalValue.trim())) return undefined
+    let n = Number(canonicalValue)
+    if (!Number.isFinite(n)) return undefined
+    if (field.min !== undefined) {
+      if (field.exclusiveMin && n <= field.min) return undefined
+      if (n < field.min) n = field.min
+    }
+    if (field.max !== undefined) {
+      if (field.exclusiveMax && n >= field.max) return undefined
+      if (n > field.max) n = field.max
+    }
     return n
   }
   // select/string 字段：数字值（如时长秒 5/10/15）保留数字类型，其余转字符串展示。
@@ -1385,8 +1398,9 @@ export default function CanvasNodePanel({
       if (maskAssetId > 0) params.mask_asset_id = maskAssetId
       for (const f of schemaFields) {
         const value = values[f.name] !== undefined ? values[f.name] : f.default
-        params[f.name] =
+        const normalized =
           kind === 'image' && isImageCountField(f) ? normalizeImageCountValue(value) : normalizeFieldValue(f, value)
+        if (normalized !== undefined) params[f.name] = normalized
       }
       return params
     },
@@ -2462,6 +2476,7 @@ export default function CanvasNodePanel({
           {/* 预估费用是说明文字，不与右侧生成按钮共用点击区域。 */}
           {
             <span
+              title={costEstimate.error}
               className={`${styles.costText} ${
                 costEstimate.loading
                   ? styles.costTextLoading
@@ -2472,11 +2487,13 @@ export default function CanvasNodePanel({
             >
               {costEstimate.loading
                 ? '…'
-                : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
-                  ? '积分不足'
-                  : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
-                    ? creditsYuanHint(costEstimate.estimated_cost)
-                    : '—'}
+                : costEstimate.error
+                  ? '预估失败'
+                  : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                    ? '积分不足'
+                    : costEstimate.estimated_cost !== undefined
+                      ? creditsYuanLabel(costEstimate.estimated_cost)
+                      : '—'}
             </span>
           }
           <button
@@ -2513,12 +2530,17 @@ function SelectorPopover({
   children,
   open,
   onClose,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   children: React.ReactNode
   open: boolean
   onClose: () => void
+  onMouseEnter: () => void
+  onMouseLeave: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const anchorRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
     const close = (e: MouseEvent) => {
@@ -2528,7 +2550,7 @@ function SelectorPopover({
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      ref.current?.parentElement?.querySelector<HTMLButtonElement>('button')?.focus()
+      anchorRef.current?.parentElement?.querySelector<HTMLButtonElement>('button')?.focus()
       onClose()
     }
     document.addEventListener('mousedown', close)
@@ -2539,8 +2561,17 @@ function SelectorPopover({
     }
   }, [open, onClose])
   return open ? (
-    <div ref={ref}>
-      <ViewportFloatingPanel className={styles.popover}>{children}</ViewportFloatingPanel>
+    <div ref={anchorRef}>
+      <ViewportFloatingPanel
+        panelRef={ref}
+        className={styles.popover}
+        role="listbox"
+        aria-label="生成模型列表"
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        {children}
+      </ViewportFloatingPanel>
     </div>
   ) : null
 }
@@ -2581,10 +2612,11 @@ function ModelSelector({
   // 有被挡住的模型时仍然允许展开：列表里逐条写明为什么用不了
   const canOpen = !disabled && (availableModels.length > 0 || blockedModels.length > 0)
   const hoverCloseTimerRef = useRef<number | null>(null)
+  const suppressHoverRef = useRef(false)
   const openOnHover = () => {
     if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
     hoverCloseTimerRef.current = null
-    if (canOpen) setOpen(true)
+    if (canOpen && !suppressHoverRef.current) setOpen(true)
   }
   const scheduleHoverClose = () => {
     if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
@@ -2601,12 +2633,22 @@ function ModelSelector({
   )
 
   return (
-    <div className={styles.selectorWrap} onMouseEnter={openOnHover} onMouseLeave={scheduleHoverClose}>
+    <div
+      className={styles.selectorWrap}
+      onMouseLeave={() => {
+        scheduleHoverClose()
+      }}
+    >
       <button
         className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
+        onMouseEnter={openOnHover}
+        onMouseLeave={() => {
+          suppressHoverRef.current = false
+        }}
         title={selected ? undefined : blockedReason || emptyLabel || undefined}
         onClick={() => {
           if (!canOpen) return
+          suppressHoverRef.current = false
           openOnHover()
         }}
         aria-expanded={open && canOpen}
@@ -2617,7 +2659,15 @@ function ModelSelector({
         {display}
       </button>
       {open && canOpen && (
-        <SelectorPopover open={open} onClose={() => setOpen(false)}>
+        <SelectorPopover
+          open={open}
+          onClose={() => {
+            suppressHoverRef.current = true
+            setOpen(false)
+          }}
+          onMouseEnter={openOnHover}
+          onMouseLeave={scheduleHoverClose}
+        >
           {/* 可用的排在前面：被锁住的混在中间会让人以为列表到此为止 */}
           {availableModels.map((m) => (
             <ModelOptionRow
@@ -2625,6 +2675,7 @@ function ModelSelector({
               model={m}
               selected={m.modelVersionId === (selected?.modelVersionId ?? value)}
               onSelect={() => {
+                suppressHoverRef.current = true
                 onChange?.(m.modelVersionId)
                 setOpen(false)
               }}
@@ -2792,7 +2843,6 @@ function SchemaFieldMenu({
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const [centerOffset, setCenterOffset] = useState(0)
 
   // 按钮摘要：视频先显示生成方式，再拼接各字段当前值
   const modeLabel = mode === 'first-last' ? '首尾帧' : mode === 'full-ref' ? '全能参考' : '自由生成'
@@ -2808,29 +2858,6 @@ function SchemaFieldMenu({
   }
   if (followSourceVideo) displayParts.push('比例时长跟随原视频')
   const display = displayParts.join(' · ')
-
-  // 弹层归属于输入面板，以面板中心对齐；参数摘要按钮长短不应改变弹层位置。
-  // 留在面板 DOM 内，画布平移/拖动隐藏时自然跟随，不依赖 body portal 重新测量。
-  useLayoutEffect(() => {
-    if (!open) return
-    const trigger = triggerRef.current
-    const panel = trigger?.closest<HTMLElement>('[data-canvas-node-panel]')
-    if (!trigger || !panel) return
-    const alignToPanel = () => {
-      const target = trigger.getBoundingClientRect()
-      const bounds = panel.getBoundingClientRect()
-      setCenterOffset(bounds.left + bounds.width / 2 - target.left - target.width / 2)
-    }
-    alignToPanel()
-    const observer = new ResizeObserver(alignToPanel)
-    observer.observe(panel)
-    observer.observe(trigger)
-    window.addEventListener('resize', alignToPanel)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', alignToPanel)
-    }
-  }, [open, display])
 
   /** number 滑块步进：default 带小数点则按小数位数（0.5→0.1，0.05→0.01），否则按 1 */
   const sliderStep = (f: ParamsSchemaField): number => {
@@ -2852,15 +2879,13 @@ function SchemaFieldMenu({
         mouseEnterDelay={0}
         mouseLeaveDelay={0.08}
         placement="top"
-        align={{ offset: [centerOffset, 0] }}
+        align={{ offset: [0, 0], overflow: { adjustX: true, adjustY: true, shiftX: true, shiftY: true } }}
         arrow={false}
         autoAdjustOverflow
         destroyOnHidden
         overlayClassName={styles.schemaPopover}
         zIndex={1400}
-        getPopupContainer={(trigger) =>
-          trigger.closest<HTMLElement>('[data-canvas-node-panel]') || trigger.parentElement!
-        }
+        getPopupContainer={() => document.body}
         content={
           <div
             className={`${styles.videoMenu} ${fields.length >= 8 ? styles.schemaMenuWide : fields.length >= 5 ? styles.schemaMenuMedium : ''}`}

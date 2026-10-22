@@ -68,6 +68,48 @@ function renderVideo(props: Record<string, unknown> = {}, seekableEndSec = 30) {
 }
 
 describe('SeekableVideo', () => {
+  it('立即准备期间不挂载远程源也不起播，完成后定位一次再播放', async () => {
+    let finish!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    server.use(
+      http.get('/api/v1/assets/55/download', async () => {
+        hits += 1
+        await waiting
+        return HttpResponse.arrayBuffer(new Uint8Array(8).buffer, { headers: { 'Content-Type': 'video/mp4' } })
+      }),
+    )
+    const video = renderVideo({ autoPlay: true, prepareImmediately: true, initialTime: 8 })
+    await waitFor(() => expect(hits).toBe(1))
+    expect(video.hasAttribute('src')).toBe(false)
+    expect(video.autoplay).toBe(false)
+    fireEvent.canPlay(video)
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled()
+    finish()
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+    fireEvent.loadedMetadata(video)
+    expect(video.currentTime).toBe(8)
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled()
+    fireEvent.canPlay(video)
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1)
+    video.currentTime = 12
+    fireEvent.loadedMetadata(video)
+    fireEvent.canPlay(video)
+    expect(video.currentTime).toBe(12)
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1)
+  })
+
+  it('立即准备失败后仅加载原地址，仍在定位后播放', async () => {
+    server.use(http.get('/api/v1/assets/55/download', () => new HttpResponse(null, { status: 503 })))
+    const video = renderVideo({ autoPlay: true, prepareImmediately: true, initialTime: 4 })
+    await waitFor(() => expect(video.getAttribute('src')).toBe(REMOTE))
+    fireEvent.loadedMetadata(video)
+    expect(video.currentTime).toBe(4)
+    fireEvent.canPlay(video)
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1)
+  })
+
   it('先用远程地址播；源支持 Range 时始终不下载', async () => {
     const video = renderVideo()
     expect(video.getAttribute('src')).toBe(REMOTE)
@@ -172,6 +214,16 @@ describe('SeekableVideo', () => {
 
     await waitFor(() => expect(play).toHaveBeenCalledTimes(2))
     expect(video.muted).toBe(true)
+  })
+
+  it('关闭静音回退时，自动播放被拦截仍保持声音开启', async () => {
+    const play = vi.mocked(HTMLMediaElement.prototype.play)
+    play.mockRejectedValueOnce(new DOMException('autoplay blocked', 'NotAllowedError'))
+    const video = renderVideo({ autoPlay: true, repairOnLoad: false, allowMutedAutoplayFallback: false })
+
+    fireEvent.canPlay(video)
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1))
+    expect(video.muted).toBe(false)
   })
 
   it('远程源可播放时若带声音自动播放被拦截，也会静音重试', async () => {

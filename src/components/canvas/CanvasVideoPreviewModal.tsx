@@ -94,7 +94,6 @@ export default function CanvasVideoPreviewModal({
   capturing = false,
   onClose,
 }: CanvasVideoPreviewModalProps) {
-  const startTimeRef = useRef(startTime)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const onCloseRef = useRef(onClose)
@@ -139,6 +138,12 @@ export default function CanvasVideoPreviewModal({
 
   useEffect(() => {
     if (!src) return
+    // StrictMode 重放清理后恢复声音；媒体源和起播顺序由 SeekableVideo 管理。
+    const video = videoRef.current
+    if (video) {
+      video.muted = false
+      video.volume = 1
+    }
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -150,7 +155,8 @@ export default function CanvasVideoPreviewModal({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => {
-      stopPlayback()
+      video?.pause()
+      if (video) video.muted = true
       window.cancelAnimationFrame(focusFrame)
       window.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = previousOverflow
@@ -208,8 +214,11 @@ export default function CanvasVideoPreviewModal({
             poster={poster || undefined}
             controls
             autoPlay
+            muted={false}
+            allowMutedAutoplayFallback={false}
             repairOnLoad={false}
             prepareImmediately
+            initialTime={startTime}
             playsInline
             preload="auto"
             onLoadedMetadata={(event) => {
@@ -221,9 +230,6 @@ export default function CanvasVideoPreviewModal({
                   Math.abs(current.value - value) < 0.001 && current.label === label ? current : { value, label },
                 )
               }
-              // 接着节点里的进度播；仅首帧元数据就绪时对齐一次，之后交给用户控制
-              const start = startTimeRef.current
-              if (start > 0 && start < video.duration) video.currentTime = start
             }}
           />
           {onCaptureFrame && (

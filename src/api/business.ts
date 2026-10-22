@@ -1402,7 +1402,7 @@ async function submitAiTask({
   onImagePartial,
 }) {
   prompt = normalizeCanvasToolPrompt(prompt, params)
-  if (['image.upscale', 'video.upscale'].includes(operationCode) && !String(prompt || '').trim()) {
+  if (operationCode === 'video.upscale' && !String(prompt || '').trim()) {
     prompt =
       operationCode === 'video.upscale'
         ? '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。'
@@ -1437,7 +1437,8 @@ async function submitAiTask({
 
   // createTask 要求 prompt 字段存在。纯素材生成允许留空，但通用空值清理会把它删掉，
   // 导致后端在解析请求体阶段返回 BAD_REQUEST，而不是进入模型参数校验。
-  requestBody.prompt = typeof prompt === 'string' ? prompt : ''
+  if (operationCode === 'image.upscale') delete requestBody.prompt
+  else requestBody.prompt = typeof prompt === 'string' ? prompt : ''
 
   // Keep the task contract stable for text-to-media requests: when the user does
   // not select a reference image, send an explicit empty collection instead of
@@ -1742,7 +1743,7 @@ export function estimateAiTaskCost({
   if (!op) {
     throw new BusinessApiError('操作类型不能为空')
   }
-  if (['image.upscale', 'video.upscale'].includes(op) && !String(prompt || '').trim()) {
+  if (op === 'video.upscale' && !String(prompt || '').trim()) {
     prompt =
       op === 'video.upscale'
         ? '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。'
@@ -1756,7 +1757,7 @@ export function estimateAiTaskCost({
         workspace_id: wsId,
         model_version_id: modelId,
         operation_code: op,
-        prompt: normalizeCanvasToolPrompt(String(prompt || ''), params),
+        prompt: op === 'image.upscale' ? undefined : normalizeCanvasToolPrompt(String(prompt || ''), params),
         params: params && typeof params === 'object' ? params : {},
         input_assets: Array.isArray(inputAssets) ? inputAssets : [],
       }),

@@ -15,7 +15,7 @@ export function hasActiveVideoUpscale(
       node.data.operationCode === 'video.upscale' &&
       Number(node.data.modelVersionId) === Number(modelVersionId) &&
       (pendingIds?.has(node.id) ||
-        (Number(node.data.taskId) > 0 &&
+        ((Number(node.data.taskId) > 0 || node.data.taskStatus === 'submitting') &&
           getCanvasTaskPresentation({
             status: node.data.taskStatus,
             hasResult: Boolean(node.data.assetId || node.data.resultUrl),

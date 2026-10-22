@@ -1,5 +1,5 @@
 import { lazy, Suspense, useId, useState } from 'react'
-import { Modal } from 'antd'
+import { ConfigProvider, Modal } from 'antd'
 import type { ModelParamField } from '@/utils/modelSchema'
 import { getModelVoiceOptions, type ModelVoiceValue } from '@/utils/modelVoices'
 import VoiceSamplePanel from './VoiceSamplePanel'
@@ -8,6 +8,8 @@ import type { Voice } from '@/api/voices'
 import styles from './CanvasVoiceLibrary.module.css'
 
 const ServerVoiceLibrary = lazy(() => import('./ServerVoiceLibrary'))
+// 音色库与局部浮层共用 2200 基准；Select 继续按父容器派生层级，避免越过默认 token 范围。
+const voiceLibraryTheme = { token: { zIndexPopupBase: 2200 } }
 
 interface Props {
   userId: string
@@ -66,9 +68,9 @@ export default function CanvasVoiceLibrary({
     onApply(next)
     onClose()
   }
-  return (
+  const modal = (
     <Modal
-      zIndex={2200}
+      zIndex={voiceLibraryTheme.token.zIndexPopupBase}
       open
       centered
       title="音色库"
@@ -98,7 +100,7 @@ export default function CanvasVoiceLibrary({
           })
         }}
       >
-        <p className={styles.intro}>浏览公共音色，为当前配音模型选择合适的声音。</p>
+        <p className={styles.intro}>浏览系统音色、我的音色与收藏，为当前配音模型选择合适的声音。</p>
         <div id={`${id}-content`} className={styles.content}>
           {tab === 'model' && (
             <>
@@ -198,7 +200,7 @@ export default function CanvasVoiceLibrary({
                 userId={userId}
                 workspaceId={workspaceId}
                 modelVersionId={modelVersionId}
-                publicOnly
+                browseOnly
                 canManage={canManage}
                 disabled={disabled || !onSelectVoice}
                 onBusyChange={setServerBusy}
@@ -224,4 +226,5 @@ export default function CanvasVoiceLibrary({
       </div>
     </Modal>
   )
+  return <ConfigProvider theme={voiceLibraryTheme}>{modal}</ConfigProvider>
 }

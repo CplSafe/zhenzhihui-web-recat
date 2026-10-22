@@ -554,9 +554,6 @@ export default function CanvasAudioNode({
                         : '上传音频 · 商用前请确认授权'}
                   </small>
                   <div className={`${styles.editorActions} canvas-audio-editor-actions`}>
-                    <a href={assetStreamUrl(Number(data.assetId), workspaceId)} download>
-                      下载音频
-                    </a>
                     <button
                       type="button"
                       disabled={savingEdited || visibleDuration <= 0}

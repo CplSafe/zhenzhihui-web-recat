@@ -47,9 +47,27 @@ test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步�
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(1\)/)
   const list = page.getByLabel('分镜列表', { exact: true })
   await expect(list).toBeVisible()
+  const firstPrompt = node.getByRole('textbox', { name: '镜头 1 提示词', exact: true })
+  const layout = () =>
+    firstPrompt.evaluate((element) => ({
+      fontSize: getComputedStyle(element).fontSize,
+      height: element.clientHeight,
+      contentHeight: element.scrollHeight,
+      overflow: getComputedStyle(element).overflowY,
+    }))
+  const initialLayout = await layout()
+  expect(initialLayout.contentHeight).toBeLessThanOrEqual(initialLayout.height + 2)
+  expect(initialLayout.overflow).toBe('hidden')
+  // 跨越此前 40% 的字号补偿边界，节点内部排版仍应保持不变。
+  for (let index = 0; index < 7; index++) await page.getByRole('button', { name: '缩小', exact: true }).click()
+  await expect.poll(layout).toEqual(initialLayout)
+  await page.getByRole('button', { name: /当前缩放/ }).click()
+  await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(1\)/)
+  await expect.poll(layout).toEqual(initialLayout)
   const transform = await page.locator('.react-flow__viewport').getAttribute('style')
   const bounds = await list.boundingBox()
-  await page.mouse.move(bounds!.x + 8, bounds!.y + bounds!.height / 2)
+  // 滚轮落在输入框正文上时，也应滚动外层列表，而非缩放画布。
+  await page.mouse.move(bounds!.x + 100, bounds!.y + bounds!.height / 2)
   await page.mouse.wheel(0, 500)
   await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', transform!)

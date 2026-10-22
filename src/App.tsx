@@ -33,14 +33,6 @@ const ComingSoonDialog = lazy(() => import('./components/ComingSoonDialog'))
 /** 按需加载的全局视频任务恢复协调器。 */
 const TaskCenterCoordinator = lazy(() => import('./components/task/TaskCenterCoordinator'))
 
-// 退出登录标记：dev 模式下 AuthContext 用 mock session 绕过 API 检查，
-// 此时主动退出需清除 mock 标记，让守卫正常跳转到 /login。
-export const DEV_LOGOUT_FLAG = '__zzh_dev_logout__'
-/** 开发环境记录主动退出，阻止 mock 会话在下一次检查时自动恢复。 */
-export function markDevLogout() {
-  ;(window as any)[DEV_LOGOUT_FLAG] = true
-}
-
 /**
  * 处理后台空间列表刷新发现的访问权变化。
  * store 会暂时保留已失效的源空间；该桥接组件先安全卸载创作页，再从会话中移除空间，

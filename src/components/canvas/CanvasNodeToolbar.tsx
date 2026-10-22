@@ -37,6 +37,7 @@ export interface CanvasNodeToolbarProps {
   onHd?: () => void
   onCompareHd?: () => void
   hdDisabledReason?: string
+  imageToolCodes?: string[]
   onImageTool?: (code: string) => void
 }
 
@@ -64,6 +65,7 @@ export default function CanvasNodeToolbar({
   onCompareHd,
   hdDisabledReason,
   onImageTool,
+  imageToolCodes = [],
 }: CanvasNodeToolbarProps) {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const captureWrapRef = useRef<HTMLSpanElement | null>(null)
@@ -106,7 +108,7 @@ export default function CanvasNodeToolbar({
   const isMedia = kind === 'image' || kind === 'video'
   // 视频有素材后不再提供「替换」：换视频等于换一个节点，走新建更清楚
   const showUpload = Boolean(onUpload) && isMedia && !(kind === 'video' && hasContent) && !uploading
-  const showDownload = Boolean(onDownload) && isMedia && hasContent && !uploading
+  const showDownload = Boolean(onDownload) && (isMedia || kind === 'audio') && hasContent && !uploading
   // 图片与视频都支持放大预览；图片预览还带全部图片的画廊导航
   const showPreview = Boolean(onPreview) && isMedia && hasContent && !uploading
   const showCapture = Boolean(onCapture) && kind === 'video' && hasContent
@@ -185,27 +187,35 @@ export default function CanvasNodeToolbar({
 
       {kind === 'image' && hasContent && !uploading && onImageTool && (
         <>
-          <button
-            type="button"
-            className={`${styles.action} ${styles.textAction}`}
-            onClick={() => onImageTool('image.multi_angle')}
-          >
-            多角度
-          </button>
-          <button
-            type="button"
-            className={`${styles.action} ${styles.textAction}`}
-            onClick={() => onImageTool('image.relight')}
-          >
-            打光
-          </button>
-          <button
-            type="button"
-            className={`${styles.action} ${styles.textAction}`}
-            onClick={() => onImageTool('image.panorama')}
-          >
-            全景
-          </button>
+          {imageToolCodes.includes('image.multi_angle') && (
+            <button
+              type="button"
+              className={`${styles.action} ${styles.textAction}`}
+              onClick={() => onImageTool('image.multi_angle')}
+            >
+              多角度
+            </button>
+          )}
+          {imageToolCodes.includes('image.relight') && (
+            <button
+              type="button"
+              className={`${styles.action} ${styles.textAction}`}
+              onClick={() => onImageTool('image.relight')}
+            >
+              打光
+            </button>
+          )}
+          {(imageToolCodes.includes('image.panorama') || imageToolCodes.includes('panorama.view')) && (
+            <button
+              type="button"
+              className={`${styles.action} ${styles.textAction}`}
+              onClick={() =>
+                onImageTool(imageToolCodes.includes('image.panorama') ? 'image.panorama' : 'panorama.view')
+              }
+            >
+              全景
+            </button>
+          )}
         </>
       )}
 

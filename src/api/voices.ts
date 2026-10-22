@@ -41,15 +41,44 @@ export interface VoiceMetadata {
   language?: string
   tags?: string[]
 }
-export interface VoiceListOptions extends VoiceContext {
+export interface VoiceFilterQuery extends VoiceContext {
   modelVersionId?: number
   source?: 'public' | 'cloned'
   q?: string
   language?: string
   favorites?: boolean
+  provider?: string
+  gender?: string
+  age?: string
+  resource_id?: string
+  accent?: string[]
+  voice_feature?: string[]
+  scenario?: string[]
+  category?: string[]
+  label?: string[]
+  emotion?: string[]
+  tag?: string[]
+}
+export interface VoiceListOptions extends VoiceFilterQuery {
   limit?: number
   offset?: number
 }
+export const VOICE_FILTER_FIELDS = [
+  { key: 'language', options: 'languages', label: '语种' },
+  { key: 'provider', options: 'providers', label: '供应商' },
+  { key: 'gender', options: 'genders', label: '性别' },
+  { key: 'age', options: 'ages', label: '年龄' },
+  { key: 'resource_id', options: 'resource_ids', label: '模型资源' },
+  { key: 'accent', options: 'accents', label: '口音', multiple: true },
+  { key: 'voice_feature', options: 'voice_features', label: '声音特征', multiple: true },
+  { key: 'scenario', options: 'scenarios', label: '使用场景', multiple: true },
+  { key: 'category', options: 'categories', label: '分类', multiple: true },
+  { key: 'label', options: 'labels', label: '标签', multiple: true },
+  { key: 'emotion', options: 'emotions', label: '情绪', multiple: true },
+  { key: 'tag', options: 'tags', label: '本地标签', multiple: true },
+] as const
+export type VoiceFilterOptions = Record<(typeof VOICE_FILTER_FIELDS)[number]['options'] | 'sources', string[]>
+export type VoiceFilterValues = Partial<Pick<VoiceFilterQuery, (typeof VOICE_FILTER_FIELDS)[number]['key']>>
 function positive(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) throw new BusinessApiError(`${label}无效`)
   return value
@@ -71,12 +100,36 @@ function normalize(value: unknown): Voice {
 function json(method: string, body: unknown, signal?: AbortSignal): RequestInit {
   return { method, signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
 }
-export async function listVoices(options: VoiceListOptions): Promise<VoicePage> {
+function filterQuery(options: VoiceFilterQuery): URLSearchParams {
   const query = new URLSearchParams({ workspace_id: String(positive(options.workspaceId, '工作空间 ID')) })
   if (options.modelVersionId !== undefined)
     query.set('model_version_id', String(positive(options.modelVersionId, '模型 ID')))
-  for (const key of ['source', 'q', 'language', 'favorites'] as const)
+  for (const key of ['source', 'q', 'language', 'favorites', 'provider', 'gender', 'age', 'resource_id'] as const)
     if (options[key] !== undefined && options[key] !== '') query.set(key, String(options[key]))
+  for (const key of ['accent', 'voice_feature', 'scenario', 'category', 'label', 'emotion', 'tag'] as const)
+    for (const value of new Set(options[key] || [])) if (value) query.append(key, value)
+  return query
+}
+export async function getVoiceFilters(options: VoiceFilterQuery): Promise<VoiceFilterOptions> {
+  const value = await requestBusinessJson<unknown>(`/api/v1/voices/filters?${filterQuery(options)}`, {
+    signal: options.signal,
+  })
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new BusinessApiError('音色筛选选项返回格式不正确')
+  const record = value as Record<string, unknown>
+  const result = {} as VoiceFilterOptions
+  for (const key of ['sources', ...VOICE_FILTER_FIELDS.map((field) => field.options)] as const) {
+    const values = record[key]
+    // 后端未提供的维度不展示；null 与空数组均表示没有可选值。
+    if (values == null) result[key] = []
+    else if (Array.isArray(values) && values.every((item) => typeof item === 'string'))
+      result[key] = [...new Set(values.filter(Boolean))]
+    else throw new BusinessApiError('音色筛选选项返回格式不正确')
+  }
+  return result
+}
+export async function listVoices(options: VoiceListOptions): Promise<VoicePage> {
+  const query = filterQuery(options)
   const limit = options.limit ?? 20
   const offset = options.offset ?? 0
   if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0)
@@ -92,9 +145,25 @@ export async function listVoices(options: VoiceListOptions): Promise<VoicePage> 
 export async function getVoice(context: VoiceContext, voiceId: number): Promise<Voice> {
   return normalize(await requestBusinessJson<unknown>(path(context, voiceId), { signal: context.signal }))
 }
+/** 可选信息未填写时省略，不把空字符串或空白标签当成有效元数据。 */
+function cloneMetadata(input: VoiceMetadata): VoiceMetadata {
+  const result: VoiceMetadata = { name: input.name.trim() }
+  for (const field of ['description', 'language', 'gender'] as const) {
+    const value = input[field]?.trim()
+    if (value) result[field] = value
+  }
+  const tags = [...new Set((input.tags || []).map((tag) => tag.trim()).filter(Boolean))]
+  if (tags.length) result.tags = tags
+  return result
+}
 export async function createVoice(
   context: VoiceContext,
-  input: VoiceMetadata & { sample_asset_id: number; consent_confirmed: true; idempotency_key: string },
+  input: VoiceMetadata & {
+    provider?: 'minimax' | 'volcengine-speech'
+    sample_asset_id: number
+    consent_confirmed: true
+    idempotency_key: string
+  },
 ): Promise<Voice> {
   if (!input.name.trim() || input.consent_confirmed !== true || !input.idempotency_key.trim())
     throw new BusinessApiError('请填写音色名称并确认授权')
@@ -102,7 +171,18 @@ export async function createVoice(
   return normalize(
     await requestBusinessJson<unknown>(
       path(context),
-      json('POST', { ...input, name: input.name.trim(), workspace_id: context.workspaceId }, context.signal),
+      json(
+        'POST',
+        {
+          ...cloneMetadata(input),
+          ...(input.provider ? { provider: input.provider } : {}),
+          sample_asset_id: input.sample_asset_id,
+          consent_confirmed: input.consent_confirmed,
+          idempotency_key: input.idempotency_key,
+          workspace_id: context.workspaceId,
+        },
+        context.signal,
+      ),
     ),
   )
 }

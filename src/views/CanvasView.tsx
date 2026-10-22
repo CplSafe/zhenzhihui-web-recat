@@ -1,3 +1,5 @@
+import { listCanvasTools } from '@/api/canvasTools'
+import { availableCanvasImageTools } from '@/utils/canvasTools'
 import CanvasNodeFailure from '@/components/canvas/CanvasNodeFailure'
 import { hasActiveVideoUpscale } from '@/utils/canvasUpscale'
 import CanvasVideoUpscaleResultPanel from '@/components/canvas/CanvasVideoUpscaleResultPanel'
@@ -1008,7 +1010,7 @@ function HandleIcon({ nodeId, side, visible }: { nodeId: string; side: 'left' | 
  * 画布缩放范围。
  *
  * 下限比 React Flow 默认的 0.5 低得多：后期节点一多，0.5 根本装不下整张图。
- * 上限保持 2，与节点内文字反向补偿的上限一致（见 readableTextScale）。
+ * 上限保持 2，节点内容与节点尺寸统一跟随画布缩放。
  */
 const MIN_CANVAS_ZOOM = 0.02
 const MAX_CANVAS_ZOOM = 2
@@ -1016,9 +1018,6 @@ const MAX_CANVAS_ZOOM = 2
 /** 自定义画布节点 */
 function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const canvasZoom = useStore((state) => state.transform[2])
-  // 画布负责节点的位置和尺寸缩放；文字做反向补偿，使屏幕上的阅读字号保持稳定。
-  // React Flow 默认缩放范围内为精确补偿，极端倍率做保护，避免产生异常字号。
-  const readableTextScale = 1 / Math.min(2.5, Math.max(0.4, canvasZoom || 1))
   const [nodeHovered, setNodeHovered] = useState(false)
   const [leftHovered, setLeftHovered] = useState(false)
   const [rightHovered, setRightHovered] = useState(false)
@@ -1601,27 +1600,36 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   // 上传/替换/下载/删除的显隐判断已随按钮一起移到 CanvasNodeToolbar，
   // 由 selectedNodeToolbarState 在视图层统一算。
 
-  /** 下载节点素材：优先按 assetId 走素材下载接口（/api/v1/assets/{id}/download），无 assetId 时退回 resultUrl。 */
-  const handleDownloadMedia = (resultAssetId?: number) => {
+  /** 图片、视频、音频统一由节点工具栏下载，节点主体不重复提供按钮。 */
+  const mediaDownloadInFlight = useRef(false)
+  const handleDownloadMedia = async (resultAssetId?: number) => {
+    if (mediaDownloadInFlight.current) return
+    mediaDownloadInFlight.current = true
     const assetId = resultAssetId || Number((data as any)?.assetId || 0) || 0
-    const fileName = buildDownloadName(
-      kind === 'image' ? '画布图片' : '画布视频',
-      new Date(),
-      kind === 'image' ? 'jpg' : 'mp4',
-    )
-    void downloadToDisk({
-      fileName,
-      mimeType: kind === 'image' ? 'image/jpeg' : 'video/mp4',
-      preserveResponseMediaType: kind === 'image',
-      resolveUrl: () => {
-        if (assetId > 0) return assetStreamUrl(assetId, workspaceId)
-        return mediaUrl
-      },
-    }).catch((error: any) => {
-      // 不能静默：另存为对话框已经在磁盘上建好了空文件，用户看到的是一个 0 字节的成品，
-      // 不给原因就会以为下载功能坏了。'started' 等浏览器接管的情况不会走到这里。
-      showToast(String(error?.message || '下载失败，请稍后重试'), 'error')
-    })
+    const audioName = String((data as any)?.title || '画布音频').replace(/[\\/:*?"<>|]/g, '_')
+    const fileName =
+      kind === 'audio'
+        ? /\.[a-z0-9]{1,8}$/i.test(audioName)
+          ? audioName
+          : `${audioName}.wav`
+        : buildDownloadName(kind === 'image' ? '画布图片' : '画布视频', new Date(), kind === 'image' ? 'jpg' : 'mp4')
+    try {
+      const result = await downloadToDisk({
+        fileName,
+        mimeType: kind === 'image' ? 'image/jpeg' : kind === 'audio' ? 'audio/wav' : 'video/mp4',
+        preserveResponseMediaType: kind === 'image' || kind === 'audio',
+        resolveUrl: () =>
+          assetId > 0 ? assetStreamUrl(assetId, Number((data as any)?.assetWorkspaceId || nodeWorkspaceId)) : mediaUrl,
+      })
+      if (kind === 'audio' && result === 'started') showToast('已交由浏览器处理下载，请查看下载列表', 'info')
+    } catch (error: any) {
+      showToast(
+        kind === 'audio' ? '音频下载失败，请稍后重试' : String(error?.message || '下载失败，请稍后重试'),
+        'error',
+      )
+    } finally {
+      mediaDownloadInFlight.current = false
+    }
   }
 
   /*
@@ -1631,7 +1639,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
    */
   const downloadMediaRef = useLatestCallback(handleDownloadMedia)
   useEffect(() => {
-    if (!(kind === 'image' || kind === 'video') || !registerNodeDownload) return
+    if (!['image', 'video', 'audio'].includes(kind) || !registerNodeDownload) return
     registerNodeDownload(id, () => downloadMediaRef())
     return () => registerNodeDownload(id, null)
   }, [kind, id, registerNodeDownload, downloadMediaRef])
@@ -1695,7 +1703,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   return (
     <div
       className={`canvas-default-node${data.hd ? ' is-hd-result' : ''}${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
-      style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}
+      // 节点内文字和控件随画布等比例缩放；长文本通过展开窗口阅读和编辑。
+      style={{ '--canvas-readable-text-scale': 1 } as CSSProperties}
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
       onWheel={onNodeWheel}
@@ -1772,11 +1781,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       )}
 
       {/* 主体：文本节点可编辑；图片/视频显示素材内容或占位图标 */}
-      <div className="canvas-node-body" onDoubleClick={handleDoubleClick}>
+      <div className={`canvas-node-body${kind === 'text' ? ' nowheel' : ''}`} onDoubleClick={handleDoubleClick}>
         {kind === 'text' ? (
           editing ? (
             <textarea
-              className="canvas-node-editor"
+              className="canvas-node-editor nodrag nopan nowheel"
               value={textContent}
               onChange={handleEditChange}
               onBlur={handleEditBlur}
@@ -2218,6 +2227,26 @@ function CanvasInner() {
   // 正在截帧上传的视频节点 id；同一时刻只允许一个，避免连点建出一堆重复图片节点
   const [capturingNodeId, setCapturingNodeId] = useState('')
   const workspaceId = useWorkspaceId()
+  const [imageToolCatalog, setImageToolCatalog] = useState<{ workspaceId: number; codes: string[] } | null>(null)
+  useEffect(() => {
+    if (!workspaceId) return
+    const controller = new AbortController()
+    listCanvasTools(Number(workspaceId), controller.signal)
+      .then((tools) => {
+        if (controller.signal.aborted) return
+        setImageToolCatalog({
+          workspaceId: Number(workspaceId),
+          codes: availableCanvasImageTools(tools).map((tool) => tool.code),
+        })
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setImageToolCatalog(null)
+          showToast('图片工具目录加载失败，请刷新页面重试', 'error')
+        }
+      })
+    return () => controller.abort()
+  }, [workspaceId])
   /**
    * 当前画布 id（路由参数）。分享面向的是已经落库的画布：
    * 新建但还没同步到云端的画布没有 id，也就没有可以分享的对象。
@@ -5605,6 +5634,7 @@ function CanvasInner() {
         // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
         const configData: Record<string, unknown> = {
           operationCode: generate.operationCode,
+          modelVersionId: generate.modelVersionId,
           params: generate.params || {},
           generationRequest: generate,
           textGenerationMode: generate.kind === 'text' ? 'storyboard' : undefined,
@@ -5625,6 +5655,13 @@ function CanvasInner() {
           resultSyncAttempts: 0,
           taskStartedAt,
           taskUpdatedAt: taskStartedAt,
+        }
+        // 并发检查直接读取 ref，不能等待 React 提交后才看到本次占用的模型。
+        latestRef.current = {
+          ...latestRef.current,
+          nodes: latestRef.current.nodes.map((n) =>
+            n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n,
+          ),
         }
         setNodes((nds) => nds.map((n) => (n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n)))
         setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
@@ -5732,6 +5769,13 @@ function CanvasInner() {
             : '',
           taskStatus: ['succeeded', 'completed', 'success'].includes(createdStatus) ? 'result_pending' : createdStatus,
           taskUpdatedAt: new Date().toISOString(),
+        }
+        // 提交锁释放前同步任务身份，避免同一事件批次内再次提交绕过检查。
+        latestRef.current = {
+          ...latestRef.current,
+          nodes: latestRef.current.nodes.map((n) =>
+            n.id === targetNodeId && n.data?.taskRunId === taskRunId ? { ...n, data: { ...n.data, ...taskData } } : n,
+          ),
         }
         setNodes((nds) =>
           nds.map((n) =>
@@ -7199,7 +7243,7 @@ function CanvasInner() {
    * 分组标签的反向缩放系数。
    *
    * 标签渲染在视口图层里，会跟着画布一起缩放——不补偿的话 38% 缩放时字号只剩 4px。
-   * 夹取区间与节点内文字保持一致（见 CanvasDefaultNode 的 readableTextScale）：
+   * 仅分组标签做阅读补偿，节点正文随画布缩放。
    * 极端倍率下不做完全补偿，否则缩到 2% 时标签会大到盖住整个分组。
    */
   const groupLabelScale = useMemo(() => 1 / Math.min(2.5, Math.max(0.4, transform[2] || 1)), [transform])
@@ -9367,8 +9411,7 @@ function CanvasInner() {
                 >
                   {/*
                     标签在视口图层里，默认会跟着画布一起缩小——38% 缩放时字号只剩 4px 左右，
-                    完全读不了。与节点内文字同一口径做反向补偿（见 readableTextScale），
-                    让它在屏幕上的阅读字号保持稳定。
+                    完全读不了。分组标签单独做反向补偿，保持屏幕上的阅读字号稳定。
                   */}
                   {renamingGroupId === frame.groupId ? (
                     <input
@@ -9453,7 +9496,7 @@ function CanvasInner() {
             onRename={() => setRenamingNodeId(selectedNode.id)}
             onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
             onHd={
-              ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
+              ['video', 'timeline'].includes(selectedNodeToolbarState.kind)
                 ? () => {
                     setImageTool(null)
                     setHdRequest({ ids: [selectedNode.id], key: Date.now() })
@@ -9467,6 +9510,7 @@ function CanvasInner() {
             onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
             onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
             onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
+            imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
             onImageTool={(code) => {
               const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
               const assetId = Number(node?.data.assetId)
@@ -9476,6 +9520,7 @@ function CanvasInner() {
               }
               const initial =
                 code === 'image.panorama' &&
+                imageToolCatalog?.codes.includes('panorama.view') &&
                 (node.data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama'
                   ? 'panorama.view'
                   : code

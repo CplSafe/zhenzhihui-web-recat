@@ -23,12 +23,40 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof CanvasNode
 }
 
 describe('CanvasNodeToolbar', () => {
+  it('只展示后端配置可用的图片工具', async () => {
+    const onImageTool = vi.fn()
+    renderToolbar({ kind: 'image', onImageTool, imageToolCodes: ['image.relight'] })
+    expect(screen.queryByRole('button', { name: '多角度' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '全景' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '打光' }))
+    expect(onImageTool).toHaveBeenCalledWith('image.relight')
+  })
+
+  it('只有全景查看可用时直接打开查看，不展示全景生成', async () => {
+    const onImageTool = vi.fn()
+    renderToolbar({ kind: 'image', onImageTool, imageToolCodes: ['panorama.view'] })
+    await userEvent.click(screen.getByRole('button', { name: '全景' }))
+    expect(onImageTool).toHaveBeenCalledWith('panorama.view')
+  })
+
   it('改名与删除对所有节点类型都可用', () => {
     renderToolbar({ kind: 'text', hasContent: false })
     expect(screen.getByRole('button', { name: '重命名节点' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '删除节点' })).toBeInTheDocument()
   })
 
+  it('音频复用同一下载按钮，保留改名删除且不开放图片视频专用动作', async () => {
+    const props = renderToolbar({ kind: 'audio', hasContent: true })
+    await userEvent.click(screen.getByRole('button', { name: '下载素材' }))
+    expect(props.onDownload).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: '重命名节点' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '删除节点' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /上传素材|替换素材|放大预览|截取画面/ })).not.toBeInTheDocument()
+  })
+  it.each([{ hasContent: false }, { uploading: true }])('音频无素材或上传中不展示下载 %j', (props) => {
+    renderToolbar({ kind: 'audio', ...props })
+    expect(screen.queryByRole('button', { name: '下载素材' })).not.toBeInTheDocument()
+  })
   it('文本节点不显示上传/下载/截帧', () => {
     renderToolbar({ kind: 'text', hasContent: false })
     expect(screen.queryByRole('button', { name: /素材/ })).not.toBeInTheDocument()

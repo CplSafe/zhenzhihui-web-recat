@@ -40,6 +40,7 @@ export default defineConfig({
         'src/api/canvasHd.ts',
         'src/utils/modelVoices.ts',
         'src/api/voices.ts',
+        'src/components/canvas/ServerVoiceLibrary.tsx',
         'src/components/common/ImageViewport.tsx',
         'src/api/aiPolish.ts',
         'src/api/entryPromptPolish.ts',

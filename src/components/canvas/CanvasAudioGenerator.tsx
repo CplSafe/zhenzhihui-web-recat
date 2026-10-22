@@ -99,6 +99,7 @@ export default function CanvasAudioGenerator({
   )
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const modelMenuRef = useRef<HTMLDivElement>(null)
+  const modelOptionsRef = useRef<HTMLDivElement>(null)
   const settingsTrigger = useRef<HTMLButtonElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const hydratedModel = useRef('')
@@ -241,7 +242,11 @@ export default function CanvasAudioGenerator({
   useEffect(() => {
     if (!modelMenuOpen) return
     const closeOnOutsideClick = (event: MouseEvent) => {
-      if (!modelMenuRef.current?.contains(event.target as Node)) setModelMenuOpen(false)
+      if (
+        !modelMenuRef.current?.contains(event.target as Node) &&
+        !modelOptionsRef.current?.contains(event.target as Node)
+      )
+        setModelMenuOpen(false)
     }
     document.addEventListener('mousedown', closeOnOutsideClick)
     return () => document.removeEventListener('mousedown', closeOnOutsideClick)
@@ -1026,7 +1031,7 @@ export default function CanvasAudioGenerator({
               event.preventDefault()
               setModelMenuOpen(true)
               requestAnimationFrame(() =>
-                modelMenuRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(),
+                modelOptionsRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(),
               )
             }
             if (event.key === 'Escape') setModelMenuOpen(false)
@@ -1053,6 +1058,7 @@ export default function CanvasAudioGenerator({
         </button>
         {modelMenuOpen && models.length > 0 && (
           <ViewportFloatingPanel
+            panelRef={modelOptionsRef}
             className={styles.modelMenu}
             role="listbox"
             aria-label="音频生成模型列表"
@@ -1064,7 +1070,7 @@ export default function CanvasAudioGenerator({
               if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
               event.preventDefault()
               const options = Array.from(
-                modelMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || [],
+                modelOptionsRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || [],
               )
               const index = options.indexOf(document.activeElement as HTMLButtonElement)
               options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus()

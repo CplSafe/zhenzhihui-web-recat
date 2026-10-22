@@ -72,6 +72,29 @@ beforeEach(() => {
   mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 10, balance: 100, can_afford: true })
 })
 describe('CanvasImageTools', () => {
+  it('按工具独立操作码查模型，估价和提交保持同一操作码', async () => {
+    const operation = 'image.relight_tool'
+    mocks.listCanvasTools.mockResolvedValue([{ ...relight, operation_code: operation }])
+    mocks.listAiModels.mockResolvedValue([
+      { id: 42, display_name: '打光模型', operation_codes: [operation] },
+      { id: 99, display_name: '普通图片模型', operation_codes: ['image.image_to_image'] },
+    ])
+    const props = mount('image.relight')
+    const button = await screen.findByRole('button', { name: '生成新图片' })
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(mocks.listAiModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 21,
+        operationCode: operation,
+        plan: '',
+      }),
+    )
+    expect(mocks.listAiModels.mock.calls[0][0]).not.toHaveProperty('capability')
+    expect(mocks.estimateAiTaskCost).toHaveBeenLastCalledWith(expect.objectContaining({ operationCode: operation }))
+    await userEvent.click(button)
+    expect(props.onGenerate.mock.calls[0][0].request.operationCode).toBe(operation)
+  })
+
   it.each(['image.multi_angle', 'image.relight', 'image.panorama'])(
     '单模型自动选用，打光保留模型展示：%s',
     async (code) => {
@@ -90,6 +113,20 @@ describe('CanvasImageTools', () => {
     },
   )
 
+  it('工具操作码不匹配时不回退普通图生图模型', async () => {
+    mocks.listCanvasTools.mockResolvedValue([{ ...angle, operation_code: 'image.multi_angle_tool' }])
+    mount()
+    expect(await screen.findByText('当前空间暂无可用模型')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '生成新图片' })).toBeDisabled()
+    expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
+  })
+  it('模型查询失败保留重试入口', async () => {
+    mocks.listAiModels.mockRejectedValueOnce(new Error('模型服务暂不可用'))
+    mount()
+    expect(await screen.findByText('模型服务暂不可用')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '生成新图片' })).toBeEnabled())
+  })
   it('多个可用模型时展示选择，并按所选模型更新报价和提交', async () => {
     mocks.listCanvasTools.mockResolvedValue([{ ...angle, model_version_ids: [42, 43] }])
     mocks.listAiModels.mockResolvedValue([
@@ -148,11 +185,12 @@ describe('CanvasImageTools', () => {
       ],
     })
   })
-  it('blocks submission when the workspace has no eligible model', async () => {
+  it('后端目录无可用模型时不展示工具生成操作', async () => {
     mocks.listCanvasTools.mockResolvedValue([{ ...angle, model_version_ids: [] }])
     mount()
-    expect(await screen.findByText('当前空间暂无可用模型')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '生成新图片' })).toBeDisabled()
+    expect(await screen.findByText('当前空间未提供此工具，请选择其他工具或联系管理员。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成新图片' })).not.toBeInTheDocument()
+    expect(mocks.listAiModels).not.toHaveBeenCalled()
     expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
   })
   it('does not estimate or submit a browser tool and saves the view state', async () => {
@@ -161,6 +199,7 @@ describe('CanvasImageTools', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: '水平视角' }), { target: { value: '90' } })
     expect(props.onViewChange).toHaveBeenCalledWith(expect.objectContaining({ yaw: 90 }))
     expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
+    expect(mocks.listAiModels).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: '生成新图片' })).not.toBeInTheDocument()
   })
   it('blocks malformed and unaffordable quotes', async () => {

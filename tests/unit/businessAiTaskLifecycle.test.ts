@@ -25,9 +25,10 @@ afterEach(() => {
 })
 
 describe('AI task identifier boundaries', () => {
-  it.each(['image', 'video'])(
+  it.each(['image', 'video', 'image-saved'])(
     'keeps %s upscale estimation and submission valid with an empty saved prompt',
-    async (kind) => {
+    async (scenario) => {
+      const kind = scenario === 'image-saved' ? 'image' : scenario
       const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
         String(url).includes('estimate-cost')
           ? jsonResponse({ data: { estimated_cost: 10, balance: 100, can_afford: true } })
@@ -38,7 +39,7 @@ describe('AI task identifier boundaries', () => {
         workspaceId: 11,
         modelVersionId: 47,
         operationCode: `${kind}.upscale`,
-        prompt: '',
+        prompt: scenario === 'image-saved' ? '旧草稿描述' : '',
         params: { scale: 2 },
         inputAssets: [{ asset_id: 99, role: kind }],
       }
@@ -47,7 +48,10 @@ describe('AI task identifier boundaries', () => {
       const [estimate, submitted] = fetchMock.mock.calls.map((call) =>
         JSON.parse(String((call as unknown as [unknown, RequestInit])[1].body)),
       )
-      expect(estimate.prompt.trim()).not.toBe('')
+      if (kind === 'image') {
+        expect(estimate).not.toHaveProperty('prompt')
+        expect(submitted).not.toHaveProperty('prompt')
+      } else expect(estimate.prompt.trim()).not.toBe('')
       expect(submitted).toMatchObject(estimate)
     },
   )

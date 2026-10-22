@@ -4,7 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, ConfigProvider, Modal, Spin } from 'antd'
 import { listCanvasTools, type CreativeTool, type ToolField } from '@/api/canvasTools'
 import { estimateAiTaskCost, listAiModels } from '@/api/business'
-import { buildToolGeneration, schemaDefaults, type ToolGeneration } from '@/utils/canvasTools'
+import {
+  availableCanvasImageTools,
+  buildToolGeneration,
+  schemaDefaults,
+  type ToolGeneration,
+} from '@/utils/canvasTools'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { creditsYuanLabel } from '@/utils/creditsYuan'
 import { panoramaModelDefaults, studioLightPosition, studioLightDirection } from '@/utils/canvasStudioControls'
@@ -43,7 +48,6 @@ interface Model {
   params_schema?: { fields?: ToolField[] } | string
   operation_codes?: string[]
 }
-const CODES = ['image.multi_angle', 'image.relight', 'image.panorama', 'panorama.view']
 
 function modelFields(model: Model | undefined, operationCode?: string): ToolField[] {
   let schema = model?.params_schema
@@ -82,13 +86,21 @@ export default function CanvasImageTools(props: Props) {
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    Promise.all([
-      listCanvasTools(props.workspaceId, controller.signal),
-      listAiModels({ workspaceId: props.workspaceId, capability: 'image', plan: '', signal: controller.signal }),
-    ])
-      .then(([catalog, modelList]) => {
+    listCanvasTools(props.workspaceId, controller.signal)
+      .then(async (catalog) => {
+        const availableTools = availableCanvasImageTools(catalog)
+        const selected = availableTools.find((entry) => entry.code === code)
+        const modelList =
+          selected?.execution === 'prompt_workflow' && selected.operation_code && selected.model_version_ids?.length
+            ? await listAiModels({
+                workspaceId: props.workspaceId,
+                operationCode: selected.operation_code,
+                plan: '',
+                signal: controller.signal,
+              })
+            : []
         if (controller.signal.aborted) return
-        setTools(catalog.filter((t) => CODES.includes(t.code)))
+        setTools(availableTools)
         setModels(Array.isArray(modelList) ? modelList : [])
       })
       .catch((err) => {
@@ -98,7 +110,7 @@ export default function CanvasImageTools(props: Props) {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [props.workspaceId, attempt])
+  }, [props.workspaceId, attempt, code])
   const tool = tools.find((t) => t.code === code)
   return (
     <ConfigProvider
@@ -192,7 +204,7 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
       models.filter(
         (model) =>
           tool.model_version_ids?.includes(Number(model.id)) &&
-          (!model.operation_codes?.length || model.operation_codes.includes(tool.operation_code || '')),
+          model.operation_codes?.includes(tool.operation_code || ''),
       ),
     [models, tool.model_version_ids, tool.operation_code],
   )

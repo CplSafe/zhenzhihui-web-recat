@@ -1,9 +1,19 @@
 import { expect, test } from '@playwright/test'
-import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
+import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 test('音频面板始终下方居中，音色库打开时隐藏节点操作且关闭后恢复', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await installStrictAuthenticatedApp(page)
+  const state = await installStrictAuthenticatedApp(page)
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text())
+  })
+  await page.route('**/api/v1/ai/tools**', (route) => {
+    expect(route.request().method()).toBe('GET')
+    expect(new URL(route.request().url()).searchParams.get('workspace_id')).toBe('21')
+    return route.fulfill({ json: { code: 0, data: [] } })
+  })
   await page.route('**/api/v1/ai/models**', (route) =>
     route.fulfill({
       json: [{ id: 91, display_name: '配音模型', operation_codes: ['audio.tts'] }],
@@ -69,4 +79,6 @@ test('音频面板始终下方居中，音色库打开时隐藏节点操作且�
   await expect(panel.getByRole('textbox', { name: '配音文案或音乐描述' })).toHaveValue('保留原始文案')
   await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toBeVisible()
   await expect(node).toHaveClass(/selected/)
+  expect(errors).toEqual([])
+  expectNoUnexpectedApi(state)
 })
