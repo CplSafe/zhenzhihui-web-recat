@@ -1,3 +1,4 @@
+import { imageGenerationInfo } from '@/utils/canvasImageInfo'
 import { useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
@@ -63,6 +64,7 @@ export default function CanvasUpscale(props: {
   nodes: Node[]
   request: HdRequest | null
   onCloseRequest: () => void
+  onSubmitted: () => void
   onTasks: (tasks: HdTask[]) => void
   onModalChange: (open: boolean) => void
   onVideoGenerate?: (submission: VideoUpscaleSubmission) => Promise<void>
@@ -316,14 +318,11 @@ export default function CanvasUpscale(props: {
         })
         return
       }
-      const task = await createAiTask({
-        ...body,
-        modelVersion: model,
-        capability: source.kind,
-        idempotencyKey: key.current,
-      })
       const base: HdTask = {
-        id: String(getAiTaskId(task)),
+        id: `submission-${key.current}`,
+        ...(source.kind === 'image'
+          ? { image_info: imageGenerationInfo(body, model.display_name || model.name || '', new Date().toISOString()) }
+          : {}),
         workspace_id: props.workspaceId,
         canvas_id: props.canvasId,
         canvas_name: '',
@@ -361,8 +360,23 @@ export default function CanvasUpscale(props: {
         tasks.current = [...tasks.current.filter((item) => item.id !== row.id), row]
         props.onTasks(tasks.current)
       }
-      publish(task)
+      publish({ status: 'queued' })
       props.onCloseRequest()
+      let task: any
+      try {
+        task = await createAiTask({
+          ...body,
+          modelVersion: model,
+          capability: source.kind,
+          idempotencyKey: key.current,
+        })
+      } catch (err) {
+        publish({ status: 'failed' })
+        showToast(err instanceof Error ? err.message : '超分请求失败', 'error')
+        return
+      }
+      props.onSubmitted()
+      publish(task)
       void getAiTask({ workspaceId: props.workspaceId, taskId: getAiTaskId(task) })
         .then((detail) =>
           waitForAiTask({

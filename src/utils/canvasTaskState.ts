@@ -68,6 +68,8 @@ export function reusableInterruptedIdempotencyKey(data: Record<string, unknown> 
 /** Saved failures are historical snapshots; verify their task before displaying them. */
 export function restoreCanvasTaskState(data: Record<string, unknown> = {}): Record<string, unknown> {
   const status = normalizeAiTaskStatus(data.taskStatus)
+  if (status === 'result_sync_failed' && (data.videoAudioComposition as { failed?: boolean } | undefined)?.failed)
+    return data
   if (!failedTaskStatuses.has(status) && status !== 'reconnecting') return data
   const taskId = Number(data.taskId)
   // Querying a payment_failed task can retry settlement; reopening must not initiate that.

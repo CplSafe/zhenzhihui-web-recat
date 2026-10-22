@@ -23,6 +23,7 @@ export type ConfirmResolve = (value: boolean | string | null) => void
 
 /** 全局确认/输入对话框的完整状态。 */
 export interface ConfirmState {
+  zIndex?: number
   visible: boolean
   id: number
   title: string
@@ -39,6 +40,8 @@ export interface ConfirmState {
 
 /** 调用确认框时允许覆盖的显示与输入配置。 */
 export interface ConfirmOptions {
+  /** 从较高层级的弹窗内确认时显式指定；默认仍由确认框样式控制。 */
+  zIndex?: number
   title?: string
   inputEnabled?: boolean
   inputValue?: string
@@ -172,6 +175,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       confirmIdCounter += 1
       set({
         confirm: {
+          zIndex: options.zIndex,
           visible: true,
           id: confirmIdCounter,
           title: options.title || '确认操作',

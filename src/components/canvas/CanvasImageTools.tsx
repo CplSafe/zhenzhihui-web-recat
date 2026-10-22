@@ -7,6 +7,7 @@ import { estimateAiTaskCost, listAiModels } from '@/api/business'
 import {
   availableCanvasImageTools,
   buildToolGeneration,
+  normalizeMultiAngleValues,
   schemaDefaults,
   type ToolGeneration,
 } from '@/utils/canvasTools'
@@ -328,6 +329,7 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
     { name: 'fov', display_name: '视野', type: 'number', min: 30, max: 110, step: 1 },
   ]
   const updateValues = (next: Record<string, unknown>) => {
+    if (tool.code === 'image.multi_angle') next = normalizeMultiAngleValues(next)
     if (tool.code === 'image.relight') {
       if (next.key_light !== values.key_light) next = { ...next, ...studioLightPosition(next.key_light) }
       else if (next.light_azimuth !== values.light_azimuth || next.light_elevation !== values.light_elevation) {
@@ -465,7 +467,12 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
             />
           )}
           <CanvasToolFields
-            fields={nativeFields.filter((field) => ['count', 'n', 'num_images', 'batch_size'].includes(field.name))}
+            fields={nativeFields.filter(
+              (field) =>
+                ['count', 'n', 'num_images', 'batch_size'].includes(field.name) ||
+                (tool.code === 'image.relight' &&
+                  ['size', 'resolution', 'quality', 'ratio', 'aspect_ratio', 'width', 'height'].includes(field.name)),
+            )}
             values={nativeValues}
             onChange={setNativeValues}
             disabled={busy}

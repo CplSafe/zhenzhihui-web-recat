@@ -87,16 +87,20 @@ describe('公共音色库业务交互', () => {
     render(<ServerVoiceLibrary {...props()} browseOnly />)
     fireEvent.click(screen.getByRole('button', { name: '我的音色' }))
     fireEvent.click(screen.getByRole('button', { name: '添加音色' }))
-    fireEvent.change(screen.getByLabelText('复刻供应商'), { target: { value: 'volcengine-speech' } })
+    expect(screen.getByLabelText('复刻供应商')).toHaveValue('minimax')
+    expect(screen.getByLabelText('复刻供应商').querySelectorAll('option')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(screen.getByRole('button', { name: '我的音色' })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByRole('button', { name: '我的音色' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.change(screen.getByRole('textbox', { name: '搜索音色' }), { target: { value: '旧筛选' } })
     fireEvent.click(screen.getByRole('button', { name: '添加音色' }))
-    fireEvent.change(screen.getByLabelText('复刻供应商'), { target: { value: 'volcengine-speech' } })
+    expect(screen.getByLabelText('复刻供应商')).toHaveValue('minimax')
+    expect(screen.getByLabelText('复刻供应商').querySelectorAll('option')).toHaveLength(1)
     fireEvent.change(screen.getByLabelText('音色名称'), { target: { value: '新音色' } })
     fireEvent.change(screen.getByLabelText('上传训练录音'), {
       target: { files: [new File(['sound'], 'sample.wav', { type: 'audio/wav' })] },
     })
+    Object.defineProperty(screen.getByLabelText('试听训练录音'), 'duration', { value: 12, configurable: true })
+    fireEvent.loadedMetadata(screen.getByLabelText('试听训练录音'))
     fireEvent.click(screen.getByRole('checkbox', { name: '我确认声音属于本人或已获得音色复刻授权' }))
     fireEvent.click(screen.getByRole('button', { name: '提交复刻' }))
     await screen.findByText(/音色创建请求已提交/)
@@ -248,10 +252,16 @@ describe('公共音色库业务交互', () => {
     expect(screen.getByRole('button', { name: '选用' })).toBeEnabled()
     expect(screen.queryByText(/同步/)).not.toBeInTheDocument()
   })
-  it('公共音色没有试听时只显示暂无试听', async () => {
-    mocks.list.mockResolvedValue({ items: [{ ...voice, source: 'public' }], total: 1 })
+  it('公共音色没有语种和试听时隐藏空项并保留选用', async () => {
+    mocks.list.mockResolvedValue({
+      items: [{ ...voice, source: 'public', language: '', gender: '', tags: [] }],
+      total: 1,
+    })
     render(<ServerVoiceLibrary {...props()} publicOnly />)
-    expect(await screen.findByText('暂无试听。')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '选用' })).toBeEnabled()
+    expect(screen.queryByText('暂无试听。')).not.toBeInTheDocument()
+    expect(screen.queryByText('语种未标注')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('试听 角色旁白')).not.toBeInTheDocument()
     expect(screen.queryByText(/同步/)).not.toBeInTheDocument()
   })
   it('训练中音色仍自动同步并更新为可用', async () => {
@@ -324,11 +334,14 @@ describe('公共音色库业务交互', () => {
       .mockResolvedValueOnce(voice)
     render(<ServerVoiceLibrary {...props()} />)
     fireEvent.click(screen.getByRole('button', { name: '创建音色' }))
-    fireEvent.change(screen.getByLabelText('复刻供应商'), { target: { value: 'volcengine-speech' } })
+    expect(screen.getByLabelText('复刻供应商')).toHaveValue('minimax')
+    expect(screen.getByLabelText('复刻供应商').querySelectorAll('option')).toHaveLength(1)
     fireEvent.change(screen.getByLabelText('音色名称'), { target: { value: '角色旁白' } })
     fireEvent.change(screen.getByLabelText('上传训练录音'), {
       target: { files: [new File(['sound'], 'record.wav', { type: 'audio/wav' })] },
     })
+    Object.defineProperty(screen.getByLabelText('试听训练录音'), 'duration', { value: 12, configurable: true })
+    fireEvent.loadedMetadata(screen.getByLabelText('试听训练录音'))
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: '提交复刻' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -357,11 +370,14 @@ describe('公共音色库业务交互', () => {
     else mocks.create.mockRejectedValueOnce(failure)
     render(<ServerVoiceLibrary {...props()} />)
     fireEvent.click(screen.getByRole('button', { name: '创建音色' }))
-    fireEvent.change(screen.getByLabelText('复刻供应商'), { target: { value: 'volcengine-speech' } })
+    expect(screen.getByLabelText('复刻供应商')).toHaveValue('minimax')
+    expect(screen.getByLabelText('复刻供应商').querySelectorAll('option')).toHaveLength(1)
     fireEvent.change(screen.getByLabelText('音色名称'), { target: { value: '男生' } })
     fireEvent.change(screen.getByLabelText('上传训练录音'), {
       target: { files: [new File(['sound'], 'record.wav', { type: 'audio/wav' })] },
     })
+    Object.defineProperty(screen.getByLabelText('试听训练录音'), 'duration', { value: 12, configurable: true })
+    fireEvent.loadedMetadata(screen.getByLabelText('试听训练录音'))
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: '提交复刻' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(expected)

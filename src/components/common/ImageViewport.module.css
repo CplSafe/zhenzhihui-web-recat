@@ -58,7 +58,7 @@
 .toolbar button,
 .toolbar input {
   background: #424651;
-  color: white;
+  color: var(--image-viewport-text, white);
   border: 1px solid #626778;
   border-radius: 5px;
   min-height: 30px;
@@ -78,7 +78,7 @@
 }
 .toolbar button:focus-visible,
 .toolbar input:focus-visible {
-  outline: 2px solid #9da7ff;
+  outline: 2px solid var(--image-toolbar-focus, #9da7ff);
   outline-offset: 2px;
 }
 .hint {
@@ -106,10 +106,10 @@
 .toolbar {
   gap: 6px;
   padding: 7px;
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid var(--image-toolbar-border, rgb(255 255 255 / 12%));
   border-radius: 12px;
-  background: rgb(30 35 44 / 94%);
-  box-shadow: 0 8px 28px rgb(0 0 0 / 28%);
+  background: var(--image-toolbar-bg, rgb(30 35 44 / 94%));
+  box-shadow: var(--image-toolbar-shadow, 0 8px 28px rgb(0 0 0 / 28%));
   backdrop-filter: blur(16px);
 }
 .toolbar button,
@@ -123,15 +123,15 @@
   transition: background 140ms;
 }
 .toolbar button:hover:not(:disabled) {
-  background: rgb(255 255 255 / 12%);
+  background: var(--image-toolbar-hover, rgb(255 255 255 / 12%));
 }
 .toolbar button:active:not(:disabled) {
-  background: rgb(255 255 255 / 20%);
+  background: var(--image-toolbar-active, rgb(255 255 255 / 20%));
 }
 .toolbar label {
   display: flex;
   align-items: center;
-  color: #aab4c4;
+  color: var(--image-toolbar-muted, #aab4c4);
   font-size: 12px;
 }
 .toolbar input {
@@ -145,7 +145,7 @@
   margin: 0;
 }
 .hint {
-  color: #8993a4;
+  color: var(--image-toolbar-muted, #8993a4);
   font-size: 11px;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -153,4 +153,35 @@
   .toolbar input {
     transition: none;
   }
+}
+
+/* Center the number and unit together, with symmetric zoom buttons. */
+.toolbar {
+  gap: 4px;
+  padding: 5px;
+}
+.toolbar button {
+  padding: 3px 8px;
+}
+.toolbar button:first-child,
+.toolbar button:nth-of-type(2) {
+  width: 30px;
+  padding: 0;
+}
+.toolbar .percent {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  width: 62px;
+}
+.toolbar .percent input {
+  width: 3ch;
+  min-width: 3ch;
+  text-align: center;
+  padding: 0;
+}
+.toolbar button:nth-of-type(3) {
+  margin-left: 4px;
+  border-left: 1px solid var(--image-toolbar-divider, rgb(255 255 255 / 14%));
+  border-radius: 0 7px 7px 0;
 }

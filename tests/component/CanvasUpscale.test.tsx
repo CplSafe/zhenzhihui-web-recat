@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import CanvasUpscale from '@/components/canvas/CanvasUpscale'
+import { useUiStore } from '@/stores/ui'
 import { hasOpenCanvasModal } from '@/utils/canvasModal'
 
 const mocks = vi.hoisted(() => ({
@@ -61,6 +62,7 @@ it('中文策略保留英文提交值，倍率变化更新预计输出尺寸', a
       nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind: 'image', assetId: 99 } }]}
       request={{ ids: ['source'], key: 1 }}
       onCloseRequest={vi.fn()}
+      onSubmitted={vi.fn()}
       onTasks={vi.fn()}
       onModalChange={vi.fn()}
     />,
@@ -95,6 +97,7 @@ it.each(['image', 'video'])('%s 超分估价与确认使用相同参数和源素
       nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind, assetId: 99 } }]}
       request={{ ids: ['source'], key: 1 }}
       onCloseRequest={close}
+      onSubmitted={vi.fn()}
       onTasks={tasks}
       onModalChange={vi.fn()}
     />,
@@ -126,9 +129,15 @@ it.each(['image', 'video'])('%s 超分估价与确认使用相同参数和源素
   })
   await waitFor(() => expect(close).toHaveBeenCalledOnce())
   expect(tasks).toHaveBeenCalled()
+  if (kind === 'image')
+    expect(tasks.mock.lastCall![0][0].image_info).toMatchObject({
+      modelName: '超分模型',
+      modelVersionId: 8,
+      operationCode: 'image.upscale',
+    })
 })
 
-it('创建失败保留弹窗与源素材，显示错误', async () => {
+it('创建失败通过全局提示反馈，结果节点保留源素材与失败状态', async () => {
   mocks.models.mockResolvedValue([{ id: 8, name: '超分模型', operation_codes: ['image.upscale'] }])
   mocks.create.mockRejectedValue(new Error('模型服务暂不可用'))
   const close = vi.fn()
@@ -140,15 +149,20 @@ it('创建失败保留弹窗与源素材，显示错误', async () => {
       nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind: 'image', assetId: 99 } }]}
       request={{ ids: ['source'], key: 1 }}
       onCloseRequest={close}
+      onSubmitted={vi.fn()}
       onTasks={tasks}
       onModalChange={vi.fn()}
     />,
   )
   await waitFor(() => expect(screen.getByRole('button', { name: '确认超分' })).toBeEnabled())
   await userEvent.click(await screen.findByRole('button', { name: /确认超分/ }))
-  expect(await screen.findByText('模型服务暂不可用')).toBeInTheDocument()
-  expect(close).not.toHaveBeenCalled()
-  expect(tasks).not.toHaveBeenCalled()
+  await waitFor(() => expect(useUiStore.getState().toast).toMatchObject({ message: '模型服务暂不可用', type: 'error' }))
+  expect(close).toHaveBeenCalledOnce()
+  expect(tasks.mock.lastCall![0][0]).toMatchObject({
+    status: 'failed',
+    source: { asset_id: 99, node_id: 'source' },
+    image_info: { modelName: '超分模型', operationCode: 'image.upscale' },
+  })
 })
 
 it('视频确认后交给画布节点流程，预估和重复点击不会额外提交旧超分任务', async () => {
@@ -162,6 +176,7 @@ it('视频确认后交给画布节点流程，预估和重复点击不会额外�
       nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind: 'video', assetId: 99 } }]}
       request={{ ids: ['source'], key: 1 }}
       onCloseRequest={vi.fn()}
+      onSubmitted={vi.fn()}
       onTasks={tasks}
       onModalChange={vi.fn()}
       onVideoGenerate={generate}
@@ -202,6 +217,7 @@ it('原视频失效时显示错误，不回退到旧的付费任务流程', asyn
       nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind: 'video', assetId: 99 } }]}
       request={{ ids: ['source'], key: 1 }}
       onCloseRequest={vi.fn()}
+      onSubmitted={vi.fn()}
       onTasks={vi.fn()}
       onModalChange={vi.fn()}
       onVideoGenerate={generate}
@@ -235,6 +251,7 @@ it('视频分辨率和增强风格使用单选，参数改变自动重新计价'
       nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind: 'video', assetId: 99 } }]}
       request={{ ids: ['source'], key: 1 }}
       onCloseRequest={vi.fn()}
+      onSubmitted={vi.fn()}
       onTasks={vi.fn()}
       onModalChange={vi.fn()}
     />,

@@ -1,129 +1,7 @@
-import { expect, test, type Page } from '@playwright/test'
-import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
+import { expect, test } from '@playwright/test'
+import { expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
 
-const voices = Array.from({ length: 45 }, (_, index) => ({
-  id: index + 1,
-  name: `公共旁白 ${String(index + 1).padStart(2, '0')}`,
-  source: 'public',
-  status: 'ready',
-  language: index % 2 ? 'en' : 'zh',
-  provider: index % 2 ? 'minimax' : 'volcengine-speech',
-  tags: [index % 2 ? '清亮' : '温柔'],
-}))
-
-async function setup(page: Page, failFilters = false) {
-  const catalog = [
-    ...voices.map((voice) => ({ ...voice, is_favorite: false })),
-    { ...voices[0], id: 901, name: '我的旁白', source: 'cloned', workspace_id: 21, is_favorite: false },
-  ]
-  const state = await installStrictAuthenticatedApp(page)
-  const requests: URL[] = []
-  const createRequests: Record<string, unknown>[] = []
-  const errors: string[] = []
-  const consoleErrors: string[] = []
-  page.on('pageerror', (error) => errors.push(error.message))
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
-  })
-  await page.route('**/api/v1/ai/tools**', (route) => {
-    expect(route.request().method()).toBe('GET')
-    expect(new URL(route.request().url()).searchParams.get('workspace_id')).toBe('21')
-    return route.fulfill({ json: { code: 0, data: [] } })
-  })
-  await page.route('**/api/v1/ai/models**', (route) =>
-    route.fulfill({ json: [{ id: 91, display_name: '配音模型', operation_codes: ['audio.tts'] }] }),
-  )
-  await page.route('**/api/v1/voices**', async (route) => {
-    const url = new URL(route.request().url())
-    requests.push(url)
-    expect(url.searchParams.get('workspace_id')).toBe('21')
-    if (route.request().method() === 'POST' && url.pathname === '/api/v1/voices') {
-      const input = route.request().postDataJSON() as Record<string, unknown>
-      createRequests.push(input)
-      expect(input).toMatchObject({ workspace_id: 21, sample_asset_id: 55, consent_confirmed: true })
-      expect(input.idempotency_key).toEqual(expect.any(String))
-      const created = { ...catalog[catalog.length - 1], id: 902, name: String(input.name), status: 'training' }
-      catalog.push(created)
-      return route.fulfill({ json: { code: 0, data: created } })
-    }
-    const favoriteId = url.pathname.match(/^\/api\/v1\/voices\/(\d+)\/favorite$/)?.[1]
-    if (favoriteId) {
-      expect(['PUT', 'DELETE']).toContain(route.request().method())
-      const voice = catalog.find((voice) => voice.id === Number(favoriteId))!
-      voice.is_favorite = route.request().method() === 'PUT'
-      return route.fulfill({ json: { code: 0, data: null } })
-    }
-    expect(route.request().method()).toBe('GET')
-    const voiceId = url.pathname.match(/^\/api\/v1\/voices\/(\d+)$/)?.[1]
-    if (voiceId) return route.fulfill({ json: catalog.find((voice) => voice.id === Number(voiceId)) })
-    if (url.searchParams.get('favorites') === 'true') expect(url.searchParams.has('source')).toBe(false)
-    else expect(['public', 'cloned']).toContain(url.searchParams.get('source'))
-    if (createRequests.length && url.searchParams.get('source') === 'cloned') {
-      expect(url.searchParams.has('model_version_id')).toBe(false)
-    } else expect(url.searchParams.get('model_version_id')).toBe('91')
-    if (url.pathname.endsWith('/filters')) {
-      expect(url.searchParams.has('limit')).toBe(false)
-      if (failFilters) {
-        failFilters = false
-        return route.fulfill({ status: 503, json: { code: 503, message: '筛选服务暂不可用' } })
-      }
-      return route.fulfill({
-        json: {
-          languages: ['zh', 'en'],
-          providers: ['minimax', 'volcengine-speech'],
-          voice_features: ['温柔', '清亮'],
-        },
-      })
-    }
-    expect(url.pathname).toBe('/api/v1/voices')
-    const q = url.searchParams.get('q') || ''
-    const features = url.searchParams.getAll('voice_feature')
-    const filtered = catalog.filter(
-      (voice) =>
-        voice.name.includes(q) &&
-        (!url.searchParams.get('source') || voice.source === url.searchParams.get('source')) &&
-        (url.searchParams.get('favorites') !== 'true' || voice.is_favorite) &&
-        (!url.searchParams.get('language') || voice.language === url.searchParams.get('language')) &&
-        (!url.searchParams.get('provider') || voice.provider === url.searchParams.get('provider')) &&
-        (!features.length || features.some((feature) => voice.tags.includes(feature))),
-    )
-    const offset = Number(url.searchParams.get('offset'))
-    const limit = Number(url.searchParams.get('limit'))
-    return route.fulfill({ json: { items: filtered.slice(offset, offset + limit), total: filtered.length } })
-  })
-  await page.route('**/api/v1/canvases/121**', (route) => {
-    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
-    return route.fulfill({
-      json: new URL(route.request().url()).pathname.endsWith('/elements')
-        ? {
-            elements: [
-              {
-                element_id: 'audio',
-                kind: 'node',
-                op: 'upsert',
-                payload: {
-                  id: 'audio',
-                  type: 'audio',
-                  position: { x: 350, y: 120 },
-                  style: { width: 320, height: 120 },
-                  data: { kind: 'audio', modelVersionId: 91, operationCode: 'audio.tts', prompt: '' },
-                },
-              },
-            ],
-            sync_revision: 1,
-            history_floor_revision: 0,
-            has_more: false,
-          }
-        : { id: 121, title: '音色筛选验证', status: 'active', revision: 1 },
-    })
-  })
-  await page.goto('/canvas/121')
-  await page.locator('.react-flow__node[data-id="audio"] .canvas-node-header').click()
-  await page.getByRole('button', { name: '音色库', exact: true }).click()
-  const modal = page.getByRole('dialog', { name: '音色库', exact: true })
-  await expect(modal).toBeVisible()
-  return { modal, requests, createRequests, errors, consoleErrors, state }
-}
+import { setupVoiceLibrary as setup } from './fixtures/canvas-voice-library'
 
 for (const width of [1440, 768]) {
   test(`我的音色添加入口、表单取消及提交训练 ${width}px`, async ({ page }, testInfo) => {
@@ -139,9 +17,9 @@ for (const width of [1440, 768]) {
       ),
     )
     // 使用有效的模拟 WAV，避免预览样本请求访问真实后端。
-    const wav = Buffer.alloc(4844)
+    const wav = Buffer.alloc(576044)
     wav.write('RIFF', 0)
-    wav.writeUInt32LE(4836, 4)
+    wav.writeUInt32LE(576036, 4)
     wav.write('WAVEfmt ', 8)
     wav.writeUInt32LE(16, 16)
     wav.writeUInt16LE(1, 20)
@@ -151,19 +29,21 @@ for (const width of [1440, 768]) {
     wav.writeUInt16LE(2, 32)
     wav.writeUInt16LE(16, 34)
     wav.write('data', 36)
-    wav.writeUInt32LE(4800, 40)
+    wav.writeUInt32LE(576000, 40)
     await page.route('**/api/v1/assets/55/download?**', (route) =>
       route.fulfill({ contentType: 'audio/wav', body: wav }),
     )
     await modal.getByRole('button', { name: '添加音色', exact: true }).click()
-    await modal.getByLabel('复刻供应商').selectOption('volcengine-speech')
+    await expect(modal.getByLabel('复刻供应商')).toHaveValue('minimax')
+    await expect(modal.getByLabel('复刻供应商').locator('option')).toHaveText(['MiniMax'])
     await expect(modal.getByText('创建专属音色', { exact: true })).toBeVisible()
     await expect(modal.getByRole('button', { name: '提交复刻' })).toBeDisabled()
     await modal.getByRole('button', { name: '取消', exact: true }).click()
     await expect(modal.getByRole('button', { name: '我的音色', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await modal.getByRole('textbox', { name: '搜索音色' }).fill('旧筛选')
     await modal.getByRole('button', { name: '添加音色', exact: true }).click()
-    await modal.getByLabel('复刻供应商').selectOption('volcengine-speech')
+    await expect(modal.getByLabel('复刻供应商')).toHaveValue('minimax')
+    await expect(modal.getByLabel('复刻供应商').locator('option')).toHaveText(['MiniMax'])
     await modal.getByLabel('音色名称', { exact: true }).fill('新建专属旁白')
     await modal.getByLabel('选择本机声音样本').selectOption('55')
     await expect(modal.getByRole('button', { name: '提交复刻' })).toBeDisabled()
@@ -282,6 +162,7 @@ for (const width of [1440, 768]) {
     })
     await page.getByTitle('英语（en）', { exact: true }).click()
     await expect(modal.getByText('共 22 个音色 · 第 1 页')).toBeVisible()
+    await modal.getByRole('button', { name: '更多筛选', exact: true }).click()
     const features = modal.getByRole('combobox', { name: '音色声音特征' })
     await expect(features).toBeEnabled()
     await features.click()
@@ -400,9 +281,9 @@ for (const width of [1440, 768]) {
       ),
     )
     // 使用有效的模拟 WAV，避免预览样本请求访问真实后端。
-    const wav = Buffer.alloc(4844)
+    const wav = Buffer.alloc(576044)
     wav.write('RIFF', 0)
-    wav.writeUInt32LE(4836, 4)
+    wav.writeUInt32LE(576036, 4)
     wav.write('WAVEfmt ', 8)
     wav.writeUInt32LE(16, 16)
     wav.writeUInt16LE(1, 20)
@@ -412,12 +293,13 @@ for (const width of [1440, 768]) {
     wav.writeUInt16LE(2, 32)
     wav.writeUInt16LE(16, 34)
     wav.write('data', 36)
-    wav.writeUInt32LE(4800, 40)
+    wav.writeUInt32LE(576000, 40)
     await page.route('**/api/v1/assets/55/download?**', (route) =>
       route.fulfill({ contentType: 'audio/wav', body: wav }),
     )
     await modal.getByRole('button', { name: '添加音色', exact: true }).click()
-    await modal.getByLabel('复刻供应商').selectOption('volcengine-speech')
+    await expect(modal.getByLabel('复刻供应商')).toHaveValue('minimax')
+    await expect(modal.getByLabel('复刻供应商').locator('option')).toHaveText(['MiniMax'])
     await modal.getByLabel('音色名称', { exact: true }).fill('待排查音色')
     await modal.getByLabel('选择本机声音样本').selectOption('55')
     await modal.getByRole('checkbox', { name: '我确认声音属于本人或已获得音色复刻授权' }).check()
@@ -490,6 +372,8 @@ for (const width of [1440, 768]) {
     await modal.getByRole('button', { name: '我的音色', exact: true }).click()
     await modal.getByRole('button', { name: '添加音色', exact: true }).click()
     await expect(modal.getByLabel('复刻供应商')).toHaveValue('minimax')
+    await expect(modal.getByLabel('复刻供应商').locator('option')).toHaveText(['MiniMax'])
+    await modal.getByText('供应商计费与激活说明', { exact: true }).click()
     await expect(modal.getByText(/首次合成会产生音色费用/)).toBeVisible()
     await modal.getByLabel('音色名称', { exact: true }).fill('你好')
     await modal.getByLabel('选择本机声音样本').selectOption('55')

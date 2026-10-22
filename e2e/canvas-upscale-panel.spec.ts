@@ -10,6 +10,7 @@ for (const dimensions of [
   test(`超分尺寸 ${dimensions.width}×${dimensions.height}：原图保留、关闭恢复与提交`, async ({ page }, testInfo) => {
     const pageErrors: string[] = []
     page.on('pageerror', (error) => pageErrors.push(error.message))
+    const succeeds = dimensions.width === 1024
     const oversized = Math.max(dimensions.width, dimensions.height) > 4096
     await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/ai/tools?**', async (route) => {
@@ -28,7 +29,7 @@ for (const dimensions of [
       }, dimensions),
       'base64',
     )
-    await page.route('**/api/v1/assets/701/download?**', (route) =>
+    await page.route('**/api/v1/assets/{701,703}/download?**', (route) =>
       route.fulfill({ contentType: 'image/png', body: png }),
     )
     let uploadCount = 0
@@ -81,12 +82,23 @@ for (const dimensions of [
       estimates.push(route.request().postDataJSON())
       await route.fulfill({ json: { data: { estimated_cost: 20, balance: 100, can_afford: true } } })
     })
+    let releaseSubmission!: () => void
+    const submissionResponse = new Promise<void>((resolve) => {
+      releaseSubmission = resolve
+    })
     await page.route('**/api/v1/ai/tasks', async (route) => {
       submissions.push(route.request().postDataJSON())
+      await submissionResponse
       await route.fulfill({ json: { data: { id: 4048, status: 'queued' } } })
     })
     await page.route('**/api/v1/ai/tasks/4048?**', (route) =>
-      route.fulfill({ json: { data: { id: 4048, status: 'failed', error_message: '模拟供应商失败' } } }),
+      route.fulfill({
+        json: {
+          data: succeeds
+            ? { id: 4048, status: 'succeeded', outputs: [{ asset_id: 703 }] }
+            : { id: 4048, status: 'failed', error_message: '模拟供应商失败' },
+        },
+      }),
     )
     await page.route('**/api/v1/ai/models**', (route) =>
       route.fulfill({
@@ -205,6 +217,24 @@ for (const dimensions of [
     await testInfo.attach('提交前的尺寸与费用', { body: await page.screenshot(), contentType: 'image/png' })
     await modal.getByRole('button', { name: '确认超分' }).click()
     await expect.poll(() => submissions.length).toBe(1)
+    await expect(modal).not.toBeVisible()
+    const child = page.locator('.react-flow__node').filter({ hasText: '原图超分' })
+    await expect(child).toHaveCount(1)
+    await testInfo.attach('慢请求期间已关闭弹窗并创建子节点', {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    })
+    releaseSubmission()
+    await expect(source).not.toHaveClass(/selected/)
+    await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
+    await expect(page.locator('.canvas-panel-area')).toHaveCount(0)
+    await expect(page.locator('.canvas-hd-badge')).toHaveCount(0)
+    if (succeeds) {
+      await expect(child.locator('img').first()).toHaveAttribute('src', /assets\/703\/download/)
+      await expect(child.locator('img').first()).toBeVisible()
+      await expect(child).not.toContainText('高清产物')
+    } else await expect(child).toContainText('失败')
+    await expect(page.locator('.react-flow__node')).toHaveCount(2)
     const submitted = submissions[0]
     expect(submitted).not.toHaveProperty('prompt')
     expect(submitted).toMatchObject({

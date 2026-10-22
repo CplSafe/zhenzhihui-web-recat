@@ -1,7 +1,15 @@
+import { createCanvasImageMetadataResolver } from '@/api/canvasImageMetadata'
+import { imageGenerationInfo, canvasImageDetails } from '@/utils/canvasImageInfo'
 import { listCanvasTools } from '@/api/canvasTools'
 import { availableCanvasImageTools } from '@/utils/canvasTools'
 import CanvasNodeFailure from '@/components/canvas/CanvasNodeFailure'
 import { hasActiveVideoUpscale } from '@/utils/canvasUpscale'
+import {
+  snapshotVideoAudio,
+  composeVideoAudio,
+  VideoAudioCompositionError,
+  type VideoAudioComposition,
+} from '@/utils/canvasVideoAudio'
 import CanvasVideoUpscaleResultPanel from '@/components/canvas/CanvasVideoUpscaleResultPanel'
 import CanvasNodeStatus from '@/components/canvas/CanvasNodeStatus'
 import CanvasStoryboard from '@/components/canvas/CanvasStoryboard'
@@ -125,7 +133,6 @@ import CanvasNodePanel, {
   AUTO_RATIO,
   calcNodeSize,
   isAutoRatio,
-  parseParamsSchema,
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
@@ -146,6 +153,7 @@ import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import { buildCanvasModelBuckets } from '@/utils/canvasModelBuckets'
+import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
 import { findFreeNodePosition } from '@/utils/canvasNodePlacement'
 import { resolveCanvasConnectDropTarget, type CanvasNodeScreenRect } from '@/utils/canvasConnectDrop'
 import { fetchAllCanvasElements, saveCanvasElementsBatched } from '@/api/canvasApi'
@@ -203,7 +211,6 @@ import CanvasFailureDetails from '@/components/canvas/CanvasFailureDetails'
 import { planMultiResultPositions } from '@/utils/canvasMultiResult'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
-import { getVideoEditModeConflict, isVideoTaskModeField } from '@/utils/canvasVideoTaskMode'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText, toCanvasPromptContext } from '@/utils/canvasStructuredText'
 import InlineEdit from '@/components/common/InlineEdit'
@@ -228,9 +235,7 @@ import {
   classifyOrphanSubmission,
   formatCanvasElapsed,
   getCanvasEstimatedVideoProgress,
-  getCanvasGenerationDuration,
   getCanvasTaskPresentation,
-  isCanvasGeneratedResult,
   isSameCanvasTask,
   restoreCanvasTaskState,
   reusableInterruptedIdempotencyKey,
@@ -597,6 +602,7 @@ async function mapWithConcurrency<T, R>(
  * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
  */
 interface CanvasNodeActions {
+  onRetryAudioComposition?: (nodeId: string) => void
   onNodeWheel?: (event: React.WheelEvent<HTMLDivElement>) => void
   onAudioGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
   onToggleImageResults?: (nodeId: string) => void
@@ -1417,6 +1423,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     onSelectImageResult,
     onSplitImageResults,
     onRenameNode,
+    onRetryAudioComposition,
     registerFrameCapture,
     registerNodeDownload,
     registerNodePreview,
@@ -1581,22 +1588,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const taskElapsedLabel = kind === 'video' || taskElapsedSec === null ? '' : formatCanvasElapsed(taskElapsedSec)
   const videoEstimatedProgress =
     kind === 'video' && taskRunning ? getCanvasEstimatedVideoProgress(taskElapsedSec) : null
-  // 标题旁的「已生成」对勾：只认当前画面确实是生成结果（替换成素材库/本地文件后不显示）
-  const generatedResult =
-    (kind === 'image' || kind === 'video') &&
-    !taskRunning &&
-    !taskFailed &&
-    isCanvasGeneratedResult(data as Record<string, unknown>)
   const imageResultIds = kind === 'image' ? canvasImageResultIds(data) : []
-  const generatedTooltip = useMemo(() => {
-    if (!generatedResult) return ''
-    const record = data as Record<string, unknown>
-    const history = Array.isArray(record.resultHistory) ? (record.resultHistory as Array<{ assetId?: number }>) : []
-    // 耗时属于最近一次生成；回退到更早版本时这个数字对不上当前画面，不显示
-    const isLatest = Number(history[history.length - 1]?.assetId || 0) === Number(record.assetId || 0)
-    const duration = isLatest ? getCanvasGenerationDuration(record) : null
-    return duration === null ? 'AI 生成' : `AI 生成 · 用时 ${formatCanvasElapsed(duration)}`
-  }, [generatedResult, data])
   // 上传/替换/下载/删除的显隐判断已随按钮一起移到 CanvasNodeToolbar，
   // 由 selectedNodeToolbarState 在视图层统一算。
 
@@ -1741,19 +1733,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             }}
           />
         </span>
-        {generatedResult ? (
-          <span className="canvas-node-header__done" role="img" aria-label={generatedTooltip} title={generatedTooltip}>
-            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
-              <path
-                d="M3.2 6.2 5.1 8l3.7-4"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        ) : null}
       </div>
 
       {/*
@@ -2027,7 +2006,13 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         <CanvasNodeFailure
           zoom={canvasZoom}
           title={
-            connectionError ? '连接异常' : data.operationCode === 'video.upscale' ? '上次超分失败' : '上次生成失败'
+            connectionError
+              ? '连接异常'
+              : (data.videoAudioComposition as VideoAudioComposition | undefined)?.failed
+                ? '配音合成失败'
+                : data.operationCode === 'video.upscale'
+                  ? '上次超分失败'
+                  : '上次生成失败'
           }
           failedAt={
             connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
@@ -2035,16 +2020,23 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           reason={connectionError || (data as any)?.taskFailure?.message || taskError}
           requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
         >
+          {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
+            <button
+              type="button"
+              className="canvas-node-voice-retry nodrag nopan nowheel"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onRetryAudioComposition?.(id)
+              }}
+            >
+              重试配音合成
+            </button>
+          )}
           {taskFailed && <CanvasFailureDetails data={data} />}
         </CanvasNodeFailure>
       )}
 
-      {data.hd && (
-        <div className="canvas-hd-badge">
-          高清产物 · 新文件 · {String((data.hd as Record<string, unknown>).spec || '')}
-          {(data.hd as Record<string, unknown>).reviewPolicy === 'reuse_source' ? ' · 审核复用源件' : ''}
-        </div>
-      )}
       {data.hdProcessing && (
         <CanvasNodeStatus zoom={canvasZoom} label={`正在处理中 · ${String(data.hdProcessing)}`}>
           <span className="canvas-node-generation-spinner" aria-hidden="true" />
@@ -2349,6 +2341,7 @@ function CanvasInner() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const canvasRootRef = useRef<HTMLDivElement>(null)
+  const nodePointerSelectionRef = useRef<{ id: string; selectedIds: string[] } | null>(null)
   const shortcutsBlockedRef = useRef(false)
   const [canvasKeyboardActive, setCanvasKeyboardActive] = useState(false)
   const canvasModalOpen = useCanvasModalOpen()
@@ -3181,6 +3174,7 @@ function CanvasInner() {
         'taskFailure',
         'taskFailureHistory',
         'generationRequest',
+        'imageGeneration',
         // 幂等键属于「那一次提交」：副本带着它重来，会被后端认成原节点的任务
         'taskIdempotencyKey',
         'taskSubmissionFingerprint',
@@ -4622,6 +4616,14 @@ function CanvasInner() {
               assetId,
               resultUrl,
               assetSource: material.realPerson ? 'real_person' : 'materials',
+              ...(sourceKind === 'image'
+                ? {
+                    imageOrigin: {
+                      assetId: Number(material.assetId),
+                      kind: material.realPerson ? 'real_person' : 'materials',
+                    },
+                  }
+                : {}),
               assetWorkspaceId: workspaceId,
               ...(material.realPerson ? { realPerson: material.realPerson } : {}),
             },
@@ -4728,6 +4730,9 @@ function CanvasInner() {
                       resultUrl,
                       realPerson,
                       assetSource: realPerson ? 'real_person' : 'materials',
+                      ...(type === 'image'
+                        ? { imageOrigin: { assetId, kind: realPerson ? 'real_person' : 'materials' } }
+                        : {}),
                       assetWorkspaceId: workspaceId,
                       ...(type === 'audio'
                         ? {
@@ -4785,6 +4790,14 @@ function CanvasInner() {
               workspaceId,
             ),
             assetSource: material.realPerson ? 'real_person' : 'materials',
+            ...(type === 'image'
+              ? {
+                  imageOrigin: {
+                    assetId: Number(material.assetId),
+                    kind: material.realPerson ? 'real_person' : 'materials',
+                  },
+                }
+              : {}),
             assetWorkspaceId: workspaceId,
             ...(type === 'audio'
               ? {
@@ -4925,6 +4938,7 @@ function CanvasInner() {
           resultUrl,
           realPerson,
           assetSource: realPerson ? 'real_person' : 'upload',
+          imageOrigin: { assetId, kind: 'upload' },
           assetWorkspaceId: workspaceId,
           ...(poster ? { poster } : {}),
         }
@@ -5061,6 +5075,7 @@ function CanvasInner() {
             assetId,
             realPerson,
             assetSource: realPerson ? 'real_person' : 'upload',
+            imageOrigin: { assetId, kind: 'upload' },
             assetWorkspaceId: workspaceId,
             resultUrl: assetStreamUrl(assetId, workspaceId),
             uploading: false,
@@ -5205,6 +5220,11 @@ function CanvasInner() {
   const handleModelChange = useCallback(
     (modelVersionId: number) => {
       if (!selectedNode) return
+      const resetImageParams =
+        selectedNode.kind === 'image' &&
+        canvasModels.image.some(
+          (model) => model.modelVersionId === selectedNode.modelVersionId && isCanvasToolOnlyImageModel(model),
+        )
       // 模型变更前记录历史，供撤销使用
       commitHistory()
       setNodes((nds) =>
@@ -5215,6 +5235,7 @@ function CanvasInner() {
                 data: {
                   ...(n.data as Record<string, unknown>),
                   modelVersionId,
+                  ...(resetImageParams ? { params: {} } : {}),
                   ...(selectedNode.kind === 'video' && selectedNode.resultUrl ? { generationIntent: 'new-model' } : {}),
                 },
               }
@@ -5226,12 +5247,13 @@ function CanvasInner() {
           ? {
               ...prev,
               modelVersionId,
+              ...(resetImageParams ? { params: {} } : {}),
               ...(prev.kind === 'video' && prev.resultUrl ? { generationIntent: 'new-model' as const } : {}),
             }
           : prev,
       )
     },
-    [selectedNode, setNodes, commitHistory],
+    [selectedNode, setNodes, commitHistory, canvasModels.image],
   )
 
   /** 文本节点只保存用户原文，不创建 AI 任务；下游图片/视频会直接读取这段文本。 */
@@ -5459,16 +5481,6 @@ function CanvasInner() {
           showToast(inputError, 'error')
           return
         }
-        const editModeError = getVideoEditModeConflict({
-          prompt: generate.prompt,
-          mode: generate.params?.mode,
-          hasVideoInput: generate.inputAssets.some((asset) => asset.role === 'video'),
-          supportsTaskMode: parseParamsSchema(submitModel).some(isVideoTaskModeField),
-        })
-        if (editModeError) {
-          showToast(editModeError, 'error')
-          return
-        }
         const videoAssetIds = generate.inputAssets
           .filter((asset) => asset.role === 'video')
           .map((asset) => Number(asset.asset_id))
@@ -5611,6 +5623,24 @@ function CanvasInner() {
       )
         return
       const uncertainSubmissionKey = unknownSubmissionKey(latestNode.data, taskSubmissionFingerprint)
+      const previousComposition = latestNode.data.videoAudioComposition as VideoAudioComposition | undefined
+      if (
+        previousComposition?.failed &&
+        Number(latestNode.data.taskId) > 0 &&
+        latestNode.data.taskSubmissionFingerprint === taskSubmissionFingerprint
+      ) {
+        const patch = {
+          taskStatus: 'result_pending',
+          taskError: '',
+          videoAudioComposition: { ...previousComposition, failed: false },
+        }
+        setNodes((items) =>
+          items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, ...patch } } : item)),
+        )
+        setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...patch } : current))
+        setSaveStatus('dirty')
+        return
+      }
       const taskIdempotencyKey =
         resume?.idempotencyKey ||
         uncertainSubmissionKey ||
@@ -5637,6 +5667,27 @@ function CanvasInner() {
           modelVersionId: generate.modelVersionId,
           params: generate.params || {},
           generationRequest: generate,
+          videoAudioComposition:
+            generate.kind === 'video' && generate.operationCode !== 'video.upscale'
+              ? snapshotVideoAudio(
+                  generate.sourceRefs || [],
+                  latestRef.current.nodes,
+                  Number(workspaceId),
+                  taskIdempotencyKey,
+                )
+              : undefined,
+          ...(generate.kind === 'image'
+            ? {
+                imageGeneration: {
+                  submissionKey: taskIdempotencyKey,
+                  info: imageGenerationInfo(
+                    { ...generate, prompt: submitPrompt },
+                    submitModel?.displayName || '',
+                    taskStartedAt,
+                  ),
+                },
+              }
+            : {}),
           textGenerationMode: generate.kind === 'text' ? 'storyboard' : undefined,
           taskIdempotencyKey,
           taskSubmissionFingerprint,
@@ -6034,6 +6085,22 @@ function CanvasInner() {
     scheduleSyncRef.current(true)
   }
 
+  const retryVideoAudioComposition = useLatestCallback((nodeId: string) => {
+    const target = latestRef.current.nodes.find((item) => item.id === nodeId)
+    const composition = target?.data.videoAudioComposition as VideoAudioComposition | undefined
+    if (!target || !composition?.failed || !(Number(target.data.taskId) > 0)) return
+    const patch = {
+      taskStatus: 'result_pending',
+      taskError: '',
+      videoAudioComposition: { ...composition, failed: false },
+    }
+    setNodes((items) =>
+      items.map((item) => (item.id === nodeId ? { ...item, data: { ...item.data, ...patch } } : item)),
+    )
+    setSelectedNode((current) => (current?.id === nodeId ? { ...current, ...patch } : current))
+    setSaveStatus('dirty')
+  })
+
   const handleVideoUpscaleGenerate = async ({
     source: input,
     request,
@@ -6181,6 +6248,7 @@ function CanvasInner() {
         assetId,
         assetWorkspaceId: workspaceId,
         assetSource: 'upload',
+        imageOrigin: { assetId, kind: 'panorama' },
         title: '全景取景',
         resultUrl: assetStreamUrl(assetId, Number(workspaceId)),
         panoramaView: values,
@@ -6255,7 +6323,15 @@ function CanvasInner() {
         generationIntent: 'edit',
         // 留一条生成历史：面板据此显示「重新生成」，也能回看这张图出自哪次生成
         resultHistory: [
-          { assetId, kind: 'image', createdAt, prompt: String((source.data as any)?.prompt || '') || undefined },
+          {
+            assetId,
+            kind: 'image',
+            createdAt,
+            prompt: String((source.data as any)?.prompt || '') || undefined,
+            imageInfo: (
+              source.data.imageGeneration as { info?: import('@/utils/canvasImageInfo').CanvasImageInfo } | undefined
+            )?.info,
+          },
         ],
       },
       style: { ...style },
@@ -6273,6 +6349,7 @@ function CanvasInner() {
   // 恢复并轮询画布中的在途任务：刷新页面后仍能继续读取真实状态，成功后把文本/图片/视频结果回填节点。
   useEffect(() => {
     let disposed = false
+    const compositionAbort = new AbortController()
     let timer = 0
     const polling = new Set<number>()
     const successStatuses = new Set(['succeeded', 'completed', 'success'])
@@ -6321,6 +6398,11 @@ function CanvasInner() {
         if (node.data?.kind === 'audio') return false
         const taskId = Number((node.data as any)?.taskId || 0)
         const status = normalizeAiTaskStatus((node.data as any)?.taskStatus)
+        if (
+          status === 'result_sync_failed' &&
+          (node.data.videoAudioComposition as VideoAudioComposition | undefined)?.failed
+        )
+          return false
         const taskError = String((node.data as any)?.taskError || '')
         const isRecoverableResultSyncFailure =
           status === 'failed' && (taskError.includes('结果同步超时') || taskError.includes('未返回可用'))
@@ -6393,12 +6475,36 @@ function CanvasInner() {
                   kind === 'image' &&
                   successStatuses.has(normalizeAiTaskStatus(node.data.taskStatus)) &&
                   Number(node.data.assetId) > 0
-                const assetId =
+                let assetId =
                   kind === 'image'
                     ? restoringImageBatch
                       ? Number(node.data.assetId)
                       : imageIds[0] || 0
                     : await resolveVerifiedResultAssetId({ workspaceId, task, type: 'video', fallbackTaskId: taskId })
+                const composition = node.data.videoAudioComposition as VideoAudioComposition | undefined
+                if (
+                  kind === 'video' &&
+                  assetId > 0 &&
+                  composition?.clips.length &&
+                  composition.submissionKey === node.data.taskIdempotencyKey
+                ) {
+                  const sourceAssetId = assetId
+                  assetId = await composeVideoAudio(
+                    Number(workspaceId),
+                    sourceAssetId,
+                    composition,
+                    compositionAbort.signal,
+                  )
+                  if (
+                    disposed ||
+                    !isSameCanvasTask(
+                      latestRef.current.nodes.find((item) => item.id === node.id)?.data || {},
+                      node.data,
+                    )
+                  )
+                    return
+                  nextData.videoAudioComposition = { ...composition, failed: false, result: { sourceAssetId, assetId } }
+                }
                 const urls = kind === 'image' ? [] : await resolveGeneratedMediaUrls({ workspaceId, task, type: kind })
                 if (kind === 'image' && (imageIds.length || restoringImageBatch)) {
                   nextData.imageResultAssetIds = imageIds
@@ -6436,6 +6542,18 @@ function CanvasInner() {
                           kind: kind === 'video' ? 'video' : 'image',
                           createdAt: new Date().toISOString(),
                           prompt: String(node.data.prompt || '') || undefined,
+                          ...(kind === 'image' &&
+                          (node.data.imageGeneration as { submissionKey?: string } | undefined)?.submissionKey ===
+                            node.data.taskIdempotencyKey &&
+                          node.data.imageGeneration
+                            ? {
+                                imageInfo: (
+                                  node.data.imageGeneration as {
+                                    info: import('@/utils/canvasImageInfo').CanvasImageInfo
+                                  }
+                                ).info,
+                              }
+                            : {}),
                         })),
                     ].slice(-CANVAS_RESULT_HISTORY_CAP)
                   }
@@ -6510,6 +6628,25 @@ function CanvasInner() {
             )
             setSaveStatus('dirty')
           } catch (error: any) {
+            if (error instanceof VideoAudioCompositionError && !disposed) {
+              const patch = {
+                taskStatus: 'result_sync_failed',
+                taskError: error.message,
+                videoAudioComposition: { ...(node.data.videoAudioComposition as VideoAudioComposition), failed: true },
+              }
+              setNodes((items) =>
+                items.map((item) =>
+                  item.id === node.id && isSameCanvasTask(item.data, node.data)
+                    ? { ...item, data: { ...item.data, ...patch } }
+                    : item,
+                ),
+              )
+              setSelectedNode((current) =>
+                current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...patch } : current,
+              )
+              setSaveStatus('dirty')
+              return
+            }
             if (!disposed && !taskFetched && node.data.taskErrorHistorical && Number(error?.status) === 404) {
               const nextData = {
                 taskStatus: 'failed',
@@ -6611,6 +6748,7 @@ function CanvasInner() {
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       disposed = true
+      compositionAbort.abort()
       window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
@@ -6996,7 +7134,7 @@ function CanvasInner() {
           {
             ratio,
             size,
-            extraData: { assetId, resultUrl: assetStreamUrl(assetId, ws) },
+            extraData: { assetId, resultUrl: assetStreamUrl(assetId, ws), imageOrigin: { assetId, kind: 'capture' } },
           },
         )
         linkCapturedFrame(nodeId, imageNodeId)
@@ -7042,6 +7180,8 @@ function CanvasInner() {
 
   // 图片放大预览：弹窗在视图层（要拿整张画布的图片列表做画廊导航），记住当前查看的节点 id 即可。
   const [imagePreviewNodeId, setImagePreviewNodeId] = useState('')
+  const imagePreviewIsOpen = Boolean(imagePreviewNodeId)
+  const resolvePreviewImageInfo = useMemo(createCanvasImageMetadataResolver, [workspaceId, imagePreviewIsOpen])
   const openImagePreview = useCallback((nodeId: string, assetId?: number) => {
     const node = latestRef.current.nodes.find((item) => item.id === nodeId)
     setImagePreviewNodeId(assetId && assetId !== Number(node?.data.assetId) ? `${nodeId}:image:${assetId}` : nodeId)
@@ -7072,6 +7212,9 @@ function CanvasInner() {
         id: node.id,
         url,
         title,
+        assetId: Number(data.assetId || 0),
+        workspaceId: Number(data.assetWorkspaceId || workspaceId),
+        ...canvasImageDetails(data, Number(data.assetId || 0)),
         panorama: (data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama',
       })
       for (const assetId of canvasImageResultIds(data).filter((id) => id !== Number(data.assetId))) {
@@ -7079,6 +7222,9 @@ function CanvasInner() {
           id: `${node.id}:image:${assetId}`,
           url: assetStreamUrl(assetId, workspaceId),
           title: `${title} · 第 ${canvasImageResultIds(data).indexOf(assetId) + 1} 张`,
+          assetId,
+          workspaceId: Number(data.assetWorkspaceId || workspaceId),
+          ...canvasImageDetails(data, assetId),
         })
       }
     }
@@ -8516,6 +8662,7 @@ function CanvasInner() {
       onSelectImageResult: changeImageResults,
       onSplitImageResults: handleSplitImageResults,
       capturingNodeId,
+      onRetryAudioComposition: retryVideoAudioComposition,
       onRenameNode: renameNode,
       registerFrameCapture,
       registerNodeDownload,
@@ -8544,6 +8691,7 @@ function CanvasInner() {
       handleSplitImageResults,
       capturingNodeId,
       renameNode,
+      retryVideoAudioComposition,
       registerFrameCapture,
       registerNodeDownload,
       registerNodePreview,
@@ -8914,7 +9062,7 @@ function CanvasInner() {
     )
     for (const node of next.nodes) {
       const hd = node.data.hd as { taskId?: string } | undefined
-      if (hd?.taskId) deliveredHdRef.current.add(hd.taskId)
+      if (hd?.taskId && node.data.assetId) deliveredHdRef.current.add(hd.taskId)
     }
     if (next.changed) {
       setNodes(next.nodes)
@@ -8942,6 +9090,12 @@ function CanvasInner() {
           }
           onCloseRequest={closeHdRequest}
           onTasks={receiveHdTasks}
+          onSubmitted={() => {
+            hdSelectionRef.current = null
+            setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
+            setSelectedNode(null)
+            setSelectedNodeIds([])
+          }}
           onVideoGenerate={handleVideoUpscaleGenerate}
           onModalChange={handleHdModalChange}
         />
@@ -9013,6 +9167,14 @@ function CanvasInner() {
         ref={canvasRootRef}
         tabIndex={-1}
         onPointerDownCapture={(event) => {
+          const target = event.target as HTMLElement
+          const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
+          nodePointerSelectionRef.current = nodeId
+            ? {
+                id: nodeId,
+                selectedIds: latestRef.current.nodes.filter((node) => node.selected).map((node) => node.id),
+              }
+            : null
           if (!shortcutsBlockedRef.current && isCanvasShortcutTarget(canvasRootRef.current, event.target)) {
             canvasRootRef.current?.focus({ preventScroll: true })
           }
@@ -9323,11 +9485,29 @@ function CanvasInner() {
               setAddMenu(null)
               setContextMenu({ x: e.clientX, y: e.clientY })
             }}
-            onNodeClick={(_e, node) => {
+            onNodeClick={(event, node) => {
               if (isPickingRef) {
                 handlePickRefNode(node as unknown as Node)
                 return
               }
+              // 按下前的快照避免 React Flow 的全局组合键状态与焦点切换时序影响这次点击。
+              const snapshot = nodePointerSelectionRef.current
+              const wanted = new Set(
+                event.ctrlKey || event.metaKey
+                  ? snapshot?.id === node.id
+                    ? snapshot.selectedIds
+                    : latestRef.current.nodes.filter((item) => item.selected).map((item) => item.id)
+                  : [],
+              )
+              if ((event.ctrlKey || event.metaKey) && wanted.has(node.id)) wanted.delete(node.id)
+              else wanted.add(node.id)
+              setNodes((items) =>
+                items.map((item) =>
+                  Boolean(item.selected) === wanted.has(item.id) ? item : { ...item, selected: wanted.has(item.id) },
+                ),
+              )
+              setEdges((items) => items.map((item) => (item.selected ? { ...item, selected: false } : item)))
+              setSelectedNodeIds(wanted.size > 1 ? [...wanted] : [])
               // 选中节点即关掉添加节点菜单（理由见 handleSelectNodeOnDown）
               setAddMenu(null)
               // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
@@ -9496,7 +9676,7 @@ function CanvasInner() {
             onRename={() => setRenamingNodeId(selectedNode.id)}
             onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
             onHd={
-              ['video', 'timeline'].includes(selectedNodeToolbarState.kind)
+              ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
                 ? () => {
                     setImageTool(null)
                     setHdRequest({ ids: [selectedNode.id], key: Date.now() })
@@ -9570,6 +9750,7 @@ function CanvasInner() {
         {imagePreviewNodeId && imagePreviewItems.length > 0 && (
           <CanvasImagePreviewModal
             items={imagePreviewItems}
+            resolveInfo={resolvePreviewImageInfo}
             activeId={imagePreviewNodeId}
             onSelect={setImagePreviewNodeId}
             onClose={() => setImagePreviewNodeId('')}

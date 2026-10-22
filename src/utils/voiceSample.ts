@@ -1,3 +1,4 @@
+import { encodeVoiceWav } from './voiceRecording'
 import { demuxMp4 } from './mp4Demux'
 import { muxMp4 } from './mp4Muxer'
 import { readBoxes } from './mp4Boxes'
@@ -65,32 +66,5 @@ export async function decodeVoiceVideo(file: File, signal: AbortSignal): Promise
 export function voiceSampleWav(buffer: AudioBuffer, start: number, end: number): Blob {
   const error = validateVoiceSampleRange(buffer.duration, start, end)
   if (error) throw new Error(error)
-  const from = Math.floor(start * buffer.sampleRate)
-  const length = Math.min(buffer.length - from, Math.floor((end - start) * buffer.sampleRate))
-  const bytes = new ArrayBuffer(44 + length * 2)
-  const view = new DataView(bytes)
-  const text = (at: number, value: string) =>
-    [...value].forEach((char, index) => view.setUint8(at + index, char.charCodeAt(0)))
-  text(0, 'RIFF')
-  view.setUint32(4, bytes.byteLength - 8, true)
-  text(8, 'WAVE')
-  text(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, 1, true)
-  view.setUint32(24, buffer.sampleRate, true)
-  view.setUint32(28, buffer.sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  text(36, 'data')
-  view.setUint32(40, length * 2, true)
-  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index))
-  for (let index = 0; index < length; index++) {
-    const value = Math.max(
-      -1,
-      Math.min(1, channels.reduce((sum, channel) => sum + channel[from + index], 0) / channels.length),
-    )
-    view.setInt16(44 + index * 2, Math.round(value * (value < 0 ? 32768 : 32767)), true)
-  }
-  return new Blob([bytes], { type: 'audio/wav' })
+  return encodeVoiceWav(buffer, start, end)
 }

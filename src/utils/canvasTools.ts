@@ -39,6 +39,15 @@ export function fieldVisible(field: ToolField, values: Record<string, unknown>):
 export function schemaDefaults(fields: ToolField[]): Record<string, unknown> {
   return Object.fromEntries(fields.filter((f) => f.default !== undefined).map((f) => [f.name, f.default]))
 }
+/** 机位按界面显示的整度提交，避免拖动产生的浮点尾数进入模型参数。 */
+export function normalizeMultiAngleValues(values: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...values }
+  for (const name of ['horizontal_angle', 'vertical_angle', 'zoom']) {
+    const value = next[name]
+    if (typeof value === 'number' && Number.isFinite(value)) next[name] = Math.round(value)
+  }
+  return next
+}
 export function activeToolParams(fields: ToolField[], values: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     fields.filter((f) => fieldVisible(f, values) && values[f.name] !== undefined).map((f) => [f.name, values[f.name]]),
@@ -85,7 +94,8 @@ export function buildToolGeneration(args: {
   modelValues: Record<string, unknown>
   assetIds: number[]
 }): ToolGeneration {
-  const { tool, modelId, values, assetIds } = args
+  const { tool, modelId, assetIds } = args
+  const values = tool.code === 'image.multi_angle' ? normalizeMultiAngleValues(args.values) : args.values
   if (tool.execution !== 'prompt_workflow' || !tool.operation_code) throw new Error('当前工具不支持生成任务')
   if (!tool.model_version_ids?.includes(modelId)) throw new Error('请选择当前工具可用的模型')
   const referenceMode = tool.code === 'image.relight' && values.mode === 'reference'
@@ -98,18 +108,23 @@ export function buildToolGeneration(args: {
   const fields = tool.params_schema?.fields || []
   const error = validateToolFields(fields, values) || validateToolFields(args.modelFields, args.modelValues)
   if (error) throw new Error(error)
+  const prompt = normalizeCanvasToolPrompt(composeStudioPrompt(tool.code, args.prompt, values), { tool: tool.code })
+  // 为后端多角度v2模板预留空间，避免拼接后超过模型提示词长度限制。
+  // 模型48真实估价中230字成功、240字被拒绝；不截断用户内容，提前给出可操作提示。
+  if (tool.code === 'image.multi_angle' && Array.from(prompt).length > 200)
+    throw new Error('多角度描述过长，请缩短补充描述（含机位说明最多200字）')
   return {
     kind: 'image',
     // 工具说明允许不填补充描述，但统一任务接口的 prompt 为必填字符串。
     // 估价与提交都使用这份正文，避免估价接受空值、创建任务时被绑定校验拒绝。
-    prompt: normalizeCanvasToolPrompt(composeStudioPrompt(tool.code, args.prompt, values), { tool: tool.code }),
+    prompt,
     modelVersionId: modelId,
     operationCode: tool.operation_code,
     params: {
       ...activeToolParams(args.modelFields, args.modelValues),
-      // 保留工具身份供结果节点识别；独立操作码的执行模板版本由后端绑定。
+      // 工具身份与目录版本成对发送，兼容仍按 params.tool 解析模板的后端。
       tool: tool.code,
-      ...(tool.operation_code === 'image.image_to_image' ? { tool_version: tool.version } : {}),
+      tool_version: tool.version,
       tool_params: activeToolParams(fields, values),
     },
     inputAssets: assetIds.map((asset_id) => ({ asset_id, role: 'reference_image' })),

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useId, useState } from 'react'
+import { lazy, Suspense, useCallback, useId, useRef, useState } from 'react'
 import { ConfigProvider, Modal } from 'antd'
 import type { ModelParamField } from '@/utils/modelSchema'
 import { getModelVoiceOptions, type ModelVoiceValue } from '@/utils/modelVoices'
@@ -46,6 +46,15 @@ export default function CanvasVoiceLibrary({
   const [tab] = useState<'model' | 'samples' | 'custom'>('custom')
   const [search, setSearch] = useState('')
   const [serverBusy, setServerBusy] = useState(false)
+  const beforeClose = useRef<(() => Promise<boolean>) | null>(null)
+  const setBeforeClose = useCallback((guard: (() => Promise<boolean>) | null) => {
+    beforeClose.current = guard
+  }, [])
+  const close = async () => {
+    if (serverBusy) return
+    if (beforeClose.current && !(await beforeClose.current())) return
+    onClose()
+  }
   const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...values }))
   const id = useId()
   const selectable = fields.filter((field) => getModelVoiceOptions(field).length > 0)
@@ -76,7 +85,7 @@ export default function CanvasVoiceLibrary({
       title="音色库"
       width={900}
       onCancel={() => {
-        if (!serverBusy) onClose()
+        void close()
       }}
       closable={!serverBusy}
       maskClosable={!serverBusy}
@@ -204,6 +213,7 @@ export default function CanvasVoiceLibrary({
                 canManage={canManage}
                 disabled={disabled || !onSelectVoice}
                 onBusyChange={setServerBusy}
+                onBeforeCloseChange={setBeforeClose}
                 onSelect={(voice) => {
                   onSelectVoice?.(voice)
                   onClose()
@@ -214,7 +224,7 @@ export default function CanvasVoiceLibrary({
         </div>
         <footer className={styles.footer}>
           <span>选用音色后将应用到当前节点</span>
-          <button type="button" className={styles.secondary} disabled={serverBusy} onClick={onClose}>
+          <button type="button" className={styles.secondary} disabled={serverBusy} onClick={() => void close()}>
             关闭
           </button>
           {tab === 'model' && (

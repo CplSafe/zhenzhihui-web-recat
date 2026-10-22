@@ -27,6 +27,7 @@ import type { AudioSettings } from '@/utils/canvasAudio'
 
 /** 单条节点生成历史：只存耐久 assetId 与轻量元数据（禁存 dataURL/签名地址，见 posterAssetId 注释的请求体上限约束）。 */
 export interface CanvasResultHistoryEntry {
+  imageInfo?: import('./canvasImageInfo').CanvasImageInfo
   /** 生成结果素材 ID（耐久，展示时按它现算下载地址） */
   assetId: number
   /** 结果类型：决定缩略图用 <img> 还是 <video> 首帧 */
@@ -83,6 +84,8 @@ interface SerializableNodeData {
   operationCode?: string
   /** 节点 params_schema 参数（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
+  imageOrigin?: import('./canvasImageInfo').CanvasImageOrigin
+  imageGeneration?: { submissionKey: string; info: import('./canvasImageInfo').CanvasImageInfo }
   /** 公共音色的展示信息；生成参数仍只使用 params.voice_id。 */
   selectedPublicVoice?: { id: number; name: string }
   panoramaView?: Record<string, unknown>
@@ -94,6 +97,7 @@ interface SerializableNodeData {
   taskFailureHistory?: import('./generationFailure').GenerationFailure[]
   taskIdempotencyKey?: string
   taskSubmissionFingerprint?: string
+  videoAudioComposition?: import('./canvasVideoAudio').VideoAudioComposition
   taskSubmitInterrupted?: boolean
   taskRunId?: string
   textGenerationMode?: 'storyboard'
@@ -161,6 +165,8 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'prompt',
   'operationCode',
   'params',
+  'imageGeneration',
+  'imageOrigin',
   'selectedPublicVoice',
   'panoramaView',
   'audioReferences',
@@ -170,6 +176,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'taskFailureHistory',
   'taskIdempotencyKey',
   'taskSubmissionFingerprint',
+  'videoAudioComposition',
   'taskSubmitInterrupted',
   'taskRunId',
   'textGenerationMode',
@@ -552,6 +559,10 @@ export function collectCanvasElementAssetIds(elements: CanvasElementMutation[]):
     for (const reference of Object.values(cropped || {})) add(reference.assetId)
     if (Array.isArray(data.audioReferences)) data.audioReferences.forEach((reference) => add(reference?.assetId))
     if (Array.isArray(data.imageResultAssetIds)) data.imageResultAssetIds.forEach(add)
+    const composition = data.videoAudioComposition as SerializableNodeData['videoAudioComposition']
+    for (const clip of composition?.clips || []) add(clip.assetId)
+    add(composition?.result?.sourceAssetId)
+    add(composition?.result?.assetId)
     const timeline = data.timeline as
       | { clips?: Array<{ assetId?: unknown }>; audioClips?: Array<{ assetId?: unknown }> }
       | undefined

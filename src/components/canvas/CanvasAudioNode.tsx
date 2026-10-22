@@ -562,9 +562,6 @@ export default function CanvasAudioNode({
                       {savingEdited ? '正在保存…' : '保存为新素材并用于下游'}
                     </button>
                   </div>
-                  <small className={styles.editorShortcut}>
-                    聚焦波形后：I / O 设置入点、出点；↑ / ↓ 步进 0.1 秒，按住 Shift 步进 0.01 秒。
-                  </small>
                 </>
               )}
             </div>

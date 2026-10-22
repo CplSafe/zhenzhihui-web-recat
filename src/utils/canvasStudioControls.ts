@@ -63,21 +63,47 @@ export function composeStudioPrompt(code: string, prompt: string, values: Record
     ]
       .filter(Boolean)
       .join('\n')
-  if (code === 'image.multi_angle')
+  if (code === 'image.multi_angle') {
+    const horizontal = Number(values.horizontal_angle ?? 0)
+    const vertical = Number(values.vertical_angle ?? 0)
+    const zoom = Number(values.zoom ?? 5)
+    const yaw = Number.isFinite(horizontal) ? Math.round(wrapStudioAngle(horizontal)) : 0
+    const pitch = Number.isFinite(vertical) ? Math.round(vertical) : 0
+    const framing = zoom >= 9 ? '极度特写' : zoom < 3.5 ? '远景' : zoom > 6.5 ? '近景' : '中景'
+    const views = [
+      '沿原机位方向观察',
+      '右前侧观察，呈现侧面与遮挡关系',
+      '右侧观察，以侧面轮廓和侧向纵深为主',
+      '右后侧观察，展示背侧表面',
+      '背面观察，人物以背影和后脑为主',
+      '左后侧观察，展示背侧表面',
+      '左侧观察，以侧面轮廓和侧向纵深为主',
+      '左前侧观察，呈现侧面与遮挡关系',
+    ]
+    const view = views[Math.round(yaw / 45) % views.length]
+    const elevation = pitch > 0 ? '增加顶部可见面积' : pitch < 0 ? '呈现底部可见面' : '保持原拍摄高度'
     return [
-      '以同一主体为中心移动拍摄机位，按指定相机角度重新观察真实空间；保持身份、服装、物体结构及场景连续性。不要用平移裁切、镜像或鱼眼变形代替机位变化。',
+      `以参考图机位为0°，水平环绕${yaw}°，${pitch > 0 ? '俯拍' : pitch < 0 ? '仰拍' : '平视'}${Math.abs(pitch)}°，${framing}构图。`,
+      `${view}；${elevation}。`,
+      zoom >= 9 ? '极度特写镜头，广角镜头，边缘带有鱼眼畸变效果。' : '',
+      '保持主体身份，主体姿态和朝向保持；不锁定原构图、可见面或背景位置。不要用平移裁切、镜像代替机位变化。',
       text,
     ]
       .filter(Boolean)
       .join('\n')
-  if (
-    code === 'image.relight' &&
-    values.mode === 'manual' &&
-    typeof values.light_azimuth === 'number' &&
-    typeof values.light_elevation === 'number'
-  ) {
+  }
+  if (code === 'image.relight' && values.mode === 'manual') {
+    const position = studioLightPosition(values.key_light)
+    const azimuth = Number.isFinite(values.light_azimuth) ? Number(values.light_azimuth) : position.light_azimuth
+    const elevation = Number.isFinite(values.light_elevation)
+      ? Number(values.light_elevation)
+      : position.light_elevation
+    const color = /^#[0-9a-f]{6}$/i.test(String(values.color || '')) ? String(values.color) : ''
     return [
-      `主光围绕主体的水平角为${Math.round(wrapStudioAngle(values.light_azimuth))}°，俯仰角为${Math.round(values.light_elevation)}°（0°正面、90°右侧、180°背后、270°左侧，正俯仰位于上方）。请以此连续空间位置细化基础光向，使受光面、投影和高光一致；保留人物身份、服装、构图与背景，不增加可见灯具。`,
+      '以本次输入图片为编辑底图，保留已有光源的方向、颜色和光照效果，包括已有彩色边光；本次仅新增一盏局部补光，不替换或重新设计原有布光。工具参数中的光向、亮度和颜色仅描述本次新增光源。',
+      `新增光源相对画面机位的水平角为${Math.round(wrapStudioAngle(azimuth))}°，俯仰角为${Math.round(elevation)}°（0°正面、90°画面右侧、180°背后、270°画面左侧，正俯仰位于上方）。使新增光源的受光面、遮挡、投影和高光一致，不镜像左右方向，不增加可见灯具。`,
+      color ? `新增光源颜色为${color}，仅影响实际受光区域，保留其余区域的原有色彩；不要把整张图片染成该颜色。` : '',
+      '保持原图人物身份、五官、姿态、服装、构图与背景结构，保留发丝、皮肤和织物的清晰细节及自然纹理。只调整必要的局部光影，不添加颗粒、噪点、模糊、过度磨皮或锐化光晕，避免高光过曝。',
       text,
     ]
       .filter(Boolean)

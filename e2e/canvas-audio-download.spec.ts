@@ -50,7 +50,7 @@ for (const width of [1440, 768]) {
                     style: { width: 320, height: 120 },
                     data: {
                       kind: 'audio',
-                      ...(width === 768 ? { audioRole: 'editor' } : {}),
+                      audioRole: 'editor',
                       title: '测试配音.mp3',
                       assetId: 55,
                       assetWorkspaceId: 21,
@@ -69,6 +69,9 @@ for (const width of [1440, 768]) {
     await page.goto('/canvas/116')
     await page.locator('.react-flow__node[data-id="audio-download"] .canvas-node-header').click()
     await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
+    await expect(page.getByText('编辑音频', { exact: true })).toBeVisible()
+    await expect(page.getByText('聚焦波形后：', { exact: false })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '保存为新素材并用于下游' })).toBeVisible()
     const toolbar = page.getByRole('toolbar', { name: '节点操作' })
     const button = toolbar.getByRole('button', { name: '下载素材', exact: true })
     await expect(toolbar.getByRole('button', { name: '重命名节点' })).toBeVisible()
@@ -108,5 +111,9 @@ for (const width of [1440, 768]) {
     expect(consoleErrors.every((message) => message.includes('403'))).toBe(true)
     expect(api.paidTaskSubmissions).toBe(0)
     expectNoUnexpectedApi(api)
+    await page.locator('.react-flow__viewport').evaluate((element) => {
+      ;(element as HTMLElement).style.transform = 'translate(0px, 0px) scale(0.45)'
+    })
+    await page.screenshot({ path: testInfo.outputPath(`audio-editor-${width}.png`) })
   })
 }

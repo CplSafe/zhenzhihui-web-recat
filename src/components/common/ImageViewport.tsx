@@ -4,7 +4,17 @@ import styles from './ImageViewport.module.css'
 const clamp = (value: number) => Math.min(8, Math.max(0.01, value))
 
 /** Shared image detail surface. 100% means one image pixel per CSS pixel. */
-export default function ImageViewport({ src, alt, onError }: { src: string; alt: string; onError?: () => void }) {
+export default function ImageViewport({
+  src,
+  alt,
+  onError,
+  onSize,
+}: {
+  src: string
+  alt: string
+  onError?: () => void
+  onSize?: (size: { width: number; height: number }) => void
+}) {
   const viewport = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
@@ -20,9 +30,20 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
 
   useEffect(() => {
     fit()
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit)
+    // Defer layout-driven updates so WebKit does not re-enter ResizeObserver delivery.
+    let frame = 0
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            window.cancelAnimationFrame(frame)
+            frame = window.requestAnimationFrame(fit)
+          })
     if (viewport.current) observer?.observe(viewport.current)
-    return () => observer?.disconnect()
+    return () => {
+      observer?.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
   }, [fit])
 
   const zoom = useCallback((factor: number, anchorX = 0, anchorY = 0) => {
@@ -128,9 +149,11 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
           alt={alt}
           draggable={false}
           onError={onError}
-          onLoad={(event) =>
-            setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
-          }
+          onLoad={(event) => {
+            const next = { width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }
+            setSize(next)
+            onSize?.(next)
+          }}
           className={styles.image}
           style={{
             width: size.width || undefined,
@@ -143,7 +166,7 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
         <button type="button" aria-label="缩小图片" disabled={view.scale <= 0.01} onClick={() => zoom(1 / 1.2)}>
           −
         </button>
-        <label>
+        <label className={styles.percent}>
           <input
             aria-label="图片缩放百分比"
             type="number"
@@ -160,7 +183,7 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
               }
             }}
           />
-          %
+          <span aria-hidden="true">%</span>
         </label>
         <button type="button" aria-label="放大图片" disabled={view.scale >= 8} onClick={() => zoom(1.2)}>
           +
@@ -172,7 +195,7 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
             setView({ scale: 1, x: 0, y: 0 })
           }}
         >
-          100%
+          原始大小
         </button>
         <button type="button" onClick={fit}>
           适应窗口
