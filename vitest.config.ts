@@ -22,6 +22,8 @@ export default defineConfig({
       // First gate the shared modules that protect the bugs fixed in this batch.
       // Expand this list as each additional business flow receives regression tests.
       include: [
+        'src/utils/canvasImageInfo.ts',
+        'src/api/canvasImageMetadata.ts',
         'src/utils/canvasModal.ts',
         'src/composables/useCanvasModalOpen.ts',
         'src/components/canvas/CanvasPortalBoundary.tsx',
@@ -37,6 +39,7 @@ export default defineConfig({
         'src/api/canvasTools.ts',
         'src/build/authCallbackProxy.ts',
         'src/utils/canvasHd.ts',
+        'src/utils/canvasVideoAudio.ts',
         'src/api/canvasHd.ts',
         'src/utils/modelVoices.ts',
         'src/api/voices.ts',
@@ -55,12 +58,16 @@ export default defineConfig({
         'src/utils/businessPagination.ts',
         'src/utils/canvasLocalImage.ts',
         'src/utils/canvasModelBuckets.ts',
+        'src/utils/canvasImageModelVisibility.ts',
         'src/utils/canvasStructuredText.ts',
         'src/utils/canvasKeyboard.ts',
         'src/utils/canvasAudio.ts',
         'src/utils/canvasAudioGeneration.ts',
         'src/utils/voiceLibrary.ts',
         'src/utils/voiceSample.ts',
+        'src/utils/voiceRecording.ts',
+        'src/composables/useVoiceRecording.ts',
+        'src/components/canvas/VoiceRecorder.tsx',
         'src/utils/canvasAssetPreflight.ts',
         'src/utils/canvasNodeTitle.ts',
         'src/utils/canvasShareMedia.ts',

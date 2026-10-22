@@ -7,6 +7,7 @@
  */
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
+import { createPortal } from 'react-dom'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
 import RatioLabel from '@/components/common/RatioLabel'
 import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
@@ -24,6 +25,7 @@ import { estimateAiTaskCost, uploadAssetFile } from '@/api/business'
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
 import { creditsYuanLabel } from '@/utils/creditsYuan'
 import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
+import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
@@ -45,7 +47,6 @@ import {
 import {
   applyVideoTaskModeParams,
   formatVideoTaskModeLabel,
-  getVideoEditModeConflict,
   isFollowSourceVideoMode,
   isVideoTaskModeField,
   resolveSelfVideoAssetId,
@@ -648,6 +649,31 @@ function RefAddButton({
     if (claimCanvasRealPersonHint(userId)) setHintOwner(userId)
   }, [hintEligible, disabled, userId])
   const wrapRef = useRef<HTMLSpanElement>(null)
+  const hintRef = useRef<HTMLButtonElement>(null)
+  const showHint = Boolean(hintOwner === userId && userId && onPickRealPerson && !disabled && !open)
+
+  useEffect(() => {
+    if (!showHint) return
+    let frame = 0
+    const update = () => {
+      const bounds = wrapRef.current?.getBoundingClientRect()
+      const hint = hintRef.current
+      if (bounds && hint) {
+        const left = Math.max(12, Math.min(bounds.left, window.innerWidth - hint.offsetWidth - 12))
+        const above = bounds.top - hint.offsetHeight - 10
+        const top = Math.max(
+          12,
+          Math.min(above >= 12 ? above : bounds.bottom + 10, window.innerHeight - hint.offsetHeight - 12),
+        )
+        hint.style.left = `${left}px`
+        hint.style.top = `${top}px`
+        hint.style.visibility = 'visible'
+      }
+      frame = requestAnimationFrame(update)
+    }
+    update()
+    return () => cancelAnimationFrame(frame)
+  }, [showHint])
 
   useEffect(() => {
     if (!open) return
@@ -675,19 +701,22 @@ function RefAddButton({
 
   return (
     <span className={styles.refAddWrap} ref={wrapRef}>
-      {hintOwner === userId && userId && onPickRealPerson && !disabled && (
-        <button
-          type="button"
-          className={styles.realPersonHint}
-          onClick={() => {
-            setHintOwner('')
-            setOpen(false)
-            onPickRealPerson()
-          }}
-        >
-          使用已认证真人素材
-        </button>
-      )}
+      {showHint &&
+        createPortal(
+          <button
+            ref={hintRef}
+            type="button"
+            className={`${styles.realPersonHint} nodrag nopan nowheel`}
+            onClick={() => {
+              setHintOwner('')
+              setOpen(false)
+              onPickRealPerson?.()
+            }}
+          >
+            使用已认证真人素材
+          </button>,
+          document.body,
+        )}
       <Popover
         open={open && !disabled}
         trigger="click"
@@ -1203,17 +1232,27 @@ export default function CanvasNodePanel({
    * 直接消失会让用户以为模型没配好，反而更难自查。
    */
   const availableModels = useMemo(() => {
-    const matched = kindModels.filter((m) => m.operationCodes?.some((code) => code === targetOperationCode))
+    const matched = kindModels.filter(
+      (m) =>
+        m.operationCodes?.some((code) => code === targetOperationCode) &&
+        (kind !== 'image' || !isCanvasToolOnlyImageModel(m)),
+    )
     if (!needsVideoInputAsset) return matched
     return matched.map((model) => {
       if (model.unavailableReason) return model
       if (resolveModelVideoInputSupport(model) !== 'unsupported') return model
       return { ...model, unavailableReason: VIDEO_INPUT_UNSUPPORTED_REASON }
     })
-  }, [kindModels, targetOperationCode, needsVideoInputAsset])
+  }, [kindModels, targetOperationCode, needsVideoInputAsset, kind])
+
+  const requiresImageModelSelection =
+    kind === 'image' &&
+    kindModels.some((m) => m.modelVersionId === node?.modelVersionId && isCanvasToolOnlyImageModel(m))
 
   // 选中模型：优先节点自己选过的；没选过时用同类节点上次生成用的模型（见 canvasLastModel）；再不行取第一个可用
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
+    // 旧草稿不能静默改用另一个付费模型；必须由用户重新选择。
+    if (requiresImageModelSelection) return undefined
     const usable = availableModels.filter((m) => !m.unavailableReason)
     const explicit = node?.modelVersionId ? usable.find((m) => m.modelVersionId === node.modelVersionId) : undefined
     if (explicit) return explicit
@@ -1227,7 +1266,7 @@ export default function CanvasNodePanel({
       if (remembered) return remembered
     }
     return usable[0]
-  }, [availableModels, node?.modelVersionId, kind, targetOperationCode])
+  }, [availableModels, node?.modelVersionId, kind, targetOperationCode, requiresImageModelSelection])
 
   const isSeedanceModel =
     kind === 'video' &&
@@ -1627,29 +1666,20 @@ export default function CanvasNodePanel({
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
     if (kind === 'video') {
-      return (
-        getVideoEditModeConflict({
-          prompt: buildFullPrompt(prompt),
-          mode: taskModeFieldName ? fieldValues[taskModeFieldName] : undefined,
-          hasVideoInput,
-          supportsTaskMode: Boolean(taskModeFieldName),
-        }) ||
-        validateCanvasVideoInputs({
-          operationCode,
-          videoMode,
-          sourceRefs,
-          workspaceId,
-          maxImageRefs: maxRefs,
-          minImageRefs: minRefs,
-          maxAudioRefs:
-            getModelInputConstraints(selectedModel?.source, operationCode).roles.find((role) =>
-              /audio/i.test(role.role),
-            )?.maxCount || 0,
-          modelLabel: selectedModel?.displayName,
-          maxVideoRefSec,
-          videoRefTotalSec,
-        })
-      )
+      return validateCanvasVideoInputs({
+        operationCode,
+        videoMode,
+        sourceRefs,
+        workspaceId,
+        maxImageRefs: maxRefs,
+        minImageRefs: minRefs,
+        maxAudioRefs:
+          getModelInputConstraints(selectedModel?.source, operationCode).roles.find((role) => /audio/i.test(role.role))
+            ?.maxCount || 0,
+        modelLabel: selectedModel?.displayName,
+        maxVideoRefSec,
+        videoRefTotalSec,
+      })
     }
     return null
   }, [
@@ -1666,9 +1696,6 @@ export default function CanvasNodePanel({
     videoRefTotalSec,
     buildFullPrompt,
     prompt,
-    taskModeFieldName,
-    fieldValues,
-    hasVideoInput,
   ])
 
   const inputSummary = useMemo(() => {
@@ -2145,7 +2172,7 @@ export default function CanvasNodePanel({
 
       {kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio') && (
         <p className={styles.audioReferenceHint}>
-          已连接的音频作为视频生成参考；是否能使用取决于所选模型的音频输入能力。若要把配音或音乐直接加入成片，请连接到视频剪辑节点的音轨。
+          视频生成后会合入本次连接的原音频并关闭模型原声，保留配音台词和音色。音频过长时需在视频剪辑中调整时长；此操作不保证口型同步。
         </p>
       )}
 
@@ -2451,7 +2478,11 @@ export default function CanvasNodePanel({
               // 缺模型时要说清缺的是哪一种能力：接了参考图走图生图、没接走文生图，
               // 两者在后端是不同的 operation_code，可用性也各自独立。
               // 只说一句「暂无可用模型」，用户会以为是素材或连线出了问题。
-              emptyLabel={emptyModelLabel}
+              emptyLabel={
+                requiresImageModelSelection && availableModels.some((m) => !m.unavailableReason)
+                  ? '原模型已不支持普通图片节点，请重新选择'
+                  : emptyModelLabel
+              }
               onChange={(value) => {
                 if (!taskRunning) onModelChange?.(value)
               }}
@@ -2511,7 +2542,9 @@ export default function CanvasNodePanel({
                 : taskRunning
                   ? '生成过程中不能修改，请添加新的节点使用其他模型'
                   : !selectedModel
-                    ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                    ? requiresImageModelSelection
+                      ? '原模型已不支持普通图片节点，请重新选择模型'
+                      : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
                     : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
             }
           >
@@ -2604,8 +2637,7 @@ function ModelSelector({
    */
   const blockedModels = models.filter((m) => m.unavailableReason)
   const blockedReason = String(blockedModels[0]?.unavailableReason || '')
-  const selected =
-    availableModels.find((m) => m.modelVersionId === value) || (availableModels.length ? availableModels[0] : undefined)
+  const selected = availableModels.find((m) => m.modelVersionId === value)
   const display = loading
     ? '加载中...'
     : selected?.displayName || (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')

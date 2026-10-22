@@ -40,7 +40,7 @@ import CanvasAudioSettings from './CanvasAudioSettings'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { saveVoiceSample } from '@/utils/voiceLibrary'
 import { getModelVoiceOptions, isModelVoiceField } from '@/utils/modelVoices'
-import { getVoice, isVoiceReady } from '@/api/voices'
+import { getVoice, isVoiceReady, listVoices } from '@/api/voices'
 import { resolveWorkspaceRole } from '@/utils/creativeDraftMetadata'
 
 const CanvasVoiceLibrary = lazy(() => import('./CanvasVoiceLibrary'))
@@ -121,6 +121,9 @@ export default function CanvasAudioGenerator({
       : 0
   const [resolvedVoice, setResolvedVoice] = useState<{ id: number; name: string; workspaceId: number } | null>(null)
   const [voiceNameLoading, setVoiceNameLoading] = useState(false)
+  const [defaultVoiceLoading, setDefaultVoiceLoading] = useState(false)
+  const [defaultVoiceError, setDefaultVoiceError] = useState('')
+  const [defaultVoiceRetry, setDefaultVoiceRetry] = useState(0)
   const savedVoiceName =
     data.selectedPublicVoice?.id === serverVoiceId && typeof data.selectedPublicVoice?.name === 'string'
       ? data.selectedPublicVoice.name.trim()
@@ -274,6 +277,7 @@ export default function CanvasAudioGenerator({
   }, [selected, supportsVoiceLibrary, params, nodeId, updateNodeData])
   const changeParams = (next: Record<string, unknown>) => {
     const cleaned = withoutSubtitleParam(next)
+    setError('')
     setParams(cleaned)
     if (cleaned.voice_id !== params.voice_id) setResolvedVoice(null)
     updateNodeData(nodeId, {
@@ -342,6 +346,14 @@ export default function CanvasAudioGenerator({
     [selected, supportsVoiceLibrary],
   )
   const voiceFields = fields.filter(isModelVoiceField)
+  const missingRequiredVoice =
+    !serverVoiceId &&
+    voiceFields.some((field) => {
+      if (!field.required) return false
+      const value = params[field.name]
+      return field.name === 'voice_id' ? true : value == null || (typeof value === 'string' && !value.trim())
+    })
+  const voiceValidationError = missingRequiredVoice ? '请先选择音色' : ''
   const settingsFields = fields.filter(
     (field) => !isModelVoiceField(field) || (!serverVoiceId && !getModelVoiceOptions(field).length),
   )
@@ -371,6 +383,63 @@ export default function CanvasAudioGenerator({
     data.taskStatus,
   )
   const running = busy || recoverableTask
+  useEffect(() => {
+    setDefaultVoiceError('')
+    setDefaultVoiceLoading(false)
+    if (
+      !selected ||
+      running ||
+      getAudioGenerationMode(selected.operationCode) !== 'voice' ||
+      serverVoiceId ||
+      !fields.some((field) => field.name === 'voice_id') ||
+      fields.some(
+        (field) =>
+          isModelVoiceField(field) &&
+          (field.default !== undefined || (params[field.name] != null && params[field.name] !== '')),
+      )
+    )
+      return
+    const abort = new AbortController()
+    setDefaultVoiceLoading(true)
+    void (async () => {
+      let offset = 0
+      while (!abort.signal.aborted) {
+        const page = await listVoices({
+          workspaceId,
+          modelVersionId: getBackendGenerationModelVersionId(selected.model),
+          source: 'public',
+          limit: 100,
+          offset,
+          signal: abort.signal,
+        })
+        if (abort.signal.aborted) return
+        const voice = page.items.find((item) => item.source === 'public' && isVoiceReady(item))
+        if (voice) {
+          const next = { ...params }
+          for (const field of fields.filter(isModelVoiceField)) delete next[field.name]
+          next.voice_id = voice.id
+          setParams(next)
+          setError('')
+          setResolvedVoice({ id: voice.id, name: voice.name, workspaceId })
+          updateNodeData(nodeId, {
+            params: next,
+            selectedPublicVoice: { id: voice.id, name: voice.name },
+          })
+          return
+        }
+        offset += page.items.length
+        if (!page.items.length || offset >= page.total) break
+      }
+      throw new Error('当前模型暂无可用的系统音色，请更换模型或在音色库中选择已有音色')
+    })()
+      .catch((e: any) => {
+        if (!abort.signal.aborted) setDefaultVoiceError(e?.message || '默认音色加载失败，请重试')
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setDefaultVoiceLoading(false)
+      })
+    return () => abort.abort()
+  }, [selected, running, serverVoiceId, fields, params, workspaceId, nodeId, updateNodeData, defaultVoiceRetry])
   const receive = async (task: any, signal: AbortSignal) => {
     const result = await waitForAiTask({
       workspaceId,
@@ -591,6 +660,7 @@ export default function CanvasAudioGenerator({
   }, [referenceSearch, referenceActive])
   const prepare = async (signal?: AbortSignal) => {
     if (!selected) throw new Error('请选择音频生成模型')
+    if (voiceValidationError) throw new Error(voiceValidationError)
     if (serverVoiceId) {
       const voice = await getVoice({ workspaceId, signal }, serverVoiceId)
       if (!isVoiceReady(voice)) throw new Error('所选音色已不可用或尚未训练完成，请在音色库中重新选择')
@@ -675,7 +745,7 @@ export default function CanvasAudioGenerator({
     setQuote(null)
     setQuoteError('')
     setQuoting(false)
-    if (!selected || running || uploadingReference || (!prompt.trim() && !linkedText)) return
+    if (!selected || running || uploadingReference || defaultVoiceLoading || (!prompt.trim() && !linkedText)) return
     const controller = new AbortController()
     quoteController.current = controller
     const timer = window.setTimeout(() => {
@@ -698,16 +768,33 @@ export default function CanvasAudioGenerator({
     }
     // 报价只随输入与模型变化；prepare 读取同次渲染的数据，不应随报价状态重复执行。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt, params, modelKey, linkedText, data.audioReferences, workspaceId, models, running, uploadingReference])
+  }, [
+    prompt,
+    params,
+    modelKey,
+    linkedText,
+    data.audioReferences,
+    workspaceId,
+    models,
+    running,
+    uploadingReference,
+    defaultVoiceLoading,
+  ])
   const generate = async () => {
     if (
       !selected ||
       running ||
+      defaultVoiceLoading ||
       uploadingReference ||
       (!prompt.trim() && !linkedText) ||
       (clone && !serverVoiceId && !authorized)
     )
       return
+    if (voiceValidationError) {
+      setError(voiceValidationError)
+      showToast(voiceValidationError, 'error')
+      return
+    }
     setBusy(true)
     setError('')
     const abort = new AbortController()
@@ -884,7 +971,7 @@ export default function CanvasAudioGenerator({
           </button>
           {serverVoiceId > 0 && (
             <span className={styles.referenceHint}>
-              已选公共音色：
+              当前音色：
               {selectedVoiceName ? (
                 <strong>{selectedVoiceName}</strong>
               ) : voiceNameLoading ? (
@@ -893,6 +980,15 @@ export default function CanvasAudioGenerator({
                 `#${serverVoiceId}`
               )}
             </span>
+          )}
+          {defaultVoiceLoading && <span role="status">正在选择默认音色…</span>}
+          {defaultVoiceError && (
+            <div role="alert">
+              {defaultVoiceError}
+              <button type="button" disabled={running} onClick={() => setDefaultVoiceRetry((value) => value + 1)}>
+                重试默认音色
+              </button>
+            </div>
           )}
         </>
       )}
@@ -1173,7 +1269,7 @@ export default function CanvasAudioGenerator({
               </span>
             )}
             {quoting && <span role="status">预估中…</span>}
-            {quoteError && quoteError !== '请填写voice_id' && <span role="alert">{quoteError}</span>}
+            {quoteError && <span role="alert">{quoteError}</span>}
           </div>
         </>
       )}
@@ -1185,6 +1281,7 @@ export default function CanvasAudioGenerator({
           loadingModels ||
           !selected ||
           running ||
+          defaultVoiceLoading ||
           uploadingReference ||
           (!prompt.trim() && !linkedText) ||
           (clone && !serverVoiceId && !authorized)

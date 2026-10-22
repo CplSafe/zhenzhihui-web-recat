@@ -32,6 +32,7 @@ export interface HdQuote {
   fps_multiplier?: number
 }
 export interface HdTask {
+  image_info?: import('@/utils/canvasImageInfo').CanvasImageInfo
   id: string
   workspace_id: number
   canvas_id: number

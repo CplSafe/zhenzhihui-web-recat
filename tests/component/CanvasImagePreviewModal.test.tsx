@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import type { CanvasImageInfo } from '@/utils/canvasImageInfo'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasImagePreviewModal from '@/components/canvas/CanvasImagePreviewModal'
@@ -103,4 +104,52 @@ describe('CanvasImagePreviewModal', () => {
     await user.click(screen.getByRole('presentation'))
     expect(props.onClose).toHaveBeenCalledOnce()
   })
+})
+
+it('本地图只显示获取方式，图片读取失败后结束加载提示', () => {
+  renderModal({
+    items: [{ id: 'local', url: '/broken.png', title: '本地图', sourceLabel: '本地添加' }],
+    activeId: 'local',
+  })
+  expect(screen.getByText('本地添加')).toBeInTheDocument()
+  expect(screen.queryByText('生成模型')).not.toBeInTheDocument()
+  expect(screen.queryByText('历史生成参数未记录')).not.toBeInTheDocument()
+  fireEvent.error(screen.getByRole('img', { name: '本地图' }))
+  expect(screen.getAllByText('读取失败')).toHaveLength(2)
+  expect(screen.queryByText('读取中…')).not.toBeInTheDocument()
+})
+
+it('历史模型异步查询不会串到本地图，切回时复用已查询的结果', async () => {
+  let finish!: (value: CanvasImageInfo) => void
+  const resolveInfo = vi.fn(
+    () =>
+      new Promise<CanvasImageInfo>((resolve) => {
+        finish = resolve
+      }),
+  )
+  const items = [
+    {
+      id: 'legacy',
+      url: '/legacy.png',
+      title: '旧超分',
+      assetId: 1,
+      workspaceId: 21,
+      sourceLabel: '模型生成',
+      generated: true,
+      info: { operationCode: 'image.upscale', rows: [] },
+    },
+    { id: 'local', url: '/local.png', title: '本地', assetId: 2, workspaceId: 21, sourceLabel: '本地添加' },
+  ]
+  const props = { items, onSelect: vi.fn(), onClose: vi.fn(), resolveInfo }
+  const rendered = render(<CanvasImagePreviewModal {...props} activeId="legacy" />)
+  rendered.rerender(<CanvasImagePreviewModal {...props} activeId="local" />)
+  await act(async () => {
+    finish({ modelName: '真实超分模型', operationCode: 'image.upscale', rows: [] })
+  })
+  expect(screen.getByText('本地添加')).toBeInTheDocument()
+  expect(screen.queryByText('真实超分模型')).not.toBeInTheDocument()
+  rendered.rerender(<CanvasImagePreviewModal {...props} activeId="legacy" />)
+  expect(await screen.findByText('真实超分模型')).toBeInTheDocument()
+  expect(screen.getByText('图片超分')).toBeInTheDocument()
+  expect(resolveInfo).toHaveBeenCalledTimes(1)
 })

@@ -91,8 +91,70 @@ describe('continuous studio controls', () => {
       expect(
         composeStudioPrompt('image.relight', ' cinematic ', { mode, light_azimuth: 80, light_elevation: 20 }),
       ).toBe('cinematic')
-    expect(composeStudioPrompt('image.relight', '', { mode: 'manual' })).toBe('')
     expect(composeStudioPrompt('other', ' test ', {})).toBe('test')
+  })
+  it('adds local colored light while preserving existing lighting, including legacy six-direction inputs', () => {
+    const prompt = composeStudioPrompt('image.relight', '', { mode: 'manual', key_light: 'left', color: '#00ff00' })
+    expect(prompt).toContain('保留已有光源的方向、颜色和光照效果')
+    expect(prompt).toContain('270°')
+    expect(prompt).toContain('新增光源颜色为#00ff00')
+    expect(prompt).toContain('不要把整张图片染成该颜色')
+    expect(prompt).toContain('不添加颗粒、噪点、模糊')
+    expect(prompt).not.toContain('NaN')
+    expect(composeStudioPrompt('image.relight', '', { mode: 'manual', color: '' })).not.toContain('新增光源颜色为')
+  })
+  it('includes distinct camera positions and framing in multi-angle prompts', () => {
+    const prompts = [
+      { horizontal_angle: 45, vertical_angle: 20, zoom: 5 },
+      { horizontal_angle: 180, vertical_angle: 0, zoom: 2 },
+      { horizontal_angle: 270, vertical_angle: -20, zoom: 8 },
+    ].map((values) => composeStudioPrompt('image.multi_angle', '保留发型', values))
+    expect(new Set(prompts).size).toBe(3)
+    expect(prompts[0]).toContain('水平环绕45°')
+    expect(prompts[0]).toContain('俯拍20°，中景')
+    expect(prompts[1]).toContain('水平环绕180°')
+    expect(prompts[1]).toContain('平视0°，远景')
+    expect(prompts[2]).toContain('仰拍20°，近景')
+    for (const prompt of prompts) expect(prompt).toContain('保留发型')
+    expect(composeStudioPrompt('image.multi_angle', '', { horizontal_angle: -90 })).toContain('水平环绕270°')
+  })
+  it('最大近景采用 LibTV 风格的广角鱼眼特写，普通机位不自动添加畸变', () => {
+    const prompt = composeStudioPrompt('image.multi_angle', '保留发型', {
+      horizontal_angle: '0',
+      vertical_angle: '30',
+      zoom: '10',
+    })
+    expect(prompt).toContain('极度特写镜头，广角镜头，边缘带有鱼眼畸变效果')
+    expect(prompt).toContain('俯拍30°，极度特写')
+    expect(prompt).toContain('保留发型')
+    expect(prompt).not.toContain('或鱼眼变形')
+    expect(composeStudioPrompt('image.multi_angle', '', { zoom: 5 })).not.toContain('鱼眼')
+    expect(composeStudioPrompt('image.multi_angle', '', { zoom: 9 })).toContain('边缘带有鱼眼畸变效果')
+  })
+  it('机位说明为后端模板预留长度，侧面、背面与鱼眼均不超出200字预算', () => {
+    for (const horizontal_angle of [0, 35, 90, 180, 270, 360]) {
+      for (const vertical_angle of [-30, 0, 6, 60]) {
+        for (const zoom of [0, 5, 10]) {
+          const prompt = composeStudioPrompt('image.multi_angle', '', { horizontal_angle, vertical_angle, zoom })
+          expect(Array.from(prompt).length).toBeLessThanOrEqual(200)
+        }
+      }
+    }
+  })
+  it('describes newly visible surfaces instead of preserving the original view', () => {
+    const back = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 180 })
+    expect(back).toContain('背影和后脑')
+    expect(back).toContain('不锁定原构图、可见面或背景位置')
+    expect(back).toContain('主体姿态和朝向保持')
+    expect(back).not.toContain('俯视透视')
+    const side = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 90, vertical_angle: 30 })
+    expect(side).toContain('侧面轮廓和侧向纵深')
+    expect(side).toContain('增加顶部可见面积')
+    const low = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 270, vertical_angle: -20 })
+    expect(low).toContain('底部可见面')
+    const front = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 0 })
+    expect(front).toContain('沿原机位方向观察')
+    expect(front).not.toContain('背影和后脑')
   })
   it('requires complete equirectangular coverage without instructing a fisheye crop', () => {
     const prompt = composeStudioPrompt('image.panorama', '花田', {})

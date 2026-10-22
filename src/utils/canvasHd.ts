@@ -98,19 +98,52 @@ export function materializeHdResults(
 ) {
   const nextNodes = [...nodes]
   const nextEdges = [...edges]
+  let changed = false
   for (const task of tasks) {
     if (
       task.workspace_id !== workspaceId ||
       task.canvas_id !== canvasId ||
-      task.status !== 'completed' ||
+      (!task.id.startsWith('submission-') && task.status !== 'completed') ||
       task.result?.canvas_delivery === 'removed' ||
       delivered.has(task.id) ||
-      !Number.isSafeInteger(task.result?.asset_id) ||
-      task.result.asset_id <= 0
+      (task.status === 'completed' && (!Number.isSafeInteger(task.result?.asset_id) || task.result.asset_id <= 0))
     )
       continue
     const id = `hd-result-${task.id}`
-    if (nextNodes.some((node) => node.id === id)) continue
+    const existing = nextNodes.findIndex((node) => node.id === id)
+    const resultData = {
+      taskStatus: task.status === 'completed' ? 'succeeded' : task.status,
+      taskError: task.status === 'failed' ? '超分失败，请重新选择原图重试' : '',
+      ...(task.result
+        ? {
+            title: task.result.name,
+            assetId: task.result.asset_id,
+            ...(task.source.kind === 'image'
+              ? {
+                  imageOrigin: {
+                    assetId: task.result.asset_id,
+                    kind: 'upscale' as const,
+                    ...(task.image_info ? { info: task.image_info } : {}),
+                  },
+                }
+              : {}),
+            assetWorkspaceId: workspaceId,
+            resultUrl: assetStreamUrl(task.result.asset_id, workspaceId),
+          }
+        : {}),
+    }
+    if (existing >= 0) {
+      const node = nextNodes[existing]
+      if (
+        Object.entries(resultData).some(([key, value]) =>
+          key === 'imageOrigin' ? JSON.stringify(node.data[key]) !== JSON.stringify(value) : node.data[key] !== value,
+        )
+      ) {
+        nextNodes[existing] = { ...node, data: { ...node.data, ...resultData } }
+        changed = true
+      }
+      continue
+    }
     const source = nextNodes.find((node) => node.id === task.source.node_id)
     if (!source) continue
     const width = Number(source.style?.width) || 320
@@ -132,12 +165,10 @@ export function materializeHdResults(
       style: { width, height },
       data: {
         kind: task.source.kind,
-        title: task.result.name,
-        assetId: task.result.asset_id,
-        assetWorkspaceId: workspaceId,
-        resultUrl: assetStreamUrl(task.result.asset_id, workspaceId),
+        title: `${task.source.name}超分`,
+        ...resultData,
         ratio:
-          task.result.width > 0 && task.result.height > 0
+          task.result?.width > 0 && task.result?.height > 0
             ? `${task.result.width}:${task.result.height}`
             : source.data.ratio,
         hd: {
@@ -145,8 +176,8 @@ export function materializeHdResults(
           sourceNodeId: source.id,
           sourceAssetId: task.source.asset_id,
           sourceSpec: task.source_spec,
-          spec: task.result.spec,
-          reviewPolicy: task.result.review_policy,
+          spec: task.result?.spec,
+          reviewPolicy: task.result?.review_policy,
         },
       },
     })
@@ -165,6 +196,6 @@ export function materializeHdResults(
   return {
     nodes: nextNodes,
     edges: nextEdges,
-    changed: nextNodes.length !== nodes.length || nextEdges.length !== edges.length,
+    changed: changed || nextNodes.length !== nodes.length || nextEdges.length !== edges.length,
   }
 }

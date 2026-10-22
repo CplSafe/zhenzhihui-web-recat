@@ -581,9 +581,6 @@
 .editorActions button:last-of-type {
   margin-left: auto;
 }
-.editorShortcut {
-  line-height: 1.5;
-}
 .trimOverlay span {
   background: rgb(231 238 242 / 65%);
 }

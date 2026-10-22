@@ -39,6 +39,40 @@ const input = {
 }
 
 describe('canvas tools backend contract', () => {
+  it('补充描述超出多角度模板预算时在请求前提示，不静默截断', () => {
+    const angle = {
+      ...tool,
+      code: 'image.multi_angle',
+      operation_code: 'image.multi_angle',
+      params_schema: { fields: [] },
+    }
+    expect(() => buildToolGeneration({ ...input, tool: angle, prompt: '保留主体'.repeat(100), values: {} })).toThrow(
+      '描述过长',
+    )
+    const result = buildToolGeneration({ ...input, tool: angle, prompt: '保留原图发型', values: {} })
+    expect(result.prompt).toContain('保留原图发型')
+  })
+  it('拖动产生的小数机位在估价和提交前与显示值统一，提示词使用同一机位', () => {
+    const result = buildToolGeneration({
+      ...input,
+      tool: {
+        ...tool,
+        code: 'image.multi_angle',
+        operation_code: 'image.multi_angle',
+        params_schema: {
+          fields: [
+            { name: 'horizontal_angle', type: 'number', min: 0, max: 360 },
+            { name: 'vertical_angle', type: 'number', min: -30, max: 60 },
+            { name: 'zoom', type: 'number', min: 0, max: 10 },
+          ],
+        },
+      },
+      values: { horizontal_angle: 54.2849734378953, vertical_angle: 28.125, zoom: 5 },
+    })
+    expect(result.params.tool_params).toEqual({ horizontal_angle: 54, vertical_angle: 28, zoom: 5 })
+    expect(result.prompt).toContain('水平环绕54°')
+    expect(result.prompt).toContain('俯拍28°')
+  })
   it('按后端工具目录判断可用性，不要求工具使用独立操作码', () => {
     const browser = { ...tool, code: 'panorama.view', execution: 'browser', model_version_ids: [], operation_code: '' }
     const independent = { ...tool, code: 'image.multi_angle', operation_code: 'backend.custom_operation' }
@@ -68,12 +102,13 @@ describe('canvas tools backend contract', () => {
     const result = buildToolGeneration(input)
     expect(result).toEqual({
       kind: 'image',
-      prompt: '请按工具参数处理参考图片。',
+      prompt: expect.stringContaining('本次仅新增一盏局部补光'),
       modelVersionId: 42,
       operationCode: 'image.image_to_image',
       params: { count: 1, tool: 'image.relight', tool_version: 1, tool_params: { mode: 'manual', brightness: 50 } },
       inputAssets: [{ asset_id: 501, role: 'reference_image' }],
     })
+    expect(result.prompt).toContain('本次仅新增一盏局部补光')
     const angle = buildToolGeneration({
       ...input,
       tool: {
@@ -96,12 +131,12 @@ describe('canvas tools backend contract', () => {
     expect(angle.prompt).toContain('test')
     expect(angle.prompt).toContain('不要用平移裁切')
   })
-  it.each(['image.relight', 'studio.lighting.custom'])('独立操作 %s 交由后端绑定模板版本', (operationCode) => {
-    const result = buildToolGeneration({ ...input, tool: { ...tool, operation_code: operationCode } })
+  it.each(['image.relight', 'studio.lighting.custom'])('独立操作 %s 同样携带目录声明的模板版本', (operationCode) => {
+    const result = buildToolGeneration({ ...input, tool: { ...tool, version: 2, operation_code: operationCode } })
     expect(result.operationCode).toBe(operationCode)
     expect(result.params.tool).toBe('image.relight')
     expect(result.params.tool_params).toEqual({ mode: 'manual', brightness: 50 })
-    expect(result.params).not.toHaveProperty('tool_version')
+    expect(result.params.tool_version).toBe(2)
   })
 
   it('drops hidden fields on smart/reference modes and requires two different reference images', () => {

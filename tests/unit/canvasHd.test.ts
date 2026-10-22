@@ -142,6 +142,22 @@ describe('canvasHd', () => {
       ).nodes,
     ).toHaveLength(4)
   })
+  it('creates a pending child before submission resolves and updates it in place through failure or success', () => {
+    const pending: HdTask = { ...task, id: 'submission-test', status: 'processing', result: undefined }
+    const initial = materializeHdResults([source], [], [pending], 21, 3)
+    expect(initial.nodes).toHaveLength(2)
+    expect(initial.edges).toHaveLength(1)
+    expect(initial.nodes[1].data).toMatchObject({ taskStatus: 'processing' })
+    expect(initial.nodes[1].data.assetId).toBeUndefined()
+    const failed = materializeHdResults(initial.nodes, initial.edges, [{ ...pending, status: 'failed' }], 21, 3)
+    expect(failed.nodes[1].data).toMatchObject({ taskStatus: 'failed' })
+    const completed = materializeHdResults(initial.nodes, initial.edges, [{ ...task, id: pending.id }], 21, 3)
+    expect(completed.nodes).toHaveLength(2)
+    expect(completed.edges).toHaveLength(1)
+    expect(completed.nodes[1].id).toBe(initial.nodes[1].id)
+    expect(completed.nodes[1].data).toMatchObject({ taskStatus: 'succeeded', assetId: 20 })
+    expect(completed.nodes[0]).toBe(source)
+  })
   it('ignores other workspaces/canvases, nonterminal tasks, missing assets and deleted sources', () => {
     for (const value of [
       { ...task, workspace_id: 22 },
@@ -161,4 +177,19 @@ describe('canvasHd', () => {
     expect(isHdActive({ ...task, status: 'processing' })).toBe(true)
     expect(isHdActive(task)).toBe(false)
   })
+})
+
+it('图片超分将实际模型快照绑定到输出素材，重复同步不修改结果', () => {
+  const imageSource = { ...source, type: 'image', data: { kind: 'image', assetId: 10 } }
+  const imageTask: HdTask = {
+    ...task,
+    source: { ...task.source, kind: 'image' },
+    image_info: { modelName: '超分模型', modelVersionId: 42, operationCode: 'image.upscale', rows: [] },
+  }
+  const first = materializeHdResults([imageSource], [], [imageTask], 21, 3)
+  const result = first.nodes.find((node) => node.id === 'hd-result-HD-1')!
+  expect(result.data.imageOrigin).toMatchObject({ assetId: 20, kind: 'upscale', info: imageTask.image_info })
+  const restored = nodeToMutation(result).payload.data as Record<string, unknown>
+  expect(restored.imageOrigin).toEqual(result.data.imageOrigin)
+  expect(materializeHdResults(first.nodes, first.edges, [imageTask], 21, 3).changed).toBe(false)
 })

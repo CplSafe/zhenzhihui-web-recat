@@ -997,25 +997,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   }
 }
 
-/* 已生成对勾：标题后的小圆标，悬停看「AI 生成 · 用时」 */
-.canvas-node-header__done {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(14px * var(--canvas-readable-text-scale));
-  height: calc(14px * var(--canvas-readable-text-scale));
-  border-radius: 50%;
-  background: #22c5a0;
-  color: #fff;
-  cursor: default;
-}
-
-.canvas-node-header__done svg {
-  width: 100%;
-  height: 100%;
-}
-
 /* 给生成中节点供料的连线：虚线朝目标方向流动，一眼看出「这些输入正在被用」 */
 .react-flow__edge.is-feeding .react-flow__edge-path {
   stroke: #22c5a0 !important;
@@ -2296,13 +2277,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-default-node.is-hd-result {
   border: 2px solid #35a66f;
 }
-.canvas-hd-badge {
-  padding: 7px 12px;
-  color: #24774e;
-  background: #eaf8f0;
-  font-size: 11px;
-  line-height: 1.5;
-}
 
 .canvas-hd-count {
   min-width: 18px;
@@ -2311,4 +2285,19 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: #e34949;
   color: white;
   font-size: 11px;
+}
+.canvas-node-voice-retry {
+  min-height: 36px;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  border: 1px solid #098669;
+  border-radius: 7px;
+  background: #098669;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+.canvas-node-voice-retry:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
 }

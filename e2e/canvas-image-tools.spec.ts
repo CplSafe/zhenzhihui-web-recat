@@ -74,6 +74,13 @@ for (const renamed of [false, true]) {
               default: 65,
               visible_when: { mode: ['manual'] },
             },
+            {
+              name: 'color',
+              display_name: '灯光颜色',
+              type: 'string',
+              default: '',
+              visible_when: { mode: ['manual'] },
+            },
           ],
         },
       },
@@ -115,7 +122,27 @@ for (const renamed of [false, true]) {
                     capability: 'image',
                     operation_codes: [operation],
                     params_schema: {
-                      fields: [{ name: 'count', display_name: '张数', type: 'integer', default: 1, min: 1, max: 6 }],
+                      fields: [
+                        { name: 'count', display_name: '张数', type: 'integer', default: 1, min: 1, max: 6 },
+                        ...(index === 1 && renamed
+                          ? [
+                              {
+                                name: 'size',
+                                display_name: '输出尺寸',
+                                type: 'select',
+                                options: ['1024x1536', '2048x3072'],
+                                default: '1024x1536',
+                              },
+                              {
+                                name: 'quality',
+                                display_name: '输出质量',
+                                type: 'select',
+                                options: ['standard', 'high'],
+                                default: 'standard',
+                              },
+                            ]
+                          : []),
+                      ],
                     },
                   },
                 ],
@@ -171,7 +198,16 @@ for (const renamed of [false, true]) {
       }),
     )
     await page.route('**/api/v1/ai/tasks/estimate-cost', async (route) => {
-      quotes.push(route.request().postDataJSON())
+      const body = route.request().postDataJSON()
+      quotes.push(body)
+      // 真实模型48：同角度短描述成功，旧版长描述被后端模板拼接长度校验拒绝。
+      if (body.operation_code === operations[0] && Array.from(String(body.prompt || '')).length > 230) {
+        await route.fulfill({
+          status: 400,
+          json: { code: 10001, code_string: 'INVALID_MODEL_PARAMS', message: '模型参数无效，请检查参数后重试。' },
+        })
+        return
+      }
       await route.fulfill({ json: { estimated_cost: 10, balance: 100, can_afford: true } })
     })
     await page.route(/\/api\/v1\/ai\/tasks(?:\?|$)/, async (route) => {
@@ -217,13 +253,78 @@ for (const renamed of [false, true]) {
     await modal.getByRole('button', { name: '重置参数', exact: true }).click()
     await expect(modal.getByRole('spinbutton', { name: '水平角', exact: true })).toHaveValue('0')
     await page.screenshot({ path: testInfo.outputPath('multi-angle.png') })
+    // 浏览器指针的连续位移会产生小数，显示值和估价正文必须保持整度一致。
+    const globe = await angleControl.boundingBox()
+    expect(globe).not.toBeNull()
+    await page.mouse.move(globe!.x + globe!.width / 2, globe!.y + globe!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(globe!.x + globe!.width / 2 + 67.85, globe!.y + globe!.height / 2 - 56.25)
+    await page.mouse.up()
+    await expect(modal.getByRole('spinbutton', { name: '水平角', exact: true })).toHaveValue('54')
+    await expect(modal.getByRole('spinbutton', { name: '俯仰角', exact: true })).toHaveValue('28')
+    await expect
+      .poll(() =>
+        quotes.some(
+          (quote) =>
+            quote.params?.tool_params?.horizontal_angle === 54 && quote.params?.tool_params?.vertical_angle === 28,
+        ),
+      )
+      .toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('multi-angle-drag.png') })
+    await modal.getByRole('spinbutton', { name: '远近', exact: true }).fill('10')
+    await expect
+      .poll(() =>
+        quotes.some(
+          (quote) =>
+            quote.params?.tool_params?.zoom === 10 &&
+            String(quote.prompt).includes('极度特写镜头，广角镜头，边缘带有鱼眼畸变效果') &&
+            !String(quote.prompt).includes('或鱼眼变形'),
+        ),
+      )
+      .toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('multi-angle-fisheye.png') })
+    await modal.getByRole('button', { name: '背面视角', exact: true }).click()
     await modal.getByRole('button', { name: '生成新图片' }).click()
     await expect(modal).not.toBeVisible()
     expect(submissions[0]).toMatchObject({ operation_code: operations[0], model_version_id: 42 })
-    expect(submissions[0].params).not.toHaveProperty('tool_version')
+    expect(submissions[0].params.tool_version).toBe(2)
+    expect(
+      quotes
+        .filter((quote) => quote.operation_code === operations[0])
+        .every((quote) => quote.params.tool_version === 2),
+    ).toBe(true)
+    expect(submissions[0].params.tool_params).toMatchObject({ horizontal_angle: 180, vertical_angle: 0, zoom: 5 })
+    expect(submissions[0].prompt).toContain('水平环绕180°')
+    expect(submissions[0].prompt).toContain('背影和后脑')
+    expect(submissions[0].prompt).toContain('不锁定原构图、可见面或背景位置')
+    expect(submissions[0].prompt).toContain('平视0°，中景')
+    expect(Array.from(submissions[0].prompt).length).toBeLessThanOrEqual(200)
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '打光', exact: true }).click()
     await expect(modal.getByRole('spinbutton', { name: '亮度', exact: true })).toBeVisible()
+    for (const width of [1440, 760]) {
+      await page.setViewportSize({ width, height: 1000 })
+      const modes = ['手动布光', '智能补光', '参考图布光'].map((name) =>
+        modal.getByRole('button', { name, exact: true }),
+      )
+      await expect(async () => {
+        const boxes = await Promise.all(modes.map((button) => button.boundingBox()))
+        for (let index = 0; index < boxes.length; index++) {
+          expect(boxes[index]).not.toBeNull()
+          expect(Math.abs(boxes[index]!.y - boxes[0]!.y)).toBeLessThan(2)
+          expect(boxes[index]!.x).toBeGreaterThanOrEqual(0)
+          expect(boxes[index]!.x + boxes[index]!.width).toBeLessThanOrEqual(width)
+          if (index > 0) expect(boxes[index]!.x).toBeGreaterThan(boxes[index - 1]!.x)
+        }
+      }).toPass()
+      await modes[1].click()
+      await expect(modes[1]).toHaveAttribute('aria-pressed', 'true')
+      await expect(modal.getByRole('spinbutton', { name: '亮度', exact: true })).toHaveCount(0)
+      await modes[0].click()
+      await expect(modal.getByRole('spinbutton', { name: '亮度', exact: true })).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath(`relight-horizontal-${width}.png`) })
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 })
     await page.locator('.react-flow__node[data-id="other-image"] .canvas-node-header').click()
     await expect(modal).not.toBeVisible()
     await expect(page.locator('.canvas-panel-area')).toBeVisible()
@@ -242,6 +343,18 @@ for (const renamed of [false, true]) {
       })
       .toBeLessThan(3)
     const light = modal.getByRole('application', { name: '灯位方向示意，拖动调整灯位' })
+    await modal.getByRole('textbox', { name: '灯光颜色', exact: true }).fill('#00ff00')
+    if (renamed) {
+      await modal.getByRole('combobox', { name: '输出尺寸' }).focus()
+      await modal.getByRole('combobox', { name: '输出尺寸' }).press('ArrowDown')
+      await page.locator('.ant-select-item-option').filter({ hasText: '2048x3072' }).click()
+      await modal.getByRole('combobox', { name: '输出质量' }).focus()
+      await modal.getByRole('combobox', { name: '输出质量' }).press('ArrowDown')
+      await page.locator('.ant-select-item-option').filter({ hasText: 'high' }).click()
+    } else {
+      await expect(modal.getByRole('combobox', { name: '输出尺寸' })).toHaveCount(0)
+      await expect(modal.getByRole('combobox', { name: '输出质量' })).toHaveCount(0)
+    }
     await light.focus()
     await light.press('ArrowRight')
     await expect(modal.getByText('高级设置', { exact: true })).toHaveCount(0)
@@ -251,7 +364,22 @@ for (const renamed of [false, true]) {
     await modal.getByRole('button', { name: '生成新图片' }).click()
     await expect(modal).not.toBeVisible()
     expect(submissions[1].prompt).toContain('275°')
-    expect(submissions[1].params.tool_params).toEqual({ mode: 'manual', key_light: 'left', brightness: 65 })
+    expect(submissions[1].prompt).toContain('保留已有光源的方向、颜色和光照效果')
+    expect(submissions[1].prompt).toContain('新增光源颜色为#00ff00')
+    expect(submissions[1].prompt).toContain('不要把整张图片染成该颜色')
+    expect(submissions[1].input_assets).toEqual([{ asset_id: 701, role: 'reference_image' }])
+    expect(submissions[1].params.tool_params).toEqual({
+      mode: 'manual',
+      key_light: 'left',
+      brightness: 65,
+      color: '#00ff00',
+    })
+    if (renamed) expect(submissions[1].params).toMatchObject({ size: '2048x3072', quality: 'high' })
+    else {
+      expect(submissions[1].params).not.toHaveProperty('size')
+      expect(submissions[1].params).not.toHaveProperty('quality')
+    }
+    expect(quotes.at(-1)?.params).toEqual(submissions[1].params)
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '全景', exact: true }).click()
     await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()

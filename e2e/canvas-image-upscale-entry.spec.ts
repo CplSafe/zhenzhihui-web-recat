@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 760]) {
-  test(`图片节点隐藏超分且保留其他操作，视频保留超分 ${width}`, async ({ page }, testInfo) => {
+  test(`图片节点展示超分且保留其他操作，视频保留超分 ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 })
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
@@ -39,7 +39,7 @@ for (const width of [1440, 760]) {
     await page.locator('.react-flow__node[data-id="image"] .canvas-node-header').click()
     const toolbar = page.getByRole('toolbar', { name: '节点操作', exact: true })
     await expect(toolbar).toBeVisible()
-    await expect(toolbar.getByRole('button', { name: '超分', exact: true })).toHaveCount(0)
+    await expect(toolbar.getByRole('button', { name: '超分', exact: true })).toBeEnabled()
     for (const name of ['重命名节点', '替换素材', '下载素材', '删除节点', '放大预览图片']) {
       await expect(toolbar.getByRole('button', { name, exact: true })).toBeVisible()
     }

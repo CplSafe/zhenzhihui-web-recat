@@ -19,6 +19,9 @@ import {
   type VoiceFilterValues,
 } from '@/api/voices'
 import { uploadAssetFile } from '@/api/business'
+import VoiceRecorder from './VoiceRecorder'
+import { voiceDurationError } from '@/utils/voiceRecording'
+import { useLatestCallback } from '@/composables/useLatestCallback'
 import { useConfirmDialog } from '@/composables/useToast'
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
 import { readVoiceLibrary } from '@/utils/voiceLibrary'
@@ -26,6 +29,7 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 import styles from './CanvasVoiceLibrary.module.css'
 
 interface Props {
+  onBeforeCloseChange?: (guard: (() => Promise<boolean>) | null) => void
   userId: string
   workspaceId: number
   modelVersionId?: number
@@ -56,6 +60,7 @@ const languageLabel = (value: string) => {
 }
 
 export default function ServerVoiceLibrary({
+  onBeforeCloseChange,
   userId,
   workspaceId,
   modelVersionId,
@@ -237,6 +242,7 @@ export default function ServerVoiceLibrary({
       <VoiceForm
         key={`${form.mode}:${form.voice?.id || 0}`}
         {...form}
+        onBeforeCloseChange={onBeforeCloseChange}
         userId={userId}
         workspaceId={workspaceId}
         onBusyChange={onBusyChange}
@@ -317,12 +323,12 @@ export default function ServerVoiceLibrary({
       {showCreate && (
         <p className={styles.note}>
           {canManage
-            ? '上传本人或已获授权的录音，选择 MiniMax 或火山引擎复刻；费用规则以所选供应商说明为准。'
+            ? '上传本人或已获授权的录音，使用 MiniMax 复刻；费用规则以供应商说明为准。'
             : '添加音色需要空间所有者或管理员权限，请联系空间管理员。'}
         </p>
       )}
       <div
-        className={`${styles.filters} ${source === 'cloned' && !expandedFilters ? styles.myFilters : ''}`}
+        className={`${styles.filters} ${browseOnly && !expandedFilters ? styles.compactFilters : ''}`}
         aria-label="音色筛选"
       >
         <input
@@ -355,8 +361,8 @@ export default function ServerVoiceLibrary({
         {VOICE_FILTER_FIELDS.map((field) => {
           const values = filterOptions?.[field.options] || []
           const selected = filters[field.key]
-          if (browseOnly && source === 'cloned' && !expandedFilters && field.key !== 'provider' && !selected?.length)
-            return null
+          const primaryFilter = source === 'cloned' ? 'provider' : 'language'
+          if (browseOnly && !expandedFilters && field.key !== primaryFilter && !selected?.length) return null
           if (!values.length && !selected?.length) return null
           return (
             <Select
@@ -418,7 +424,7 @@ export default function ServerVoiceLibrary({
           />
           只看当前模型兼容音色
         </label>
-        {browseOnly && source === 'cloned' && (
+        {browseOnly && (
           <button
             type="button"
             disabled={busy}
@@ -469,12 +475,14 @@ export default function ServerVoiceLibrary({
               <span className={styles.tag}>{statusLabel(voice)}</span>
             </div>
             <p>{voice.description || (voice.source === 'public' ? '公共音色' : '自建音色')}</p>
-            <small>
-              {[voice.language ? languageLabel(voice.language) : '语种未标注', voice.gender, ...(voice.tags || [])]
-                .filter(Boolean)
-                .join(' · ')}
-            </small>
-            {sanitizeMediaUrl(voice.preview_url) ? (
+            {(voice.language || voice.gender || voice.tags?.some(Boolean)) && (
+              <small>
+                {[voice.language ? languageLabel(voice.language) : '', voice.gender, ...(voice.tags || [])]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </small>
+            )}
+            {sanitizeMediaUrl(voice.preview_url) && (
               <audio
                 controls
                 preload="none"
@@ -490,10 +498,6 @@ export default function ServerVoiceLibrary({
                   }))
                 }
               />
-            ) : (
-              <p className={styles.note}>
-                {voice.source === 'public' || browseOnly ? '暂无试听。' : '暂无试听，尝试同步获取最新地址。'}
-              </p>
             )}
             {previewErrors[voice.id] && (
               <p role="alert" className={styles.error}>
@@ -656,6 +660,7 @@ export default function ServerVoiceLibrary({
 }
 
 function VoiceForm({
+  onBeforeCloseChange,
   mode,
   voice,
   userId,
@@ -664,6 +669,7 @@ function VoiceForm({
   onSaved,
   onBusyChange,
 }: {
+  onBeforeCloseChange?: (guard: (() => Promise<boolean>) | null) => void
   mode: 'create' | 'edit' | 'retry'
   voice?: Voice
   userId: string
@@ -679,7 +685,11 @@ function VoiceForm({
     gender: voice?.gender || '',
     tags: voice?.tags || [],
   })
-  const [provider, setProvider] = useState(voice ? voice.provider || 'volcengine-speech' : 'minimax')
+  const provider = voice ? voice.provider || 'volcengine-speech' : 'minimax'
+  const [nameTouched, setNameTouched] = useState(false)
+  const [dragOverUpload, setDragOverUpload] = useState(false)
+  const [dropError, setDropError] = useState('')
+  const [inputOrigin, setInputOrigin] = useState<'recording' | 'upload' | 'sample'>('upload')
   const [duration, setDuration] = useState<number | null>(null)
   const [mediaFailed, setMediaFailed] = useState(false)
   const minimax = provider === 'minimax'
@@ -687,6 +697,30 @@ function VoiceForm({
   const [sample, setSample] = useState(0)
   const [consent, setConsent] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [recordingActive, setRecordingActive] = useState(false)
+  const [recordingDraft, setRecordingDraft] = useState(false)
+  const [recordingReset, setRecordingReset] = useState(0)
+  const { requestConfirm } = useConfirmDialog()
+  const canClose = useLatestCallback(async () => {
+    if (busy || recordingActive) return false
+    return (
+      !(file || recordingDraft) ||
+      Boolean(await requestConfirm('退出将丢弃本次未提交的录音，确定退出吗？', { title: '丢弃录音', zIndex: 2300 }))
+    )
+  })
+  useEffect(() => {
+    onBeforeCloseChange?.(canClose)
+    return () => onBeforeCloseChange?.(null)
+  }, [canClose, onBeforeCloseChange])
+  useEffect(() => {
+    if (!file && !recordingDraft && !recordingActive) return
+    const preventLeave = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', preventLeave)
+    return () => window.removeEventListener('beforeunload', preventLeave)
+  }, [file, recordingDraft, recordingActive])
   const [error, setError] = useState('')
   const [preview, setPreview] = useState('')
   const [key, setKey] = useState(() => crypto.randomUUID())
@@ -697,9 +731,9 @@ function VoiceForm({
   const fileInput = useRef<HTMLInputElement | null>(null)
   useEffect(() => () => controller.current?.abort(), [])
   useEffect(() => {
-    onBusyChange(busy)
+    onBusyChange(busy || recordingActive)
     return () => onBusyChange(false)
-  }, [busy, onBusyChange])
+  }, [busy, recordingActive, onBusyChange])
   const samples = readVoiceLibrary(userId, workspaceId)
   useEffect(() => {
     if (!file) {
@@ -710,15 +744,23 @@ function VoiceForm({
     setPreview(url)
     return () => URL.revokeObjectURL(url)
   }, [file, sample, workspaceId])
+  useEffect(() => {
+    if (!preview || duration !== null || mediaFailed) return
+    const timer = window.setTimeout(() => setMediaFailed(true), 15000)
+    return () => window.clearTimeout(timer)
+  }, [preview, duration, mediaFailed])
+  const fileError = file
+    ? !(minimax ? /\.(wav|mp3|m4a)$/i : /\.(wav|mp3|ogg|m4a|aac)$/i).test(file.name) ||
+      file.size > (minimax ? 20 : 10) * 1024 * 1024 ||
+      !file.size
+      ? minimax
+        ? '请选择 20 MiB 以内的 MP3、M4A 或 WAV 录音'
+        : '请选择 10 MiB 以内的 WAV、MP3、OGG、M4A 或 AAC 录音'
+      : ''
+    : ''
   const recordingError =
-    mode !== 'edit' && (file || sample) && minimax
-      ? mediaFailed
-        ? '无法读取录音，请重新选择可播放的 MP3、M4A 或 WAV 录音'
-        : duration === null
-          ? '正在读取录音时长，请稍候'
-          : !Number.isFinite(duration) || duration < 10 || duration > 300
-            ? `MiniMax 录音需为 10～300 秒，当前为 ${Number.isFinite(duration) ? duration.toFixed(1) : '未知'} 秒，请更换录音`
-            : ''
+    mode !== 'edit' && (file || sample)
+      ? fileError || (mediaFailed ? '无法读取录音，请重新选择可播放的音频' : voiceDurationError(duration, minimax))
       : ''
   const changeInput = () => {
     setError('')
@@ -727,8 +769,21 @@ function VoiceForm({
       submitted.current = false
     }
   }
+  const selectTrainingFile = (nextFile: File | null): void => {
+    changeInput()
+    setDropError('')
+    setInputOrigin('upload')
+    setRecordingDraft(false)
+    setRecordingReset((value) => value + 1)
+    setDuration(null)
+    setMediaFailed(false)
+    setFile(nextFile)
+    setSample(0)
+    setConsent(false)
+    if (fileInput.current) fileInput.current.value = ''
+  }
   const submit = async () => {
-    if (submitting.current) return
+    if (submitting.current || recordingActive || recordingDraft) return
     submitting.current = true
     const abort = new AbortController()
     controller.current = abort
@@ -742,13 +797,7 @@ function VoiceForm({
       if (recordingError) throw new Error(recordingError)
       let assetId = sample
       if (mode !== 'edit' && file) {
-        const formats = minimax ? /\.(wav|mp3|m4a)$/i : /\.(wav|mp3|ogg|m4a|aac)$/i
-        if (!formats.test(file.name) || file.size > (minimax ? 20 : 10) * 1024 * 1024 || !file.size)
-          throw new Error(
-            minimax
-              ? '请选择 20 MiB 以内的 MP3、M4A 或 WAV 录音'
-              : '请选择 10 MiB 以内的 WAV、MP3、OGG、M4A 或 AAC 录音',
-          )
+        if (fileError) throw new Error(fileError)
         if (uploaded.current?.file === file) assetId = uploaded.current.assetId
         else {
           stage = '录音上传'
@@ -771,7 +820,7 @@ function VoiceForm({
         submitted.current = true
         await createVoice(context, {
           ...metadata,
-          provider: minimax ? 'minimax' : 'volcengine-speech',
+          provider: 'minimax',
           sample_asset_id: assetId,
           consent_confirmed: true,
           idempotency_key: key,
@@ -809,165 +858,296 @@ function VoiceForm({
   }
   return (
     <form
-      className={styles.detail}
+      className={`${styles.detail} ${styles.cloneForm}`}
       aria-label={mode === 'edit' ? '编辑音色' : mode === 'retry' ? '重试音色训练' : '创建音色表单'}
       onSubmit={(event) => {
         event.preventDefault()
-        if (!busy && !recordingError && (mode === 'retry' || metadata.name.trim())) void submit()
+        if (
+          !busy &&
+          !recordingActive &&
+          !recordingDraft &&
+          !recordingError &&
+          (mode === 'retry' || metadata.name.trim())
+        )
+          void submit()
       }}
     >
-      <strong>{mode === 'edit' ? '编辑音色' : mode === 'retry' ? '重试音色训练' : '创建专属音色'}</strong>
+      <div className={styles.heading}>
+        <strong>{mode === 'edit' ? '编辑音色' : mode === 'retry' ? '重试音色训练' : '创建专属音色'}</strong>
+        <button
+          type="button"
+          disabled={busy || recordingActive}
+          onClick={async () => {
+            if (await canClose()) onClose()
+          }}
+        >
+          返回音色列表
+        </button>
+      </div>
       {mode !== 'retry' && (
-        <>
-          <label>
-            音色名称
-            <input
-              value={metadata.name}
-              disabled={busy}
-              onChange={(e) => {
-                changeInput()
-                setMetadata((v) => ({ ...v, name: e.target.value }))
-              }}
-            />
-          </label>
-          <details open={mode === 'edit'}>
+        <section className={styles.basicSection} aria-label="基础信息">
+          <h3>基础信息</h3>
+          <div className={styles.basicFields}>
+            <label>
+              音色名称
+              <input
+                value={metadata.name}
+                required
+                placeholder="例如：品牌旁白、我的声音"
+                aria-invalid={nameTouched && !metadata.name.trim()}
+                onBlur={() => setNameTouched(true)}
+                disabled={busy}
+                onChange={(e) => {
+                  changeInput()
+                  setMetadata((v) => ({ ...v, name: e.target.value }))
+                }}
+              />
+            </label>
+            {mode === 'create' && (
+              <label>
+                复刻供应商
+                <select defaultValue="minimax" disabled={busy}>
+                  <option value="minimax">MiniMax</option>
+                </select>
+              </label>
+            )}
+          </div>
+          {nameTouched && !metadata.name.trim() && (
+            <p role="alert" className={styles.error}>
+              请输入音色名称
+            </p>
+          )}
+          <details className={styles.optionalDetails} open={mode === 'edit'}>
             <summary>更多信息（可选）</summary>
-            <label>
-              描述
-              <textarea
-                value={metadata.description}
-                disabled={busy}
-                onChange={(e) => {
-                  changeInput()
-                  setMetadata((v) => ({ ...v, description: e.target.value }))
-                }}
-              />
-            </label>
-            <label>
-              语种
-              <input
-                value={metadata.language}
-                disabled={busy}
-                onChange={(e) => {
-                  changeInput()
-                  setMetadata((v) => ({ ...v, language: e.target.value }))
-                }}
-              />
-            </label>
-            <label>
-              声音性别描述
-              <input
-                value={metadata.gender}
-                disabled={busy}
-                onChange={(e) => {
-                  changeInput()
-                  setMetadata((v) => ({ ...v, gender: e.target.value }))
-                }}
-              />
-            </label>
-            <label>
-              标签（逗号分隔）
-              <input
-                value={metadata.tags?.join(',')}
-                disabled={busy}
-                onChange={(e) => {
-                  changeInput()
-                  setMetadata((v) => ({ ...v, tags: e.target.value.split(/[,，]/) }))
-                }}
-              />
-            </label>
+            <div className={styles.optionalFields}>
+              <p className={styles.optionalHint}>补充声音特点，方便之后查找和选用。</p>
+              <label className={styles.wideField}>
+                描述
+                <textarea
+                  rows={2}
+                  placeholder="例如：温柔自然的旁白，适合生活分享类视频"
+                  value={metadata.description}
+                  disabled={busy}
+                  onChange={(e) => {
+                    changeInput()
+                    setMetadata((v) => ({ ...v, description: e.target.value }))
+                  }}
+                />
+              </label>
+              <label>
+                语种
+                <input
+                  placeholder="例如：中文、英语"
+                  value={metadata.language}
+                  disabled={busy}
+                  onChange={(e) => {
+                    changeInput()
+                    setMetadata((v) => ({ ...v, language: e.target.value }))
+                  }}
+                />
+              </label>
+              <label>
+                声音性别描述
+                <input
+                  placeholder="例如：女声、男声、中性"
+                  value={metadata.gender}
+                  disabled={busy}
+                  onChange={(e) => {
+                    changeInput()
+                    setMetadata((v) => ({ ...v, gender: e.target.value }))
+                  }}
+                />
+              </label>
+              <label className={styles.wideField}>
+                标签（逗号分隔）
+                <input
+                  placeholder="例如：温柔，清晰，旁白"
+                  value={metadata.tags?.join(',')}
+                  disabled={busy}
+                  onChange={(e) => {
+                    changeInput()
+                    setMetadata((v) => ({ ...v, tags: e.target.value.split(/[,，]/) }))
+                  }}
+                />
+              </label>
+            </div>
           </details>
-        </>
+        </section>
       )}
       {mode !== 'edit' && (
         <>
-          {mode === 'create' && (
-            <label>
-              复刻供应商
-              <select
-                value={provider}
-                disabled={busy}
-                onChange={(e) => {
-                  changeInput()
-                  setProvider(e.target.value)
-                  setConsent(false)
+          <p className={styles.formHint}>选择一种音频来源即可：现场录制，或上传已有录音。</p>
+          <div className={styles.audioSources}>
+            <VoiceRecorder
+              key={recordingReset}
+              disabled={busy}
+              onActiveChange={setRecordingActive}
+              onDraftChange={setRecordingDraft}
+              onRecorded={(recordedFile, recordedDuration) => {
+                changeInput()
+                setInputOrigin('recording')
+                setFile(recordedFile)
+                setSample(0)
+                setDuration(recordedDuration)
+                setMediaFailed(false)
+                setConsent(false)
+                if (fileInput.current) fileInput.current.value = ''
+              }}
+            />
+            <section className={styles.uploadSection} aria-label="上传音频">
+              <h3>上传音频</h3>
+              <p className={styles.formHint}>选择一段清晰、无背景音乐的单人人声。</p>
+              <input
+                ref={fileInput}
+                className={styles.uploadInput}
+                type="file"
+                aria-label="上传训练录音"
+                accept={minimax ? '.mp3,.m4a,.wav' : '.wav,.mp3,.ogg,.m4a,.aac'}
+                disabled={busy || recordingActive}
+                aria-describedby="voice-upload-hint"
+                onChange={(event) => {
+                  const nextFile = event.target.files?.[0]
+                  if (nextFile) selectTrainingFile(nextFile)
+                }}
+              />
+              <button
+                type="button"
+                className={`${styles.uploadDropzone} ${dragOverUpload ? styles.uploadDragging : ''}`}
+                disabled={busy || recordingActive}
+                aria-describedby="voice-upload-hint"
+                onClick={() => fileInput.current?.click()}
+                onDragOver={(event) => {
+                  event.stopPropagation()
+                  event.preventDefault()
+                  if (!busy && !recordingActive) setDragOverUpload(true)
+                }}
+                onDragLeave={() => setDragOverUpload(false)}
+                onDrop={(event) => {
+                  event.stopPropagation()
+                  event.preventDefault()
+                  setDragOverUpload(false)
+                  if (busy || recordingActive) return
+                  const files = event.dataTransfer.files
+                  if (files.length > 1) {
+                    setDropError('每次仅支持一个音频文件，请重新选择')
+                    return
+                  }
+                  if (files[0]) selectTrainingFile(files[0])
                 }}
               >
-                <option value="minimax">MiniMax</option>
-                <option value="volcengine-speech">火山引擎</option>
-              </select>
+                <svg
+                  width="28"
+                  height="28"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  aria-hidden="true"
+                >
+                  <path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <strong>{file || sample > 0 ? '更换音频' : '选择音频文件'}</strong>
+                <span>{dragOverUpload ? '松开即可选择文件' : '或将音频拖到此处'}</span>
+              </button>
+              {dropError && (
+                <p role="alert" className={styles.error}>
+                  {dropError}
+                </p>
+              )}
+              <p id="voice-upload-hint">
+                {minimax
+                  ? 'MP3 / M4A / WAV · 最大 20 MiB · 10～300 秒'
+                  : 'WAV / MP3 / OGG / M4A / AAC · 最大 10 MiB · 至少 10 秒'}
+                <br />
+                请上传至少 10 秒的清晰人声音频，建议 20～30 秒。
+              </p>
+              {samples.length > 0 && (
+                <>
+                  <label>
+                    选择本机声音样本
+                    <select
+                      value={sample}
+                      disabled={busy || recordingActive}
+                      onChange={(e) => {
+                        changeInput()
+                        setRecordingDraft(false)
+                        setRecordingReset((value) => value + 1)
+                        setDuration(null)
+                        setMediaFailed(false)
+                        setInputOrigin('sample')
+                        setSample(Number(e.target.value))
+                        setFile(null)
+                        if (fileInput.current) fileInput.current.value = ''
+                        setConsent(false)
+                      }}
+                    >
+                      <option value={0}>请选择声音样本</option>
+                      {samples.map((item) => (
+                        <option key={item.assetId} value={item.assetId}>
+                          {item.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p>已有声音样本也需至少 10 秒；采用新录音或样本后，请重新确认声音授权。</p>
+                </>
+              )}
+              {(file || sample > 0) && (
+                <p className={styles.selectedAudio} role="status">
+                  当前采用：
+                  {inputOrigin === 'recording' ? '现场录音' : inputOrigin === 'sample' ? '声音样本' : '上传音频'}
+                  {file && ` · ${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MiB`}
+                  {duration !== null && Number.isFinite(duration) && ` · ${duration.toFixed(1)} 秒`}
+                </p>
+              )}
+              {(file || sample > 0) && (
+                <button
+                  type="button"
+                  className={styles.removeAudio}
+                  disabled={busy || recordingActive}
+                  onClick={() => selectTrainingFile(null)}
+                >
+                  移除音频
+                </button>
+              )}
+              {preview && !fileError && (
+                <audio
+                  key={preview}
+                  src={preview}
+                  controls
+                  preload="metadata"
+                  aria-label="试听训练录音"
+                  onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                  onDurationChange={(e) => setDuration(e.currentTarget.duration)}
+                  onError={() => {
+                    setDuration(null)
+                    setMediaFailed(true)
+                  }}
+                />
+              )}
+              {recordingError && (
+                <p role={duration === null && !mediaFailed && !fileError ? 'status' : 'alert'} className={styles.error}>
+                  {recordingError}
+                </p>
+              )}
+            </section>
+          </div>
+          <div className={styles.consentSection}>
+            <label>
+              <input type="checkbox" checked={consent} disabled={busy} onChange={(e) => setConsent(e.target.checked)} />
+              我确认声音属于本人或已获得音色复刻授权
             </label>
-          )}
-          <p>
-            {minimax
-              ? 'MiniMax：支持 MP3、M4A、WAV，10～300 秒，最大 20 MiB。无需预付费槽位；需在 7 天内首次合成激活，首次合成会产生音色费用。'
-              : '火山引擎：支持 WAV、MP3、OGG、M4A、AAC，最大 10 MiB，使用当前空间预付费音色槽位。'}
-            {mode === 'retry' && '不选择新录音时沿用原样本；MiniMax 重试会创建新的供应商音色 ID。'}
-          </p>
-          <label>
-            上传训练录音
-            <input
-              ref={fileInput}
-              type="file"
-              accept={minimax ? '.mp3,.m4a,.wav' : '.wav,.mp3,.ogg,.m4a,.aac'}
-              disabled={busy}
-              onChange={(e) => {
-                changeInput()
-                setDuration(null)
-                setMediaFailed(false)
-                setFile(e.target.files?.[0] || null)
-                setSample(0)
-                setConsent(false)
-              }}
-            />
-          </label>
-          <label>
-            选择本机声音样本
-            <select
-              value={sample}
-              disabled={busy}
-              onChange={(e) => {
-                changeInput()
-                setDuration(null)
-                setMediaFailed(false)
-                setSample(Number(e.target.value))
-                setFile(null)
-                if (fileInput.current) fileInput.current.value = ''
-                setConsent(false)
-              }}
-            >
-              <option value={0}>请选择声音样本</option>
-              {samples.map((item) => (
-                <option key={item.assetId} value={item.assetId}>
-                  {item.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          {preview && (
-            <audio
-              key={preview}
-              src={preview}
-              controls
-              preload="metadata"
-              aria-label="试听训练录音"
-              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-              onDurationChange={(e) => setDuration(e.currentTarget.duration)}
-              onError={() => {
-                setDuration(null)
-                setMediaFailed(true)
-              }}
-            />
-          )}
-          {recordingError && (
-            <p role={duration === null && !mediaFailed ? 'status' : 'alert'} className={styles.error}>
-              {recordingError}
-            </p>
-          )}
-          <label>
-            <input type="checkbox" checked={consent} disabled={busy} onChange={(e) => setConsent(e.target.checked)} />
-            我确认声音属于本人或已获得音色复刻授权
-          </label>
+            <p className={styles.formHint}>仅提交时上传至当前空间，音色按空间权限使用。</p>
+            <details className={styles.providerNote}>
+              <summary>供应商计费与激活说明</summary>
+              <p>
+                {minimax
+                  ? 'MiniMax 无需预付费槽位；请在 7 天内首次合成激活，首次合成会产生音色费用。'
+                  : '使用当前空间预付费音色槽位。'}
+                {mode === 'retry' && '不选择新录音时沿用原样本；MiniMax 重试会创建新的供应商音色 ID。'}
+              </p>
+            </details>
+          </div>
         </>
       )}
       {error && (
@@ -976,14 +1156,23 @@ function VoiceForm({
         </p>
       )}
       {busy && <p role="status">正在提交，请勿重复操作…</p>}
-      <div className={styles.actions}>
-        <button type="button" disabled={busy} onClick={onClose}>
+      <div className={`${styles.actions} ${styles.formActions}`}>
+        <button
+          type="button"
+          disabled={busy || recordingActive}
+          onClick={async () => {
+            if (await canClose()) onClose()
+          }}
+        >
           取消
         </button>
         <button
           type="submit"
+          className={styles.primary}
           disabled={
             busy ||
+            recordingActive ||
+            recordingDraft ||
             Boolean(recordingError) ||
             (mode !== 'retry' && !metadata.name.trim()) ||
             (mode === 'create' && (!consent || (!file && !sample))) ||

@@ -49,6 +49,7 @@ export default function AppConfirmDialog() {
     <div
       ref={dialogRef}
       className="confirm-overlay"
+      style={state.zIndex === undefined ? undefined : { zIndex: state.zIndex }}
       role="alertdialog"
       tabIndex={-1}
       aria-modal="true"

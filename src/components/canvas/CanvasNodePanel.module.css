@@ -228,28 +228,19 @@
 }
 
 .realPersonHint {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 0;
-  z-index: 31;
+  position: fixed;
+  z-index: 1450;
+  visibility: hidden;
   padding: 8px 12px;
   border: 0;
   border-radius: 8px;
   background: #5767e5;
   color: #fff;
   font-size: 12px;
-  white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  white-space: normal;
   cursor: pointer;
   box-shadow: 0 4px 14px #5767e533;
-}
-
-.realPersonHint::after {
-  position: absolute;
-  top: 100%;
-  left: 16px;
-  border: 5px solid transparent;
-  border-top-color: #5767e5;
-  content: '';
 }
 
 .refAddMenu {
