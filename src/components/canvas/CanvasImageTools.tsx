@@ -222,8 +222,11 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
   const [referenceId, setReferenceId] = useState('')
   const selectedModel = allowed.find((m) => Number(m.id) === modelId)
   const nativeFields = useMemo(
-    () => modelFields(selectedModel, tool.operation_code),
-    [selectedModel, tool.operation_code],
+    () =>
+      modelFields(selectedModel, tool.operation_code).filter(
+        (field) => tool.code !== 'image.relight' || field.name !== 'size',
+      ),
+    [selectedModel, tool.operation_code, tool.code],
   )
   const nativeDefaults = (list: ToolField[]) =>
     tool.code === 'image.panorama' ? panoramaModelDefaults(list, schemaDefaults(list)) : schemaDefaults(list)
@@ -471,7 +474,7 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
               (field) =>
                 ['count', 'n', 'num_images', 'batch_size'].includes(field.name) ||
                 (tool.code === 'image.relight' &&
-                  ['size', 'resolution', 'quality', 'ratio', 'aspect_ratio', 'width', 'height'].includes(field.name)),
+                  ['resolution', 'quality', 'ratio', 'aspect_ratio', 'width', 'height'].includes(field.name)),
             )}
             values={nativeValues}
             onChange={setNativeValues}
@@ -726,7 +729,9 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
         >
           重置参数
         </Button>
-        {browser && <p className={styles.hint}>浏览和取景不创建 AI 任务。取景截图上传后作为新素材添加到画布。</p>}
+        {browser && (
+          <p className={styles.hint}>浏览和截图不创建 AI 任务。截图先集中预览，确认后再将选中的截图加入画布。</p>
+        )}
       </div>
     </div>
   )

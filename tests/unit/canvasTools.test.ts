@@ -39,6 +39,19 @@ const input = {
 }
 
 describe('canvas tools backend contract', () => {
+  it('打光忽略输出尺寸的旧值和必填声明，不影响其他模型参数', () => {
+    const result = buildToolGeneration({
+      ...input,
+      modelFields: [
+        ...input.modelFields,
+        { name: 'size', type: 'select', required: true, options: ['1024x1536'] },
+        { name: 'quality', type: 'select', options: ['high'] },
+      ],
+      modelValues: { count: 1, size: 'obsolete-size', quality: 'high' },
+    })
+    expect(result.params).not.toHaveProperty('size')
+    expect(result.params).toMatchObject({ count: 1, quality: 'high' })
+  })
   it('补充描述超出多角度模板预算时在请求前提示，不静默截断', () => {
     const angle = {
       ...tool,

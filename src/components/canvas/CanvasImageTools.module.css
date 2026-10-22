@@ -692,10 +692,25 @@
   inset: 10%;
   border: 1px dashed #fff;
 }
+.captureCollection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.captureSummary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #52695f;
+}
 .captureResults {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
 }
 .captureResults label {
   font-size: 12px;
