@@ -2,6 +2,7 @@ import { imageGenerationInfo } from '@/utils/canvasImageInfo'
 import { useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
+import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import { Alert, Button, Modal, Radio, Select, Spin } from 'antd'
 import { createAiTask, estimateAiTaskCost, getAiTaskId, getAiTask, listAiModels, waitForAiTask } from '@/api/business'
 import type { ToolField } from '@/api/canvasTools'
@@ -71,12 +72,13 @@ export default function CanvasUpscale(props: {
 }) {
   const source = hdSources(props.nodes.filter((node) => props.request?.ids.includes(node.id)))[0]
   const operation = source ? `${source.kind}.upscale` : ''
+  const [catalogRetry, setCatalogRetry] = useState(0)
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight })
   const [panelHeight, setPanelHeight] = useState(350)
   const bodyRef = useRef<HTMLDivElement>(null)
   const [models, setModels] = useState<Model[]>([])
   const [modelId, setModelId] = useState(0)
-  const [values, setValues] = useState<Record<string, unknown>>({})
+  const [editableValues, setValues] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -88,6 +90,7 @@ export default function CanvasUpscale(props: {
   const [sizeError, setSizeError] = useState('')
   const prepareController = useRef<AbortController | null>(null)
   const lock = useRef(false)
+  const submittingKeys = useRef(new Set<string>())
   const tasks = useRef<HdTask[]>([])
   const key = useRef('')
   const controller = useRef(new AbortController())
@@ -159,6 +162,7 @@ export default function CanvasUpscale(props: {
     setModels([])
     setModelId(0)
     setValues({})
+    setBusy(false)
     key.current = crypto.randomUUID()
     if (!open || !operation) return
     const abort = new AbortController()
@@ -178,10 +182,23 @@ export default function CanvasUpscale(props: {
         if (!abort.signal.aborted) setLoading(false)
       })
     return () => abort.abort()
-  }, [open, operation, props.workspaceId, props.request?.key])
+  }, [open, operation, props.workspaceId, props.request?.key, catalogRetry])
   const model = models.find((m) => Number(m.id) === modelId)
   const fields = upscaleFields(model, operation)
-  const choiceFields = fields.filter(
+  // 图片超分的分辨率和细节程度固定，估价、校验与提交共用同一组值。
+  const fixedValues: Record<string, unknown> = {}
+  if (source?.kind === 'image') {
+    for (const field of fields) {
+      const eightK = fieldOptions(field).find(
+        (option) => /^8k$/i.test(String(option.value)) || /^8k$/i.test(option.label),
+      )
+      if (/resolution/.test(field.name) && eightK) fixedValues[field.name] = eightK.value
+      if (field.display_name === '细节生成程度') fixedValues[field.name] = 100
+    }
+  }
+  const values = { ...editableValues, ...fixedValues }
+  const editableFields = fields.filter((field) => !Object.prototype.hasOwnProperty.call(fixedValues, field.name))
+  const choiceFields = editableFields.filter(
     (field) =>
       field.name !== 'multiple' &&
       fieldOptions(field).length > 0 &&
@@ -291,14 +308,15 @@ export default function CanvasUpscale(props: {
   }, [fingerprint, open, validationError])
   const currentQuote = quote?.key === fingerprint ? quote : null
   async function run() {
-    if (lock.current || !source || !body) return
+    const submissionKey = key.current
+    if (lock.current || submittingKeys.current.has(submissionKey) || !source || !body) return
     if (!currentQuote || !currentQuote.can_afford || currentQuote.balance < currentQuote.estimated_cost) return
     const validation = validateToolFields(fields, values)
     if (validation) {
       setError(validation)
       return
     }
-    lock.current = true
+    submittingKeys.current.add(submissionKey)
     setBusy(true)
     setError('')
     try {
@@ -319,7 +337,7 @@ export default function CanvasUpscale(props: {
         return
       }
       const base: HdTask = {
-        id: `submission-${key.current}`,
+        id: `submission-${submissionKey}`,
         ...(source.kind === 'image'
           ? { image_info: imageGenerationInfo(body, model.display_name || model.name || '', new Date().toISOString()) }
           : {}),
@@ -346,6 +364,8 @@ export default function CanvasUpscale(props: {
         const row: HdTask = {
           ...base,
           status,
+          task_id: getAiTaskId(current) || undefined,
+          error: current.error_message || current.error?.message || '',
           result: output
             ? {
                 asset_id: Number(output.asset_id || output.asset?.id),
@@ -362,20 +382,20 @@ export default function CanvasUpscale(props: {
       }
       publish({ status: 'queued' })
       props.onCloseRequest()
+      props.onSubmitted()
       let task: any
       try {
         task = await createAiTask({
           ...body,
           modelVersion: model,
           capability: source.kind,
-          idempotencyKey: key.current,
+          idempotencyKey: submissionKey,
         })
       } catch (err) {
-        publish({ status: 'failed' })
+        publish({ status: 'failed', error_message: err instanceof Error ? err.message : '超分请求失败' })
         showToast(err instanceof Error ? err.message : '超分请求失败', 'error')
         return
       }
-      props.onSubmitted()
       publish(task)
       void getAiTask({ workspaceId: props.workspaceId, taskId: getAiTaskId(task) })
         .then((detail) =>
@@ -399,15 +419,15 @@ export default function CanvasUpscale(props: {
         })
         .catch((err) => {
           if (!controller.current.signal.aborted) {
-            publish({ status: 'failed' })
+            publish({ status: 'failed', id: getAiTaskId(task), error_message: err.message || '超分任务查询失败' })
             showToast(err.message || '超分任务查询失败', 'error')
           }
         })
     } catch (err) {
-      setError(err instanceof Error ? err.message : '超分请求失败')
+      if (key.current === submissionKey) setError(err instanceof Error ? err.message : '超分请求失败')
     } finally {
-      lock.current = false
-      setBusy(false)
+      submittingKeys.current.delete(submissionKey)
+      if (key.current === submissionKey) setBusy(false)
     }
   }
   return (
@@ -442,7 +462,19 @@ export default function CanvasUpscale(props: {
       ) : !source || source.asset_id <= 0 ? (
         <Alert type="warning" message="请选择已上传或生成的图片、视频" />
       ) : !models.length ? (
-        <Alert type="info" message="当前空间暂无可用超分模型，请联系管理员启用模型并授权套餐。" />
+        error ? (
+          <Alert
+            type="error"
+            message={error}
+            action={<Button onClick={() => setCatalogRetry((value) => value + 1)}>重新加载</Button>}
+          />
+        ) : (
+          <EmptyModelNotice
+            workspaceId={props.workspaceId}
+            label="超分模型"
+            onReload={() => setCatalogRetry((value) => value + 1)}
+          />
+        )
       ) : (
         <div ref={bodyRef} className={styles.body}>
           <div className={styles.row}>
@@ -468,6 +500,16 @@ export default function CanvasUpscale(props: {
             />
           </div>
           <div className={styles.fields}>
+            {fields
+              .filter(
+                (field) => Object.prototype.hasOwnProperty.call(fixedValues, field.name) && fieldVisible(field, values),
+              )
+              .map((field) => (
+                <div className={styles.row} key={field.name}>
+                  <span>{field.display_name || field.name}</span>
+                  <span>{fixedValues[field.name] === 100 ? '100' : '8K'}</span>
+                </div>
+              ))}
             {upscaleDisplayFields(choiceFields)
               .filter((field) => fieldVisible(field, values))
               .map((field) => (
@@ -486,7 +528,7 @@ export default function CanvasUpscale(props: {
               ))}
             <CanvasToolFields
               fields={upscaleDisplayFields(
-                fields.filter((field) => field.name !== 'multiple' && !choiceFields.includes(field)),
+                editableFields.filter((field) => field.name !== 'multiple' && !choiceFields.includes(field)),
               )}
               values={values}
               disabled={busy}

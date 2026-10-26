@@ -374,7 +374,7 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
       return '当前空间有任务正在生成中，请等待上一个任务完成后再试'
     }
     if (/not available without an active subscription/i.test(error.message)) {
-      return '当前模型需要开通对应套餐后才能使用；如果只用积分包也要可用，需要后端放开无套餐用户的模型授权'
+      return '当前模型需要有效会员授权，请查看包含此模型权益的会员；团队成员请联系团队所有者处理'
     }
 
     const contentSafetyMessage = getContentSafetyErrorMessage(error)

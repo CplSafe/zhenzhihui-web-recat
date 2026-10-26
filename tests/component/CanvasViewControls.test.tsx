@@ -23,6 +23,26 @@ function renderControls(overrides: Partial<React.ComponentProps<typeof CanvasVie
 }
 
 describe('CanvasViewControls', () => {
+  it('快捷键优先按钮展示状态并转交用户点击', async () => {
+    const user = userEvent.setup()
+    const toggle = vi.fn()
+    renderControls({ keyboardPriority: true, onKeyboardPriorityToggle: toggle })
+    const button = screen.getByRole('button', { name: '全屏快捷键模式' })
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+    await user.click(button)
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+  it('等待全屏和权限时禁用按钮，防止重复请求', () => {
+    renderControls({ keyboardPriorityPending: true, onKeyboardPriorityToggle: vi.fn() })
+    expect(screen.getByRole('button', { name: '全屏快捷键模式' })).toBeDisabled()
+  })
+  it('选择预设倍率时调用缩放回调', async () => {
+    const user = userEvent.setup()
+    const onZoomTo = vi.fn()
+    renderControls({ onZoomTo })
+    await user.selectOptions(screen.getByRole('combobox', { name: '画布缩放' }), '60')
+    expect(onZoomTo).toHaveBeenCalledWith(0.6)
+  })
   it('把当前倍率读成百分比，点读数回到 100%', async () => {
     const user = userEvent.setup()
     const props = renderControls({ zoom: 0.8 })

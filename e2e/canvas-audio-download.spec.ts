@@ -68,7 +68,7 @@ for (const width of [1440, 768]) {
     )
     await page.goto('/canvas/116')
     await page.locator('.react-flow__node[data-id="audio-download"] .canvas-node-header').click()
-    await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
+    await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
     await expect(page.getByText('编辑音频', { exact: true })).toBeVisible()
     await expect(page.getByText('聚焦波形后：', { exact: false })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '保存为新素材并用于下游' })).toBeVisible()

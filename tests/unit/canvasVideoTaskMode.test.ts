@@ -53,7 +53,32 @@ describe('applyVideoTaskModeParams', () => {
         { mode: 'edit', duration: 5 },
         { modeFieldName: 'mode', hasVideoInput: true, sourceVideoSeconds: 7.2 },
       ),
-    ).toEqual({ mode: 'edit', duration: 5, source_video_duration: 8 })
+    ).toEqual({ mode: 'edit', source_video_duration: 8 })
+  })
+
+  it.each(['edit', 'extend'])('removes fixed ratio and duration aliases for %s without mutating input', (mode) => {
+    const params = {
+      mode,
+      ratio: '21:9',
+      aspect_ratio: '21:9',
+      aspectRatio: '21:9',
+      duration: 5,
+      duration_seconds: 5,
+      resolution: '720p',
+    }
+    expect(
+      applyVideoTaskModeParams(params, { modeFieldName: 'mode', hasVideoInput: true, sourceVideoSeconds: 8 }),
+    ).toEqual({ mode, resolution: '720p', source_video_duration: 8 })
+    expect(params.duration).toBe(5)
+  })
+
+  it('keeps explicit output ratio and duration for generation with a reference video', () => {
+    expect(
+      applyVideoTaskModeParams(
+        { mode: 'generate', ratio: '21:9', duration: 5 },
+        { modeFieldName: 'mode', hasVideoInput: true, sourceVideoSeconds: 8 },
+      ),
+    ).toEqual({ mode: 'generate', ratio: '21:9', duration: 5, source_video_duration: 8 })
   })
 
   it('omits the source length while it is still unknown', () => {

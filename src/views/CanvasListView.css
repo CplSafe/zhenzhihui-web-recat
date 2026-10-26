@@ -1,398 +1,368 @@
-/* 无限画布列表页 —— 复用 project-management.css 的 pm2 布局类，此处补充画布专属样式 */
-
-/* 卡片封面占位：柔和渐变 + 网格图标 */
+/* Compact creative library: bounded previews retain their scale with sparse data. */
+.cl-page {
+  --cl-ground: #f7f8fa;
+  --cl-surface: #fff;
+  --cl-well: #f1f4f3;
+  --cl-ink: #202b27;
+  --cl-muted: #66736d;
+  --cl-line: #e5ebe8;
+  --cl-accent: #087d60;
+  background: var(--cl-ground);
+  color: var(--cl-ink);
+}
+.cl-page .apptop,
+.cl-page .app-sidebar {
+  background: var(--cl-surface);
+}
+.cl-page .pm2-main {
+  margin: 0;
+  padding: 28px 36px 48px;
+  border: 0;
+  border-radius: 0;
+  background: var(--cl-ground);
+}
+.cl-page .pm2-head {
+  align-items: center;
+  margin-bottom: 28px;
+}
+.cl-page .pm2-head-title {
+  color: var(--cl-ink);
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.03em;
+}
+.cl-page .pm2-head-sub {
+  margin-top: 8px;
+  color: var(--cl-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.cl-page .pm2-new-btn {
+  height: 40px;
+  border-radius: 8px;
+  background: var(--cl-accent);
+  color: var(--cl-surface);
+  box-shadow: none;
+}
+.cl-page .pm2-new-btn:hover {
+  background: #06654e;
+  filter: none;
+}
+.cl-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.cl-section-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.cl-section-head > span {
+  color: var(--cl-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+/* n * ((available - (n - 1) * 20px) / n) + (n - 1) * 20px = available */
+.cl-page .pm2-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 24px;
+}
+.cl-page .pm2-pcard {
+  min-width: 0;
+  max-width: 380px;
+  border-color: var(--cl-line);
+  border-radius: 14px;
+  transition: border-color 150ms ease;
+}
+.cl-page .pm2-pcard:hover {
+  transform: none;
+  border-color: #9caea4;
+  box-shadow: none;
+}
+.cl-page .pm2-pcard-cover {
+  aspect-ratio: 16/9;
+  border-radius: 13px 13px 0 0;
+  background: var(--cl-well);
+}
 .cl-cover {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;
+  gap: 12px;
   width: 100%;
   height: 100%;
-  color: #8ea3bf;
+  color: var(--cl-muted);
+  font-size: 12px;
 }
-
-/* 封面媒体（最后生成的图/视频首帧）：铺满卡片封面区，按短边裁切保持构图 */
+.cl-cover svg {
+  width: 28px;
+  height: 28px;
+}
 .cl-cover-media {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  background: #eef1f7;
+  background: var(--cl-well);
   pointer-events: none;
 }
-
-.cl-cover svg {
-  width: 44px;
-  height: 44px;
-  opacity: 0.85;
+.cl-page .pm2-pcard-body {
+  padding: 14px 16px 16px;
+}
+.cl-page .pm2-pcard-head {
+  position: relative;
+}
+.cl-page .pm2-pcard-title {
+  color: var(--cl-ink);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.cl-page .pm2-pcard-more {
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: -4px -6px -4px 0;
+  border-radius: 6px;
+  color: var(--cl-muted);
+}
+.cl-page .pm2-pcard-more:hover {
+  background: var(--cl-well);
+  color: var(--cl-ink);
+}
+.cl-page .pm2-pcard-meta {
+  margin-top: 6px;
+  color: var(--cl-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 新建按钮禁用态 */
-.pm2-new-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.cl-page .pm2-pcard-time {
+  color: var(--cl-muted);
 }
-
-/* 卡片标题旁的归档状态徽标 */
 .cl-status-badge {
   flex: none;
-  font-size: 11px;
-  line-height: 1;
   padding: 3px 7px;
-  border-radius: 999px;
-  background: #eef0f4;
-  color: #6b7280;
+  border-radius: 4px;
+  background: var(--cl-well);
+  color: var(--cl-muted);
+  font-size: 11px;
   white-space: nowrap;
 }
-
-/* 创意画布初始化：沿用 Figma 的右侧需求抽屉，并适配现有绿色品牌色。 */
+.cl-empty {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-direction: column;
+  min-height: 220px;
+  padding: 32px;
+  border-radius: 10px;
+  background: var(--cl-well);
+  color: var(--cl-muted);
+  font-size: 14px;
+}
+.cl-empty h3 {
+  margin: 0;
+  color: var(--cl-ink);
+  font-size: 20px;
+  font-weight: 600;
+}
+.cl-empty p {
+  margin: 10px 0 20px;
+  line-height: 1.7;
+}
+.cl-empty button {
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--cl-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
 .cl-brief-mask {
   position: fixed;
   inset: 0;
   z-index: 1200;
   display: flex;
-  justify-content: flex-end;
-  background: rgba(15, 23, 42, 0.36);
-  backdrop-filter: blur(2px);
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(20 31 28 / 34%);
 }
-
 .cl-brief-drawer {
-  display: flex;
-  flex-direction: column;
-  width: min(720px, calc(100vw - 24px));
-  height: 100%;
-  overflow: hidden;
-  border-left: 1px solid rgba(15, 118, 110, 0.12);
-  background: #fff;
-  box-shadow: -24px 0 64px rgba(15, 23, 42, 0.14);
+  box-sizing: border-box;
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  border: 1px solid var(--cl-line);
+  border-radius: 16px;
+  background: var(--cl-surface);
+  box-shadow: 0 20px 64px rgb(20 31 28 / 16%);
+  color: var(--cl-ink);
 }
-
 .cl-brief-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  padding: 34px 38px 28px;
-  border-bottom: 1px solid #edf1ef;
-  background: linear-gradient(135deg, #f0fbf7 0%, #fff 72%);
+  gap: 16px;
+  padding: 28px 28px 0;
 }
-
-.cl-brief-kicker {
-  display: block;
-  margin-bottom: 8px;
-  color: #0d9f78;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-}
-
 .cl-brief-head h2 {
   margin: 0;
-  color: #17231f;
-  font-size: 28px;
-  line-height: 1.3;
+  font-size: 22px;
+  line-height: 1.4;
 }
-
 .cl-brief-head p {
   margin: 10px 0 0;
-  color: #6b7772;
+  color: var(--cl-muted);
   font-size: 14px;
   line-height: 1.7;
 }
-
 .cl-brief-close {
-  display: grid;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  place-items: center;
-  border: 1px solid #e2e8e5;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.86);
-  color: #53605a;
+  border: 0;
+  border-radius: 6px;
+  background: var(--cl-well);
+  color: var(--cl-muted);
   font-size: 22px;
   cursor: pointer;
 }
-
 .cl-brief-content {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 30px;
-  overflow-y: auto;
-  padding: 34px 38px;
-}
-
-.cl-brief-name {
-  display: grid;
-  gap: 10px;
-  color: #3d4b45;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.cl-brief-name input {
-  height: 46px;
-  padding: 0 15px;
-  border: 1px solid #dfe7e4;
-  border-radius: 12px;
-  outline: none;
-  color: #1f2b27;
-  font: inherit;
-  font-weight: 400;
-}
-
-.cl-brief-name input:focus {
-  border-color: #21b88b;
-  box-shadow: 0 0 0 3px rgba(33, 184, 139, 0.12);
-}
-
-.cl-brief-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 20px 38px;
-  border-top: 1px solid #edf1ef;
-  background: #fff;
-}
-
-.cl-brief-foot > button {
-  min-width: 180px;
-  height: 46px;
-  padding: 0 24px;
-  border: 0;
-  border-radius: 12px;
-  background: #19b889;
-  color: #fff;
-  font-size: 15px;
-  font-weight: 650;
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(25, 184, 137, 0.2);
-}
-
-.cl-brief-foot > button:disabled {
-  background: #cdd7d3;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.cl-brief-close:focus-visible,
-.cl-brief-foot > button:focus-visible {
-  outline: 3px solid rgba(33, 184, 139, 0.28);
-  outline-offset: 2px;
-}
-
-@media (max-width: 720px) {
-  .cl-brief-drawer {
-    width: 100%;
-  }
-
-  .cl-brief-head,
-  .cl-brief-content,
-  .cl-brief-foot {
-    padding-right: 20px;
-    padding-left: 20px;
-  }
-
-  .cl-brief-foot {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .cl-brief-foot > button {
-    width: 100%;
-  }
-}
-
-/* 创建画布改为居中弹窗：只填写名称，不再承载素材和制作需求。 */
-.cl-brief-mask {
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(20, 31, 28, 0.34);
-  backdrop-filter: blur(4px);
-}
-
-.cl-brief-drawer {
-  width: min(480px, calc(100vw - 32px));
-  height: auto;
-  max-height: calc(100vh - 48px);
-  border: 1px solid rgba(15, 118, 110, 0.12);
-  border-radius: 22px;
-  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.2);
-  animation: cl-brief-modal-enter 0.2s ease-out;
-}
-
-.cl-brief-head {
-  align-items: center;
-  padding: 26px 28px 22px;
-  background: linear-gradient(145deg, #effbf7 0%, #fff 78%);
-}
-
-.cl-brief-kicker {
-  margin-bottom: 6px;
-}
-
-.cl-brief-head h2 {
-  font-size: 23px;
-}
-
-.cl-brief-head p {
-  max-width: 360px;
-  margin-top: 7px;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.cl-brief-content {
-  flex: none;
   padding: 28px;
-  overflow: visible;
 }
-
 .cl-brief-name {
   position: relative;
-  gap: 9px;
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
 }
-
-.cl-brief-name > span::after {
-  content: ' *';
-  color: #dc5a4f;
-}
-
 .cl-brief-name input {
-  height: 50px;
-  padding-right: 58px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 46px;
+  padding: 0 60px 0 12px;
+  border: 1px solid #b4c1ba;
+  border-radius: 8px;
+  background: var(--cl-surface);
+  color: var(--cl-ink);
+  font: inherit;
 }
-
 .cl-brief-name small {
   position: absolute;
-  right: 14px;
+  right: 12px;
   bottom: 16px;
-  color: #9aa6a1;
+  color: var(--cl-muted);
   font-size: 11px;
-  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
-
 .cl-brief-foot {
+  display: flex;
   justify-content: flex-end;
-  flex-direction: row;
   gap: 10px;
-  padding: 18px 28px 24px;
-  border-top: 0;
+  padding: 0 28px 28px;
 }
-
 .cl-brief-foot > button {
-  width: auto;
-  min-width: 112px;
-  height: 42px;
+  min-height: 40px;
   padding: 0 20px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
+  background: var(--cl-ink);
+  color: var(--cl-surface);
+  font: inherit;
   font-size: 14px;
-  box-shadow: 0 8px 20px rgba(25, 184, 137, 0.17);
+  cursor: pointer;
 }
-
 .cl-brief-foot > .cl-brief-cancel {
-  border-color: #dfe7e4;
-  background: #fff;
-  color: #52605b;
-  box-shadow: none;
+  border-color: var(--cl-line);
+  background: var(--cl-surface);
+  color: var(--cl-ink);
 }
-
-.cl-brief-foot > .cl-brief-cancel:hover {
-  border-color: #a9cfc3;
-  background: #f6fbf9;
-  color: #15866b;
+.cl-brief-foot > button:hover:not(:disabled) {
+  filter: brightness(0.92);
 }
-
+.cl-brief-foot > button:disabled,
 .cl-brief-close:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
-  opacity: 0.5;
 }
-
-@keyframes cl-brief-modal-enter {
-  from {
-    transform: translateY(12px) scale(0.98);
-    opacity: 0;
-  }
+.cl-page :is(button, input, [role='button']):focus-visible {
+  outline: 2px solid var(--cl-accent);
+  outline-offset: 3px;
 }
-
-/*
- * 必须放在所有 .cl-brief-drawer 的 animation 声明之后。
- * 之前这段写在上面的抽屉样式区里，被后面同优先级 (0,1,0) 的
- * `.cl-brief-drawer { animation: cl-brief-modal-enter }` 直接压掉，
- * 开了「减少动态效果」的用户照样会吃到入场动画。
- */
-@media (prefers-reduced-motion: reduce) {
-  .cl-brief-drawer {
-    animation: none;
-  }
-}
-
-@media (max-width: 520px) {
-  .cl-brief-mask {
-    padding: 16px;
-  }
-
-  .cl-brief-drawer {
-    width: 100%;
-  }
-
-  .cl-brief-head,
-  .cl-brief-content,
-  .cl-brief-foot {
-    padding-right: 20px;
-    padding-left: 20px;
-  }
-
-  .cl-brief-foot {
-    align-items: center;
-    flex-direction: row;
-  }
-
-  .cl-brief-foot > button {
-    width: auto;
-    flex: 1;
-  }
-}
-
-/* 携带素材进入列表页时的引导条（我的素材 → 去创作 → 无限画布） */
 .cl-carry-banner {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 18px;
-  padding: 10px 16px;
-  border: 1px solid rgb(87 103 229 / 22%);
-  border-radius: 12px;
-  background: rgb(87 103 229 / 8%);
-  color: #3a4590;
-  font-size: 13px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #eaf5f0;
+  color: #245d49;
+  font-size: 14px;
 }
-
 .cl-carry-banner__text {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
-
 .cl-carry-banner__exit {
-  flex-shrink: 0;
-  padding: 4px 12px;
-  border: 1px solid rgb(87 103 229 / 35%);
-  border-radius: 12px;
+  flex: none;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
-  color: #5767e5;
-  font-size: 12px;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
-  transition: background 0.15s;
 }
-
-.cl-carry-banner__exit:hover {
-  background: rgb(87 103 229 / 12%);
+@media (max-width: 760px) {
+  .cl-page .pm2-main {
+    margin: 0;
+    padding: 24px 20px 40px;
+    border: 0;
+    border-radius: 0;
+  }
+  .cl-page .pm2-head {
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .cl-page .pm2-head-title {
+    font-size: 24px;
+  }
+  .cl-page .apptop {
+    gap: 12px;
+    padding-inline: 16px;
+  }
+  .cl-page .apptop__right {
+    min-width: 0;
+    margin-left: auto;
+  }
+  /* Keep the menu, notifications and account available in the compact bar. */
+  .cl-page .apptop__right > :is(.apptop__share, .apptop__member),
+  .cl-page .apptop__right > a {
+    display: none;
+  }
+  .cl-empty {
+    min-height: 200px;
+    padding: 24px;
+  }
+  .cl-brief-head {
+    padding: 24px 20px 0;
+  }
+  .cl-brief-content {
+    padding: 24px 20px;
+  }
+  .cl-brief-foot {
+    padding: 0 20px 24px;
+  }
 }

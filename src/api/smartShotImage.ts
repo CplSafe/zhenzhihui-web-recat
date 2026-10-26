@@ -827,6 +827,8 @@ export async function generateShotImage(args: {
  */
 export async function estimateShotImageCost(args: {
   workspaceId: number
+  /** 与正式提交同序的参考素材 ID；提供后必须与声明数量一致。 */
+  refAssetIds?: number[]
   /** 实际会随任务提交的参考图数量；用于保证核价校验与任务创建完全一致。 */
   referenceImageCount?: number
   /** @deprecated 仅用于兼容旧调用；新调用应传 referenceImageCount。 */
@@ -844,12 +846,17 @@ export async function estimateShotImageCost(args: {
    */
   prompt?: string
 }): Promise<any> {
-  const fallbackReferenceCount = args.hasRefs ? 1 : 0
+  const refAssetIds = args.refAssetIds
+  if (refAssetIds?.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error('参考图尚未准备完成，请重新选择参考图后再试')
+  }
+  const fallbackReferenceCount = refAssetIds?.length ?? (args.hasRefs ? 1 : 0)
   const referenceImageCount =
     args.referenceImageCount === undefined ? fallbackReferenceCount : Number(args.referenceImageCount)
   if (
     !Number.isSafeInteger(referenceImageCount) ||
     referenceImageCount < 0 ||
+    (refAssetIds !== undefined && referenceImageCount !== refAssetIds.length) ||
     (args.hasRefs !== undefined && args.hasRefs !== referenceImageCount > 0)
   ) {
     throw new Error('参考图数量参数无效，请重新选择参考图后再试')
@@ -878,6 +885,7 @@ export async function estimateShotImageCost(args: {
     modelVersionId: explicitModel?.id || model.id,
     operationCode,
     ...(args.prompt ? { prompt: args.prompt } : {}),
+    ...(refAssetIds ? { inputAssets: refAssetIds.map((asset_id) => ({ asset_id, role: 'reference_image' })) } : {}),
     params,
   })
 }

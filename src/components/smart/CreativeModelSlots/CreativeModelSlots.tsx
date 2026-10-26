@@ -7,6 +7,7 @@
  * 内部的选择器则与创作台一致。
  */
 import { useEffect, useRef, useState } from 'react'
+import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
 import { modelInitial } from '@/utils/studioModelPresentation'
 import type {
@@ -182,8 +183,12 @@ export default function CreativeModelSlots({
               <span className={`${barStyles.label} ${styles.slotLabel}`}>{slot.label}</span>
               {!slot.models.some((model) => !model.disabled) && (
                 <span role="status">
-                  {slot.models.find((model) => model.unavailableReason)?.unavailableReason ||
-                    `${slot.label}暂无可用模型`}
+                  <ModelAvailabilityNotice
+                    message={
+                      slot.models.find((model) => model.unavailableReason)?.unavailableReason ||
+                      `${slot.label}暂无可用模型，请刷新重试；若仍不可用，请联系平台管理员`
+                    }
+                  />
                 </span>
               )}
               <div

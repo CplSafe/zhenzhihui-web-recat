@@ -50,6 +50,10 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
   await page.goto('/canvas/122')
   const nodeVideo = page.locator('.react-flow__node[data-id="video"] video')
   await expect(nodeVideo).toBeVisible()
+  await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('100')
+  await expect
+    .poll(() => page.locator('.react-flow__viewport').evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a))
+    .toBe(1)
   let finishDownload!: () => void
   const downloadGate = new Promise<void>((resolve) => {
     finishDownload = resolve
@@ -63,8 +67,9 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
     await route.fallback()
   })
   await page
-    .locator('.react-flow__node[data-id="video"] .canvas-node-video-wrap')
-    .dblclick({ position: { x: 20, y: 20 } })
+    .locator('.react-flow__node[data-id="video"]')
+    .getByRole('button', { name: '放大视频', exact: true })
+    .click()
   const dialog = page.getByRole('dialog', { name: '视频预览', exact: true })
   const video = dialog.locator('video')
   await expect(dialog).toBeVisible()
@@ -78,14 +83,21 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
   await expect(video).toHaveJSProperty('readyState', 4)
   await expect(video).toHaveJSProperty('muted', false)
   await expect(video).toHaveJSProperty('volume', 1)
-  await video.evaluate((element: HTMLVideoElement) => {
-    element.muted = true
-  })
-  await page.getByRole('button', { name: '关闭视频预览', exact: true }).click()
+  await dialog.getByRole('button', { name: '静音视频', exact: true }).click()
+  await expect(video).toHaveJSProperty('muted', true)
+  await expect(dialog.getByRole('button', { name: '开启视频声音', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await dialog.getByRole('button', { name: '开启视频声音', exact: true }).click()
+  await expect(video).toHaveJSProperty('muted', false)
+  await dialog.getByRole('button', { name: '静音视频', exact: true }).click()
+  await page.getByRole('button', { name: '收起', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await page
-    .locator('.react-flow__node[data-id="video"] .canvas-node-video-wrap')
-    .dblclick({ position: { x: 20, y: 20 } })
+    .locator('.react-flow__node[data-id="video"]')
+    .getByRole('button', { name: '放大视频', exact: true })
+    .click()
   await expect(video).toBeVisible()
   await expect(video).toHaveJSProperty('readyState', 4)
   await expect(video).toHaveJSProperty('muted', false)

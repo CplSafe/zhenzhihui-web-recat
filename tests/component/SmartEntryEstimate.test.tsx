@@ -2,6 +2,12 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import SmartEntry from '@/components/smart/SmartEntry/SmartEntry'
+import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import type { ReactElement } from 'react'
+
+function renderEntry(element: ReactElement) {
+  return render(<RouterProvider router={createMemoryRouter([{ path: '/', element }])} />)
+}
 
 const mocks = vi.hoisted(() => ({
   estimateAiTaskCost: vi.fn(),
@@ -20,7 +26,7 @@ vi.mock('@/composables/useToast', () => ({
 describe('SmartEntry 模型按钮文案', () => {
   it('随「制作视频 / 制作图片」Tab 切换', async () => {
     const user = userEvent.setup()
-    render(
+    renderEntry(
       <SmartEntry
         workspaceId={7}
         onSubmit={vi.fn()}
@@ -51,7 +57,7 @@ describe('SmartEntry 切换创作类型确认', () => {
     const requestConfirm = vi.fn().mockResolvedValue(true)
     const toast = await import('@/composables/useToast')
     vi.spyOn(toast, 'useConfirmDialog').mockReturnValue({ requestConfirm } as any)
-    render(<SmartEntry workspaceId={7} onSubmit={vi.fn()} initial={{ resolution: '720P' } as any} />)
+    renderEntry(<SmartEntry workspaceId={7} onSubmit={vi.fn()} initial={{ resolution: '720P' } as any} />)
 
     await user.click(screen.getByRole('tab', { name: '制作图片' }))
     expect(requestConfirm).not.toHaveBeenCalled()
@@ -63,7 +69,7 @@ describe('SmartEntry 切换创作类型确认', () => {
     const requestConfirm = vi.fn().mockResolvedValue(false)
     const toast = await import('@/composables/useToast')
     vi.spyOn(toast, 'useConfirmDialog').mockReturnValue({ requestConfirm } as any)
-    render(<SmartEntry workspaceId={7} onSubmit={vi.fn()} initial={{ text: '已有文案' }} />)
+    renderEntry(<SmartEntry workspaceId={7} onSubmit={vi.fn()} initial={{ text: '已有文案' }} />)
 
     await user.click(screen.getByRole('tab', { name: '制作图片' }))
     expect(requestConfirm).toHaveBeenCalledOnce()
@@ -80,7 +86,7 @@ describe('SmartEntry 积分预估的 input_assets', () => {
   it('带已有素材的参考图时，按 { asset_id, role } 对象下发，与正式提交同构', async () => {
     const user = userEvent.setup()
     mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 600, balance: 10000, can_afford: true })
-    render(
+    renderEntry(
       <SmartEntry
         workspaceId={7}
         onSubmit={vi.fn()}

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasAudioNode from '@/components/canvas/CanvasAudioNode'
 
 const mocks = vi.hoisted(() => ({
+  selection: [] as { id: string; selected: boolean }[],
   waveform: vi.fn(),
   update: vi.fn(),
   upload: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('@/utils/audioWaveform', () => ({ loadAudioWaveform: mocks.waveform }))
 vi.mock('@/utils/audioMix', () => ({ renderAudioMix: mocks.renderMix, audioBufferToWav: () => new Blob(['wav']) }))
 vi.mock('@/api/business', () => ({ uploadAssetFile: mocks.upload }))
 vi.mock('@xyflow/react', () => ({
+  useStore: (selector: any) => selector({ nodes: mocks.selection }),
   useReactFlow: () => ({ updateNodeData: mocks.update, getNode: mocks.getNode, getEdges: mocks.getEdges }),
 }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
@@ -22,6 +24,7 @@ vi.mock('@/components/canvas/CanvasAudioGenerator', () => ({ default: () => null
 describe('画布音频节点波形加载', () => {
   let reveal: () => void
   beforeEach(() => {
+    mocks.selection = []
     mocks.waveform.mockReset()
     mocks.update.mockReset()
     mocks.getNode.mockReset()
@@ -49,6 +52,25 @@ describe('画布音频节点波形加载', () => {
     )
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it.each([undefined, 'editor'])('多选隐藏面板、恢复单选显示且不卸载：%s', (audioRole) => {
+    const props = { nodeId: 'audio-1', data: { audioRole }, workspaceId: 21, src: '', selected: true }
+    const { container, rerender } = render(<CanvasAudioNode {...props} />)
+    const panel = container.querySelector('.canvas-audio-panel')!
+    expect(panel).toBeVisible()
+    mocks.selection = [
+      { id: 'audio-1', selected: true },
+      { id: 'other', selected: true },
+    ]
+    rerender(<CanvasAudioNode {...props} />)
+    expect(panel).not.toBeVisible()
+    expect(container.querySelector('.canvas-audio-panel')).toBe(panel)
+    mocks.selection = [{ id: 'audio-1', selected: true }]
+    rerender(<CanvasAudioNode {...props} />)
+    expect(panel).toBeVisible()
+    rerender(<CanvasAudioNode {...props} selected={false} />)
+    expect(panel).not.toBeVisible()
+  })
 
   it('远离视口的音频不提前解码，进入视口后才加载波形', async () => {
     render(<CanvasAudioNode nodeId="audio-1" data={{}} workspaceId={21} src="/sample.wav" selected={false} />)

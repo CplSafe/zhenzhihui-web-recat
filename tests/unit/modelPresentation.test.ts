@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { readModelAccentHue, readModelInitial, readModelPresentation } from '@/utils/modelPresentation'
+import {
+  readModelAccentHue,
+  readModelInitial,
+  readModelPresentation,
+  readModelDescription,
+} from '@/utils/modelPresentation'
+
+describe('readModelDescription', () => {
+  it('只读取目录原文，兼容 source 和 metadata，缺失时不推断', () => {
+    expect(readModelDescription({ source: { description: '  模型原文  ' } })).toBe('模型原文')
+    expect(readModelDescription({ source: { metadata: { short_description: '简短说明' } } })).toBe('简短说明')
+    expect(readModelDescription({ summary: '摘要' })).toBe('摘要')
+    expect(readModelDescription({ source: { description: { text: '不能展示的对象' } } })).toBe('')
+    expect(readModelDescription({ displayName: 'Seedance 2.0' })).toBe('')
+  })
+})
 
 /**
  * 取值宽进严出：字段名按候选列表匹配、数据形状尽量兼容，但读不到就返回空。

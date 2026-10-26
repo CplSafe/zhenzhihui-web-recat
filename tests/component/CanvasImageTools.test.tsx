@@ -3,7 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ listCanvasTools: vi.fn(), listAiModels: vi.fn(), estimateAiTaskCost: vi.fn() }))
 vi.mock('@/api/canvasTools', () => ({ listCanvasTools: mocks.listCanvasTools }))
-vi.mock('@/api/business', () => ({ listAiModels: mocks.listAiModels, estimateAiTaskCost: mocks.estimateAiTaskCost }))
+vi.mock('@/api/business', () => ({
+  listAiModels: mocks.listAiModels,
+  estimateAiTaskCost: mocks.estimateAiTaskCost,
+  getSubscription: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('@/components/canvas/CanvasToolScene', () => ({ default: () => <div>3D preview</div> }))
 import CanvasImageTools from '@/components/canvas/CanvasImageTools'
 
@@ -188,7 +192,9 @@ describe('CanvasImageTools', () => {
   it('后端目录无可用模型时不展示工具生成操作', async () => {
     mocks.listCanvasTools.mockResolvedValue([{ ...angle, model_version_ids: [] }])
     mount()
-    expect(await screen.findByText('当前空间未提供此工具，请选择其他工具或联系管理员。')).toBeInTheDocument()
+    expect(
+      await screen.findByText('当前空间尚未开放此工具，请选择其他工具；如需开通，请联系平台管理员。'),
+    ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '生成新图片' })).not.toBeInTheDocument()
     expect(mocks.listAiModels).not.toHaveBeenCalled()
     expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()

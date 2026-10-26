@@ -35,6 +35,9 @@ vi.mock('@/stores/ui', () => ({
     }),
 }))
 vi.mock('@/stores/workspaceSession', () => ({
+  useCurrentWorkspace: () => null,
+  useCurrentMember: () => null,
+  useCurrentUser: () => null,
   deriveWorkspaceId: () => 0,
   useWorkspaceSessionStore: Object.assign(
     (selector: (state: any) => unknown) => selector({ pendingWorkspaceTransition: null }),

@@ -1,7 +1,12 @@
+vi.mock('@/utils/canvasFeatureFlags', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/canvasFeatureFlags')>()),
+  CANVAS_PHASE_ONE_EXTRAS_ENABLED: true,
+}))
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import { normalizeAudioSettings } from '@/utils/canvasAudio'
 import CanvasTimelineEditor from '@/components/canvas/CanvasTimelineEditor'
 import {
   MAX_TIMELINE_CLIPS,
@@ -59,6 +64,26 @@ function lastState(onState: ReturnType<typeof vi.fn>): TimelineState {
 }
 
 describe('CanvasTimelineEditor', () => {
+  it('键盘微调音轨起始位置，可撤销且不修改原音频参数', async () => {
+    const user = userEvent.setup()
+    const onState = vi.fn()
+    const audio = {
+      ...normalizeAudioSettings({ durationSec: 5, volume: 0.6 }),
+      sourceNodeId: 'voice',
+      assetId: 201,
+      title: '旁白',
+    }
+    render(<ControlledEditor initial={{ ...baseState(), audioClips: [audio] }} onState={onState} />)
+    const slider = screen.getByRole('slider', { name: '旁白音轨位置' })
+    slider.focus()
+    await user.keyboard('{ArrowRight}{Shift>}{ArrowRight}{/Shift}')
+    expect(lastState(onState).audioClips![0]).toEqual({ ...audio, startSec: 1.1 })
+    await user.keyboard('{Home}')
+    expect(slider).toHaveAttribute('aria-valuenow', '0')
+    await user.click(screen.getByRole('button', { name: /撤销/ }))
+    expect(slider).toHaveAttribute('aria-valuenow', '1.1')
+  })
+
   it('展示片段数与总时长，关闭时不渲染', () => {
     const { rerender } = render(<ControlledEditor />)
     expect(screen.getByText('2 段 · 共 00:09.0')).toBeInTheDocument()
@@ -95,6 +120,26 @@ describe('CanvasTimelineEditor', () => {
 
     await user.click(screen.getByRole('button', { name: '片段 2 前移' }))
     expect(lastState(onState).clips.map((clip) => clip.id)).toEqual(['clip-2', 'clip-1'])
+  })
+
+  it('C 在播放头分割，B 删除选中片段并补齐，支持撤销且忽略输入与组合键', async () => {
+    const user = userEvent.setup()
+    const onState = vi.fn()
+    render(<ControlledEditor onState={onState} />)
+    await user.keyboard('{Shift>}{ArrowRight}{/Shift}c')
+    expect(lastState(onState).clips.map((clip) => clip.outSec - clip.inSec)).toEqual([1, 4, 4])
+    await user.keyboard('b')
+    expect(lastState(onState).clips.map((clip) => clip.outSec - clip.inSec)).toEqual([4, 4])
+    expect(screen.getByText('2 段 · 共 00:08.0')).toBeInTheDocument()
+    await user.keyboard('{Control>}z{/Control}')
+    expect(lastState(onState).clips).toHaveLength(3)
+    await user.click(screen.getByRole('button', { name: '片段 2' }))
+    onState.mockClear()
+    await user.keyboard('{Control>}c{/Control}{Alt>}b{/Alt}')
+    fireEvent.keyDown(document, { key: 'b', repeat: true })
+    fireEvent.keyDown(document, { key: 'c', isComposing: true })
+    fireEvent.keyDown(screen.getByLabelText('终点'), { key: 'b' })
+    expect(onState).not.toHaveBeenCalled()
   })
 
   it('工具条删除选中片段，总时长同步变化', async () => {

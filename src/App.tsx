@@ -10,7 +10,14 @@ import AppConfirmDialog from './components/AppConfirmDialog'
 import { useSafeWorkspaceSwitch } from './composables/useSafeWorkspaceSwitch'
 import { useGuideStore } from './stores/guide'
 import { useUiStore } from './stores/ui'
-import { deriveWorkspaceId, useWorkspaceSessionStore } from './stores/workspaceSession'
+import {
+  deriveWorkspaceId,
+  useWorkspaceSessionStore,
+  useCurrentWorkspace,
+  useCurrentMember,
+  useCurrentUser,
+} from './stores/workspaceSession'
+import ModelAvailabilityProvider from './components/common/ModelAvailabilityProvider'
 import { captureInviteCode } from './utils/inviteCode'
 import { readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
 import { APP_HOME_PATH } from './utils/sidebarNavigation'
@@ -110,6 +117,9 @@ export function WorkspaceRefreshTransitionBridge() {
 
 /** 根据当前路由和会话状态渲染业务页面，并承载所有全局单例 UI。 */
 export function AppShell() {
+  const modelWorkspace = useCurrentWorkspace()
+  const modelMember = useCurrentMember()
+  const modelUser = useCurrentUser()
   const navigate = useNavigate()
   const location = useLocation()
   const matches = useMatches()
@@ -200,7 +210,9 @@ export function AppShell() {
       ) : protectedRouteDenied ? (
         <div className="auth-session-loading" aria-label="正在跳转登录页" />
       ) : (
-        <Outlet />
+        <ModelAvailabilityProvider workspace={modelWorkspace} member={modelMember} user={modelUser}>
+          <Outlet />
+        </ModelAvailabilityProvider>
       )}
 
       {/* 页面卸载/刷新后的 AI 视频任务恢复与全局完成提醒。 */}

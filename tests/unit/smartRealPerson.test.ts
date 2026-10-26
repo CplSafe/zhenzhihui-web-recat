@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildRealPersonIdentityPrompt,
+  buildSmartImagePrompt,
   buildRealPersonVideoIdentityConstraint,
   buildRealPersonVideoIdentityPrompt,
   createSmartRealPersonReference,
@@ -20,6 +21,14 @@ const person = { id: 13, name: '测试人物', status: 'verified', assets: [] }
 const asset = { id: 21, local_asset_id: 108, status: 'ready', asset_type: 'image' }
 
 describe('smartRealPerson', () => {
+  it('uses the same final image prompt for pricing and submission, filtering unrelated people', () => {
+    const reference = createSmartRealPersonReference(person as any, asset as any)
+    expect(buildSmartImagePrompt('', [])).toBe('生成一张营销广告图片')
+    expect(buildSmartImagePrompt('产品特写', [999], [reference])).toBe('产品特写')
+    expect(buildSmartImagePrompt('产品特写', [108], [reference])).toBe(
+      buildRealPersonIdentityPrompt('产品特写', '测试人物'),
+    )
+  })
   it('始终把已认证真人素材放在参考图第一位并去重', () => {
     expect(prioritizeRealPersonReferenceAssetIds([201, 108, 202, 108, 0], 108)).toEqual([108, 201, 202])
     expect(prioritizeRealPersonReferenceAssetIds([201, 201], 0)).toEqual([201])

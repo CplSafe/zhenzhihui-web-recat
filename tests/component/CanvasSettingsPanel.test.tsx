@@ -32,7 +32,7 @@ describe('CanvasSettingsPanel 快捷键设置', () => {
     })
 
     await user.click(addShortcut)
-    await user.keyboard('l')
+    await user.keyboard('{Control>}l{/Control}')
     expect(screen.getByRole('alert')).toHaveTextContent('已用于“连接选中的两个节点”')
   })
 

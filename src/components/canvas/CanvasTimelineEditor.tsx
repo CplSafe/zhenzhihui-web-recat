@@ -1,3 +1,4 @@
+import { resolveAudioTrackStart } from '@/utils/canvasTimelineAudioEditing'
 /**
  * 剪辑时间线编辑器：一条主视频轨道的基础剪辑（对标剪映的基础剪辑模式）。
  *
@@ -52,7 +53,7 @@ import {
 import CanvasTimelinePlayer from './CanvasTimelinePlayer'
 import CanvasAudioMixer from './CanvasAudioMixer'
 import { parseTimelineAudio } from '@/utils/canvasAudio'
-import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
+import { CANVAS_AUDIO_NODES_ENABLED, CANVAS_PHASE_ONE_EXTRAS_ENABLED } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasTimelineEditor.module.css'
 
 interface CanvasTimelineEditorProps {
@@ -644,7 +645,8 @@ export default function CanvasTimelineEditor({
       const target = event.target as HTMLElement | null
       const tag = target?.tagName || ''
       // 正在输入框里打字时不抢键，否则删不掉字符、也退不出输入
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || event.isComposing)
+        return
 
       const meta = event.ctrlKey || event.metaKey
       if (meta && event.key.toLowerCase() === 'z') {
@@ -663,6 +665,15 @@ export default function CanvasTimelineEditor({
         onClose()
         return
       }
+      const key = event.key.toLowerCase()
+      if (!meta && !event.altKey && (key === 'c' || key === 'b')) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.repeat) return
+        if (key === 'c') handleSplit()
+        else if (selectedClipId) handleRemove()
+        return
+      }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (!selectedClipId) return
         event.preventDefault()
@@ -677,7 +688,7 @@ export default function CanvasTimelineEditor({
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, redo, undo, onClose, selectedClipId, handleRemove, draftTotalSec])
+  }, [open, redo, undo, onClose, selectedClipId, handleRemove, handleSplit, draftTotalSec])
 
   // 点到别处收起添加菜单：它会盖住轨道，留着碍事
   useEffect(() => {
@@ -973,7 +984,7 @@ export default function CanvasTimelineEditor({
                 canSplit ? `在播放头处把片段 ${(located?.index ?? 0) + 1} 分成两段` : '把播放头移到片段中间才能分割'
               }
             >
-              ✂ 分割
+              ✂ 分割 (C)
             </button>
             <button
               type="button"
@@ -981,7 +992,7 @@ export default function CanvasTimelineEditor({
               disabled={!targetClip}
               title={targetClip ? `删除${targetLabel}` : noTargetReason}
             >
-              🗑 删除
+              🗑 删除 (B)
             </button>
             <button
               type="button"
@@ -1194,6 +1205,18 @@ export default function CanvasTimelineEditor({
 
             {CANVAS_AUDIO_NODES_ENABLED && (
               <div className={styles.audioTracks} aria-label="同步音轨">
+                {CANVAS_PHASE_ONE_EXTRAS_ENABLED && (
+                  <p className={styles.audioEditingHint}>
+                    拖动音轨调整位置，自动吸附镜头边界和播放头；按住 Alt 临时关闭吸附。聚焦音轨后用左右键微调，Shift
+                    加速。
+                  </p>
+                )}
+                {CANVAS_PHASE_ONE_EXTRAS_ENABLED && audioDragPosition && (
+                  <p role="status" aria-live="polite">
+                    起始位置 {audioDragPosition.startSec.toFixed(2)} 秒，松开应用，Esc 取消
+                  </p>
+                )}
+
                 {audioClips.map((clip, index) => {
                   const startSec =
                     audioDragPosition?.id === clip.sourceNodeId ? audioDragPosition.startSec : clip.startSec
@@ -1212,10 +1235,53 @@ export default function CanvasTimelineEditor({
                       <span
                         key={clip.sourceNodeId}
                         className={styles.audioTrackClip}
+                        role={CANVAS_PHASE_ONE_EXTRAS_ENABLED ? 'slider' : undefined}
+                        tabIndex={CANVAS_PHASE_ONE_EXTRAS_ENABLED ? 0 : undefined}
+                        aria-label={`${clip.title}音轨位置`}
+                        aria-valuemin={0}
+                        aria-valuemax={Math.max(0, draftTotalSec - 0.1)}
+                        aria-valuenow={startSec}
+                        aria-valuetext={`${startSec.toFixed(2)} 秒`}
+                        onKeyDown={(event) => {
+                          if (!CANVAS_PHASE_ONE_EXTRAS_ENABLED) return
+                          if (event.key === 'Escape' && audioDragRef.current) {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            releasePointer(event.currentTarget, audioDragRef.current.pointerId)
+                            audioDragRef.current = null
+                            setAudioDragPosition(null)
+                            return
+                          }
+                          if (
+                            !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) ||
+                            event.ctrlKey ||
+                            event.metaKey ||
+                            event.altKey
+                          )
+                            return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          const step = event.shiftKey ? 1 : 0.1
+                          const value =
+                            event.key === 'Home'
+                              ? 0
+                              : event.key === 'End'
+                                ? draftTotalSec
+                                : clip.startSec + (event.key === 'ArrowLeft' ? -step : step)
+                          const next = resolveAudioTrackStart(value, draftTotalSec)
+                          if (next !== clip.startSec)
+                            update({
+                              ...state,
+                              audioClips: audioClips.map((item) =>
+                                item.sourceNodeId === clip.sourceNodeId ? { ...item, startSec: next } : item,
+                              ),
+                            })
+                        }}
                         onPointerDown={(event) => {
                           if (event.button !== 0) return
                           event.stopPropagation()
                           event.preventDefault()
+                          if (CANVAS_PHASE_ONE_EXTRAS_ENABLED) event.currentTarget.focus()
                           capturePointer(event.currentTarget, event.pointerId)
                           audioDragRef.current = {
                             id: clip.sourceNodeId,
@@ -1230,12 +1296,17 @@ export default function CanvasTimelineEditor({
                           const drag = audioDragRef.current
                           if (!drag || drag.pointerId !== event.pointerId) return
                           event.stopPropagation()
-                          drag.nextSec = Math.max(
-                            0,
-                            Math.min(
-                              Math.max(0, draftTotalSec - 0.1),
-                              Math.round((drag.startSec + (event.clientX - drag.x) / drag.scale) * 100) / 100,
-                            ),
+                          const points = [
+                            ...snapPoints,
+                            ...audioClips
+                              .filter((item) => item.sourceNodeId !== drag.id)
+                              .flatMap((item) => [item.startSec, item.startSec + item.outSec - item.inSec]),
+                          ]
+                          drag.nextSec = resolveAudioTrackStart(
+                            drag.startSec + (event.clientX - drag.x) / drag.scale,
+                            draftTotalSec,
+                            event.altKey || !CANVAS_PHASE_ONE_EXTRAS_ENABLED ? [] : points,
+                            SNAP_THRESHOLD_PX / drag.scale,
                           )
                           setAudioDragPosition({ id: drag.id, startSec: drag.nextSec })
                         }}

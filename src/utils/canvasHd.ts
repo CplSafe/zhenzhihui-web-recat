@@ -113,7 +113,8 @@ export function materializeHdResults(
     const existing = nextNodes.findIndex((node) => node.id === id)
     const resultData = {
       taskStatus: task.status === 'completed' ? 'succeeded' : task.status,
-      taskError: task.status === 'failed' ? '超分失败，请重新选择原图重试' : '',
+      taskId: task.task_id || 0,
+      taskError: task.status === 'failed' ? task.error || '超分失败，请重新选择原图重试' : '',
       ...(task.result
         ? {
             title: task.result.name,

@@ -5,6 +5,7 @@
  * 不含壳子(侧栏/顶栏)与出视频逻辑——那些在编排器里。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ModelAvailabilityPanel } from '@/components/common/ModelAvailabilityNotice'
 import { useToast } from '@/composables/useToast'
 import { findMentionDeletionRange } from '@/utils/canvasMentions'
 import ImageDetailModal from '@/components/common/ImageDetailModal'
@@ -1432,6 +1433,9 @@ export default function HotCopyEntry({
               )}
 
               {/* 底部:尺寸/时长 + @ 参考素材(左) + 圆形发送(右) */}
+              {!modelLoading && typeof modelError === 'string' && modelError && (
+                <ModelAvailabilityPanel message={modelError} onReload={onReloadModels} />
+              )}
               <div className="hotcopy__bottom">
                 <div className="hotcopy__tools">
                   <CreativeModelSlots

@@ -305,7 +305,7 @@ describe('generation model catalog', () => {
     expect(imageGroup?.models.map((model) => model.modelVersionId)).toEqual([2, 3, 3])
   })
 
-  it('将目录中真实提供的 Framora 视频模型排在第一位，不补造未返回的模型', () => {
+  it('保留后端配置的视频模型顺序，不按品牌重排或补造未返回的模型', () => {
     const backendModels = [
       { id: 1, enabled: true, display_name: 'HappyHorse 1.1', operation_codes: ['video.generate'] },
       { id: 2, enabled: true, display_name: 'Framora 1.0', operation_codes: ['video.generate'] },
@@ -316,7 +316,8 @@ describe('generation model catalog', () => {
         .find((group) => group.key === 'video')
         ?.models.map((model) => model.displayName)
 
-    expect(video(backendModels)).toEqual(['Framora 1.0', 'HappyHorse 1.1', '万相 3.0'])
+    expect(video(backendModels)).toEqual(['HappyHorse 1.1', 'Framora 1.0', '万相 3.0'])
+    expect(video([...backendModels].reverse())).toEqual(['万相 3.0', 'Framora 1.0', 'HappyHorse 1.1'])
     expect(video(backendModels.filter((model) => model.id !== 2))).toEqual(['HappyHorse 1.1', '万相 3.0'])
   })
 

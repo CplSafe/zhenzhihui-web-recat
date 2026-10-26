@@ -68,7 +68,7 @@ describe('CanvasNodeToolbar', () => {
     expect(screen.queryByRole('button', { name: '截取画面为图片' })).not.toBeInTheDocument()
   })
 
-  it('图片与视频有素材时都提供放大预览，文本节点不显示', async () => {
+  it('图片与视频保留放大预览，文本不显示放大按钮', async () => {
     const user = userEvent.setup()
     const videoProps = renderToolbar({ kind: 'video', hasContent: true })
     await user.click(screen.getByRole('button', { name: '放大预览视频' }))

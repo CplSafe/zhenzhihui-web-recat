@@ -66,6 +66,8 @@ import {
 } from '@/utils/memberCenterPayment'
 import EntryCanvasBg from '@/components/smart/EntryCanvasBg'
 import { formatCredits } from '@/utils/creditsFormat'
+import { memberPlanRank, resolveMemberPlanAction } from '@/utils/memberPlanAction'
+import { resolveWorkspaceRole } from '@/utils/creativeDraftMetadata'
 import './MemberCenterModal.css'
 
 /** 套餐能力清单中的一项及其是否包含状态。 */
@@ -109,6 +111,8 @@ interface ApiPlan {
   discount_percent?: number
   quota?: string
   display?: any
+  tier_rank?: number
+  tierRank?: number
 }
 
 /** 将多个后端版本字段归一化后的套餐卡片视图模型。 */
@@ -118,6 +122,7 @@ interface PlanVM {
   name: string
   subtitle: string
   priceCents: number
+  tierRank: number | null
   price: string
   unit: string
   origin: string // 划线原价(￥899),无则空
@@ -363,6 +368,7 @@ function toVM(p: ApiPlan): PlanVM {
     name: normalizePlanName(p.name || '套餐', p),
     subtitle,
     priceCents: payCents,
+    tierRank: memberPlanRank(p.tier_rank ?? p.tierRank),
     price: formatPriceCents(payCents),
     unit,
     origin,
@@ -406,6 +412,9 @@ function PlanCard({
   disabledReason,
   actionText,
   onBuy,
+  previous,
+  onCreateTeam,
+  createDisabled,
 }: {
   plan: PlanVM
   buying: boolean
@@ -415,6 +424,9 @@ function PlanCard({
   disabledReason?: string
   actionText?: string
   onBuy: (p: PlanVM) => void
+  previous?: boolean
+  onCreateTeam?: (p: PlanVM) => void
+  createDisabled?: boolean
 }) {
   return (
     <div className="mc-card">
@@ -434,15 +446,33 @@ function PlanCard({
         <span className="mc-card-credit-unit">{plan.creditUnit}</span>
       </div>
       {plan.quota && <div className="mc-card-quota">{plan.quota}</div>}
-      <button
-        type="button"
-        className="mc-card-buy"
-        disabled={buying || disabled}
-        title={disabled ? disabledReason : undefined}
-        onClick={() => onBuy(plan)}
-      >
-        {buying ? '处理中…' : disabled ? disabledText || '暂不可购买' : actionText || (purchased ? '续费' : '立即开通')}
-      </button>
+      {purchased && <span className="mc-card-current">{previous ? '上次订阅' : '当前套餐'}</span>}
+      <div className={onCreateTeam ? 'mc-card-actions mc-card-actions--split' : 'mc-card-actions'}>
+        {onCreateTeam && (
+          <button
+            type="button"
+            className="mc-card-buy"
+            disabled={buying || createDisabled}
+            onClick={() => onCreateTeam(plan)}
+          >
+            {buying ? '处理中…' : '创建团队'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="mc-card-buy"
+          disabled={buying || disabled}
+          title={disabledReason || undefined}
+          onClick={() => onBuy(plan)}
+        >
+          {buying
+            ? '处理中…'
+            : disabled
+              ? disabledText || '暂不可购买'
+              : actionText || `${purchased ? '续费' : '订阅'}${plan.name}`}
+        </button>
+      </div>
+      {disabledReason && <p className="mc-card-action-reason">{disabledReason}</p>}
       <div className="mc-card-divider" />
       <ul className="mc-card-feats">
         {plan.features.map((f, i) => (
@@ -532,7 +562,7 @@ export default function MemberCenterModal({
   const switchWorkspaceSafely = useSafeWorkspaceSwitch()
   const workspaceSwitchLocked = useUiStore((state) => state.workspaceSwitchLocked)
   const workspaceId = Number(useWorkspaceId() || 0)
-  // 仅主账号可充值:团队空间里只有所有者能充值,子账号不允许;个人空间是自己的,可充值。
+  // 团队所有者和管理员可购买会员及充值；取消订阅等管理操作仍仅限所有者。
   const currentWs = useCurrentWorkspace()
   const currentUser = useCurrentUser()
   const currentMember = useCurrentMember()
@@ -541,8 +571,9 @@ export default function MemberCenterModal({
   const isOwner =
     (Boolean(paymentUserScope) &&
       String(currentWs?.owner_user_id ?? currentWs?.ownerUserId ?? '').trim() === paymentUserScope) ||
-    String(currentMember?.role || '').toLowerCase() === 'owner'
-  const canRecharge = !isTeamWs || isOwner
+    resolveWorkspaceRole(currentMember) === 'owner'
+  const canRecharge = !isTeamWs || isOwner || resolveWorkspaceRole(currentMember) === 'admin'
+  const canManageSubscription = !isTeamWs || isOwner
   // 新开团队空间的默认团队名(intent=new_team 必须带名字随下单建空间);默认「XX的团队」。
   // 用户在【充值/开通前】就把团队名输入好(见团队版 tab 的团队名输入框),随下单直接建好空间,不再支付后二次命名。
   const defaultTeamName = `${String(currentUser?.nickname || currentUser?.name || currentUser?.username || '我').trim()}的团队`
@@ -790,33 +821,27 @@ export default function MemberCenterModal({
   }
 
   const getPlanPurchaseRestriction = (p: PlanVM) => {
-    // 团队套餐卡片创建的是独立新空间，不属于当前团队的升降级链路。
-    if (p.isTeam) return { disabled: false, text: '', reason: '' }
-    if (subscriptionLoading) {
-      return {
-        disabled: true,
-        text: '套餐状态加载中…',
-        reason: '正在确认当前套餐，请稍后再试',
-      }
+    const blocked = (text: string, reason: string) => ({ disabled: true, text, reason, intent: 'subscribe' as const })
+    if (subscriptionLoading) return blocked('状态加载中', '正在确认当前套餐，请稍后再试')
+    if (p.isTeam !== isTeamWs) {
+      return blocked(
+        p.isTeam ? '请切换团队' : '请切换个人空间',
+        p.isTeam ? '请先切换到需要开通或续费的团队' : '基础版仅用于个人空间，请切换到个人空间购买',
+      )
     }
-    if (!hasActiveSubscription || subscriptionIsTeam !== p.isTeam || isPurchased(p)) {
-      return { disabled: false, text: '', reason: '' }
-    }
-    if (!currentPlan) {
-      return {
-        disabled: true,
-        text: '暂不可购买',
-        reason: '未能识别当前套餐价格，请刷新会员中心后重试',
-      }
-    }
-    if (p.priceCents >= currentPlan.priceCents) {
-      return { disabled: false, text: '', reason: '' }
-    }
-    const expiry = formatExpiry(subscription)
+    if (!canRecharge) return blocked('仅团主或管理员', '当前团队会员仅限所有者或管理员开通、续费或升级')
+    const action = resolveMemberPlanAction({
+      active: hasActiveSubscription,
+      purchased: isPurchased(p),
+      hasHistory: hasSubscriptionPlan,
+      currentRank: currentPlan?.tierRank ?? memberPlanRank(subscription?.tier_rank ?? subscription?.tierRank),
+      targetRank: p.tierRank,
+    })
     return {
-      disabled: true,
-      text: '到期后可购买',
-      reason: `当前${p.isTeam ? '团队版' : '个人版'}套餐${expiry ? `有效期至 ${expiry}，` : ''}到期前不能购买更低价格的套餐`,
+      ...action,
+      text: action.disabled
+        ? action.text
+        : `${isPurchased(p) ? '续费' : hasActiveSubscription && currentPlan?.tierRank !== null && currentPlan?.tierRank !== undefined && p.tierRank !== null && p.tierRank > currentPlan.tierRank ? '升级至' : '订阅'}${p.name}`,
     }
   }
 
@@ -1284,22 +1309,20 @@ export default function MemberCenterModal({
   }
 
   // 会员开通 / 续费:统一走 subscription-orders 下单,取一次性付款 pay_url 直接跳支付宝。
-  const onBuy = async (p: PlanVM) => {
+  const onBuy = async (p: PlanVM, newTeam = false) => {
     if (buyingId || paymentActionLockRef.current) return
     if (!workspaceId) {
       showToast('缺少 workspace,无法开通', 'error')
       return
     }
     const restriction = getPlanPurchaseRestriction(p)
-    if (restriction.disabled) {
+    if (!newTeam && restriction.disabled) {
       showToast(restriction.reason, 'info')
       return
     }
-    // 团队套餐卡只负责新建独立团队；当前团队续费固定由顶部「续费当前团队」入口处理。
-    // 两种意图不能再根据“是否同款套餐”隐式切换，否则同款团队套餐将失去新建团队能力。
-    const newTeam = p.isTeam
+    // 原团队开通/续费与创建新团队由用户明确选择，不依赖到期接口是否保留历史套餐。
+    const intent = newTeam ? 'new_team' : restriction.intent
     const renew = !newTeam && isPurchased(p)
-    const intent = newTeam ? 'new_team' : 'subscribe'
     const restoredNewTeamIntent = newTeam && paymentUserScope ? loadPendingNewTeamOrder(paymentUserScope, p.id) : null
     // new_team:随单建团队空间。团队名不在会员中心输入,统一用唯一默认名,并做校验/去重,避免后端因非法/重名建不出空间。
     let nwsName = restoredNewTeamIntent?.teamName || ''
@@ -1413,7 +1436,7 @@ export default function MemberCenterModal({
   const onRecharge = async (pkg: PackageVM) => {
     if (buyingId || paymentActionLockRef.current) return
     if (!canRecharge) {
-      showToast('仅主账号可充值,子账号请联系主账号', 'error')
+      showToast('仅团队所有者或管理员可充值，请联系团队所有者或管理员', 'error')
       return
     }
     if (subscriptionLoading) {
@@ -1471,7 +1494,7 @@ export default function MemberCenterModal({
     }
   }
 
-  // 订阅管理(仅主账号 canRecharge):关闭自动续费 / 取消订阅。成功后重拉订阅刷新展示。
+  // 关闭自动续费 / 取消订阅仍仅限所有者，充值权限不扩大到订阅管理。
   const subscriptionId = Number(subscription?.subscription_id || subscription?.id || 0)
   const isAutoRenew = String(subscription?.renew_mode || '')
     .toLowerCase()
@@ -1484,7 +1507,7 @@ export default function MemberCenterModal({
       .catch(() => {})
   }
   const handleDisableAutoRenew = async () => {
-    if (subActionLoading || !workspaceId || !subscriptionId) return
+    if (subActionLoading || !workspaceId || !subscriptionId || !canManageSubscription) return
     const ok = await requestConfirm('确定关闭自动续费吗?关闭后当前订阅到期将不再自动扣款,权益到期结束。')
     if (!ok) return
     setSubActionLoading(true)
@@ -1499,7 +1522,7 @@ export default function MemberCenterModal({
     }
   }
   const handleCancelSubscription = async () => {
-    if (subActionLoading || !workspaceId || !subscriptionId) return
+    if (subActionLoading || !workspaceId || !subscriptionId || !canManageSubscription) return
     const ok = await requestConfirm('确定取消当前订阅吗?取消后将不再续费。')
     if (!ok) return
     setSubActionLoading(true)
@@ -1514,13 +1537,25 @@ export default function MemberCenterModal({
     }
   }
 
-  // 续费当前空间的历史套餐。团队套餐卡片用于「开新团队」，所以团队续费固定走这里；
+  // 有历史套餐时直接续费；团队缺少历史套餐信息时，引导选择原团队套餐。
   // 已到期的个人套餐也可走这里兜底，避免 active=false 后失去续费入口。
   const handleRenewCurrentSubscription = async () => {
-    if (renewing || buyingId || paymentActionLockRef.current || !workspaceId || !hasSubscriptionPlan) return
+    if (renewing || buyingId || paymentActionLockRef.current || !workspaceId || !canRecharge || subscriptionLoading)
+      return
+    const selectTeamPlan = () => {
+      setMainTab('team')
+    }
+    if (!hasSubscriptionPlan) {
+      if (isTeamWs) selectTeamPlan()
+      return
+    }
     // 定位当前套餐 id:优先订阅自带 plan_id,否则按 code/name 从套餐列表匹配
     let planId = Number(subscription.plan_id ?? subscription.planId ?? 0) || 0
     if (!planId) {
+      if (isTeamWs) {
+        selectTeamPlan()
+        return
+      }
       const matched = plans.find((p) => subscription.plan_code === p.code || subscription.plan_name === p.name)
       planId = Number(matched?.id || 0) || 0
     }
@@ -1535,7 +1570,7 @@ export default function MemberCenterModal({
     try {
       await startPay(
         () =>
-          resolveOrder(`sub:subscribe:${planId}:`, () =>
+          resolveOrder(`sub:subscribe:${planId}`, () =>
             createSubscriptionOrder({ workspaceId, planId, intent: 'subscribe', idempotencyKey: idemKey }),
           ),
         '续费失败,请稍后重试',
@@ -1574,6 +1609,7 @@ export default function MemberCenterModal({
         {/* 当前订阅信息(套餐 / 席位 / 并发);未订阅不显示 */}
         {hasSubscriptionPlan && (
           <div className="mcm-sub">
+            {isTeamWs && <span className="mcm-sub-item">当前团队：{currentWorkspaceName}</span>}
             <span className="mcm-sub-plan">
               {(() => {
                 const name = subscription.plan_name || subscription.plan_code || '当前套餐'
@@ -1606,13 +1642,9 @@ export default function MemberCenterModal({
               const exp = formatExpiry(subscription)
               return exp ? <span className="mcm-sub-item mcm-sub-expiry">{exp}</span> : null
             })()}
-            {subscription.renew_mode && (
-              <span className="mcm-sub-item">
-                {String(subscription.renew_mode).toLowerCase().includes('auto') ? '自动续费' : '手动续费'}
-              </span>
-            )}
-            {/* 当前套餐统一提供明确续费入口，不要求用户再去套餐卡中寻找。 */}
-            {canRecharge && (
+            {isAutoRenew && <span className="mcm-sub-item">自动续费</span>}
+            {/* 团队续费使用套餐卡片入口。 */}
+            {canRecharge && !isTeamWs && (
               <button
                 type="button"
                 className="mcm-sub-item mcm-sub-action"
@@ -1631,7 +1663,7 @@ export default function MemberCenterModal({
               </button>
             )}
             {/* 订阅管理:仅主账号。自动续费时可「关闭自动续费」;有订阅时可「取消订阅」 */}
-            {canRecharge && subscriptionId > 0 && isAutoRenew && (
+            {canManageSubscription && subscriptionId > 0 && isAutoRenew && (
               <button
                 type="button"
                 className="mcm-sub-item mcm-sub-action"
@@ -1642,7 +1674,7 @@ export default function MemberCenterModal({
                 关闭自动续费
               </button>
             )}
-            {canRecharge && subscriptionId > 0 && (
+            {canManageSubscription && subscriptionId > 0 && (
               <button
                 type="button"
                 className="mcm-sub-item mcm-sub-action"
@@ -1653,6 +1685,15 @@ export default function MemberCenterModal({
                 取消订阅
               </button>
             )}
+          </div>
+        )}
+
+        {isTeamWs && canRecharge && !subscriptionLoading && !hasSubscriptionPlan && !error && (
+          <div className="mcm-sub">
+            <span className="mcm-sub-plan">当前团队：{currentWorkspaceName}</span>
+            <button type="button" className="mcm-current-team-action" onClick={handleRenewCurrentSubscription}>
+              续费当前团队
+            </button>
           </div>
         )}
 
@@ -1695,6 +1736,11 @@ export default function MemberCenterModal({
 
         {mainTab !== 'recharge' ? (
           <>
+            <p className="mcm-purchase-scope" role="note">
+              {mainTab === 'team'
+                ? `创建团队将新建独立团队；右侧操作仅用于当前团队「${currentWorkspaceName}」。`
+                : '基础版仅用于个人空间；续费、升级和重新开通均保留原空间。'}
+            </p>
             {loading ? (
               <div className="mcm-hint">套餐加载中…</div>
             ) : error ? (
@@ -1710,12 +1756,15 @@ export default function MemberCenterModal({
                       key={p.id}
                       plan={p}
                       buying={buyingId === p.id}
-                      purchased={!p.isTeam && isPurchased(p)}
+                      purchased={p.isTeam === isTeamWs && isPurchased(p)}
+                      previous={!hasActiveSubscription}
                       disabled={restriction.disabled}
                       disabledText={restriction.text}
                       disabledReason={restriction.reason}
-                      actionText={p.isTeam && isPurchased(p) ? '新建团队' : undefined}
-                      onBuy={onBuy}
+                      actionText={restriction.text}
+                      onBuy={(plan) => onBuy(plan)}
+                      onCreateTeam={p.isTeam ? (plan) => onBuy(plan, true) : undefined}
+                      createDisabled={Boolean(buyingId || renewing)}
                     />
                   )
                 })}

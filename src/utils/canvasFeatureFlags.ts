@@ -17,3 +17,6 @@ export function isCanvasAudioKind(value: unknown): boolean {
 export function isCanvasAudioEntryVisible(value: unknown): boolean {
   return CANVAS_AUDIO_NODES_ENABLED || !isCanvasAudioKind(value)
 }
+
+/** 上一轮新增的指南、剧本导入与音轨增强暂不展示；保留代码供后续开放。 */
+export const CANVAS_PHASE_ONE_EXTRAS_ENABLED = false

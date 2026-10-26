@@ -7,7 +7,8 @@ import { humanizeCanvasTaskError, isCanvasProviderServiceError } from '@/utils/c
  * 换素材、再兜底换模型，避免把用户往「换模型」死路上引。这里只改说法，不改判断。
  */
 const ASSET_NOT_APPLICABLE = '该素材不适用于当前操作，请重新上传或更换素材后重试；也可尝试更换其他模型'
-const PROVIDER_UNAVAILABLE = '该模型的服务商暂时不可用（计费未配置或额度/接入异常），请更换其他模型后重试，或联系管理员'
+const PROVIDER_UNAVAILABLE =
+  '该模型的服务商暂时不可用，请更换其他模型重试；若仍失败，请联系平台管理员检查服务商计费、额度及接入配置'
 
 describe('humanizeCanvasTaskError', () => {
   it('把「素材类型不适用于当前操作」改写成可执行的说法', () => {

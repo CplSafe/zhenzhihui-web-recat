@@ -490,7 +490,7 @@ export default function CanvasListView() {
 
   return (
     <div
-      className="pm2-page"
+      className="pm2-page cl-page"
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', overflow: 'hidden' }}
     >
       <AppSidebar
@@ -506,16 +506,12 @@ export default function CanvasListView() {
       >
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        <section
-          className="pm2-main"
-          aria-label="无限画布"
-          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 36px 56px' }}
-        >
+        <section className="pm2-main" aria-label="无限画布">
           {/* 头部：标题 + 新建 */}
           <div className="pm2-head">
             <div className="pm2-head-titles">
               <h1 className="pm2-head-title">无限画布</h1>
-              <p className="pm2-head-sub">用节点与连线组织 AI 生成流程</p>
+              <p className="pm2-head-sub">连接灵感、素材与 AI，继续你的创作。</p>
             </div>
             <div className="pm2-head-actions">
               <button type="button" className="pm2-new-btn" onClick={() => setCreateOpen(true)}>
@@ -542,10 +538,22 @@ export default function CanvasListView() {
 
           {/* 画布卡片网格 */}
           <section className="pm2-section">
+            <div className="cl-section-head">
+              <h2>我的画布</h2>
+              <span>{loading ? '正在同步…' : `共 ${effectiveCanvases.length} 个画布`}</span>
+            </div>
             {loading && !effectiveCanvases.length ? (
-              <div className="pm2-hint">正在加载画布…</div>
+              <div className="cl-empty" role="status">
+                正在加载画布…
+              </div>
             ) : !effectiveCanvases.length ? (
-              <div className="pm2-hint">还没有画布，点右上角「新建画布」开始</div>
+              <div className="cl-empty">
+                <h3>还没有画布</h3>
+                <p>从一个想法开始，把文本、图片和视频连接成你的创作流程。</p>
+                <button type="button" onClick={() => setCreateOpen(true)}>
+                  创建第一张画布 →
+                </button>
+              </div>
             ) : (
               <div className="pm2-card-grid" ref={gridRef}>
                 {pagedCanvases.map((item) => (
@@ -558,6 +566,7 @@ export default function CanvasListView() {
                     aria-label={`打开画布 ${item.title || '未命名画布'}`}
                     onClick={() => openCanvas(item)}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return
                       if (e.key !== 'Enter' && e.key !== ' ') return
                       e.preventDefault()
                       openCanvas(item)
@@ -585,6 +594,7 @@ export default function CanvasListView() {
                             <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
                             <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
                           </svg>
+                          <span>暂无预览</span>
                         </span>
                       )}
                     </div>
@@ -602,6 +612,7 @@ export default function CanvasListView() {
                           type="button"
                           className="pm2-pcard-more cl-menu-btn"
                           aria-label="更多操作"
+                          aria-expanded={openMenuId === item.id}
                           onClick={(e) => {
                             e.stopPropagation()
                             setOpenMenuId((prev) => (prev === item.id ? 0 : Number(item.id)))
@@ -612,43 +623,43 @@ export default function CanvasListView() {
                             <circle cx="10" cy="10" r="1.4" fill="currentColor" />
                             <circle cx="16" cy="10" r="1.4" fill="currentColor" />
                           </svg>
-                          {openMenuId === item.id && (
-                            <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="pm2-folder-menu-item"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  openRenameModal(item)
-                                }}
-                              >
-                                重命名
-                              </button>
-                              <button
-                                type="button"
-                                className="pm2-folder-menu-item"
-                                disabled={duplicatingId === item.id}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void handleDuplicate(item)
-                                }}
-                              >
-                                {duplicatingId === item.id ? '创建中…' : '创建副本'}
-                              </button>
-                              <button
-                                type="button"
-                                className="pm2-folder-menu-item is-danger"
-                                disabled={deletingId === item.id}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleDelete(item)
-                                }}
-                              >
-                                {deletingId === item.id ? '删除中…' : '删除画布'}
-                              </button>
-                            </div>
-                          )}
                         </button>
+                        {openMenuId === item.id && (
+                          <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              className="pm2-folder-menu-item"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openRenameModal(item)
+                              }}
+                            >
+                              重命名
+                            </button>
+                            <button
+                              type="button"
+                              className="pm2-folder-menu-item"
+                              disabled={duplicatingId === item.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void handleDuplicate(item)
+                              }}
+                            >
+                              {duplicatingId === item.id ? '创建中…' : '创建副本'}
+                            </button>
+                            <button
+                              type="button"
+                              className="pm2-folder-menu-item is-danger"
+                              disabled={deletingId === item.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDelete(item)
+                              }}
+                            >
+                              {deletingId === item.id ? '删除中…' : '删除画布'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="pm2-pcard-meta">
                         <span className="pm2-pcard-time">
@@ -687,7 +698,6 @@ export default function CanvasListView() {
           >
             <header className="cl-brief-head">
               <div>
-                <span className="cl-brief-kicker">创意画布</span>
                 <h2 id="canvas-brief-title">创建新画布</h2>
                 <p>为画布起一个便于识别的名称，创建后即可自由添加文本、图片和视频。</p>
               </div>

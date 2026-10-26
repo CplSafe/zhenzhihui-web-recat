@@ -9,7 +9,8 @@
 function fullscreenVideo(): HTMLVideoElement | null {
   const doc = document as Document & { webkitFullscreenElement?: Element | null }
   const element = doc.fullscreenElement || doc.webkitFullscreenElement || null
-  if (!element) return null
+  // 整个应用全屏（画布快捷键模式）不等于播放器全屏，不能误控制页面上的任意视频。
+  if (!element || element === doc.documentElement || element === doc.body) return null
   if (element instanceof HTMLVideoElement) return element
   // 自定义播放器把外层容器设为全屏时，取里面的视频
   return element.querySelector('video')

@@ -40,7 +40,8 @@
 
 .canvas-view .canvas-panel-area > * {
   zoom: var(--canvas-ui-scale, 1);
-  max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
+  /* 锚点至少让出左侧 128px；同时预留面板内边距与右侧操作空间。 */
+  max-width: calc((100vw - 200px) / var(--canvas-ui-scale, 1));
   max-height: calc((100dvh - 160px) / var(--canvas-ui-scale, 1));
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -553,17 +554,63 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 /*
  * 分组框：画在视口图层里，随缩放平移一起走。
  * position 用 absolute + transform 定位，与 React Flow 摆放节点的方式一致；
- * pointer-events 必须关掉——它盖在节点区域上，不关会把整片区域的点击都吃掉。
+ * 分组放在节点下层：空白接收拖组事件，节点和内部控件仍在上层交互。
  */
 .canvas-group-frame {
+  box-sizing: border-box;
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 0;
-  pointer-events: none;
-  border: 1.5px dashed rgba(87, 103, 229, 0.45);
+  z-index: -1;
+  pointer-events: auto;
+  border: max(1px, calc(var(--group-edge-hit, 16px) * 0.09375)) solid rgb(8 127 104 / 35%);
   border-radius: 14px;
-  background: rgba(87, 103, 229, 0.045);
+  background: rgb(31 207 169 / 3%);
+  box-shadow: none;
+}
+
+.canvas-group-frame__edge {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.canvas-group-frame.is-draggable .canvas-group-frame__edge,
+.canvas-group-frame.is-draggable .canvas-group-frame__label {
+  cursor: grab;
+}
+
+.canvas-group-frame.is-draggable .canvas-group-frame__edge:active,
+.canvas-group-frame.is-draggable .canvas-group-frame__label:active {
+  cursor: grabbing;
+}
+
+.canvas-group-frame__edge.is-top,
+.canvas-group-frame__edge.is-bottom {
+  left: calc(var(--group-edge-hit, 16px) / -2);
+  right: calc(var(--group-edge-hit, 16px) / -2);
+  height: var(--group-edge-hit, 16px);
+}
+
+.canvas-group-frame__edge.is-top {
+  top: calc(var(--group-edge-hit, 16px) / -2);
+}
+.canvas-group-frame__edge.is-bottom {
+  bottom: calc(var(--group-edge-hit, 16px) / -2);
+}
+
+.canvas-group-frame__edge.is-left,
+.canvas-group-frame__edge.is-right {
+  top: 6px;
+  bottom: 6px;
+  width: var(--group-edge-hit, 16px);
+}
+
+.canvas-group-frame__edge.is-left {
+  left: calc(var(--group-edge-hit, 16px) / -2);
+}
+.canvas-group-frame__edge.is-right {
+  right: calc(var(--group-edge-hit, 16px) / -2);
 }
 
 /*
@@ -592,6 +639,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-group-frame__label {
+  touch-action: none;
   max-width: 220px;
   overflow: hidden;
   cursor: pointer;
@@ -1256,7 +1304,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-node-media {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 10px;
   pointer-events: none;
 }
@@ -1344,7 +1392,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-node-video-bar {
   position: absolute;
   left: 8px;
-  right: 44px; /* 让开右下角的放大按钮 */
+  right: 8px;
   bottom: 8px;
   z-index: 3;
   display: flex;
@@ -2300,4 +2348,350 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-node-voice-retry:focus-visible {
   outline: 2px solid #5767e5;
   outline-offset: 3px;
+}
+
+.canvas-actions-toggle {
+  display: none;
+}
+.canvas-actions-menu[data-open='false'] > .canvas-global-actions {
+  display: flex;
+}
+.canvas-global-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+@media (max-width: 760px) {
+  .canvas-actions-menu {
+    position: absolute;
+    top: 28px;
+    right: 12px;
+    z-index: 1100;
+  }
+  .canvas-actions-toggle {
+    display: block;
+    padding: 9px 12px;
+    border: 1px solid #dfe5e3;
+    border-radius: 10px;
+    background: #fff;
+    color: #33403a;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .canvas-actions-toggle:focus-visible {
+    outline: 2px solid #009b7d;
+    outline-offset: 3px;
+  }
+  .canvas-actions-menu[data-open='false'] > .canvas-global-actions {
+    display: none;
+  }
+  .canvas-actions-menu[data-open='true'] > .canvas-global-actions {
+    display: flex;
+    position: absolute;
+    top: 48px;
+    right: 0;
+    left: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 210px;
+    padding: 12px;
+    border: 1px solid #dfe5e3;
+    border-radius: 12px;
+    background: #fff;
+  }
+  .canvas-global-actions .canvas-share-btn {
+    justify-content: center;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 760px) {
+  .canvas-actions-menu[data-open='true'] {
+    z-index: 1400;
+  }
+}
+
+/* 视频控制统一置于底部同一行，竖版节点也保留完整可点击区域。 */
+.canvas-default-node.is-video .canvas-node-body {
+  padding: 0;
+}
+.canvas-node-video-wrap .canvas-node-media {
+  object-fit: contain;
+  background: #111;
+}
+.canvas-node-video-bar {
+  min-width: 0;
+  gap: 6px;
+  padding: 4px 6px;
+}
+.canvas-node-video-time {
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0;
+}
+.canvas-video-expand {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  padding: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.canvas-video-expand:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.canvas-video-expand:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.canvas-video-buffering {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+}
+
+/* 临时抓手：节点、连线、分组及内部控件统一穿透到画布，松键即恢复。 */
+.canvas-view.is-space-panning .react-flow__viewport,
+.canvas-view.is-space-panning .react-flow__viewport * {
+  pointer-events: none !important;
+}
+
+.canvas-view.is-space-panning .react-flow__pane {
+  cursor: grab;
+}
+
+.canvas-view.is-space-panning .react-flow__pane:active {
+  cursor: grabbing;
+}
+
+/* 临时多选外框只展示选区；右侧加号独立接收事件，不阻挡节点拖动。 */
+.canvas-selection-frame {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 1001;
+  border: 1px solid #9ba4f2;
+  border-radius: 10px;
+  pointer-events: none;
+}
+/* 固定命中区与可移动圆面分开，磁吸不会让目标逃离指针。 */
+.canvas-selection-frame__add {
+  position: absolute;
+  right: -28px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.canvas-selection-frame__add-face {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #123d33;
+  background: #1fcfa9;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 12%);
+  pointer-events: none;
+  transform: translate(var(--magnet-x, 0px), var(--magnet-y, 0px));
+  transition:
+    transform 180ms var(--canvas-ease),
+    background-color 140ms ease-out,
+    color 140ms ease-out,
+    box-shadow 180ms ease-out;
+}
+.canvas-selection-frame__add-face svg {
+  width: 14px;
+  height: 14px;
+}
+.canvas-selection-frame__add:hover .canvas-selection-frame__add-face,
+.canvas-selection-frame__add[aria-expanded='true'] .canvas-selection-frame__add-face {
+  color: #123d33;
+  background: #1fcfa9;
+  box-shadow: 0 2px 6px rgb(15 23 42 / 16%);
+  transform: translate(var(--magnet-x, 0px), var(--magnet-y, 0px)) scale(1.04);
+}
+.canvas-selection-frame__add:active .canvas-selection-frame__add-face {
+  transform: translate(var(--magnet-x, 0px), var(--magnet-y, 0px)) scale(0.96);
+}
+.canvas-selection-frame__add:focus-visible .canvas-selection-frame__add-face {
+  outline: 2px solid #087f68;
+  outline-offset: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-selection-frame .canvas-selection-frame__add .canvas-selection-frame__add-face {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* 分组背景在节点之下：空白能拖组，卡片与其内部控件继续接收自己的事件。 */
+.canvas-group-frame.is-draggable {
+  cursor: grab;
+}
+.canvas-group-frame.is-draggable:active {
+  cursor: grabbing;
+}
+.canvas-view.has-group-selection .react-flow__nodesselection-rect {
+  pointer-events: none;
+}
+.react-flow__node.is-group-member-locked .canvas-handle-mover {
+  visibility: hidden;
+  pointer-events: none;
+}
+.canvas-selection-frame.is-group-selection {
+  border: 0;
+  border-radius: 0;
+}
+.canvas-group-frame__header {
+  box-sizing: border-box;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  transform-origin: left bottom;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  color: #39564f;
+  box-shadow: none;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+.canvas-group-frame__header .canvas-group-frame__label,
+.canvas-group-frame__header .canvas-group-frame__input {
+  position: static;
+  margin: 0;
+  min-width: 0;
+  border-color: transparent;
+  color: #245e50;
+  flex-shrink: 1;
+}
+.canvas-group-frame__grip {
+  flex-shrink: 0;
+  color: #698079;
+}
+.canvas-group-frame__hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: #536c65;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.canvas-group-frame__exit {
+  border: 0;
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: #e4f7f1;
+  color: #245e50;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.canvas-group-frame__exit:focus-visible {
+  outline: 2px solid #087f68;
+  outline-offset: 2px;
+}
+.canvas-group-frame.is-selected,
+.canvas-group-frame.is-editing {
+  border-color: #0f9c7f;
+  background: rgb(31 207 169 / 7%);
+}
+
+/* 名称常驻，操作在悬停和键盘聚焦时显现。 */
+.canvas-group-frame__header .canvas-group-frame__label,
+.canvas-group-frame__header .canvas-group-frame__input {
+  font-size: 14px;
+  font-weight: 600;
+  color: #263e37;
+  background: #f5faf8;
+}
+.canvas-group-frame__header .canvas-group-frame__input {
+  border-color: #087f68;
+}
+.canvas-group-frame__count {
+  flex-shrink: 0;
+  color: #536c65;
+  font-size: 12px;
+}
+.canvas-group-frame__more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #f5faf8;
+  color: #39564f;
+  cursor: pointer;
+  opacity: 0;
+}
+.canvas-group-frame:hover .canvas-group-frame__more,
+.canvas-group-frame:focus-within .canvas-group-frame__more,
+.canvas-group-frame.is-selected .canvas-group-frame__more {
+  opacity: 1;
+}
+.canvas-group-frame__more:hover {
+  background: #e4f2ec;
+}
+.canvas-group-frame__more:focus-visible {
+  outline: 2px solid #087f68;
+}
+
+.canvas-view.has-group-selection .react-flow__nodesselection-rect {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+/* 节点详情入口随节点显示，独立于画布右侧编辑面板。 */
+.canvas-video-details-icon {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 7px;
+  background: rgb(20 24 28 / 78%);
+  color: #fff;
+  cursor: pointer;
+}
+.canvas-video-details-icon:hover {
+  background: #35463f;
+}
+.canvas-video-details-icon:focus-visible {
+  outline: 2px solid #77dfbb;
+  outline-offset: 2px;
 }

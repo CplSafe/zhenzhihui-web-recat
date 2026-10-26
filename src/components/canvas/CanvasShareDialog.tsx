@@ -77,9 +77,8 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     try {
       setShare(await getCanvasShare({ workspaceId, canvasId }))
     } catch (err) {
-      // 「还没开启分享」在后端可能就是一个 404/业务错误，这里不把它当致命错误吞掉整个弹窗，
-      // 而是显示为未分享 + 错误说明，用户仍可以点「生成链接」
-      setShare({ token: '', url: '', expiresAt: '', status: '' })
+      // 查询失败不能等同于未分享，否则用户会误点重新生成，让已有链接失效。
+      setShare(null)
       setError(String((err as Error)?.message || '分享状态读取失败'))
     } finally {
       setLoading(false)
@@ -91,6 +90,7 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
   }, [load])
 
   const shareUrl = share ? buildCanvasShareUrl(share) : ''
+  const hasShare = Boolean(shareUrl)
 
   const handleCreate = async () => {
     setBusy(true)
@@ -98,7 +98,7 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     try {
       const next = await createCanvasShare({ workspaceId, canvasId })
       setShare(next)
-      onToast?.(share?.token ? '已重新生成链接，原链接失效' : '分享已开启', 'success')
+      onToast?.(hasShare ? '已重新生成链接，原链接失效' : '分享已开启', 'success')
     } catch (err) {
       setError(String((err as Error)?.message || '开启分享失败'))
     } finally {
@@ -149,7 +149,7 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
 
         {loading ? (
           <p className={styles.meta}>读取分享状态中…</p>
-        ) : share?.token ? (
+        ) : hasShare ? (
           <>
             <div className={styles.linkRow}>
               <input className={styles.link} readOnly value={shareUrl} aria-label="分享链接" />
@@ -159,17 +159,23 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
             </div>
             <p className={styles.meta}>{formatExpiry(share.expiresAt)}</p>
           </>
-        ) : (
+        ) : share ? (
           <p className={styles.meta}>这块画布还没有分享链接。</p>
-        )}
+        ) : null}
 
         {error && <p className={styles.error}>{error}</p>}
 
         <div className={styles.actions}>
-          <button type="button" className={styles.primary} onClick={handleCreate} disabled={busy || loading}>
-            {share?.token ? '重新生成链接' : '生成链接'}
-          </button>
-          {share?.token && (
+          {!loading && !share ? (
+            <button type="button" className={styles.primary} onClick={() => void load()}>
+              重新读取分享状态
+            </button>
+          ) : (
+            <button type="button" className={styles.primary} onClick={handleCreate} disabled={busy || loading}>
+              {hasShare ? '重新生成链接' : '生成链接'}
+            </button>
+          )}
+          {hasShare && (
             <button type="button" className={styles.danger} onClick={handleClose} disabled={busy}>
               关闭分享
             </button>

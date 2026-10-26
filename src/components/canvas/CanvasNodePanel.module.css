@@ -891,13 +891,61 @@
   flex-direction: column;
   gap: 4px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   text-align: left;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
+  transition: background-color 120ms ease-out;
+}
+
+.modelPopover {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.modelRowReveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 180ms ease-out,
+    opacity 140ms ease-out;
+}
+
+.modelRowReveal > span {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.modelRowDescription {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding-left: 26px;
+  color: #59636b;
+  font-size: 12px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.modelRow[data-expanded='true'] .modelRowReveal {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.modelRow[data-expanded='true'] {
+  background: #f0f6f4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modelRow,
+  .modelRowReveal {
+    transition: none;
+  }
 }
 
 .modelRow:hover {
@@ -905,13 +953,22 @@
 }
 
 .modelRowActive {
-  background: #ebfffb;
+  background: #edf7f4;
+}
+
+.modelRow + .modelRow {
+  margin-top: 4px;
+}
+
+.modelRow:focus-visible {
+  outline: 2px solid #16836d;
+  outline-offset: -2px;
 }
 
 .modelRowHead {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 /* 没有图标资源时用厂商首字母占位：比一个通用图标更能区分不同厂商 */
@@ -957,7 +1014,7 @@
 }
 
 .modelRowActive .modelRowName {
-  color: #11a98a;
+  color: #146b59;
   font-weight: 600;
 }
 
@@ -1359,4 +1416,10 @@
 .generateBtn:disabled {
   background: #c0c4d0;
   cursor: not-allowed;
+}
+
+.modelRowHint {
+  padding-left: 26px;
+  padding-top: 4px;
+  min-width: 0;
 }

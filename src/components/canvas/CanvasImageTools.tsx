@@ -1,4 +1,5 @@
 import CanvasToolSelect from './CanvasToolSelect'
+import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, ConfigProvider, Modal, Spin } from 'antd'
@@ -126,7 +127,7 @@ export default function CanvasImageTools(props: Props) {
       button={{ autoInsertSpace: false }}
     >
       <Modal
-        className={styles.dialog}
+        className={`${styles.dialog} ${code === 'image.panorama' ? styles.panoramaDialog : ''}`}
         open
         title={
           <div className={styles.heading}>
@@ -177,9 +178,15 @@ export default function CanvasImageTools(props: Props) {
               </Button>
             )}
             {tool ? (
-              <ToolEditor key={code} {...props} tool={tool} models={models} />
+              <ToolEditor
+                key={code}
+                {...props}
+                tool={tool}
+                models={models}
+                onReload={() => setAttempt((value) => value + 1)}
+              />
             ) : (
-              <Alert type="warning" message="当前空间未提供此工具，请选择其他工具或联系管理员。" />
+              <Alert type="warning" message="当前空间尚未开放此工具，请选择其他工具；如需开通，请联系平台管理员。" />
             )}
           </>
         )}
@@ -188,7 +195,12 @@ export default function CanvasImageTools(props: Props) {
   )
 }
 
-function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; models: Model[] }) {
+function ToolEditor({
+  tool,
+  models,
+  onReload,
+  ...props
+}: Props & { tool: CreativeTool; models: Model[]; onReload: () => void }) {
   const browser = tool.execution === 'browser' && tool.code === 'panorama.view'
   const { onHeightChange } = props
   const compactRoot = useRef<HTMLDivElement>(null)
@@ -376,6 +388,9 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
             />
           </div>
         )}
+        {!browser && !allowed.length && (
+          <EmptyModelNotice workspaceId={props.workspaceId} label="当前工具模型" onReload={onReload} />
+        )}
         <div className={styles.studioVisual}>
           {angle ? (
             <CanvasAngleEditor
@@ -530,6 +545,9 @@ function ToolEditor({ tool, models, ...props }: Props & { tool: CreativeTool; mo
   }
   return (
     <div className={styles.body}>
+      {!browser && !allowed.length && (
+        <EmptyModelNotice workspaceId={props.workspaceId} label="当前工具模型" onReload={onReload} />
+      )}
       <div className={styles.preview}>
         {tool.code === 'image.multi_angle' && (
           <CanvasAngleEditor

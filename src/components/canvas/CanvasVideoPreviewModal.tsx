@@ -14,6 +14,7 @@ import styles from './CanvasVideoPreviewModal.module.css'
 export interface CanvasVideoPreviewInfo {
   /** 生成该视频所用的模型名 */
   modelName?: string
+  prompt?: string
   /** 画面比例，如 16:9 */
   ratio?: string
   /** 时长文本（mm:ss） */
@@ -37,6 +38,7 @@ interface CanvasVideoPreviewModalProps {
   startTime?: number
   /** 视频信息；有任一字段时在播放器右侧展示信息栏 */
   info?: CanvasVideoPreviewInfo
+  showInfo?: boolean
   /**
    * 「截取此帧」（反馈 #7 任意帧截帧）：把当前进度条时刻传给上层，由节点在该时刻取一帧建图片节点。
    * 不传则不显示截帧按钮。
@@ -90,12 +92,14 @@ export default function CanvasVideoPreviewModal({
   durationLabel,
   startTime = 0,
   info,
+  showInfo = true,
   onCaptureFrame,
   capturing = false,
   onClose,
 }: CanvasVideoPreviewModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [muted, setMuted] = useState(false)
   const onCloseRef = useRef(onClose)
   const requestedRatioLabel = String(info?.ratio || '').trim()
   const initialMediaWidth = Number(info?.mediaWidth || 0)
@@ -138,6 +142,7 @@ export default function CanvasVideoPreviewModal({
 
   useEffect(() => {
     if (!src) return
+    setMuted(false)
     // StrictMode 重放清理后恢复声音；媒体源和起播顺序由 SeekableVideo 管理。
     const video = videoRef.current
     if (video) {
@@ -170,6 +175,7 @@ export default function CanvasVideoPreviewModal({
 
   // 只展示节点上确实有的字段：缺失项直接不出现，不用「未知」占位撑满信息栏。
   const infoRows: Array<{ label: string; value: string }> = [
+    { label: '提示词', value: String(info?.prompt || '').trim() },
     { label: '模型', value: String(info?.modelName || '').trim() },
     { label: '宽高比', value: resolvedRatio.label },
     { label: '时长', value: String(info?.durationLabel || durationLabel || '').trim() },
@@ -188,17 +194,11 @@ export default function CanvasVideoPreviewModal({
         role="dialog"
         aria-modal="true"
         aria-label="视频预览"
-        data-has-info={infoRows.length > 0}
+        data-has-info={showInfo && infoRows.length > 0}
         onClick={(event) => event.stopPropagation()}
       >
-        <button
-          ref={closeButtonRef}
-          type="button"
-          className={styles.close}
-          onClick={closePreview}
-          aria-label="关闭视频预览"
-        >
-          ✕
+        <button ref={closeButtonRef} type="button" className={styles.close} onClick={closePreview} aria-label="收起">
+          收起
         </button>
         {/* 先按节点比例占位：即使 /download 仍在整片加载，也不会退回浏览器默认的 300×150。 */}
         <div
@@ -214,7 +214,8 @@ export default function CanvasVideoPreviewModal({
             poster={poster || undefined}
             controls
             autoPlay
-            muted={false}
+            muted={muted}
+            onVolumeChange={(event) => setMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
             allowMutedAutoplayFallback={false}
             repairOnLoad={false}
             prepareImmediately
@@ -232,23 +233,41 @@ export default function CanvasVideoPreviewModal({
               }
             }}
           />
-          {onCaptureFrame && (
+          <div className={styles.mediaActions}>
             <button
               type="button"
-              className={styles.capture}
-              disabled={capturing}
-              onClick={() => onCaptureFrame(videoRef.current?.currentTime ?? 0)}
-              title="把进度条当前位置这一帧截取为图片节点（可先拖动进度条到任意位置）"
+              className={styles.sound}
+              aria-label={muted ? '开启视频声音' : '静音视频'}
+              aria-pressed={muted}
+              onClick={() => {
+                const video = videoRef.current
+                if (!video) return
+                const next = !(video.muted || video.volume === 0)
+                video.muted = next
+                if (!next && video.volume === 0) video.volume = 1
+                setMuted(next)
+              }}
             >
-              <CaptureIcon />
-              <span>{capturing ? '截取中…' : '截取此帧'}</span>
+              {muted ? '开启声音' : '静音'}
             </button>
-          )}
+            {onCaptureFrame && (
+              <button
+                type="button"
+                className={styles.capture}
+                disabled={capturing}
+                onClick={() => onCaptureFrame(videoRef.current?.currentTime ?? 0)}
+                title="把进度条当前位置这一帧截取为图片节点（可先拖动进度条到任意位置）"
+              >
+                <CaptureIcon />
+                <span>{capturing ? '截取中…' : '截取此帧'}</span>
+              </button>
+            )}
+          </div>
         </div>
         {/* 信息栏放在播放器之外：有字段才出现，没有时弹窗保持原来的纯播放形态 */}
-        {infoRows.length ? (
+        {showInfo && infoRows.length ? (
           <aside className={styles.info} aria-label="视频信息">
-            <h3 className={styles.infoTitle}>信息</h3>
+            <h3 className={styles.infoTitle}>视频参数</h3>
             <dl className={styles.infoList}>
               {infoRows.map((row) => (
                 <div key={row.label} className={styles.infoRow}>
@@ -258,7 +277,7 @@ export default function CanvasVideoPreviewModal({
               ))}
             </dl>
           </aside>
-        ) : durationLabel ? (
+        ) : showInfo && durationLabel ? (
           <span className={styles.duration}>时长 {durationLabel}</span>
         ) : null}
       </div>

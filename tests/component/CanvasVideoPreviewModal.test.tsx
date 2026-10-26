@@ -5,6 +5,22 @@ import { describe, expect, it, vi } from 'vitest'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 
 describe('CanvasVideoPreviewModal', () => {
+  it('显式声音按钮与原生播放器音量保持同步', async () => {
+    const user = userEvent.setup()
+    render(<CanvasVideoPreviewModal src="blob:sound-toggle" onClose={vi.fn()} />)
+    const video = screen.getByRole('dialog', { name: '视频预览' }).querySelector('video')!
+    await user.click(screen.getByRole('button', { name: '静音视频' }))
+    expect(video.muted).toBe(true)
+    await user.click(screen.getByRole('button', { name: '开启视频声音' }))
+    expect(video.muted).toBe(false)
+    video.volume = 0
+    fireEvent.volumeChange(video)
+    expect(screen.getByRole('button', { name: '开启视频声音' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '开启视频声音' }))
+    expect(video.volume).toBe(1)
+    expect(video.muted).toBe(false)
+  })
+
   it('StrictMode 重放挂载副作用后仍保持有声并保留视频源', () => {
     render(
       <StrictMode>
@@ -102,7 +118,7 @@ describe('CanvasVideoPreviewModal', () => {
     await user.click(screen.getByRole('dialog', { name: '视频预览' }))
     expect(onClose).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: '关闭视频预览' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
     expect(onClose).toHaveBeenCalledTimes(1)
 
     await user.keyboard('{Escape}')
@@ -116,7 +132,7 @@ describe('CanvasVideoPreviewModal', () => {
     render(<CanvasVideoPreviewModal src="blob:closing" onClose={vi.fn()} />)
 
     const video = screen.getByRole('dialog', { name: '视频预览' }).querySelector('video') as HTMLVideoElement
-    await user.click(screen.getByRole('button', { name: '关闭视频预览' }))
+    await user.click(screen.getByRole('button', { name: '收起' }))
 
     expect(pause).toHaveBeenCalled()
     expect(video.muted).toBe(true)

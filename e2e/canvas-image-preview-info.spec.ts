@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
-for (const width of [1440, 760, 390]) {
+for (const width of [1440, 1024, 820, 760, 390]) {
   test(`图片预览参数与缩放居中 ${width}`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width, height: 1000 })
+    await page.setViewportSize({ width, height: width === 1440 ? 1000 : 640 })
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     const api = await installStrictAuthenticatedApp(page)
@@ -121,6 +121,24 @@ for (const width of [1440, 760, 390]) {
                     },
                   },
                 },
+                ...Array.from({ length: 51 }, (_, index) => ({
+                  element_id: `gallery-${index}`,
+                  kind: 'node',
+                  payload: {
+                    id: `gallery-${index}`,
+                    type: 'image',
+                    position: { x: 1600 + index * 350, y: 200 },
+                    style: { width: 320, height: 240 },
+                    data: {
+                      kind: 'image',
+                      assetId: 703,
+                      assetWorkspaceId: WORKSPACE_ID,
+                      title: `画廊图片 ${index + 1}`,
+                      assetSource: 'upload',
+                      imageOrigin: { assetId: 703, kind: 'upload' },
+                    },
+                  },
+                })),
               ],
               sync_revision: 1,
               history_floor_revision: 0,
@@ -130,8 +148,14 @@ for (const width of [1440, 760, 390]) {
       }),
     )
     await page.goto('/canvas/120', { waitUntil: 'domcontentloaded' })
-    await page.locator('.react-flow__node[data-id="image"] .canvas-node-header').click()
-    await page.getByRole('button', { name: '放大预览图片', exact: true }).click()
+    // 长画廊首次适配会把节点缩得很小；通过搜索定位后再使用真实双击入口。
+    await page.getByTitle('搜索 / 定位节点（Ctrl + F）', { exact: true }).click()
+    await page.getByRole('textbox', { name: '搜索分组、节点名称或提示词', exact: true }).fill('海边的人像')
+    await page.getByRole('option', { name: /海边的人像/ }).click()
+    await page
+      .locator('.react-flow__node[data-id="image"]')
+      .getByRole('img', { name: '生成图片 1（主图）', exact: true })
+      .dblclick()
     const dialog = page.getByRole('dialog', { name: '图片预览' })
     const info = dialog.getByRole('complementary', { name: '图片信息' })
     await expect(dialog).toHaveCSS('background-color', 'rgb(255, 255, 255)')
@@ -147,6 +171,50 @@ for (const width of [1440, 760, 390]) {
     await expect(info.getByText('3:2', { exact: true })).toBeVisible()
     await expect(info.getByText('2K', { exact: true })).toBeVisible()
     await expect(info.getByText('4K', { exact: true })).toHaveCount(0)
+    const assertFittedImage = async () => {
+      await expect
+        .poll(() =>
+          dialog.getByRole('region', { name: '图片缩放区域' }).evaluate((region) => {
+            const area = region.getBoundingClientRect()
+            const image = region.querySelector('img')!.getBoundingClientRect()
+            return (
+              area.width > 0 &&
+              area.height > 0 &&
+              image.left >= area.left - 1 &&
+              image.right <= area.right + 1 &&
+              image.top >= area.top - 1 &&
+              image.bottom <= area.bottom + 1 &&
+              Math.abs((area.left + area.right - image.left - image.right) / 2) < 1
+            )
+          }),
+        )
+        .toBe(true)
+      const bounds = await dialog.evaluate((element) => {
+        const panel = element.getBoundingClientRect()
+        const content = element.querySelector('[role="region"]')!.parentElement!.parentElement!.parentElement!
+        const area = content.firstElementChild!.getBoundingClientRect()
+        const info = content.querySelector('aside')!.getBoundingClientRect()
+        return {
+          centered: Math.abs((panel.left + panel.right) / 2 - innerWidth / 2),
+          contained: [area, info].every(
+            (rect) =>
+              rect.left >= panel.left &&
+              rect.right <= panel.right &&
+              rect.top >= panel.top &&
+              rect.bottom <= panel.bottom,
+          ),
+          overflow: element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
+          separate: innerWidth > 900 ? area.right <= info.left : area.bottom <= info.top,
+        }
+      })
+      expect(bounds.centered).toBeLessThan(1)
+      expect(bounds.contained).toBe(true)
+      expect(bounds.overflow).toBe(false)
+      expect(bounds.separate).toBe(true)
+      await expect(dialog.getByRole('group', { name: '图片缩放工具' })).toBeInViewport()
+      await expect(dialog.getByRole('button', { name: '关闭图片预览' })).toBeInViewport()
+    }
+    await assertFittedImage()
     await dialog.getByRole('button', { name: '原始大小', exact: true }).click()
     const percent = dialog.getByRole('spinbutton', { name: '图片缩放百分比' })
     await expect(percent).toHaveValue('100')
@@ -180,6 +248,12 @@ for (const width of [1440, 760, 390]) {
     await percent.press('Enter')
     await expect(percent).toHaveValue('200')
     await dialog.getByRole('button', { name: '适应窗口' }).click()
+    await assertFittedImage()
+    await page.setViewportSize({ width: 640, height: 480 })
+    await assertFittedImage()
+    await page.screenshot({ path: testInfo.outputPath('image-preview-resized.png') })
+    await page.setViewportSize({ width, height: width === 1440 ? 1000 : 640 })
+    await assertFittedImage()
     const previewPath = testInfo.outputPath('image-preview-info.png')
     await page.screenshot({ path: previewPath })
     await testInfo.attach('图片预览与参数', { path: previewPath, contentType: 'image/png' })
@@ -213,6 +287,27 @@ for (const width of [1440, 760, 390]) {
     await dialog.getByRole('button', { name: '下一张图片' }).click()
     await expect(info.getByText('Topaz 超分模型', { exact: true })).toBeVisible()
     expect(historicalTaskReads).toBe(1)
+    await dialog.getByRole('option').last().click()
+    await expect(dialog.getByRole('option').last()).toHaveAttribute('aria-selected', 'true')
+    const bounds = await dialog.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: innerWidth,
+        height: innerHeight,
+        overflow: element.scrollWidth > element.clientWidth,
+      }
+    })
+    expect(bounds.left).toBeGreaterThanOrEqual(0)
+    expect(bounds.right).toBeLessThanOrEqual(bounds.width)
+    expect(bounds.top).toBeGreaterThanOrEqual(0)
+    expect(bounds.bottom).toBeLessThanOrEqual(bounds.height)
+    expect(bounds.overflow).toBe(false)
+    await expect(dialog.getByRole('button', { name: '关闭图片预览' })).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath('long-gallery-centered.png') })
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
     expect(errors).toEqual([])

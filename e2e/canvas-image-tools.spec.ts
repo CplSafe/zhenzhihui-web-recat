@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const renamed of [false, true]) {
@@ -242,6 +243,10 @@ for (const renamed of [false, true]) {
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '多角度', exact: true }).click()
     const modal = page.getByRole('dialog')
+    await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
+    await modal.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '多角度', exact: true }).click()
     await expect(modal.getByRole('spinbutton', { name: '水平角', exact: true })).toBeVisible()
     await modal.getByRole('spinbutton', { name: '水平角', exact: true }).fill('90')
     await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
@@ -301,6 +306,7 @@ for (const renamed of [false, true]) {
     expect(Array.from(submissions[0].prompt).length).toBeLessThanOrEqual(200)
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '打光', exact: true }).click()
+    await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
     await expect(modal.getByRole('spinbutton', { name: '亮度', exact: true })).toBeVisible()
     for (const width of [1440, 760]) {
       await page.setViewportSize({ width, height: 1000 })
@@ -382,7 +388,26 @@ for (const renamed of [false, true]) {
     expect(quotes.at(-1)?.params).toEqual(submissions[1].params)
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '全景', exact: true }).click()
+    await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
     await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
+    const panoramaSource = modal.getByRole('img', { name: '全景生成参考图' })
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(panoramaSource).toBeVisible()
+      await expect
+        .poll(async () =>
+          panoramaSource.evaluate((image) => {
+            const media = image.getBoundingClientRect()
+            const dialog = image.closest('[role="dialog"]')!.getBoundingClientRect()
+            return media.width <= dialog.width && media.right <= dialog.right && media.height <= 240
+          }),
+        )
+        .toBe(true)
+      expect(await modal.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await modal.getByRole('button', { name: '生成新图片' }).scrollIntoViewIfNeeded()
+      await page.screenshot({ path: testInfo.outputPath(`panorama-generation-${width}.png`) })
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 })
     await modal.getByRole('button', { name: '生成新图片' }).click()
     await expect(modal).not.toBeVisible()
     await expect.poll(() => submissions.length).toBe(3)
@@ -427,6 +452,7 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   const api = await installStrictAuthenticatedApp(page)
   const saved: Array<Record<string, any>> = []
   let uploads = 0
+  let uploadedPng: Buffer | null = null
   const png = await page.evaluate(() => {
     const canvas = document.createElement('canvas')
     canvas.width = 1024
@@ -443,7 +469,7 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     route.fulfill({ contentType: 'image/png', body: Buffer.from(png, 'base64') }),
   )
   await page.route('**/api/v1/assets/702/download?**', (route) =>
-    route.fulfill({ contentType: 'image/png', body: Buffer.from(png, 'base64') }),
+    route.fulfill({ contentType: 'image/png', body: uploadedPng || Buffer.from(png, 'base64') }),
   )
   await page.route('**/api/v1/ai/tools?**', (route) =>
     route.fulfill({
@@ -513,6 +539,8 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     const body = route.request().postDataBuffer()!
     const start = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     expect(start).toBeGreaterThanOrEqual(0)
+    const end = body.indexOf(Buffer.from('49454e44ae426082', 'hex'), start) + 8
+    uploadedPng = body.subarray(start, end)
     expect(body.readUInt32BE(start + 16)).toBe(1080)
     expect(body.readUInt32BE(start + 20)).toBe(1920)
     await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } })
@@ -537,12 +565,15 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   await expect(modal).toBeVisible()
   await expect(modal.getByRole('button', { name: '大屏预览' })).toBeVisible()
   await modal.getByLabel('构图参考线').selectOption('thirds')
+  await expect(modal.getByLabel('全景截图工作台')).toContainText('俯视、平视、仰视各 4 张')
   await modal.getByRole('button', { name: '4视角截图', exact: true }).click()
   await expect(modal.getByRole('img', { name: /^视角 / })).toHaveCount(4)
   await modal.getByRole('button', { name: '12视角截图', exact: true }).click()
   await expect(modal.getByRole('img', { name: /^视角 / })).toHaveCount(16, { timeout: 45000 })
   const collection = modal.getByRole('region', { name: '截图预览' })
   await expect(collection).toContainText('共 16 张 · 已选 16 张')
+  await expect(collection).toContainText('水平 90° · 俯仰 -35°')
+  await expect(collection).toContainText('水平 90° · 俯仰 35°')
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   expect(uploads).toBe(0)
   await collection.getByRole('button', { name: '取消全选' }).click()
@@ -572,6 +603,53 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   await expect(collection.getByRole('button', { name: '将选中截图加入画布' })).toBeDisabled()
   expect(await collection.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('panorama-capture-narrow.png') })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await modal.getByRole('button', { name: '当前视角截图' }).click()
+  await expect(collection.getByRole('img', { name: /^视角 / })).toHaveCount(18)
+  await modal.getByRole('button', { name: '当前视角截图' }).click()
+  await expect(collection.getByRole('img', { name: /^视角 / })).toHaveCount(19)
+  await expect(collection).toContainText('已选 2 张')
+  const downloadPromise = page.waitForEvent('download')
+  await collection.getByRole('button', { name: '拼接下载选中截图' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('全景分镜拼图.png')
+  const pngFile = await readFile((await download.path())!)
+  expect(pngFile.readUInt32BE(16)).toBe(2160)
+  expect(pngFile.readUInt32BE(20)).toBe(1920)
+  expect(uploads).toBe(1)
+  await collection.getByRole('button', { name: '将选中截图加入画布' }).click()
+  await expect.poll(() => uploads).toBe(3)
+  await expect(page.locator('.react-flow__node')).toHaveCount(4)
+  await expect(page.locator('.canvas-group-frame')).toContainText('全景分镜组')
+  await expect.poll(() => JSON.stringify(saved)).toContain('"groupName":"全景分镜组"')
+  const positions = await page.locator('.react-flow__node').evaluateAll((elements) =>
+    elements.slice(-2).map((element) => ({
+      x: (element as HTMLElement).style.transform,
+    })),
+  )
+  expect(positions[0].x).not.toBe(positions[1].x)
+  await expect
+    .poll(async () => {
+      const rects = await page.locator('.react-flow__node').evaluateAll((elements) =>
+        elements.slice(-2).map((element) => {
+          const rect = element.getBoundingClientRect()
+          return { left: rect.left, right: rect.right }
+        }),
+      )
+      return rects[0].right <= rects[1].left
+    })
+    .toBe(true)
+  await modal.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByRole('button', { name: '复位视图', exact: true }).click()
+  await expect
+    .poll(async () =>
+      page.locator('.canvas-group-frame').evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight
+      }),
+    )
+    .toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('panorama-grid-group.png') })
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })

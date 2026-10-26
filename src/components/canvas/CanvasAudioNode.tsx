@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useReactFlow } from '@xyflow/react'
+import { useReactFlow, useStore } from '@xyflow/react'
 import { uploadAssetFile } from '@/api/business'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { audioGainAt, isAudioFile, normalizeAudioSettings, readAudioDuration } from '@/utils/canvasAudio'
@@ -29,6 +29,10 @@ export default function CanvasAudioNode({
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const isEditor = data.audioRole === 'editor'
+  // selected 只表示批量选择成员；仅唯一选中时才允许展开编辑面板。
+  // 直接订阅 React Flow 的选择状态，涵盖框选、快捷键及整组选中。
+  const hasOtherSelectedNodes = useStore((state) => state.nodes.some((node) => node.selected && node.id !== nodeId))
+  const panelVisible = selected && !hasOtherSelectedNodes
   const { updateNodeData, getNode, getEdges } = useReactFlow()
   const { showToast } = useToast()
   const settings = normalizeAudioSettings(data.audio)
@@ -354,7 +358,7 @@ export default function CanvasAudioNode({
       <section
         ref={panelElement}
         className={`${styles.settings} canvas-audio-panel nodrag nopan nowheel ${isEditor ? styles.editorPanel : ''}`}
-        hidden={!selected}
+        hidden={!panelVisible}
         aria-label={isEditor ? '音频编辑' : '音频参数'}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
@@ -412,7 +416,13 @@ export default function CanvasAudioNode({
             </details>
           )}
         {!isEditor && (
-          <CanvasAudioGenerator nodeId={nodeId} data={data} workspaceId={workspaceId} onGenerated={onGenerated} />
+          <CanvasAudioGenerator
+            nodeId={nodeId}
+            data={data}
+            workspaceId={workspaceId}
+            active={panelVisible}
+            onGenerated={onGenerated}
+          />
         )}
         {isEditor && (
           <button

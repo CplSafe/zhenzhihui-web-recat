@@ -227,7 +227,11 @@ describe('useHotCopyModelCatalog', () => {
 
     const { result } = renderHook(() => useHotCopyModelCatalog(21))
 
-    await waitFor(() => expect(result.current.error).toBe('当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用'))
+    await waitFor(() =>
+      expect(result.current.error).toBe(
+        '当前空间暂无可用的爆款复制视频模型，请刷新重试；若仍不可用，请联系平台管理员检查功能开放及模型授权',
+      ),
+    )
 
     expect(result.current.loading).toBe(false)
     expect(result.current.ready).toBe(false)
@@ -236,7 +240,8 @@ describe('useHotCopyModelCatalog', () => {
       expect.objectContaining({
         name: '暂无可用模型',
         disabled: true,
-        unavailableReason: '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用',
+        unavailableReason:
+          '当前空间暂无可用的爆款复制视频模型，请刷新重试；若仍不可用，请联系平台管理员检查功能开放及模型授权',
       }),
     ])
   })

@@ -276,6 +276,29 @@ describe('MemberCenterModal behavior', () => {
     expect(screen.getByRole('button', { name: '积分充值' })).toHaveAttribute('aria-disabled', 'true')
   })
 
+  it('allows a team administrator to renew and recharge without granting subscription cancellation', async () => {
+    const user = userEvent.setup()
+    const paymentWindow = fakePaymentWindow()
+    vi.spyOn(window, 'open').mockReturnValue(paymentWindow as any)
+    mocks.workspace.id = 30
+    mocks.workspace.current = { id: 30, name: '管理员团队', type: 'team', owner_user_id: 99 }
+    mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'admin' }
+    mocks.getSubscription.mockResolvedValue({ active: true, id: 61, plan_id: 2, plan_type: 'team', renew_mode: 'auto' })
+    renderModal()
+    expect(await screen.findByText('自动续费')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '续费当前团队' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '取消订阅' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '关闭自动续费' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '团队版' }))
+    const card = screen.getByText('团队版/团队协作会员', { selector: '.mc-card-name' }).closest('.mc-card')!
+    expect(within(card as HTMLElement).getByRole('button', { name: /^续费.+/ })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '积分充值' }))
+    await user.click(screen.getByRole('button', { name: '立即充值' }))
+    await waitFor(() => expect(mocks.createRechargeOrder).toHaveBeenCalledWith({ workspaceId: 30, creditPackageId: 8 }))
+    expect(mocks.requestConfirm).toHaveBeenCalledWith(expect.stringContaining('管理员团队'))
+    expect(paymentWindow.location.href).toBe('https://pay.example/recharge')
+  })
+
   it('shows and confirms the team attribution before creating a recharge order', async () => {
     const user = userEvent.setup()
     vi.spyOn(window, 'open').mockReturnValue(fakePaymentWindow() as any)
@@ -306,7 +329,7 @@ describe('MemberCenterModal behavior', () => {
     mocks.createSubscriptionOrder.mockReturnValue(order.promise)
 
     renderModal()
-    const buy = await screen.findByRole('button', { name: '立即开通' })
+    const buy = await screen.findByRole('button', { name: /^订阅.+/ })
     await user.dblClick(buy)
 
     expect(mocks.createSubscriptionOrder).toHaveBeenCalledTimes(1)
@@ -334,7 +357,7 @@ describe('MemberCenterModal behavior', () => {
     renderModal()
     await screen.findByText('个人版/一分体验会员')
     await user.click(screen.getByRole('button', { name: '团队版' }))
-    await user.click(screen.getByRole('button', { name: '立即开通' }))
+    await user.click(screen.getByRole('button', { name: '创建团队' }))
 
     await waitFor(() => expect(bodies).toHaveLength(1))
     expect(bodies[0]).toMatchObject({
@@ -355,7 +378,7 @@ describe('MemberCenterModal behavior', () => {
     mocks.createSubscriptionOrder.mockResolvedValue({ order: { id: 303 }, pay_url: 'https://pay.example/manual' })
 
     renderModal()
-    await user.click(await screen.findByRole('button', { name: '立即开通' }))
+    await user.click(await screen.findByRole('button', { name: /^订阅.+/ }))
 
     const link = await screen.findByRole('link', { name: '点此手动打开支付页' })
     expect(link).toHaveAttribute('href', 'https://pay.example/manual')
@@ -427,7 +450,7 @@ describe('MemberCenterModal behavior', () => {
     await user.click(await screen.findByRole('button', { name: '团队版' }))
     const currentTeamCard = screen.getByText('团队版/团队协作会员', { selector: '.mc-card-name' }).closest('.mc-card')
     expect(currentTeamCard).not.toBeNull()
-    await user.click(within(currentTeamCard as HTMLElement).getByRole('button', { name: '新建团队' }))
+    await user.click(within(currentTeamCard as HTMLElement).getByRole('button', { name: '创建团队' }))
 
     await waitFor(() =>
       expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
@@ -436,7 +459,7 @@ describe('MemberCenterModal behavior', () => {
     )
   })
 
-  it('renews only the current team from the dedicated renewal action', async () => {
+  it('renews only the current team from the plan card', async () => {
     const user = userEvent.setup()
     const paymentWindow = fakePaymentWindow()
     vi.spyOn(window, 'open').mockReturnValue(paymentWindow as any)
@@ -454,7 +477,9 @@ describe('MemberCenterModal behavior', () => {
     mocks.createSubscriptionOrder.mockResolvedValue({ order: { id: 607 }, pay_url: 'https://pay.example/team-renew' })
 
     renderModal()
-    await user.click(await screen.findByRole('button', { name: '续费当前团队' }))
+    await user.click(await screen.findByRole('button', { name: '团队版' }))
+    const card = screen.getByText('团队版/团队协作会员', { selector: '.mc-card-name' }).closest('.mc-card')!
+    await user.click(within(card as HTMLElement).getByRole('button', { name: /^续费.+/ }))
 
     await waitFor(() =>
       expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
@@ -466,6 +491,49 @@ describe('MemberCenterModal behavior', () => {
     )
   })
 
+  it('offers existing-team purchase when an expired subscription only returns active:false', async () => {
+    const user = userEvent.setup()
+    const paymentWindow = fakePaymentWindow()
+    vi.spyOn(window, 'open').mockReturnValue(paymentWindow as any)
+    mocks.workspace.id = 30
+    mocks.workspace.current = { id: 30, name: '原团队', type: 'team', owner_user_id: 7 }
+    mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'owner' }
+    mocks.getSubscription.mockResolvedValue({ active: false })
+    mocks.createSubscriptionOrder.mockResolvedValue({
+      order: { id: 608 },
+      pay_url: 'https://pay.example/existing-team',
+    })
+    renderModal()
+    await user.click(await screen.findByRole('button', { name: '续费当前团队' }))
+    expect(screen.getByRole('note')).toHaveTextContent('右侧操作仅用于当前团队「原团队」')
+    const card = screen.getByText('团队版/团队协作会员', { selector: '.mc-card-name' }).closest('.mc-card')!
+    await user.click(within(card as HTMLElement).getByRole('button', { name: /^订阅.+/ }))
+    await waitFor(() =>
+      expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 30, planId: 2, intent: 'subscribe' }),
+      ),
+    )
+    const request = mocks.createSubscriptionOrder.mock.calls[0][0]
+    expect(request.newWorkspaceName).toBe('')
+    expect(paymentWindow.location.href).toBe('https://pay.example/existing-team')
+    expect(mocks.switchWorkspaceSafely).not.toHaveBeenCalled()
+    expect(screen.getByText('当前积分余额:88')).toBeVisible()
+  })
+
+  it('does not show the current-team renewal choice to an ordinary member', async () => {
+    const user = userEvent.setup()
+    mocks.workspace.id = 30
+    mocks.workspace.current = { id: 30, name: '原团队', type: 'team', owner_user_id: 99 }
+    mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'member' }
+    renderModal()
+    await screen.findByText('个人版/一分体验会员')
+    expect(screen.queryByRole('button', { name: '续费当前团队' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '团队版' }))
+    expect(screen.queryByRole('group', { name: '团队套餐用途' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '创建团队' })).toBeVisible()
+    expect(mocks.createSubscriptionOrder).not.toHaveBeenCalled()
+  })
+
   it('closes the blank popup and reports an error when the order has no pay_url', async () => {
     const user = userEvent.setup()
     const paymentWindow = fakePaymentWindow()
@@ -473,7 +541,7 @@ describe('MemberCenterModal behavior', () => {
     mocks.createSubscriptionOrder.mockResolvedValue({ order: { id: 404 }, pay_url: '' })
 
     renderModal()
-    await user.click(await screen.findByRole('button', { name: '立即开通' }))
+    await user.click(await screen.findByRole('button', { name: /^订阅.+/ }))
 
     await waitFor(() => expect(paymentWindow.close).toHaveBeenCalledTimes(1))
     expect(mocks.showToast).toHaveBeenCalledWith('未获取到支付链接,请稍后重试', 'error')

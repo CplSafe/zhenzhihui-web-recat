@@ -32,7 +32,7 @@ const REWRITE_RULES: { match: RegExp; text: string }[] = [
   {
     // 供应商账户/计费/接入点/限流等「服务级」失败——见 PROVIDER_SERVICE_RE。
     match: PROVIDER_SERVICE_RE,
-    text: '该模型的服务商暂时不可用（计费未配置或额度/接入异常），请更换其他模型后重试，或联系管理员',
+    text: '该模型的服务商暂时不可用，请更换其他模型重试；若仍失败，请联系平台管理员检查服务商计费、额度及接入配置',
   },
 ]
 

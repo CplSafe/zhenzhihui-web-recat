@@ -18,6 +18,7 @@ export interface CanvasSearchableNode {
   kind: string
   /** 节点上可读的文字：文本内容或提示词；可为空（空节点也要能定位） */
   text: string
+  memberCount?: number
   /** 类型中文名，用于结果行的副标题 */
   kindLabel: string
 }
@@ -92,8 +93,8 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
           ref={inputRef}
           className={styles.input}
           value={keyword}
-          placeholder="搜索节点内容或提示词"
-          aria-label="搜索节点内容或提示词"
+          placeholder="搜索分组、节点名称或提示词"
+          aria-label="搜索分组、节点名称或提示词"
           onChange={(event) => setKeyword(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
@@ -163,6 +164,7 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
               <span className={styles.itemKind}>{node.kindLabel}</span>
               <span className={`${styles.itemText} ${node.text ? '' : styles.itemTextEmpty}`}>
                 {node.text || '（空节点）'}
+                {node.kind === 'group' && <span className={styles.itemCount}>{node.memberCount} 个节点</span>}
               </span>
             </button>
           ))

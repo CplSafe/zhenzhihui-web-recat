@@ -12,6 +12,7 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } fr
 test('右键菜单能建出视频剪辑节点，且按时间线尺寸落位', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/112**', async (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
@@ -53,6 +54,7 @@ test('右键菜单能建出视频剪辑节点，且按时间线尺寸落位', as
 test('左侧添加菜单可以创建音频节点', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/115**', async (route) => {
     const url = new URL(route.request().url())
     if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
@@ -75,7 +77,7 @@ test('左侧添加菜单可以创建音频节点', async ({ page }) => {
   const node = page.locator('.react-flow__node')
   await expect(node).toHaveCount(1)
   await expect(node).toHaveAttribute('style', /width:\s*320px/)
-  await expect(node).toHaveAttribute('style', /height:\s*210px/)
+  await expect(node).toHaveAttribute('style', /height:\s*116px/)
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })
@@ -83,6 +85,7 @@ test('左侧添加菜单可以创建音频节点', async ({ page }) => {
 test('文本节点可以连接到另一个文本节点', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/113**', async (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
@@ -140,6 +143,7 @@ test('文本节点可以连接到另一个文本节点', async ({ page }) => {
 test('文本转为本节点提示词写入正文而不是重命名字段', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/114**', async (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
@@ -206,7 +210,14 @@ test('文本转为本节点提示词写入正文而不是重命名字段', async
 
 test('图片、文本、视频可以按语义反复接成新的下游节点', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
+  const selectConnection = async (index: number) => {
+    const edge = page.locator('.react-flow__edge').nth(index)
+    await edge.focus()
+    await page.keyboard.press('Enter')
+    await expect(edge).toHaveClass(/selected/)
+  }
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/115**', async (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
@@ -231,6 +242,9 @@ test('图片、文本、视频可以按语义反复接成新的下游节点', as
   await expect(imageNextMenu.getByRole('button', { name: /^文本节点/ })).toBeEnabled()
   await imageNextMenu.getByRole('button', { name: /^文本节点/ }).click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  await page.locator('.canvas-view').focus()
+  await page.keyboard.press('Alt+Shift+f')
+  await selectConnection(0)
   await expect(page.locator('.canvas-edge-role-label').filter({ hasText: '视觉理解' })).toHaveCount(1)
 
   // 文本 → 视频：文本作为视频提示词。
@@ -241,6 +255,9 @@ test('图片、文本、视频可以按语义反复接成新的下游节点', as
   await expect(textNextMenu.getByRole('button', { name: /^视频节点/ })).toBeEnabled()
   await textNextMenu.getByRole('button', { name: /^视频节点/ }).click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+  await page.locator('.canvas-view').focus()
+  await page.keyboard.press('Alt+Shift+f')
+  await selectConnection(1)
   await expect(page.locator('.canvas-edge-role-label').filter({ hasText: '提示词' })).toHaveCount(1)
 
   // 已作为下游的视频仍可以继续回拉出文本节点，形成新的分支/处理链。
@@ -251,7 +268,10 @@ test('图片、文本、视频可以按语义反复接成新的下游节点', as
   await expect(videoNextMenu.getByRole('button', { name: /^文本节点/ })).toBeEnabled()
   await videoNextMenu.getByRole('button', { name: /^文本节点/ }).click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(3)
-  await expect(page.locator('.canvas-edge-role-label').filter({ hasText: '视觉理解' })).toHaveCount(2)
+  await page.locator('.canvas-view').focus()
+  await page.keyboard.press('Alt+Shift+f')
+  await selectConnection(2)
+  await expect(page.locator('.canvas-edge-role-label').filter({ hasText: '视觉理解' })).toHaveCount(1)
 
   expectNoUnexpectedApi(api)
 })

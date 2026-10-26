@@ -25,21 +25,21 @@ export type CanvasShortcutAction =
 export type CanvasShortcutBindings = Record<CanvasShortcutAction, string>
 
 export const DEFAULT_CANVAS_SHORTCUTS: CanvasShortcutBindings = {
-  connect: 'L',
-  duplicate: 'Shift+D',
-  add: 'N',
+  connect: 'Mod+L',
+  duplicate: 'Mod+D',
+  add: 'Tab',
   selectTool: 'V',
   panTool: 'H',
   arrange: 'Alt+Shift+F',
-  zoomIn: 'E',
-  zoomOut: 'Q',
-  resetZoom: '0',
-  fitView: '1',
+  zoomIn: 'Mod+=',
+  zoomOut: 'Mod+-',
+  resetZoom: 'Mod+1',
+  fitView: 'Mod+0',
 }
 
 export const CANVAS_SHORTCUT_LABELS: Record<CanvasShortcutAction, string> = {
   connect: '连接选中的两个节点',
-  duplicate: '生成副本',
+  duplicate: '复制节点和连线',
   add: '添加节点',
   selectTool: '切换到选择工具',
   panTool: '切换到抓手工具',
@@ -60,6 +60,8 @@ export const CANVAS_RESERVED_SHORTCUTS = new Set([
   'Mod+C',
   'Mod+V',
   'Mod+G',
+  'Alt+G',
+  'Alt+Shift+G',
   'Mod+Shift+G',
   'Mod+Alt+G',
   'Mod+Enter',
@@ -72,7 +74,7 @@ export const CANVAS_RESERVED_SHORTCUTS = new Set([
 ])
 
 const MODIFIER_KEYS = new Set(['Control', 'Meta', 'Alt', 'Shift'])
-const RESERVED_KEYS = new Set(['Tab', 'Escape'])
+const RESERVED_KEYS = new Set(['Escape'])
 
 export function shortcutFromKeyboardEvent(
   event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
@@ -130,7 +132,7 @@ export function canUseCanvasShortcuts(root: HTMLElement | null, target: EventTar
   )
 }
 
-/** 避开地址栏、收藏和 Tab 焦点导航的默认组合键。 */
+/** 创建命令按当前绑定匹配；调用方仅在画布快捷键作用域内接管。 */
 export function resolveCanvasCreationShortcut(
   event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
   bindings: CanvasShortcutBindings = DEFAULT_CANVAS_SHORTCUTS,

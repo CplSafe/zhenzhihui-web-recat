@@ -1,0 +1,152 @@
+.starter {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  width: min(500px, calc(100% - 180px));
+  padding: 28px;
+  border: 1px solid #dfe5e3;
+  border-radius: 16px;
+  background: #fff;
+  color: #253833;
+}
+.starter h2 {
+  margin: 0 0 12px;
+  font-size: 24px;
+  font-weight: 600;
+}
+.starter p,
+.importBody p {
+  color: #52645e;
+  line-height: 1.65;
+  margin: 0 0 16px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.actions button {
+  padding: 10px 14px;
+  background: #f0f7f4;
+  border: 1px solid #cadfd7;
+  border-radius: 8px;
+  color: #245d4b;
+  cursor: pointer;
+}
+.actions button:hover {
+  background: #e2f2eb;
+}
+.starter .hint {
+  font-size: 13px;
+}
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.starter .footer {
+  justify-content: space-between;
+}
+.starter .footer button {
+  color: #52645e;
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  cursor: pointer;
+}
+.starter button:focus-visible {
+  outline: 2px solid #009b7d;
+  outline-offset: 3px;
+}
+.importBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.importBody p {
+  margin: 0;
+}
+.importBody label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fileLabel {
+  color: #52645e;
+  font-size: 13px;
+}
+.preview {
+  background: #f5f8f7;
+  border-radius: 8px;
+  padding: 16px;
+}
+.preview pre {
+  font-family: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow: auto;
+  margin: 10px 0 0;
+}
+@media (max-width: 640px) {
+  .starter {
+    width: calc(100% - 120px);
+    left: calc(50% + 22px);
+    padding: 20px;
+    top: 45%;
+    max-height: calc(100% - 200px);
+    overflow-y: auto;
+  }
+  .starter h2 {
+    font-size: 20px;
+  }
+  .actions {
+    flex-direction: column;
+  }
+}
+
+.importBody textarea,
+.importBody select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #bdccc6;
+  border-radius: 8px;
+  background: #fff;
+  color: #253833;
+  font: inherit;
+  line-height: 1.6;
+}
+.importBody textarea {
+  resize: vertical;
+  min-height: 120px;
+}
+.importBody textarea:focus-visible,
+.importBody select:focus-visible,
+.importBody button:focus-visible {
+  outline: 2px solid #009b7d;
+  outline-offset: 2px;
+}
+.importBody .footer button {
+  padding: 8px 16px;
+  border: 1px solid #bdccc6;
+  border-radius: 8px;
+  background: #fff;
+  color: #253833;
+  cursor: pointer;
+}
+.importBody .footer .primary {
+  background: #087c63;
+  color: #fff;
+  border-color: #087c63;
+}
+.importBody button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.importBody .error {
+  color: #a72b2b;
+}

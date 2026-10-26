@@ -1,0 +1,31 @@
+.hint {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  white-space: normal;
+  text-align: left;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #edf0f3;
+  color: #485464;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.scenario {
+  color: #657080;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
