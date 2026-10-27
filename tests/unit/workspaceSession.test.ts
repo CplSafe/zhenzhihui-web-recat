@@ -31,7 +31,24 @@ vi.mock('@/api/auth', () => ({
   listWorkspaceMembers: mocks.listWorkspaceMembers,
 }))
 
-import { deriveCurrentMember, deriveWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import {
+  deriveCurrentMember,
+  deriveWalletCredits,
+  deriveWorkspaceId,
+  useWorkspaceSessionStore,
+} from '@/stores/workspaceSession'
+
+describe('钱包积分兼容', () => {
+  it.each([
+    [{ balance: 1234.5 }, 1234.5],
+    [{ available: 0, balance: 1234 }, 0],
+    [{ available: '12.5', balance: 99 }, 12.5],
+    [{ available: null, balance: 1234 }, 1234],
+    [null, 0],
+  ])('读取可用积分 %j', (currentWallet, expected) => {
+    expect(deriveWalletCredits({ ...useWorkspaceSessionStore.getState(), currentWallet })).toBe(expected)
+  })
+})
 
 function deferred<T>() {
   let resolve!: (value: T) => void

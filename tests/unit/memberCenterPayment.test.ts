@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatPriceCents,
   getMemberCenterPaymentUserScope,
+  getMemberCenterSubscriptionIntent,
   hasMemberCenterSubscriptionChanged,
   hasMemberCenterWalletIncreased,
   isSameMemberCenterPaymentScope,
@@ -12,6 +13,15 @@ import {
   tryAcquireMemberCenterPayment,
   tryTrackMemberCenterOrder,
 } from '@/utils/memberCenterPayment'
+
+it.each([
+  [true, true, 'subscribe'],
+  [true, false, 'new_team'],
+  [false, true, 'subscribe'],
+  [false, false, 'subscribe'],
+] as const)('routes teamPlan=%s currentTeam=%s to %s', (teamPlan, currentTeam, expected) => {
+  expect(getMemberCenterSubscriptionIntent(teamPlan, currentTeam)).toBe(expected)
+})
 
 describe('会员中心价格精度', () => {
   it.each([

@@ -10,6 +10,7 @@ import { Popover, Tooltip } from 'antd'
 import { createPortal } from 'react-dom'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
 import RatioLabel from '@/components/common/RatioLabel'
+import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
 import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
 import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
 export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
@@ -55,7 +56,7 @@ import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { resolveModelVideoInputSupport, VIDEO_INPUT_UNSUPPORTED_REASON } from '@/utils/modelVideoInputSupport'
-import { readModelAccentHue, readModelInitial, readModelPresentation } from '@/utils/modelPresentation'
+import ModelSelector from './CanvasModelSelector'
 import {
   buildModelRestrictionSummary,
   getModelDurationLimitLabel,
@@ -384,7 +385,7 @@ function formatResolutionValue(value: unknown): string {
 
 function formatBooleanValue(field: ParamsSchemaField, value: unknown): string {
   if (isWatermarkField(field)) return value ? '有水印' : '无水印'
-  if (isAudioField(field) || /背景音|生成音频/.test(field.displayName)) return value ? '有背景音' : '无背景音'
+  if (isAudioField(field) || /背景音|生成音频/.test(field.displayName)) return value ? '有声音' : '无声音'
   return value ? '开' : '关'
 }
 
@@ -713,7 +714,7 @@ function RefAddButton({
               onPickRealPerson?.()
             }}
           >
-            使用已认证真人素材
+            可使用已认证的真人素材
           </button>,
           document.body,
         )}
@@ -1346,7 +1347,7 @@ export default function CanvasNodePanel({
   const emptyModelLabel = useMemo(() => {
     if (modelsLoading) return '正在加载模型…'
     if (catalogOperationState?.status === 'error') return '模型加载失败，请重新加载'
-    if (catalogOperationState?.status === 'configuration-error') return '模型配置异常，请联系管理员'
+    if (catalogOperationState?.status === 'configuration-error') return '模型配置异常，请联系平台管理员'
     const labels: Record<string, string> = {
       'image.image_to_image': '暂无可用的图生图模型',
       'image.text_to_image': '暂无可用的文生图模型',
@@ -1363,7 +1364,6 @@ export default function CanvasNodePanel({
 
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
-  const hasAudioInput = kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio')
 
   // 节点自己已有的视频（上传或生成的）可作为编辑 / 延长的源视频。
   const hasSelfVideo = kind === 'video' && Boolean(node?.resultUrl) && Number(node?.assetId || 0) > 0
@@ -1382,9 +1382,9 @@ export default function CanvasNodePanel({
   // 后端未传时按其自身默认处理。
   const schemaFields = useMemo(() => {
     // 任务类型（编辑 / 延长）离不开视频：没接视频时不展示，也不下发。
-    const fields = parseParamsSchema(selectedModel).filter(
-      (field) => !isHiddenParamField(field, kind) && (taskModeVideoAvailable || !isVideoTaskModeField(field)),
-    )
+    const fields = parseParamsSchema(selectedModel)
+      .filter((field) => !isHiddenParamField(field, kind) && (taskModeVideoAvailable || !isVideoTaskModeField(field)))
+      .map((field) => (kind === 'video' && isAudioField(field) ? { ...field, displayName: '生成声音' } : field))
     if (hasMediaInput) return fields
     return fields.map((field) =>
       isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
@@ -1436,7 +1436,9 @@ export default function CanvasNodePanel({
       const params: Record<string, unknown> = {}
       if (maskAssetId > 0) params.mask_asset_id = maskAssetId
       for (const f of schemaFields) {
-        const value = values[f.name] !== undefined ? values[f.name] : f.default
+        // 尊重已选的 true/false；新视频节点未选择时默认有声音，预估与提交共用此值。
+        const value =
+          values[f.name] !== undefined ? values[f.name] : kind === 'video' && isAudioField(f) ? true : f.default
         const normalized =
           kind === 'image' && isImageCountField(f) ? normalizeImageCountValue(value) : normalizeFieldValue(f, value)
         if (normalized !== undefined) params[f.name] = normalized
@@ -1459,19 +1461,6 @@ export default function CanvasNodePanel({
     },
     [schemaFields, onRatioChange, onParamsChange, buildSchemaParams, fieldValues],
   )
-
-  const previousAudioConnection = useRef({ nodeId: node?.id, connected: hasAudioInput })
-  useEffect(() => {
-    const previous = previousAudioConnection.current
-    previousAudioConnection.current = { nodeId: node?.id, connected: hasAudioInput }
-    // 仅新接入音频时默认开启；恢复已有节点、手动关闭及断开连线均保留已存选择。
-    if (previous.nodeId !== node?.id || previous.connected || !hasAudioInput) return
-    const audioFields = schemaFields.filter(isAudioField)
-    if (!audioFields.length) return
-    const next = { ...fieldValues, ...Object.fromEntries(audioFields.map((field) => [field.name, true])) }
-    setFieldValues(next)
-    onParamsChange?.(buildSchemaParams(next))
-  }, [node?.id, hasAudioInput, schemaFields, fieldValues, onParamsChange, buildSchemaParams])
 
   const videoRatioField = kind === 'video' ? schemaFields.find(isRatioField) : undefined
   const videoRatioValue = videoRatioField ? formatRatioValue(fieldValues[videoRatioField.name]) : ''
@@ -1795,7 +1784,7 @@ export default function CanvasNodePanel({
       // 编辑 / 延长时比例跟随原视频，所选比例不生效，不在确认框里误导用户
       const ratioNote = videoRatioValue && !followSourceVideo ? `，画面比例 ${videoRatioValue}` : ''
       const confirmed = await requestConfirm(
-        `${operationLabel}${ratioNote}，预计费用 ${creditsYuanLabel(cost)}，是否继续？`,
+        `${operationLabel}${ratioNote}，预计消耗 ${creditsYuanLabel(cost)}，是否继续？`,
         {
           title: '确认生成费用',
           confirmLabel: '继续生成',
@@ -1885,11 +1874,13 @@ export default function CanvasNodePanel({
           (modelsLoading || ['error', 'empty', 'configuration-error'].includes(catalogOperationState.status)) && (
             <div className={styles.catalogNotice} role={catalogOperationState.status === 'error' ? 'alert' : 'status'}>
               <span>
-                {modelsLoading
-                  ? '正在加载模型目录…'
-                  : catalogOperationState.usingCachedModels
-                    ? `模型目录刷新失败，暂时显示上次成功的模型。${catalogOperationState.message}`
-                    : catalogOperationState.message}
+                {modelsLoading ? (
+                  '正在加载模型目录…'
+                ) : catalogOperationState.usingCachedModels ? (
+                  `模型目录刷新失败，暂时显示上次成功的模型。${catalogOperationState.message}`
+                ) : (
+                  <ModelAvailabilityNotice message={catalogOperationState.message} />
+                )}
                 {!modelsLoading && catalogOperationState.requestId && (
                   <small>请求 ID：{catalogOperationState.requestId}</small>
                 )}
@@ -2470,7 +2461,12 @@ export default function CanvasNodePanel({
           )}
           {kind !== 'text' && (
             <ModelSelector
+              key={node?.id}
+              durationLabel={(model) =>
+                getModelDurationLimitLabel(buildModelRestrictionSummary(model.source).constraints)
+              }
               models={availableModels}
+              operation={operationCode}
               // 与实际提交用的 selectedModel 同源，默认模型（含「上次使用」）才不会显示一个、提交另一个
               value={selectedModel?.modelVersionId}
               loading={modelsLoading}
@@ -2523,7 +2519,7 @@ export default function CanvasNodePanel({
                   : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
                     ? '积分不足'
                     : costEstimate.estimated_cost !== undefined
-                      ? creditsYuanLabel(costEstimate.estimated_cost)
+                      ? `预计消耗：${creditsYuanLabel(costEstimate.estimated_cost)}`
                       : '—'}
             </span>
           }
@@ -2557,302 +2553,6 @@ export default function CanvasNodePanel({
 }
 
 /* ---------- 子组件：选择器 ---------- */
-
-/** 通用选择器弹出层 */
-function SelectorPopover({
-  children,
-  open,
-  onClose,
-  onMouseEnter,
-  onMouseLeave,
-}: {
-  children: React.ReactNode
-  open: boolean
-  onClose: () => void
-  onMouseEnter: () => void
-  onMouseLeave: () => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const anchorRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-    }
-    const keyboard = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      anchorRef.current?.parentElement?.querySelector<HTMLButtonElement>('button')?.focus()
-      onClose()
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', keyboard, true)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', keyboard, true)
-    }
-  }, [open, onClose])
-  return open ? (
-    <div ref={anchorRef}>
-      <ViewportFloatingPanel
-        panelRef={ref}
-        className={styles.popover}
-        role="listbox"
-        aria-label="生成模型列表"
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
-      >
-        {children}
-      </ViewportFloatingPanel>
-    </div>
-  ) : null
-}
-
-/* ── 模型选择器（受控，数据来自 /api/v1/ai/models） ── */
-function ModelSelector({
-  models,
-  value,
-  loading,
-  disabled,
-  emptyLabel,
-  onChange,
-}: {
-  models: GenerationModelOption[]
-  value?: number
-  loading?: boolean
-  disabled?: boolean
-  /** 没有可用模型时的说明，用于区分「目录还没加载出来」和「这个操作没有可用模型」。 */
-  emptyLabel?: string
-  onChange?: (modelVersionId: number) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const availableModels = models.filter((m) => !m.unavailableReason)
-  /**
-   * 目录里有、但当前用不了的模型（未开通会员、余额不足、套餐不含等）。
-   *
-   * 这些模型原来被直接滤掉，控件只剩一句「暂无可用模型」且连点都点不开——
-   * 后端明明给了 unavailableReason，用户却看不到，只能以为是素材或连线出了毛病。
-   * 有原因就把原因显示出来，让人知道下一步该做什么。
-   */
-  const blockedModels = models.filter((m) => m.unavailableReason)
-  const blockedReason = String(blockedModels[0]?.unavailableReason || '')
-  const selected = availableModels.find((m) => m.modelVersionId === value)
-  const display = loading
-    ? '加载中...'
-    : selected?.displayName || (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')
-  // 有被挡住的模型时仍然允许展开：列表里逐条写明为什么用不了
-  const canOpen = !disabled && (availableModels.length > 0 || blockedModels.length > 0)
-  const hoverCloseTimerRef = useRef<number | null>(null)
-  const suppressHoverRef = useRef(false)
-  const openOnHover = () => {
-    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
-    hoverCloseTimerRef.current = null
-    if (canOpen && !suppressHoverRef.current) setOpen(true)
-  }
-  const scheduleHoverClose = () => {
-    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
-    hoverCloseTimerRef.current = window.setTimeout(() => {
-      setOpen(false)
-      hoverCloseTimerRef.current = null
-    }, 80)
-  }
-  useEffect(
-    () => () => {
-      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
-    },
-    [],
-  )
-
-  return (
-    <div
-      className={styles.selectorWrap}
-      onMouseLeave={() => {
-        scheduleHoverClose()
-      }}
-    >
-      <button
-        className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
-        onMouseEnter={openOnHover}
-        onMouseLeave={() => {
-          suppressHoverRef.current = false
-        }}
-        title={selected ? undefined : blockedReason || emptyLabel || undefined}
-        onClick={() => {
-          if (!canOpen) return
-          suppressHoverRef.current = false
-          openOnHover()
-        }}
-        aria-expanded={open && canOpen}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') setOpen(false)
-        }}
-      >
-        {display}
-      </button>
-      {open && canOpen && (
-        <SelectorPopover
-          open={open}
-          onClose={() => {
-            suppressHoverRef.current = true
-            setOpen(false)
-          }}
-          onMouseEnter={openOnHover}
-          onMouseLeave={scheduleHoverClose}
-        >
-          {/* 可用的排在前面：被锁住的混在中间会让人以为列表到此为止 */}
-          {availableModels.map((m) => (
-            <ModelOptionRow
-              key={m.modelVersionId}
-              model={m}
-              selected={m.modelVersionId === (selected?.modelVersionId ?? value)}
-              onSelect={() => {
-                suppressHoverRef.current = true
-                onChange?.(m.modelVersionId)
-                setOpen(false)
-              }}
-            />
-          ))}
-          {blockedModels.map((m) => (
-            <ModelOptionRow key={m.modelVersionId} model={m} blockedReason={String(m.unavailableReason)} />
-          ))}
-        </SelectorPopover>
-      )}
-    </div>
-  )
-}
-
-/**
- * 模型列表里的一行。
- *
- * 一行承载四类信息：厂商标记 + 模型名（可带 NEW）、特点标签、耗时、单价。
- * 这些全部来自后端记录，读不到的就不渲染——宁可这一行只有名字，
- * 也不能凭前端猜一个「高质量」出来，用户会照着它做选择。
- *
- * 不可用的模型同样走这一行：右侧换成锁标记，原因写在下方。
- * 锁给出「点不了」的瞬时信号，文字回答「为什么、下一步做什么」，两者缺一不可。
- */
-function ModelOptionRow({
-  model,
-  selected,
-  blockedReason,
-  onSelect,
-}: {
-  model: GenerationModelOption
-  selected?: boolean
-  blockedReason?: string
-  onSelect?: () => void
-}) {
-  const info = readModelPresentation(model)
-  const initial = readModelInitial(model.displayName, info.provider)
-  const hue = readModelAccentHue(model.displayName)
-  const blocked = Boolean(blockedReason)
-  /*
-   * 图标优先用后端给的 logo；加载失败再退回首字母。
-   * 不做失败回退的话，链接一坏这一列就全是碎图占位——比没有图标更糟。
-   */
-  const [logoFailed, setLogoFailed] = useState(false)
-  const showLogo = Boolean(info.logo) && !logoFailed
-  /*
-   * 模型的时长上限，直接展示在模型名下方。
-   * 不展示的话，用户只能先选中模型、再去时长档位条里看还剩哪几档，选错了还得退回来重选——
-   * 「我要的秒数它做不做得到」应当在选之前就看得见。
-   * 只报上限：模型是 1 秒起、到上限为止，逐档列出反而会把可选范围说窄。
-   */
-  const durationSupport = getModelDurationLimitLabel(buildModelRestrictionSummary(model.source).constraints)
-
-  const content = (
-    <>
-      <span className={styles.modelRowHead}>
-        {showLogo ? (
-          <img
-            className={styles.modelRowLogo}
-            src={info.logo}
-            alt=""
-            title={info.provider || undefined}
-            loading="lazy"
-            onError={() => setLogoFailed(true)}
-          />
-        ) : (
-          initial && (
-            <span
-              className={styles.modelRowAvatar}
-              // 厂商名放在 title 里：标记本身取的是模型名首字，厂商信息不该因此丢失
-              title={info.provider || undefined}
-              aria-hidden="true"
-              style={
-                blocked
-                  ? undefined
-                  : {
-                      // 同一模型每次打开都是同一个颜色（按名称哈希，不用随机值）
-                      background: `hsl(${hue} 62% 94%)`,
-                      color: `hsl(${hue} 46% 38%)`,
-                    }
-              }
-            >
-              {initial}
-            </span>
-          )
-        )}
-        <span className={styles.modelRowName}>{model.displayName}</span>
-        {info.isNew && !blocked && <span className={styles.modelRowNew}>NEW</span>}
-        {blocked ? (
-          <LockIcon />
-        ) : selected ? (
-          <span className={styles.modelRowCheck} aria-hidden="true">
-            ✓
-          </span>
-        ) : null}
-      </span>
-      {(durationSupport || info.tags.length > 0 || info.durationLabel || info.priceLabel) && (
-        <span className={styles.modelRowMeta}>
-          {/* 支持的秒数排在最前：选视频模型时这是最先要判断的一项 */}
-          {durationSupport && (
-            <span className={`${styles.modelRowTag} ${styles.modelRowTagDuration}`}>{durationSupport}</span>
-          )}
-          {info.tags.map((tag) => (
-            <span key={tag} className={styles.modelRowTag}>
-              {tag}
-            </span>
-          ))}
-          {info.durationLabel && <span className={styles.modelRowTag}>{info.durationLabel}</span>}
-          {info.priceLabel && <span className={styles.modelRowTag}>{info.priceLabel}</span>}
-        </span>
-      )}
-      {blocked && <em className={styles.modelRowReason}>{blockedReason}</em>}
-    </>
-  )
-
-  if (blocked) {
-    return (
-      <span className={`${styles.modelRow} ${styles.modelRowBlocked}`} title={blockedReason}>
-        {content}
-      </span>
-    )
-  }
-
-  return (
-    <button
-      type="button"
-      role="option"
-      aria-selected={Boolean(selected)}
-      className={`${styles.modelRow} ${selected ? styles.modelRowActive : ''}`}
-      onClick={onSelect}
-    >
-      {content}
-    </button>
-  )
-}
-
-/** 不可用模型的锁标记。 */
-function LockIcon() {
-  return (
-    <svg className={styles.modelRowLock} viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-      <rect x="3.5" y="7" width="9" height="6.5" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  )
-}
 
 /* ── 模型参数菜单（生成方式[视频] + params_schema 动态参数，所有节点类型通用） ── */
 function SchemaFieldMenu({
@@ -2907,9 +2607,7 @@ function SchemaFieldMenu({
       <Popover
         open={open}
         onOpenChange={setOpen}
-        trigger={['hover', 'click']}
-        mouseEnterDelay={0}
-        mouseLeaveDelay={0.08}
+        trigger="click"
         placement="top"
         align={{ offset: [0, 0], overflow: { adjustX: true, adjustY: true, shiftX: true, shiftY: true } }}
         arrow={false}
@@ -2977,7 +2675,7 @@ function SchemaFieldMenu({
                     {followsSource(f) ? (
                       <div className={styles.videoMenuHint}>编辑 / 延长时跟随原视频，无需选择。</div>
                     ) : isBooleanField(f) ? (
-                      <div className={styles.videoBtnGroup}>
+                      <div className={styles.videoBtnGroup} role="group" aria-label={f.displayName}>
                         <button
                           className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
                           aria-pressed={Boolean(current)}

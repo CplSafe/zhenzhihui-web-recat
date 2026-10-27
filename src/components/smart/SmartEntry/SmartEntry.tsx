@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
+import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
 import EntryDropdown from '../EntryDropdown'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import PromptPolishActions from '@/components/common/PromptPolishActions'
@@ -59,7 +60,7 @@ import { DEFAULT_REFERENCE_IMAGE_LIMIT } from '@/utils/modelInputConstraints'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
 import { useUnsavedEntryLeaveGuard } from '@/composables/useHotCopyLeaveGuard'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
+import { buildSmartImagePrompt, type SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import ImageDetailModal from '@/components/common/ImageDetailModal'
@@ -70,7 +71,8 @@ import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/pr
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useCurrentUser } from '@/stores/workspaceSession'
 import { estimateAiTaskCost } from '@/api/business'
-import { sumCredits, toMilli } from '@/utils/creditsFormat'
+import { estimateShotImageCost } from '@/api/smartShotImage'
+import { multiplyCredits, sumCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './SmartEntry.module.less'
 
 /** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
@@ -226,6 +228,8 @@ interface CreationCostEstimate {
   canAfford: boolean
   loading: boolean
   failed: boolean
+  estimateKind?: string
+  estimateNote?: string
 }
 
 /** 可选的智能成片脚本。 */
@@ -980,26 +984,55 @@ export default function SmartEntry({
           : operationCode.startsWith('image.')
             ? { ratio, count: mode === 'image' ? outputCount : 1 }
             : { duration: durationSec, ratio, resolution }
-      const result = await estimateAiTaskCost({
-        workspaceId,
-        modelVersionId,
-        operationCode,
-        prompt: cleanText,
-        params,
-        // 后端 input_assets 是 { asset_id, role } 对象数组，与正式提交同构；传裸数字会被整体判为
-        // 「请求体格式不合法」。本地上传的图在入口阶段 id 还是 0 会被过滤掉，所以只有带素材库/
-        // 真人库/上次创作的图时才失败——这就是预估「偶发」失败的来源。
-        inputAssets: imageAssetIds
-          .filter((assetId) => assetId > 0)
-          .map((assetId) => ({ asset_id: assetId, role: resolveModelInputAssetRoleSafe(undefined, operationCode) })),
-      })
+      const result = operationCode.startsWith('image.')
+        ? await estimateShotImageCost({
+            workspaceId,
+            modelVersionId: Number(modelVersionId),
+            modelVersion: resolveModel?.(operationCode, modelVersionId) || { id: Number(modelVersionId) },
+            prompt: buildSmartImagePrompt(cleanText, imageAssetIds, realPersonReferences),
+            ratio,
+            referenceImageCount: operationCode === 'image.image_to_image' ? images.length : 0,
+            refAssetIds: operationCode === 'image.image_to_image' ? imageAssetIds : [],
+          })
+        : await estimateAiTaskCost({
+            workspaceId,
+            modelVersionId,
+            operationCode,
+            prompt: cleanText,
+            params,
+            // 后端 input_assets 是 { asset_id, role } 对象数组，与正式提交同构；传裸数字会被整体判为
+            // 「请求体格式不合法」。本地上传的图在入口阶段 id 还是 0 会被过滤掉，所以只有带素材库/
+            // 真人库/上次创作的图时才失败——这就是预估「偶发」失败的来源。
+            inputAssets: imageAssetIds
+              .filter((assetId) => assetId > 0)
+              .map((assetId) => ({
+                asset_id: assetId,
+                role: resolveModelInputAssetRoleSafe(undefined, operationCode),
+              })),
+          })
       return {
-        estimatedCost: Number(result?.estimated_cost ?? 0),
+        estimatedCost: operationCode.startsWith('image.')
+          ? multiplyCredits(result?.estimated_cost ?? 0, mode === 'image' ? outputCount : 1)
+          : Number(result?.estimated_cost ?? 0),
+        estimateKind: result?.estimate_kind,
+        estimateNote: result?.estimate_note,
         balance: Number.isFinite(Number(result?.balance)) ? Number(result.balance) : undefined,
         canAfford: result?.can_afford,
       }
     },
-    [cleanText, duration, imageAssetIds, mode, outputCount, ratio, resolution, workspaceId],
+    [
+      cleanText,
+      duration,
+      imageAssetIds,
+      images.length,
+      mode,
+      outputCount,
+      ratio,
+      realPersonReferences,
+      resolution,
+      workspaceId,
+      resolveModel,
+    ],
   )
   /**
    * 合计预估：把每个已选模型各跑一次估价后求和，显示在「去制作」旁边。
@@ -1057,6 +1090,8 @@ export default function SmartEntry({
             (balance == null || toMilli(total) <= toMilli(balance)),
           loading: false,
           failed: results.some((item) => !item.ok),
+          estimateKind: succeeded.some((item) => item.estimateKind === 'reservation') ? 'reservation' : 'estimate',
+          estimateNote: [...new Set(succeeded.map((item) => item.estimateNote).filter(Boolean))].join('；'),
         })
       })
     }, 400)
@@ -1451,7 +1486,13 @@ export default function SmartEntry({
                 <div className={styles.capabilityNotice} role="status">
                   {modelError ? (
                     <>
-                      {modelError}
+                      <ModelAvailabilityNotice
+                        message={
+                          typeof modelError === 'string'
+                            ? modelError
+                            : Object.values(modelError).filter(Boolean).join('；')
+                        }
+                      />
                       {onReloadModels && (
                         <button type="button" className={styles.noticeAction} onClick={() => onReloadModels()}>
                           重新加载
@@ -1470,6 +1511,8 @@ export default function SmartEntry({
                     loading={modelEstimate.loading}
                     failed={modelEstimate.failed}
                     estimatedCost={modelEstimate.total}
+                    estimateKind={modelEstimate.estimateKind}
+                    estimateNote={modelEstimate.estimateNote}
                     canAfford={modelEstimate.canAfford}
                   />
                 </div>

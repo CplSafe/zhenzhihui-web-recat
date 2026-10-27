@@ -284,7 +284,7 @@ export const deriveCurrentPlanName = (s: S): string => deriveActiveSubscription(
 /** 取得当前套餐到期时间。 */
 export const deriveCurrentPlanExpiresAt = (s: S): string => deriveActiveSubscription(s)?.current_period_end || ''
 /** 取得钱包可用积分。 */
-export const deriveWalletCredits = (s: S): number => Number(s.currentWallet?.available ?? 0)
+export const deriveWalletCredits = (s: S): number => Number(s.currentWallet?.available ?? s.currentWallet?.balance ?? 0)
 
 /** 按套餐代码查找已加载的计费方案。 */
 const findPlanByCode = (s: S, code: any) => (code && s.billingPlans.find((p) => p.code === code)) || null

@@ -38,23 +38,32 @@ describe('画布快捷键冲突处理', () => {
     expect(resolveCanvasZoomShortcut(key('0', { ctrlKey: true }))).toBeNull()
     expect(resolveCanvasZoomShortcut(key('+', { ctrlKey: true, altKey: true }))).toBeNull()
   })
-  it('连线、副本、添加使用 L、Shift+D、N', () => {
-    expect(resolveCanvasCreationShortcut(key('l'))).toBe('connect')
-    expect(resolveCanvasCreationShortcut(key('L'))).toBe('connect')
-    expect(resolveCanvasCreationShortcut(key('D', { shiftKey: true }))).toBe('duplicate')
-    expect(resolveCanvasCreationShortcut(key('n'))).toBe('add')
-    expect(resolveCanvasCreationShortcut(key('d'))).toBeNull()
-    expect(resolveCanvasCreationShortcut(key('N', { shiftKey: true }))).toBeNull()
+  it.each(['ctrlKey', 'metaKey'] as const)('连线和复制使用 %s，Tab 新建节点', (modifier) => {
+    expect(resolveCanvasCreationShortcut(key('l', { [modifier]: true }))).toBe('connect')
+    expect(resolveCanvasCreationShortcut(key('D', { [modifier]: true }))).toBe('duplicate')
+    expect(resolveCanvasCreationShortcut(key('Tab'))).toBe('add')
+    expect(resolveCanvasCreationShortcut(key('n', { [modifier]: true }))).toBeNull()
+    for (const name of ['l', 'd', 'n']) expect(resolveCanvasCreationShortcut(key(name))).toBeNull()
+    expect(resolveCanvasCreationShortcut(key('L', { [modifier]: true, shiftKey: true }))).toBeNull()
   })
 
-  it.each(['d', '+', '-', '0', 'Tab'])('不再接管浏览器或 Tab 的 %s', (name) => {
+  it.each(['d', '+', '-', '0'])('不将 %s 识别为创建命令', (name) => {
     expect(resolveCanvasCreationShortcut(key(name))).toBeNull()
   })
 
-  it.each(['ctrlKey', 'metaKey', 'altKey'] as const)('保留带 %s 的浏览器组合键', (modifier) => {
-    for (const name of ['l', 'd', '+', '-', '0', 'n', 'Tab']) {
-      expect(resolveCanvasCreationShortcut(key(name, { [modifier]: true }))).toBeNull()
+  it('不将无关修饰键或 Tab 识别为创建命令', () => {
+    for (const name of ['l', 'd', 'n']) {
+      expect(resolveCanvasCreationShortcut(key(name, { altKey: true }))).toBeNull()
     }
+    expect(resolveCanvasCreationShortcut(key('Tab', { ctrlKey: true }))).toBeNull()
+    expect(DEFAULT_CANVAS_SHORTCUTS).toMatchObject({
+      add: 'Tab',
+      selectTool: 'V',
+      panTool: 'H',
+      arrange: 'Alt+Shift+F',
+      fitView: 'Mod+0',
+    })
+    expect(resolveCanvasCreationShortcut(key('Tab', { shiftKey: true }))).toBeNull()
   })
 
   it('支持录入、展示并匹配用户自定义组合键', () => {

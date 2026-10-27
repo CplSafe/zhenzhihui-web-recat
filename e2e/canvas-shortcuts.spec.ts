@@ -3,6 +3,7 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } fr
 
 test('画布快捷键遵守焦点范围并保留浏览器与 Tab 行为', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))
   await page.route('**/api/v1/canvases/119**', async (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
@@ -27,17 +28,26 @@ test('画布快捷键遵守焦点范围并保留浏览器与 Tab 行为', async 
       return event.defaultPrevented
     })
   })
-  expect(prevented).toEqual([false, false, false, false, false])
+  // 焦点在画布时接管命令组合键，包括无选中节点时的连线/副本命令。
+  expect(prevented).toEqual([true, true, true, true, true])
+  const viewport = page.locator('.react-flow__viewport')
+  const scale = () => viewport.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a)
+  const beforeZoom = await scale()
+  await page.keyboard.press('Control+=')
+  await expect.poll(scale).toBeGreaterThan(beforeZoom)
+  const zoomed = await scale()
+  await page.keyboard.press('Control+-')
+  await expect.poll(scale).toBeLessThan(zoomed)
 
-  await page.keyboard.press('n')
+  await page.keyboard.press('Tab')
   await expect(menu).toBeVisible()
   await expect(menu.getByRole('button', { name: '文本节点' })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(menu).toBeHidden()
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
   await expect(root).not.toBeFocused()
   await expect(menu).toBeHidden()
-  await page.keyboard.press('n')
+  await page.keyboard.press('Tab')
   await expect(menu).toBeHidden()
 
   await page.evaluate(() => {
@@ -49,19 +59,19 @@ test('画布快捷键遵守焦点范围并保留浏览器与 Tab 行为', async 
   })
   await pane.click({ position: { x: 600, y: 300 } })
   await page.getByTestId('shortcut-outside').click()
-  await page.keyboard.press('n')
+  await page.keyboard.press('Tab')
   await expect(menu).toBeHidden()
   await page.getByTestId('shortcut-outside').evaluate((element) => element.remove())
 
   await pane.click({ position: { x: 600, y: 300 } })
   await page.keyboard.press('Shift+/')
   await expect(page.getByRole('dialog', { name: '画布快捷键' })).toBeVisible()
-  await page.keyboard.press('n')
+  await page.keyboard.press('Tab')
   await expect(menu).toBeHidden()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog', { name: '画布快捷键' })).toBeHidden()
   await expect(root).toBeFocused()
-  await page.keyboard.press('n')
+  await page.keyboard.press('Tab')
   await expect(menu).toBeVisible()
   expectNoUnexpectedApi(api)
 })

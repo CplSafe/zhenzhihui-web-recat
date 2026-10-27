@@ -4,11 +4,11 @@ import type { GenerationModelOption } from './generationModelCatalog'
 export function isCanvasToolOnlyImageModel(model: GenerationModelOption): boolean {
   return [
     model.displayName,
-    model.source.model_code,
-    model.source.modelCode,
-    model.source.model_name,
-    model.source.modelName,
-    model.source.name,
+    model.source?.model_code,
+    model.source?.modelCode,
+    model.source?.model_name,
+    model.source?.modelName,
+    model.source?.name,
   ].some((value) => {
     const identity = String(value ?? '')
       .toLowerCase()

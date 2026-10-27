@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
 import { estimateAiTaskCost } from '@/api/business'
+import * as uiStore from '@/stores/ui'
 import { createGenerationModelOperationStateMap } from '@/utils/generationModelCatalog'
 
 /**
@@ -30,7 +31,7 @@ function renderPanel(imageModels: any[], node: any = imageNodeWithReference(), e
     <CanvasNodePanel
       node={node as any}
       workspaceId={7}
-      models={{ text: [], image: imageModels, video: [] } as any}
+      models={{ text: [], image: imageModels.map((model) => ({ source: {}, ...model })), video: [] } as any}
       modelsLoading={false}
       onGenerate={vi.fn()}
       onModelChange={vi.fn()}
@@ -50,7 +51,7 @@ describe('CanvasNodePanel unified real-person material entry', () => {
   it('零费用预估也显示金额', async () => {
     vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({ estimated_cost: 0, balance: 100, can_afford: true })
     renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
-    expect(await screen.findByText('约0元', {}, { timeout: 2000 })).toBeInTheDocument()
+    expect(await screen.findByText('预计消耗：约0元', {}, { timeout: 2000 })).toBeInTheDocument()
   })
 
   it('参考来源菜单脱离可滚动面板，并支持关闭和选用素材', async () => {
@@ -255,7 +256,7 @@ describe.each([
 })
 
 describe('CanvasNodePanel 模型选择器', () => {
-  it('悬停展开模型列表，移入列表后保持展开，移出后收起', async () => {
+  it('模型列表仅点击展开，移出后保持展开', async () => {
     const user = userEvent.setup()
     renderPanel([
       { modelVersionId: 21, displayName: '模型一', operationCodes: IMAGE_OPERATIONS },
@@ -263,10 +264,14 @@ describe('CanvasNodePanel 模型选择器', () => {
     ])
     const trigger = screen.getByRole('button', { name: '模型一' })
     await user.hover(trigger)
+    expect(screen.queryByText('模型二')).not.toBeInTheDocument()
+    await user.click(trigger)
     const option = await screen.findByText('模型二')
     await user.hover(option)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     await user.unhover(option)
+    expect(screen.getByText('模型二')).toBeInTheDocument()
+    await user.click(trigger)
     await waitFor(() => expect(screen.queryByText('模型二')).not.toBeInTheDocument())
   })
 
@@ -293,7 +298,7 @@ describe('CanvasNodePanel 模型选择器', () => {
       },
     ])
 
-    await user.hover(screen.getByRole('button', { name: '1:1' }))
+    await user.click(screen.getByRole('button', { name: '1:1' }))
     expect(await screen.findByText('比例')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '9:16' })).toBeInTheDocument()
   })
@@ -301,7 +306,7 @@ describe('CanvasNodePanel 模型选择器', () => {
   it('把预估费用显示为独立文字，右侧使用文字生成按钮', async () => {
     renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }])
 
-    const cost = await screen.findByText('约0.2元')
+    const cost = await screen.findByText('预计消耗：约0.2元')
     expect(cost.closest('button')).toBeNull()
     expect(screen.getByRole('button', { name: '生成' })).toBeEnabled()
     expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
@@ -591,7 +596,7 @@ describe('CanvasNodePanel 模型选择器', () => {
 
     const selector = screen.getByRole('button', { name: '可用模型 A' })
     await user.click(selector)
-    expect(screen.getByRole('option', { name: '可用模型 B' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /可用模型 B/ })).toBeInTheDocument()
   })
 })
 
@@ -1723,7 +1728,7 @@ it.each([
   expect(onGenerate.mock.calls[0]![0].params[field.name]).toBe(false)
 })
 
-it('视频数量带条单位且背景音不会混成水印开关', async () => {
+it('视频数量带条单位，声音选项与水印各自显示', async () => {
   const user = userEvent.setup()
   const model = {
     ...modelWithFields([
@@ -1740,88 +1745,144 @@ it('视频数量带条单位且背景音不会混成水印开关', async () => {
       models: { text: [], image: [], video: [model] },
     },
   )
-  await user.click(screen.getByRole('button', { name: /2条 · 有背景音 · 无水印/ }))
+  await user.click(screen.getByRole('button', { name: /2条.*无水印/ }))
   expect(screen.getByText('2条')).toBeInTheDocument()
   expect(screen.getByRole('slider', { name: '生成数量' })).toHaveValue('2')
-  expect(screen.getByRole('button', { name: '有背景音' })).toBeInTheDocument()
+  expect(screen.getByText('生成声音')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '有声音' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: '无声音' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '无水印' })).toBeInTheDocument()
 })
 
-it.each(['Seedance 2.0', '其他视频模型'])('音频连接的视频默认有声且允许切换：%s', async (displayName) => {
+it.each(['generate_audio', 'audio', 'with_audio', 'enable_audio'])(
+  '生成声音恢复已保存选择，开关用于提交和持久化：%s',
+  async (name) => {
+    vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(true)
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    const onParamsChange = vi.fn()
+    const model = {
+      ...modelWithFields([{ name, display_name: '自动生成背景音', type: 'bool', default: false }]),
+      operationCodes: ['video.generate'],
+    }
+    renderPanel(
+      [],
+      {
+        id: 'video-audio',
+        kind: 'video',
+        prompt: '测试视频',
+        videoMode: 'auto',
+        params: { [name]: false },
+        sourceRefs: [],
+      },
+      { models: { text: [], image: [], video: [model] }, onGenerate, onParamsChange },
+    )
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onGenerate.mock.calls[0]![0].params[name]).toBe(false)
+    await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(false))
+    await user.click(screen.getByRole('button', { name: /自由生成.*无声音/ }))
+    expect(screen.getByText('生成声音')).toBeInTheDocument()
+    expect(screen.queryByText(/有背景音|无背景音|自动生成背景音/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '无声音' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: '有声音' }))
+    expect(onParamsChange).toHaveBeenLastCalledWith({ [name]: true })
+    await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+    await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(true))
+    await waitFor(() => expect(screen.getByTitle('发送生成')).toBeEnabled())
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onGenerate).toHaveBeenCalledTimes(2)
+    expect(onGenerate.mock.lastCall?.[0].params[name]).toBe(true)
+    await user.click(screen.getByRole('button', { name: /自由生成.*有声音/ }))
+    await user.click(screen.getByRole('button', { name: '无声音' }))
+    expect(onParamsChange).toHaveBeenLastCalledWith({ [name]: false })
+    await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+    await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(false))
+    await waitFor(() => expect(screen.getByTitle('发送生成')).toBeEnabled())
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onGenerate).toHaveBeenCalledTimes(3)
+    expect(onGenerate.mock.lastCall?.[0].params[name]).toBe(false)
+  },
+)
+
+it('新视频节点默认有声音', async () => {
+  vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(true)
   const user = userEvent.setup()
-  const onParamsChange = vi.fn()
+  const onGenerate = vi.fn()
   const model = {
-    ...modelWithFields([{ name: 'generate_audio', display_name: '自动生成背景音', type: 'bool', default: true }]),
-    displayName,
+    ...modelWithFields([{ name: 'generate_audio', display_name: '背景音', type: 'bool', default: false }]),
     operationCodes: ['video.generate'],
   }
   renderPanel(
     [],
-    {
-      id: 'video-audio',
-      kind: 'video',
-      prompt: '测试视频',
-      videoMode: 'auto',
-      sourceRefs: [{ nodeId: 'audio-source', kind: 'audio', assetId: 42 }],
-    },
-    { models: { text: [], image: [], video: [model] }, onParamsChange },
+    { id: 'video-new', kind: 'video', prompt: '新视频', videoMode: 'auto', sourceRefs: [] },
+    { models: { text: [], image: [], video: [model] }, onGenerate },
   )
-  await user.click(screen.getByRole('button', { name: /有背景音/ }))
-  expect(screen.getByRole('button', { name: '有背景音' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: '无背景音' })).toBeEnabled()
-  await user.click(screen.getByRole('button', { name: '无背景音' }))
-  expect(onParamsChange).toHaveBeenLastCalledWith(expect.objectContaining({ generate_audio: false }))
-  expect(screen.getByRole('button', { name: '无背景音' })).toHaveAttribute('aria-pressed', 'true')
-  await user.click(screen.getByRole('button', { name: '有背景音' }))
-  expect(onParamsChange).toHaveBeenLastCalledWith(expect.objectContaining({ generate_audio: true }))
-  expect(screen.getByRole('button', { name: '有背景音' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: /自由生成.*有声音/ }))
+  expect(screen.getByRole('button', { name: '有声音' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await user.click(screen.getByTitle('发送生成'))
+  expect(onGenerate.mock.lastCall?.[0].params.generate_audio).toBe(true)
 })
 
-it('已有视频新接音频默认开启，手动关闭及重新打开保留无声设置', async () => {
+it('有声音和无声音的选择均在面板卸载重开后保留', async () => {
   const user = userEvent.setup()
   const model = {
-    ...modelWithFields([{ name: 'generate_audio', display_name: '生成音频', type: 'bool', default: true }]),
+    ...modelWithFields([{ name: 'generate_audio', display_name: '背景音', type: 'bool', default: false }]),
     operationCodes: ['video.generate'],
   }
   function Harness() {
-    const [connected, setConnected] = useState(false)
-    const [open, setOpen] = useState(true)
     const [params, setParams] = useState({ generate_audio: false })
+    const [open, setOpen] = useState(true)
     return (
       <>
-        <button onClick={() => setConnected(true)}>连接音频</button>
-        <button onClick={() => setOpen(!open)}>切换面板</button>
+        <button onClick={() => setOpen((value) => !value)}>切换面板</button>
         {open && (
           <CanvasNodePanel
-            node={
-              {
-                id: 'video',
-                kind: 'video',
-                prompt: '测试视频',
-                videoMode: 'auto',
-                params,
-                sourceRefs: connected ? [{ nodeId: 'audio', kind: 'audio', assetId: 42 }] : [],
-              } as any
-            }
+            node={{ id: 'video', kind: 'video', prompt: '文案', videoMode: 'auto', sourceRefs: [], params } as any}
             workspaceId={7}
             models={{ text: [], image: [], video: [model] } as any}
-            onParamsChange={(next) => setParams(next as typeof params)}
+            modelsLoading={false}
+            onGenerate={vi.fn()}
+            onModelChange={vi.fn()}
+            onParamsChange={(value) => setParams(value as typeof params)}
           />
         )}
       </>
     )
   }
   render(<Harness />)
-  await user.click(screen.getByRole('button', { name: '连接音频' }))
-  await user.click(screen.getByRole('button', { name: /有背景音/ }))
-  await user.click(screen.getByRole('button', { name: '无背景音' }))
-  expect(screen.getByRole('button', { name: '无背景音' })).toHaveAttribute('aria-pressed', 'true')
-  await user.click(screen.getByRole('button', { name: '切换面板' }))
-  await user.click(screen.getByRole('button', { name: '切换面板' }))
-  await user.click(screen.getByRole('button', { name: /无背景音/ }))
-  expect(screen.getByRole('button', { name: '无背景音' })).toHaveAttribute('aria-pressed', 'true')
+  for (const [from, to] of [
+    ['无声音', '有声音'],
+    ['有声音', '无声音'],
+  ]) {
+    await user.click(screen.getByRole('button', { name: new RegExp(`自由生成.*${from}`) }))
+    await user.click(screen.getByRole('button', { name: to }))
+    await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+    await user.click(screen.getByRole('button', { name: '切换面板' }))
+    await user.click(screen.getByRole('button', { name: '切换面板' }))
+    expect(screen.getByRole('button', { name: new RegExp(`自由生成.*${to}`) })).toBeInTheDocument()
+  }
 })
 
+it('模型未声明声音能力时不显示声音控件，也不提交声音参数', async () => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  const model = {
+    ...modelWithFields([{ name: 'duration', display_name: '时长', options: [5], default: 5 }]),
+    operationCodes: ['video.generate'],
+  }
+  renderPanel(
+    [],
+    { id: 'video-silent-model', kind: 'video', prompt: '测试', videoMode: 'auto', sourceRefs: [] },
+    { models: { text: [], image: [], video: [model] }, onGenerate },
+  )
+  await user.click(screen.getByRole('button', { name: /自由生成/ }))
+  expect(screen.queryByText('生成声音')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await user.click(screen.getByTitle('发送生成'))
+  for (const key of ['generate_audio', 'audio', 'with_audio', 'enable_audio'])
+    expect(onGenerate.mock.lastCall?.[0].params).not.toHaveProperty(key)
+})
 it('保留 Seedream 的 size 分辨率档位', async () => {
   const user = userEvent.setup()
   const onGenerate = vi.fn()

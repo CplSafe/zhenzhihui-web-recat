@@ -35,6 +35,7 @@ export interface CanvasPreferences {
   notifySound: boolean
   /** 可由用户自定义的画布高频快捷键 */
   shortcuts: CanvasShortcutBindings
+  shortcutsVersion: 3
 }
 
 export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
@@ -48,9 +49,37 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
   notifyOnFail: true,
   notifySound: true,
   shortcuts: { ...DEFAULT_CANVAS_SHORTCUTS },
+  shortcutsVersion: 3,
 }
 
 const STORAGE_KEY = 'zzh_canvas_preferences'
+
+// 旧版本会保存整份默认快捷键；仅升级旧默认值，保留用户自定义组合。
+const LEGACY_CANVAS_SHORTCUTS: CanvasShortcutBindings = {
+  connect: 'L',
+  duplicate: 'Shift+D',
+  add: 'N',
+  selectTool: 'V',
+  panTool: 'H',
+  arrange: 'Alt+Shift+F',
+  zoomIn: 'E',
+  zoomOut: 'Q',
+  resetZoom: '0',
+  fitView: '1',
+}
+
+const PREVIOUS_CANVAS_SHORTCUTS: CanvasShortcutBindings = {
+  connect: 'Mod+L',
+  duplicate: 'Mod+D',
+  add: 'Mod+N',
+  selectTool: 'Mod+Shift+V',
+  panTool: 'Mod+H',
+  arrange: 'Mod+Alt+F',
+  zoomIn: 'Mod+=',
+  zoomOut: 'Mod+-',
+  resetZoom: 'Mod+0',
+  fitView: 'Mod+1',
+}
 
 const WHEEL_MODES: readonly CanvasWheelMode[] = ['pan', 'zoom']
 const MENU_TRIGGERS: readonly CanvasPaneMenuTrigger[] = ['contextmenu', 'dblclick']
@@ -67,7 +96,15 @@ export function normalizeCanvasPreferences(raw: unknown): CanvasPreferences {
   const shortcuts = Object.fromEntries(
     (Object.keys(DEFAULT_CANVAS_SHORTCUTS) as CanvasShortcutAction[]).map((action) => {
       const value = String((rawShortcuts as Record<string, unknown>)[action] || '')
-      return [action, value || DEFAULT_CANVAS_SHORTCUTS[action]]
+      return [
+        action,
+        !value ||
+        (source.shortcutsVersion !== 3 &&
+          (value === PREVIOUS_CANVAS_SHORTCUTS[action] ||
+            (source.shortcutsVersion !== 2 && value === LEGACY_CANVAS_SHORTCUTS[action])))
+          ? DEFAULT_CANVAS_SHORTCUTS[action]
+          : value,
+      ]
     }),
   ) as CanvasShortcutBindings
   return {
@@ -85,6 +122,7 @@ export function normalizeCanvasPreferences(raw: unknown): CanvasPreferences {
     notifyOnFail: bool('notifyOnFail'),
     notifySound: bool('notifySound'),
     shortcuts,
+    shortcutsVersion: 3,
   }
 }
 

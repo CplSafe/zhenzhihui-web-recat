@@ -64,6 +64,12 @@ describe('全屏视频时空格只做播放 / 暂停', () => {
     wrapper.remove()
   })
 
+  it('整个画布全屏时不误控制其中的视频，保留空格抓手', () => {
+    setFullscreenElement(document.documentElement)
+    expect(pressSpace().defaultPrevented).toBe(false)
+    expect(video.pause).not.toHaveBeenCalled()
+  })
+
   it('不全屏时完全不接管空格', () => {
     setFullscreenElement(null)
     const event = pressSpace()

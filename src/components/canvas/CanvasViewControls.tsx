@@ -10,6 +10,9 @@
 import styles from './CanvasViewControls.module.css'
 
 export interface CanvasViewControlsProps {
+  keyboardPriority?: boolean
+  keyboardPriorityPending?: boolean
+  onKeyboardPriorityToggle?: () => void
   uiSize?: 'standard' | 'large' | 'extra-large'
   onUiSizeChange?: (size: 'standard' | 'large' | 'extra-large') => void
   /** 当前缩放倍率（1 = 100%） */
@@ -18,6 +21,7 @@ export interface CanvasViewControlsProps {
   onZoomOut: () => void
   /** 点击倍率读数回到 100% */
   onZoomReset: () => void
+  onZoomTo?: (zoom: number) => void
   /** 复位视图：缩放到刚好装下全部节点 */
   onFitView: () => void
   snapEnabled: boolean
@@ -39,12 +43,16 @@ export interface CanvasViewControlsProps {
 }
 
 export default function CanvasViewControls({
+  keyboardPriority = false,
+  keyboardPriorityPending = false,
+  onKeyboardPriorityToggle,
   uiSize = 'standard',
   onUiSizeChange,
   zoom,
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  onZoomTo,
   onFitView,
   snapEnabled,
   onSnapToggle,
@@ -78,15 +86,33 @@ export default function CanvasViewControls({
       </button>
 
       {/* 读数本身可点：这是回到 100% 最直觉的入口，比再加一个按钮省地方 */}
-      <button
-        type="button"
-        className={styles.zoomValue}
-        onClick={onZoomReset}
-        title="点击回到 100%"
-        aria-label={`当前缩放 ${percent}%，点击回到 100%`}
-      >
-        {percent}%
-      </button>
+      {onZoomTo ? (
+        <select
+          aria-label="画布缩放"
+          className={styles.zoomValue}
+          value={percent}
+          onChange={(event) => onZoomTo(Number(event.target.value) / 100)}
+        >
+          {![1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].includes(percent) && (
+            <option value={percent}>{percent}%</option>
+          )}
+          {[1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].map((value) => (
+            <option key={value} value={value}>
+              {value}%
+            </option>
+          ))}
+        </select>
+      ) : (
+        <button
+          type="button"
+          className={styles.zoomValue}
+          onClick={onZoomReset}
+          title="点击回到 100%"
+          aria-label={`当前缩放 ${percent}%，点击回到 100%`}
+        >
+          {percent}%
+        </button>
+      )}
 
       <button type="button" className={styles.btn} onClick={onZoomIn} title="放大" aria-label="放大">
         <PlusIcon />
@@ -144,6 +170,32 @@ export default function CanvasViewControls({
         </button>
       )}
 
+      {onKeyboardPriorityToggle && (
+        <button
+          type="button"
+          className={`${styles.btn} ${keyboardPriority ? styles.btnActive : ''}`}
+          onClick={onKeyboardPriorityToggle}
+          disabled={keyboardPriorityPending}
+          aria-label="全屏快捷键模式"
+          aria-pressed={keyboardPriority}
+          aria-busy={keyboardPriorityPending}
+          title={keyboardPriority ? '退出全屏快捷键模式（Esc）' : '进入全屏，让画布快捷键优先于浏览器'}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            aria-hidden="true"
+          >
+            <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
+            <rect x="7" y="9" width="10" height="7" rx="1.5" />
+            <path d="M9 12h1m1 0h1m1 0h2M10 14h4" />
+          </svg>
+        </button>
+      )}
       {onOpenHelp && (
         <button
           type="button"

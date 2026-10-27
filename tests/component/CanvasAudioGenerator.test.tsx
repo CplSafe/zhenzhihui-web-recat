@@ -40,6 +40,7 @@ vi.mock('@/utils/canvasAudio', async (original) => ({
   readAudioDuration: mocks.duration,
 }))
 vi.mock('@/api/business', () => ({
+  getSubscription: vi.fn().mockResolvedValue(undefined),
   listAiModels: mocks.list,
   estimateAiTaskCost: mocks.estimate,
   createAiTask: mocks.submit,
@@ -248,8 +249,10 @@ describe('音频生成任务提交', () => {
   it('没有目录能力时不展示可提交的模拟模型', async () => {
     mocks.list.mockResolvedValue([])
     render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
-    expect(await screen.findByRole('button', { name: '音频生成模型' })).toHaveTextContent('暂无可用音频生成模型')
-    expect(await screen.findByRole('status')).toHaveTextContent('切换到已开放音频模型的工作空间')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '音频生成模型' })).toHaveTextContent('暂无可用音频生成模型'),
+    )
+    expect(await screen.findByRole('status')).toHaveTextContent('平台管理员')
     expect(screen.getByRole('button', { name: '生成音频' })).toBeDisabled()
   })
   it('混合目录只展示生成操作，不将识别和转写标成配音', async () => {

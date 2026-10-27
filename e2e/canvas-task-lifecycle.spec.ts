@@ -155,7 +155,7 @@ for (const scenario of [
     await page.goto('/canvas/108')
     await expect(page.getByText(`上次生成失败：${oldError}`, { exact: true })).toBeVisible()
     expect(oldTaskQueries).toBe(1)
-    await page.getByRole('button', { name: /当前缩放/ }).click()
+    await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
     await page.locator('.react-flow__node-image').filter({ hasText: oldError }).click()
     const send = page.getByRole('button', { name: /约.*元/ })
     await expect(send).toBeEnabled()

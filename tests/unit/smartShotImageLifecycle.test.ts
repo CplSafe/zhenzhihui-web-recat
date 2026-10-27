@@ -1039,6 +1039,35 @@ describe('estimateShotImageCost', () => {
     mocks.estimateAiTaskCost.mockResolvedValue({ credits: 4 })
   })
 
+  it('passes exact reference assets and final prompt to the pricing request', async () => {
+    const model = { id: 613 }
+    mocks.buildStoryboardImageParams.mockReturnValue({ ratio: '16:9', count: 1 })
+    mocks.getModelParamFields.mockReturnValue([])
+    await estimateShotImageCost({
+      workspaceId: 7,
+      modelVersionId: 613,
+      modelVersion: model,
+      refAssetIds: [731, 732],
+      prompt: '最终提示词',
+      ratio: '16:9',
+    })
+    expect(mocks.estimateAiTaskCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationCode: 'image.image_to_image',
+        prompt: '最终提示词',
+        inputAssets: [
+          { asset_id: 731, role: 'reference_image' },
+          { asset_id: 732, role: 'reference_image' },
+        ],
+        params: { ratio: '16:9', count: 1 },
+      }),
+    )
+    await expect(estimateShotImageCost({ workspaceId: 7, refAssetIds: [731], referenceImageCount: 2 })).rejects.toThrow(
+      '参考图数量参数无效',
+    )
+    await expect(estimateShotImageCost({ workspaceId: 7, refAssetIds: [0] })).rejects.toThrow('参考图尚未准备完成')
+  })
+
   it('rejects estimate before billing when the selected model requires more references', async () => {
     const selectedModel = {
       id: 621,

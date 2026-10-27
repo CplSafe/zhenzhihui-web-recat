@@ -1,4 +1,5 @@
 import ViewportFloatingPanel from './ViewportFloatingPanel'
+import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import { useMentionNavigation } from '@/composables/useMentionNavigation'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import { useReactFlow } from '@xyflow/react'
@@ -74,11 +75,13 @@ export default function CanvasAudioGenerator({
   nodeId,
   data,
   workspaceId,
+  active = true,
   onGenerated,
 }: {
   nodeId: string
   data: Record<string, any>
   workspaceId: number
+  active?: boolean
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const { updateNodeData, getEdges, getNode, getNodes } = useReactFlow()
@@ -102,6 +105,14 @@ export default function CanvasAudioGenerator({
   const modelOptionsRef = useRef<HTMLDivElement>(null)
   const settingsTrigger = useRef<HTMLButtonElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  useEffect(() => {
+    if (active) return
+    setSampleLibraryOpen(false)
+    setModelMenuOpen(false)
+    setSettingsOpen(false)
+    setReferenceSearch(null)
+    setReferenceRange(null)
+  }, [active])
   const hydratedModel = useRef('')
   const [mode, setMode] = useState<AudioGenerationMode | ''>(
     data.operationCode ? getAudioGenerationMode(String(data.operationCode)) : '',
@@ -992,7 +1003,7 @@ export default function CanvasAudioGenerator({
           )}
         </>
       )}
-      {sampleLibraryOpen && userId && (
+      {active && sampleLibraryOpen && userId && (
         <Suspense fallback={<p role="status">正在加载音色库…</p>}>
           <CanvasVoiceLibrary
             key={`${userId}:${workspaceId}:${modelKey}`}
@@ -1152,7 +1163,7 @@ export default function CanvasAudioGenerator({
             />
           </svg>
         </button>
-        {modelMenuOpen && models.length > 0 && (
+        {active && modelMenuOpen && models.length > 0 && (
           <ViewportFloatingPanel
             panelRef={modelOptionsRef}
             className={styles.modelMenu}
@@ -1202,13 +1213,20 @@ export default function CanvasAudioGenerator({
           </ViewportFloatingPanel>
         )}
       </div>
-      {!loadingModels && !error && models.length === 0 && (
-        <p role="status">
-          {catalogHasModels
-            ? '当前目录未提供可生成音频的模型。语音识别输出文字，不能用于配音；请切换到已开放音频模型的工作空间，或联系管理员为当前空间启用文字转语音或音乐生成模型。'
-            : '当前工作空间未提供音频模型，请切换到已开放音频模型的工作空间，或联系管理员开放音频生成能力。'}
-        </p>
-      )}
+      {!loadingModels &&
+        !error &&
+        models.length === 0 &&
+        (catalogHasModels ? (
+          <p role="status">
+            当前目录中的模型不能生成音频，请切换到支持配音或音乐生成的工作空间；如需开通，请联系平台管理员。语音识别仅输出文字。
+          </p>
+        ) : (
+          <EmptyModelNotice
+            workspaceId={workspaceId}
+            label="音频生成模型"
+            onReload={() => setCatalogRetry((value) => value + 1)}
+          />
+        ))}
       {!loadingModels && modelKey && !selected && (
         <p role="status">原选模型不可用于音频生成，请重新选择配音或音乐生成模型。</p>
       )}
@@ -1229,7 +1247,7 @@ export default function CanvasAudioGenerator({
               >
                 生成参数
               </button>
-              {settingsOpen && settingsTrigger.current && (
+              {active && settingsOpen && settingsTrigger.current && (
                 <CanvasAudioSettings
                   anchor={settingsTrigger.current}
                   fields={settingsFields}

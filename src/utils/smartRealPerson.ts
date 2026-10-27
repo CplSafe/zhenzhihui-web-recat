@@ -130,6 +130,20 @@ export function buildRealPersonIdentityPrompt(prompt: string, personName?: strin
     .join('；')
 }
 
+/** 图片估价与提交共用最终提示词，包含默认文案及实际引用的真人身份约束。 */
+export function buildSmartImagePrompt(
+  prompt: string,
+  assetIds: readonly number[],
+  references: readonly SmartRealPersonReference[] = [],
+): string {
+  const base = prompt.trim() || '生成一张营销广告图片'
+  const people = references.filter(
+    (reference) => Number(reference.realPersonId) > 0 && assetIds.includes(Number(reference.localAssetId)),
+  )
+  const names = [...new Set(people.map((reference) => reference.personName?.trim()).filter(Boolean))].join('、')
+  return people.length ? buildRealPersonIdentityPrompt(base, names) : base
+}
+
 const VERIFIED_PERSON_STATUSES = new Set(['verified', 'approved', 'succeeded', 'success'])
 const READY_ASSET_STATUSES = new Set(['ready', 'active', 'verified', 'approved', 'succeeded', 'success', 'completed'])
 

@@ -1000,3 +1000,110 @@
   border-radius: 10px;
   background: #edf2ef;
 }
+
+.capturePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.captureIntro {
+  padding: 12px;
+  background: #edf2f2;
+  border-radius: 6px;
+}
+.captureIntro strong {
+  font-size: 14px;
+  color: #253c32;
+}
+.captureIntro p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #52695f;
+}
+.captureFrame {
+  padding: 6px;
+  border: 1px solid #dce5df;
+  border-radius: 6px;
+  min-width: 0;
+}
+.captureFrame[data-selected='true'] {
+  border-color: #527a65;
+  background: #edf5ef;
+}
+.captureFrame[data-saved='true'] {
+  background: #f0f2f1;
+}
+.captureFrame label {
+  display: block;
+  cursor: pointer;
+}
+.captureFrame:focus-within {
+  outline: 2px solid #527a65;
+  outline-offset: 2px;
+}
+.captureAngle {
+  display: block;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.captureFrame a {
+  display: inline-block;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+/* Panorama generation keeps source media inside the floating tool window. */
+.panoramaDialog :global(.ant-modal-body) {
+  max-height: calc(100dvh - 160px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.panoramaStudio {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 1fr);
+  gap: 20px;
+}
+.panoramaStudio .studioVisual {
+  display: grid;
+  place-items: center;
+  height: 240px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #edf2ef;
+}
+.panoramaStudio .studioSource {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 0;
+}
+.panoramaStudio .studioParams {
+  gap: 16px;
+}
+.panoramaStudio .studioFooter {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  padding: 14px 0 2px;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .panoramaStudio {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .panoramaStudio .studioVisual {
+    height: 180px;
+  }
+  .panoramaStudio .studioSource {
+    max-height: 180px;
+  }
+  .panoramaStudio .studioFooter {
+    gap: 8px;
+  }
+  .panoramaStudio .studioFooter > :global(.ant-btn-primary) {
+    flex: 1;
+  }
+}

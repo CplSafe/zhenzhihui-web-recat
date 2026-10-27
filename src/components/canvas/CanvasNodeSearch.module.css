@@ -175,3 +175,9 @@
   outline: 3px solid rgb(87 103 229 / 26%);
   outline-offset: -3px;
 }
+
+.itemCount {
+  margin-left: 8px;
+  color: #667085;
+  font-size: 12px;
+}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three/src/Three.Core.js'
 import { WebGLRenderer } from 'three/src/renderers/WebGLRenderer.js'
-import { Button } from 'antd'
+import PanoramaCapturePanel, { type PanoramaFrame } from './PanoramaCapturePanel'
 import styles from './CanvasImageTools.module.css'
 import {
   studioLightVector,
@@ -45,9 +45,8 @@ export default function CanvasToolScene({
   const current = useRef(values)
   current.current = values
   const [guide, setGuide] = useState('none')
-  const [frames, setFrames] = useState<
-    Array<{ blob: Blob; url: string; view: Record<string, unknown>; selected: boolean; saved: boolean }>
-  >([])
+  const [frames, setFrames] = useState<PanoramaFrame[]>([])
+  const [captureProgress, setCaptureProgress] = useState<{ done: number; total: number } | null>(null)
   const frameUrls = useRef<string[]>([])
   useEffect(() => () => frameUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
   const [error, setError] = useState('')
@@ -318,6 +317,7 @@ export default function CanvasToolScene({
     if (captureLock.current) return
     captureLock.current = true
     setCapturing(true)
+    setCaptureProgress({ done: 0, total: count })
     setCaptureError('')
     const original = current.current
     const state = handle.current
@@ -352,6 +352,7 @@ export default function CanvasToolScene({
         )
         const url = URL.createObjectURL(blob)
         pending.push({ blob, url, view, selected: true, saved: false })
+        setCaptureProgress({ done: index + 1, total: count })
       }
       frameUrls.current.push(...pending.map((frame) => frame.url))
       setFrames((old) => [...old, ...pending])
@@ -365,6 +366,7 @@ export default function CanvasToolScene({
       drawRef.current()
       captureLock.current = false
       setCapturing(false)
+      setCaptureProgress(null)
     }
   }
 
@@ -523,90 +525,20 @@ export default function CanvasToolScene({
       )}
       {mode === 'panorama' && onCapture && (
         <>
-          <div className={styles.presets}>
-            {[1, 4, 12].map((count) => (
-              <Button
-                key={count}
-                disabled={!ready || Boolean(error) || disabled || capturing}
-                onClick={() => void captureFrames(count)}
-              >
-                {count === 1 ? '当前视角截图' : `${count}视角截图`}
-              </Button>
-            ))}
-            <span role="status">{capturing ? '正在处理截图…' : '本地取景，不消耗生成积分'}</span>
-          </div>
-          {frames.length > 0 && (
-            <section className={styles.captureCollection} aria-label="截图预览">
-              <div className={styles.captureSummary}>
-                <strong>截图预览</strong>
-                <span role="status">
-                  共 {frames.length} 张 · 已选 {frames.filter((frame) => frame.selected && !frame.saved).length} 张
-                </span>
-                <Button
-                  size="small"
-                  disabled={disabled || capturing || frames.every((frame) => frame.saved)}
-                  onClick={() => setFrames((old) => old.map((frame) => ({ ...frame, selected: !frame.saved })))}
-                >
-                  全选未添加截图
-                </Button>
-                <Button
-                  size="small"
-                  disabled={disabled || capturing || !frames.some((frame) => frame.selected)}
-                  onClick={() => setFrames((old) => old.map((frame) => ({ ...frame, selected: false })))}
-                >
-                  取消全选
-                </Button>
-              </div>
-              <p className={styles.hint}>截图会保留在此处，确认选好后再统一加入画布。关闭窗口将清除未添加的截图。</p>
-              <div className={styles.captureResults}>
-                {frames.map((frame, index) => (
-                  <label key={frame.url}>
-                    <img src={frame.url} alt={`视角 ${index + 1}`} />
-                    <input
-                      type="checkbox"
-                      checked={frame.selected}
-                      disabled={disabled || capturing || frame.saved}
-                      aria-label={`选择视角 ${index + 1}`}
-                      onChange={(event) =>
-                        setFrames((old) =>
-                          old.map((item, i) => (i === index ? { ...item, selected: event.target.checked } : item)),
-                        )
-                      }
-                    />
-                    {frame.saved ? '已加入画布' : `视角 ${index + 1}`}
-                    <a href={frame.url} download={`全景视角-${index + 1}.png`}>
-                      下载
-                    </a>
-                  </label>
-                ))}
-              </div>
-              <Button
-                type="primary"
-                disabled={disabled || capturing || !frames.some((frame) => frame.selected && !frame.saved)}
-                onClick={async () => {
-                  if (captureLock.current) return
-                  captureLock.current = true
-                  setCapturing(true)
-                  setCaptureError('')
-                  try {
-                    for (const frame of frames.filter((frame) => frame.selected && !frame.saved)) {
-                      await onCapture(frame.blob, frame.view)
-                      setFrames((old) =>
-                        old.map((item) => (item.url === frame.url ? { ...item, saved: true, selected: false } : item)),
-                      )
-                    }
-                  } catch (err) {
-                    setCaptureError(err instanceof Error ? err.message : '保存失败，可重试未保存的截图')
-                  } finally {
-                    captureLock.current = false
-                    setCapturing(false)
-                  }
-                }}
-              >
-                将选中截图加入画布
-              </Button>
-            </section>
-          )}
+          <PanoramaCapturePanel
+            ready={ready}
+            error={error}
+            disabled={disabled}
+            capturing={capturing}
+            progress={captureProgress}
+            frames={frames}
+            setFrames={setFrames}
+            captureFrames={captureFrames}
+            captureLock={captureLock}
+            setCapturing={setCapturing}
+            setCaptureError={setCaptureError}
+            onCapture={onCapture}
+          />
         </>
       )}
       {captureError && (

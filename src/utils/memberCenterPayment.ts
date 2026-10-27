@@ -5,6 +5,14 @@
 
 import { toMilli } from './creditsFormat'
 
+/** 当前团队续费固定绑定原空间；只有明确购买独立团队时才创建新空间。 */
+export function getMemberCenterSubscriptionIntent(
+  isTeamPlan: boolean,
+  useCurrentTeam: boolean,
+): 'subscribe' | 'new_team' {
+  return isTeamPlan && !useCurrentTeam ? 'new_team' : 'subscribe'
+}
+
 /** 防止用户重复发起支付提交的内存锁。 */
 export interface MemberCenterPaymentLock {
   current: boolean

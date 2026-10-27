@@ -8,7 +8,8 @@
  * 项目管理、视频详情各自挂载时不再各拉一遍 5 个 operation；过期后先用旧目录渲染再后台刷新。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getBusinessErrorMessage, listAiModels } from '@/api/business'
+import { getBusinessErrorMessage, getSubscription, listAiModels } from '@/api/business'
+import { emptyModelMessage } from '@/utils/modelAvailability'
 import { createSharedRequestCache } from '@/utils/sharedRequestCache'
 import type {
   GenerationModelGroup as PickerGroup,
@@ -271,6 +272,23 @@ async function loadGenerationModelCatalog(
   const groups = buildGenerationModelGroups(models)
   const operationStates = createGenerationModelOperationStateMap()
 
+  // 仅空目录查询会员，不覆盖网络错误、配置错误，也不把有效模型隐藏。
+  let subscription: any = undefined
+  if (
+    results.some(
+      (result, index) =>
+        result.status === 'fulfilled' &&
+        !groups
+          .flatMap((group) => group.operationGroups)
+          .find((group) => group.operationCode === GENERATION_OPERATION_CODES[index])?.models.length,
+    )
+  ) {
+    try {
+      subscription = await getSubscription(workspaceId)
+    } catch {
+      /* 未知状态不能推断成未购买。 */
+    }
+  }
   results.forEach((result, index) => {
     const operationCode = GENERATION_OPERATION_CODES[index]
     if (result.status === 'rejected') {
@@ -303,7 +321,7 @@ async function loadGenerationModelCatalog(
       availableModelCount,
       message: availableModelCount
         ? ''
-        : configurationError || `${OPERATION_LABELS[operationCode]}暂无可用模型，请联系管理员配置`,
+        : configurationError || emptyModelMessage(OPERATION_LABELS[operationCode], subscription),
     }
   })
 
@@ -321,7 +339,9 @@ async function loadGenerationModelCatalog(
     error:
       rejected.length === results.length
         ? operationStates[GENERATION_OPERATION_CODES[0]].message
-        : configurationError?.message || '当前工作空间没有可用的生成模型，请联系管理员配置后重试',
+        : configurationError?.message ||
+          Object.values(operationStates).find((state) => state.status === 'empty')?.message ||
+          '模型目录加载失败，请重新加载',
   }
 }
 

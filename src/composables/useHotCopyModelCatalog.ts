@@ -6,7 +6,8 @@
  * 与 useGenerationModelCatalog 同样按工作空间做内存缓存：爆款复制页来回切不再每次重拉。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getBusinessErrorMessage, listAiModels } from '@/api/business'
+import { getBusinessErrorMessage, getSubscription, listAiModels } from '@/api/business'
+import { emptyModelMessage } from '@/utils/modelAvailability'
 import { createSharedRequestCache } from '@/utils/sharedRequestCache'
 import type { GenerationModelGroup, GenerationModelOption } from '@/components/smart/GenerationModelPicker'
 import {
@@ -185,7 +186,15 @@ async function loadHotCopyModelCatalog(workspaceId: number, signal: AbortSignal)
   )
   if (models.some((model) => !model.option.disabled)) return { models, error: '' }
   const configurationError = models.find((model) => model.option.unavailableReason)?.option.unavailableReason
-  return { models, error: configurationError || '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用' }
+  let subscription: any = undefined
+  if (!configurationError) {
+    try {
+      subscription = await getSubscription(workspaceId)
+    } catch {
+      /* 保留未知状态。 */
+    }
+  }
+  return { models, error: configurationError || emptyModelMessage('爆款复制视频模型', subscription) }
 }
 
 export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalogState {
@@ -265,7 +274,7 @@ export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalog
                     id: '__unavailable_hot_copy_video_model__',
                     name: '暂无可用模型',
                     disabled: true,
-                    unavailableReason: error || '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用',
+                    unavailableReason: error || '暂无可用的爆款复制视频模型，请刷新重试；若仍不可用，请联系平台管理员',
                   },
                 ],
             required: true,

@@ -88,6 +88,10 @@ for (const dimensions of [
     })
     await page.route('**/api/v1/ai/tasks', async (route) => {
       submissions.push(route.request().postDataJSON())
+      if (submissions.length === 2) {
+        await route.fulfill({ status: 409, json: { code: 10401, message: '当前模型有任务正在生成中，请稍后再试。' } })
+        return
+      }
       await submissionResponse
       await route.fulfill({ json: { data: { id: 4048, status: 'queued' } } })
     })
@@ -109,7 +113,19 @@ for (const dimensions of [
               name: '图片超分',
               capability: 'image',
               operation_codes: ['image.upscale'],
-              params_schema: { fields: [{ name: 'multiple', type: 'number', default: 2, min: 1, max: 4 }] },
+              params_schema: {
+                fields: [
+                  { name: 'multiple', type: 'number', default: 2, min: 1, max: 4 },
+                  {
+                    name: 'resolution',
+                    display_name: '输出分辨率',
+                    type: 'select',
+                    default: '4k',
+                    options: ['4k', '8k'],
+                  },
+                  { name: 'detail', display_name: '细节生成程度', type: 'number', default: 50, min: 0, max: 100 },
+                ],
+              },
             },
           ],
         },
@@ -158,6 +174,12 @@ for (const dimensions of [
     await page.getByRole('button', { name: '超分', exact: true }).click()
     const modal = page.getByRole('dialog', { name: '超分', exact: true })
     await expect(modal).toBeVisible()
+    await expect(modal.getByText('8K', { exact: true })).toBeVisible()
+    await expect(modal.getByText('100', { exact: true })).toBeVisible()
+    await expect(modal.getByText('4k', { exact: true })).toHaveCount(0)
+    await expect(modal.getByRole('slider')).toHaveCount(0)
+    await expect(modal.getByRole('spinbutton', { name: '细节生成程度' })).toHaveCount(0)
+    await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
     await expect(page.locator('.ant-modal-mask')).toBeVisible()
     await expect(modal.getByRole('button', { name: '2 倍', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await expect(modal.getByRole('button', { name: '6 倍', exact: true })).toHaveCount(0)
@@ -218,12 +240,28 @@ for (const dimensions of [
     await modal.getByRole('button', { name: '确认超分' }).click()
     await expect.poll(() => submissions.length).toBe(1)
     await expect(modal).not.toBeVisible()
-    const child = page.locator('.react-flow__node').filter({ hasText: '原图超分' })
+    const child = page.locator('.react-flow__node').filter({ hasText: '原图超分' }).first()
     await expect(child).toHaveCount(1)
+    await expect(source.locator('img').first()).toBeVisible()
+    await expect(source.getByText('正在处理中', { exact: true })).toHaveCount(0)
+    await expect(source.locator('.canvas-node-generation-spinner')).toHaveCount(0)
+    await expect(child.locator('.canvas-node-generation-spinner')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('only-upscale-result-loading.png') })
     await testInfo.attach('慢请求期间已关闭弹窗并创建子节点', {
       body: await page.screenshot(),
       contentType: 'image/png',
     })
+    if (succeeds) {
+      // 第一笔请求尚未返回时，允许同模型的独立提交；后端拒绝原因保留在第二个节点。
+      await source.locator('.canvas-node-header').click()
+      await page.getByRole('button', { name: '超分', exact: true }).click()
+      await expect(modal.getByRole('button', { name: '确认超分' })).toBeEnabled()
+      await modal.getByRole('button', { name: '确认超分' }).click()
+      await expect.poll(() => submissions.length).toBe(2)
+      expect(submissions[1].idempotency_key).not.toBe(submissions[0].idempotency_key)
+      await expect(page.locator('.react-flow__node').filter({ hasText: '当前模型有任务正在生成中' })).toHaveCount(1)
+      await page.screenshot({ path: testInfo.outputPath('concurrent-upscale-rejection.png') })
+    }
     releaseSubmission()
     await expect(source).not.toHaveClass(/selected/)
     await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
@@ -234,14 +272,14 @@ for (const dimensions of [
       await expect(child.locator('img').first()).toBeVisible()
       await expect(child).not.toContainText('高清产物')
     } else await expect(child).toContainText('失败')
-    await expect(page.locator('.react-flow__node')).toHaveCount(2)
+    await expect(page.locator('.react-flow__node')).toHaveCount(succeeds ? 3 : 2)
     const submitted = submissions[0]
     expect(submitted).not.toHaveProperty('prompt')
     expect(submitted).toMatchObject({
       workspace_id: WORKSPACE_ID,
       model_version_id: 42,
       operation_code: 'image.upscale',
-      params: { multiple: 2 },
+      params: { multiple: 2, resolution: '8k', detail: 100 },
       input_assets: [{ asset_id: oversized ? 702 : 701, role: 'image' }],
       idempotency_key: expect.any(String),
     })

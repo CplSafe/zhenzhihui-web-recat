@@ -84,7 +84,7 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
     }
     const binding = shortcutFromKeyboardEvent(event.nativeEvent)
     if (!binding) {
-      setShortcutError('请按一个非 Tab / Esc 的完整快捷键')
+      setShortcutError('请按一个非 Esc 的完整快捷键')
       return
     }
     if (CANVAS_RESERVED_SHORTCUTS.has(binding)) {

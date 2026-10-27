@@ -152,6 +152,16 @@
   color: #4b59d6;
 }
 
+.mcm-current-team-action {
+  border: 0;
+  padding: 4px 8px;
+  background: transparent;
+  color: #4b59d6;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .mcm-sub-item {
   position: relative;
   padding-left: 14px;
@@ -633,4 +643,59 @@
 
 .mc-card-feats li.is-off {
   color: rgba(102, 102, 102, 0.4);
+}
+
+.mcm-purchase-scope {
+  margin: 0 auto 20px;
+  max-width: 680px;
+  text-align: center;
+  color: #5b6072;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.mc-card-actions {
+  display: flex;
+  margin-top: 18px;
+}
+.mc-card-actions .mc-card-buy {
+  margin-top: 0;
+  min-height: 40px;
+  height: auto;
+  padding: 10px 4px;
+}
+.mc-card-actions--split .mc-card-buy {
+  width: 50%;
+  border-radius: 0 12px 12px 0;
+}
+.mc-card-actions--split .mc-card-buy:first-child {
+  border-radius: 12px 0 0 12px;
+  border-right: 1px solid rgba(91, 96, 114, 0.25);
+}
+.mc-card-buy:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
+}
+.mc-card-current {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #4854bc;
+}
+.mc-card-action-reason {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5b6072;
+  margin: 8px 0 0;
+}
+
+@media (max-width: 960px) {
+  .mcm-cards:not(.mcm-cards--recharge) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .mcm-cards:not(.mcm-cards--recharge) {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

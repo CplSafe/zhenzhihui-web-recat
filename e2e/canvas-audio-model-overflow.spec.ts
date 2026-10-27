@@ -64,6 +64,7 @@ test('音频模型浮层脱离裁切并保持键盘操作', async ({ page }) => 
   await model.click()
   const modelMenu = page.getByRole('listbox', { name: '音频生成模型列表' })
   await expect(modelMenu).toBeVisible()
+  await expect(modelMenu.getByRole('option').first()).toContainText('适合视频解说、产品介绍和日常内容配音。')
   expect(await modelMenu.evaluate((element) => element.closest('.canvas-audio-panel') === null)).toBe(true)
   await model.press('ArrowDown')
   await expect(modelMenu.getByRole('option').first()).toBeFocused()

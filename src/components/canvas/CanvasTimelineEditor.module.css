@@ -958,3 +958,14 @@
   opacity: 0.6;
   pointer-events: none;
 }
+
+.audioEditingHint {
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #b2bdcb;
+}
+.audioTrackClip:focus-visible {
+  outline: 2px solid #008d70;
+  outline-offset: 3px;
+}

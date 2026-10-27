@@ -43,7 +43,7 @@ test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步�
   await page.goto('/canvas/122')
   const node = page.locator('.react-flow__node[data-id="script"]')
   await expect(node).toBeVisible()
-  await page.getByRole('button', { name: /当前缩放/ }).click()
+  await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(1\)/)
   const list = page.getByLabel('分镜列表', { exact: true })
   await expect(list).toBeVisible()
@@ -61,7 +61,7 @@ test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步�
   // 跨越此前 40% 的字号补偿边界，节点内部排版仍应保持不变。
   for (let index = 0; index < 7; index++) await page.getByRole('button', { name: '缩小', exact: true }).click()
   await expect.poll(layout).toEqual(initialLayout)
-  await page.getByRole('button', { name: /当前缩放/ }).click()
+  await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(1\)/)
   await expect.poll(layout).toEqual(initialLayout)
   const transform = await page.locator('.react-flow__viewport').getAttribute('style')

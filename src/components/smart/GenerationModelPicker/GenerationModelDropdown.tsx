@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSPrope
 import { createPortal } from 'react-dom'
 import { CheckCircleFilled, CloseOutlined, ControlOutlined, DownOutlined, LoadingOutlined } from '@ant-design/icons'
 import { openMemberCenter } from '@/stores/ui'
+import ModelAvailabilityNotice, { useModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import { INSUFFICIENT_CREDITS_TEXT, creditsToYuanAmount, creditsYuanLabel } from '@/utils/creditsYuan'
 import {
   getModelConstraintConflicts,
@@ -35,6 +36,8 @@ export interface GenerationModelEstimateResult {
   estimatedCost: number
   balance?: number
   canAfford?: boolean
+  estimateKind?: string
+  estimateNote?: string
 }
 
 export interface GenerationModelEstimateRequest {
@@ -168,9 +171,6 @@ export function formatModelOptionNotes(model: GenerationModelOption, durationSec
 }
 
 /** 区分“目录加载失败”和“当前套餐没有可用模型”，避免把充值问题误报为系统故障。 */
-function isRechargeRequiredError(message: string): boolean {
-  return /套餐|会员|订阅|充值|暂无可用.*模型|没有可用.*模型/.test(message)
-}
 
 /**
  * 返回指定 operation 下「已选模型实际支持」的时长档位（秒，升序去重）。
@@ -401,6 +401,8 @@ export default function GenerationModelDropdown({
         balance?: number
         canAfford?: boolean
         message?: string
+        estimateKind?: string
+        estimateNote?: string
       }
     >
   >({})
@@ -412,7 +414,8 @@ export default function GenerationModelDropdown({
   const hasConflict = conflicts.length > 0
   const globalLoading = typeof loading === 'boolean' && loading
   const globalError = typeof error === 'string' ? error : ''
-  const rechargeRequired = Boolean(globalError) && isRechargeRequiredError(globalError)
+  const modelNotice = useModelNotice(globalError)
+  const rechargeRequired = Boolean(modelNotice.action)
   const closeAndRestoreFocus = useCallback(() => {
     setOpen(false)
     requestAnimationFrame(() => triggerRef.current?.focus())
@@ -454,6 +457,8 @@ export default function GenerationModelDropdown({
                 estimatedCost: Math.max(0, Number(result.estimatedCost) || 0),
                 balance: Number.isFinite(Number(result.balance)) ? Number(result.balance) : undefined,
                 canAfford: result.canAfford,
+                estimateKind: result.estimateKind,
+                estimateNote: result.estimateNote,
               },
             ] as const
           } catch (error) {
@@ -579,7 +584,9 @@ export default function GenerationModelDropdown({
       ? '模型加载中'
       : globalError
         ? rechargeRequired
-          ? '需要充值'
+          ? modelNotice.action === 'renew'
+            ? '会员已到期'
+            : '查看会员'
           : '模型不可用'
         : locked
           ? `模型处理中 ${selectedCount}/${slots.length}`
@@ -675,8 +682,8 @@ export default function GenerationModelDropdown({
               <div className={`${styles.globalState} ${styles.error}`} role="alert">
                 {rechargeRequired ? (
                   <div className={styles.rechargeState}>
-                    <strong>当前套餐暂无可用模型</strong>
-                    <span>充值或开通会员后，即可选择模型并开始创作。</span>
+                    <strong>{modelNotice.action === 'renew' ? '当前会员已到期' : '当前空间尚未开通会员'}</strong>
+                    <span>{modelNotice.message}</span>
                     <div className={styles.stateActions}>
                       <button
                         type="button"
@@ -686,18 +693,18 @@ export default function GenerationModelDropdown({
                           openMemberCenter()
                         }}
                       >
-                        去充值
+                        {modelNotice.action === 'renew' ? '续费 / 购买会员' : '查看会员'}
                       </button>
                       {onRetry && (
                         <button type="button" onClick={() => onRetry()}>
-                          我已充值，重新加载
+                          刷新权益与模型
                         </button>
                       )}
                     </div>
                   </div>
                 ) : (
                   <>
-                    <span>{globalError}</span>
+                    <span>{modelNotice.message}</span>
                     {onRetry && (
                       <button type="button" onClick={() => onRetry()}>
                         重新加载
@@ -756,7 +763,7 @@ export default function GenerationModelDropdown({
 
                       {effectiveSlotError && (
                         <div className={styles.slotError} role="alert">
-                          <span>{effectiveSlotError}</span>
+                          <ModelAvailabilityNotice message={effectiveSlotError} />
                           {onRetry && (
                             <button type="button" onClick={() => onRetry(slot.groupKey, slot.subgroupKey)}>
                               重试
@@ -813,7 +820,7 @@ export default function GenerationModelDropdown({
                                 : estimate?.status === 'loading'
                                   ? '正在预估…'
                                   : estimate?.status === 'success'
-                                    ? `预计 ${creditsYuanLabel(estimate?.estimatedCost)}`
+                                    ? `${estimate.estimateKind === 'reservation' ? '预冻结' : '预计'} ${creditsYuanLabel(estimate?.estimatedCost)}`
                                     : estimate?.status === 'error'
                                       ? '暂无法预估，不影响创作'
                                       : '等待预估'
@@ -821,7 +828,10 @@ export default function GenerationModelDropdown({
                                 <span
                                   className={`${styles.modelEstimate} ${warned ? styles.modelEstimateNotice : ''}`}
                                   // 具体原因（后端返回的报错）留在悬浮提示里，不占用面板版面
-                                  title={notice || (estimate?.status === 'error' ? estimate?.message : undefined)}
+                                  title={
+                                    notice ||
+                                    (estimate?.status === 'error' ? estimate?.message : estimate?.estimateNote)
+                                  }
                                 >
                                   {label}
                                 </span>
@@ -839,7 +849,11 @@ export default function GenerationModelDropdown({
               <section className={styles.estimateSummary} aria-live="polite" aria-label="模型费用预估">
                 <div className={styles.estimateSummaryTop}>
                   <div>
-                    <strong>模型参考预估</strong>
+                    <strong>
+                      {Object.values(estimates).some((estimate) => estimate.estimateKind === 'reservation')
+                        ? '模型预冻结金额'
+                        : '模型参考预估'}
+                    </strong>
                     <span>当前配置下，各模型分别执行 1 次</span>
                   </div>
                   <div className={styles.estimateTotal}>

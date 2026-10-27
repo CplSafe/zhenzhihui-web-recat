@@ -27,6 +27,7 @@ import StudioResultFeed, {
 } from '@/components/studio/StudioResultFeed/StudioResultFeed'
 import StudioShotList from '@/components/studio/StudioShotList/StudioShotList'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
+import { ModelAvailabilityPanel } from '@/components/common/ModelAvailabilityNotice'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useStudioCostEstimate } from '@/composables/useStudioCostEstimate'
@@ -115,7 +116,7 @@ export default function StudioCreateView() {
 
   const ws = Number(workspaceId || 0)
   // 目录取 'all'：页面在图片/视频模式间切换，两类 operation 的模型都要就绪。
-  const { groups, loading: modelLoading } = useGenerationModelCatalog(ws, 'all')
+  const { groups, operationStates, reload: reloadModels, loading: modelLoading } = useGenerationModelCatalog(ws, 'all')
 
   // 右侧结果流跨刷新累计：历史创作从后端任务列表恢复，新生成追加到尾部。
   const {
@@ -468,7 +469,8 @@ export default function StudioCreateView() {
         if (invalidVideos) return invalidVideos
       }
     }
-    if (!selectedModel) return modelLoading ? '模型目录加载中，请稍候' : '当前工作空间暂无可用模型'
+    if (!selectedModel)
+      return modelLoading ? '模型目录加载中，请稍候' : operationStates[primaryOperation].message || '请重新选择模型'
     // 预估已明确算出余额不足时先拦一道，避免白跑一次上传再被后端拒绝。
     if (estimate && !estimate.canAfford) {
       return INSUFFICIENT_CREDITS_TEXT
@@ -679,6 +681,9 @@ export default function StudioCreateView() {
               />
 
               {/* 视频生成模式：决定参考图的数量语义与下发角色 */}
+              {!modelLoading && !primaryModels.length && operationStates[primaryOperation].message && (
+                <ModelAvailabilityPanel message={operationStates[primaryOperation].message} onReload={reloadModels} />
+              )}
               {mode === 'video' && (
                 <StudioVideoModeTabs
                   modes={availableVideoModes}

@@ -181,9 +181,15 @@ export default function CanvasImagePreviewModal({
     }
   }, [goTo])
 
-  // 切图后让缩略图条自动滚到当前项，画廊长时也能看见「现在在哪」。（jsdom 无 scrollIntoView，故取可选调用）
+  // 仅滚动缩略图条，避免 scrollIntoView 连带滚动遮罩或页面。
   useEffect(() => {
-    activeThumbRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    const thumb = activeThumbRef.current
+    const strip = thumb?.parentElement
+    if (!thumb || !strip) return
+    const item = thumb.getBoundingClientRect()
+    const viewport = strip.getBoundingClientRect()
+    if (item.left < viewport.left) strip.scrollLeft -= viewport.left - item.left
+    else if (item.right > viewport.right) strip.scrollLeft += item.right - viewport.right
   }, [index])
 
   if (!current) return null

@@ -17,11 +17,7 @@
  * 面板自己会按当前 operation_code 再过滤一次，所以这里必须给出「该节点类型可能用到的全部模型」，
  * 而不是某一个 operation 的子集。
  */
-import {
-  sortCreativeVideoModels,
-  type GenerationModelGroup,
-  type GenerationModelOption,
-} from './generationModelCatalog'
+import type { GenerationModelGroup, GenerationModelOption } from './generationModelCatalog'
 
 /** 画布节点类型 → 该类型可选的模型列表。 */
 export interface CanvasModelBuckets {
@@ -70,6 +66,6 @@ export function buildCanvasModelBuckets(
   return {
     text: collect(GROUP_KEYS_BY_NODE_KIND.text),
     image: collect(GROUP_KEYS_BY_NODE_KIND.image),
-    video: sortCreativeVideoModels(collect(GROUP_KEYS_BY_NODE_KIND.video)),
+    video: collect(GROUP_KEYS_BY_NODE_KIND.video),
   }
 }

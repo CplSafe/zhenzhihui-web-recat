@@ -47,6 +47,17 @@ export function applyVideoTaskModeParams(
     delete next[args.modeFieldName]
     return next
   }
+  if (isFollowSourceVideoMode(next[args.modeFieldName])) {
+    for (const name of Object.keys(next)) {
+      if (
+        ['ratio', 'aspectratio', 'duration', 'durationsec', 'durationseconds'].includes(
+          name.replace(/[^a-z0-9]/gi, '').toLowerCase(),
+        )
+      ) {
+        delete next[name]
+      }
+    }
+  }
   if (args.sourceVideoSeconds > 0) next.source_video_duration = Math.ceil(args.sourceVideoSeconds)
   return next
 }

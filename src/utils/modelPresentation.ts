@@ -288,3 +288,10 @@ export function readModelAccentHue(displayName: string): number {
   }
   return hash
 }
+
+/** 只读取目录里的真实简介；不根据模型名称推断能力。 */
+export function readModelDescription(model: unknown): string {
+  if (!isRecord(model)) return ''
+  const record = isRecord(model.source) ? model.source : model
+  return readText(pickField(record, ['description', 'short_description', 'summary', 'intro']))
+}

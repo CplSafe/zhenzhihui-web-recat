@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   getBusinessErrorMessage: vi.fn(),
   listAiModels: vi.fn(),
+  getSubscription: vi.fn(),
 }))
 
 vi.mock('@/api/business', () => ({
   getBusinessErrorMessage: mocks.getBusinessErrorMessage,
   listAiModels: mocks.listAiModels,
+  getSubscription: mocks.getSubscription,
 }))
 
 import {
@@ -27,7 +29,23 @@ describe('useGenerationModelCatalog', () => {
   beforeEach(() => {
     mocks.getBusinessErrorMessage.mockReset()
     mocks.listAiModels.mockReset()
+    mocks.getSubscription.mockReset().mockResolvedValue(undefined)
     mocks.getBusinessErrorMessage.mockImplementation((_reason, fallback) => fallback)
+  })
+
+  it('explains expired membership for empty operations and refreshes membership with the catalog', async () => {
+    mocks.listAiModels.mockResolvedValue([])
+    mocks.getSubscription.mockResolvedValue({ plan_id: 1, active: false, expires_at: '2020-01-01T00:00:00Z' })
+    const { result } = renderHook(() => useGenerationModelCatalog(199))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.operationStates['image.image_to_image'].message).toContain('当前会员已到期')
+    mocks.getSubscription.mockResolvedValue({ plan_id: 1, active: true, expires_at: '2099-01-01T00:00:00Z' })
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) =>
+      operationCode === 'image.image_to_image' ? [{ id: 11, display_name: '恢复的图生图模型' }] : [],
+    )
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.operationStates['image.image_to_image'].status).toBe('ready'))
+    expect(result.current.operationStates['image.image_to_image'].message).toBe('')
   })
 
   it('retries a transient video request and recovers without losing successful operations', async () => {
@@ -238,7 +256,9 @@ describe('useGenerationModelCatalog', () => {
 
     expect(result.current.groups.map((group) => group.key)).toEqual(['script', 'image', 'video', 'videoEdit'])
     expect(Object.values(result.current.operationStates).every((state) => state.status === 'empty')).toBe(true)
-    expect(result.current.error).toBe('当前工作空间没有可用的生成模型，请联系管理员配置后重试')
+    expect(result.current.error).toBe(
+      '当前空间暂无可用的脚本生成模型，请刷新重试；若仍不可用，请联系平台管理员检查功能开放及模型授权',
+    )
   })
 
   it('binds a queried operation only when the record omits operation metadata', async () => {
@@ -416,12 +436,12 @@ describe('useGenerationModelCatalog', () => {
         ?.operationGroups.find((group) => group.operationCode === 'video.generate')?.models ?? []
     expect(videoModels.map(({ modelVersionId, displayName }) => ({ modelVersionId, displayName }))).toEqual([
       { modelVersionId: 921, displayName: 'HappyHorse 参考生视频' },
-      { modelVersionId: 930, displayName: 'MiniMax 图生视频' },
       { modelVersionId: 922, displayName: 'Seedance 2.0' },
       { modelVersionId: 928, displayName: 'Seedance 2.0 Fast' },
       { modelVersionId: 929, displayName: 'Seedance 2.0 Mini' },
       { modelVersionId: 925, displayName: '其他视频生成模型' },
       { modelVersionId: 926, displayName: '后端新增视频模型' },
+      { modelVersionId: 930, displayName: 'MiniMax 图生视频' },
     ])
     expect(result.current.operationStates['video.generate']).toMatchObject({
       status: 'ready',
@@ -434,12 +454,12 @@ describe('useGenerationModelCatalog', () => {
         ?.subgroups?.find((group) => group.key === 'video.generate')?.models ?? []
     expect(dropdownModels.map(({ name }) => name)).toEqual([
       'HappyHorse 参考生视频',
-      'MiniMax 图生视频',
       'Seedance 2.0',
       'Seedance 2.0 Fast',
       'Seedance 2.0 Mini',
       '其他视频生成模型',
       '后端新增视频模型',
+      'MiniMax 图生视频',
     ])
   })
 

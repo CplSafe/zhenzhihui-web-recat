@@ -107,6 +107,8 @@ for (const kind of ['image', 'video']) {
       const modelTrigger = editor.getByRole('button', { name: '布局测试模型', exact: true })
       await modelTrigger.hover()
       const models = page.getByRole('listbox', { name: '生成模型列表' })
+      await expect(models).toBeHidden()
+      await modelTrigger.click()
       await expect(models).toBeVisible()
       await expect(async () => {
         const box = (await models.boundingBox())!
@@ -124,7 +126,7 @@ for (const kind of ['image', 'video']) {
       await page.keyboard.press('Escape')
       await expect(models).toBeHidden()
       await editor.getByRole('button', { name: /备选模型13/ }).click()
-      await models.getByRole('option', { name: '布局测试模型', exact: true }).click()
+      await models.getByRole('option', { name: /布局测试模型/ }).click()
       await trigger.click()
       const menu = page.getByRole('region', { name: '生成参数', exact: true })
       await expect(menu).toBeVisible()

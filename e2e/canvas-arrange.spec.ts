@@ -3,6 +3,7 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures
 
 test('整理全部将工作流分区、保留分组，重复整理稳定且一步撤销', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))
   const patches: Array<{ mutations?: Array<{ kind: string; payload?: { position?: unknown } }> }> = []
   const sourceNodes = [
     { id: 'a', x: 0, y: 0, groupId: 'one' },

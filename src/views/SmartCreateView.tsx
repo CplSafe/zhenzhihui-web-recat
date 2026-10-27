@@ -100,7 +100,6 @@ import {
 import { listRealPeople } from '@/api/realPeople'
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
-import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import { isVideoResolutionLower, readVideoMetadata, type VideoMetadata } from '@/utils/videoDuration'
 import { resolveVideoEditResolution } from '@/utils/videoEditResolution'
@@ -113,7 +112,6 @@ import {
   getBusinessErrorMessage,
   cancelAiTask,
   updateCreativeProjectDraft,
-  estimateAiTaskCost,
   listAiModels,
   restoreCreativeTrashItem,
   deleteCreativeTrashItem,
@@ -260,7 +258,7 @@ import {
 } from '@/utils/smartModelSwitchSafety'
 import { findDuplicateSubjectGroups, type DuplicateSubjectGroup } from '@/utils/subjectDuplicates'
 import {
-  buildRealPersonIdentityPrompt,
+  buildSmartImagePrompt,
   buildRealPersonVideoIdentityConstraint,
   buildRealPersonVideoIdentityPrompt,
   getFacePrivacyGenerationMessage,
@@ -1570,6 +1568,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const projectIdRef = useRef(0)
   const projectCreationAttemptRef = useRef(0)
   const creationStartingRef = useRef(false)
+  const entryQuoteAssetCacheRef = useRef<Record<string, number>>({})
   const pendingCreatedProjectRef = useRef<{ workspaceId: number; projectId: number } | null>(null)
   useEffect(
     () => () => {
@@ -2295,7 +2294,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     perImage: boolean
     count: number // 下一步要出的图片张数(出图口径);估价已按张数汇总为总额
     // perOne = 再加一张图片的增量积分(元素图=文生图单价;分镜帧=图生图单价,因新增分镜带上一帧)
-    estimate: { estimatedCost: number; balance: number; canAfford: boolean; perOne?: number } | null
+    estimate: {
+      estimatedCost: number
+      balance: number
+      canAfford: boolean
+      perOne?: number
+      kind?: string
+      note?: string
+    } | null
   }>({ loading: false, error: '', perImage: false, count: 0, estimate: null })
   // 进行中的整片生成任务 id:生成开始即记录并随草稿持久化,切路由/刷新后凭它续轮询(不重新生成)
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
@@ -4552,6 +4558,12 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           const res: any = await estimateShotImageCost({
             workspaceId: ws,
             referenceImageCount: imageComposerRefCount,
+            refAssetIds: imageComposerDraft.images.map((image) => Number(image.assetId || 0)),
+            prompt: buildSmartImagePrompt(
+              imageComposerDraft.text,
+              imageComposerDraft.images.map((image) => Number(image.assetId || 0)),
+              entryMeta?.realPersonReferences,
+            ),
             ratio: imageComposerRatio || entryMeta?.ratio,
             modelVersionId: modelSelection.modelVersionId,
             modelVersion: modelSelection.source,
@@ -4572,6 +4584,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
               balance,
               canAfford,
               perOne: perImageCost,
+              kind: res?.estimate_kind,
+              note: res?.estimate_note,
             },
           })
           return
@@ -4621,6 +4635,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     imageComposerRefCount,
     imageComposerRatio,
     imageComposerOutputCount,
+    imageComposerDraft.text,
+    imageComposerDraft.images,
+    entryMeta?.realPersonReferences,
     textToImageModelSelectionId,
     imageToImageModelSelectionId,
     videoGenerationModelSelectionId,
@@ -6109,6 +6126,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             const currentEstimate: any = await estimateShotImageCost({
               workspaceId: ws,
               referenceImageCount: request.refAssetIds.length,
+              refAssetIds: request.refAssetIds,
               // 必须与用户确认报价时使用同一提示词。部分图生图模型会按输入内容计费；
               // 此处漏传会导致提交前复核得到另一价格，即使人民币展示四舍五入后看起来相同。
               prompt: request.text,
@@ -7041,6 +7059,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const confirmImageGenerationCost = async (args: {
     workspaceId: number
     referenceImageCount: number
+    refAssetIds: number[]
     /** 估价必须带上提示词，与入口按钮旁的预估同口径（按输入计费的模型否则估低） */
     prompt?: string
     ratio: string
@@ -7059,6 +7078,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const estimate: any = await estimateShotImageCost({
         workspaceId: args.workspaceId,
         referenceImageCount: args.referenceImageCount,
+        refAssetIds: args.refAssetIds,
         prompt: args.prompt,
         ratio: args.ratio,
         modelVersionId: modelSelection.modelVersionId,
@@ -7088,7 +7108,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         error: '',
         perImage: true,
         count,
-        estimate: { estimatedCost, balance, canAfford, perOne: perImageCost },
+        estimate: {
+          estimatedCost,
+          balance,
+          canAfford,
+          perOne: perImageCost,
+          kind: estimate?.estimate_kind,
+          note: estimate?.estimate_note,
+        },
       })
 
       if (!canAfford) {
@@ -7107,7 +7134,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const operationLabel = args.referenceImageCount > 0 ? '参考图创作' : '文字生成图片'
       const confirmed =
         (await requestConfirm(
-          `${operationLabel}将生成 ${count} 张图片，预计费用共 ${creditsYuanLabel(estimatedCost)}（每张${creditsYuanLabel(perImageCost)}）。图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
+          `${operationLabel}将生成 ${count} 张图片，${estimate?.estimate_kind === 'reservation' ? '预冻结金额' : '预计费用'}共 ${creditsYuanLabel(estimatedCost)}（每张${creditsYuanLabel(perImageCost)}）。${estimate?.estimate_note ? `${estimate.estimate_note}。` : ''}图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
           {
             title: '确认生成图片',
             confirmLabel: '确认并生成',
@@ -7201,9 +7228,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const realPersonRefs = (entryMetaRef.current?.realPersonReferences || []).filter(
         (reference) => Number(reference?.realPersonId) > 0 && submittedRefIds.has(Number(reference?.localAssetId) || 0),
       )
-      const realPersonIdentityName = Array.from(
-        new Set(realPersonRefs.map((reference) => String(reference?.personName || '').trim()).filter(Boolean)),
-      ).join('、')
       const refAssetIds = prioritizeRealPersonReferenceAssetIds(
         userImages.map((image) => image.assetId).filter((assetId) => assetId > 0),
         Number(realPersonRefs[0]?.localAssetId || 0),
@@ -7214,12 +7238,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         options.generationModels || entryMeta?.generationModels,
       )
       if (!modelSelection) return false
+      const prompt = buildSmartImagePrompt(text, refAssetIds, realPersonRefs)
       const confirmedQuote =
         options.confirmedQuote ||
         (await confirmImageGenerationCost({
           workspaceId: ws,
           referenceImageCount: refAssetIds.length,
-          prompt: text,
+          refAssetIds,
+          prompt,
           ratio,
           count,
           modelSelection,
@@ -7237,10 +7263,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (quoteBindingError) throw new Error(quoteBindingError)
 
       const uid = nextMsgId()
-      const basePrompt = text || '生成一张营销广告图片'
-      const prompt = realPersonRefs.length
-        ? buildRealPersonIdentityPrompt(basePrompt, realPersonIdentityName)
-        : basePrompt
       const idempotencyRoot = options.idempotencyKey || createImageChatIdempotencyKey()
       const batchId = count > 1 ? `batch_${idempotencyRoot}` : ''
       const request = {
@@ -7698,10 +7720,26 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
     let initialImageQuote: LockedSmartImageQuotedCost | undefined
     if (meta.mode === 'image') {
+      try {
+        const cache = entryQuoteAssetCacheRef.current
+        meta = {
+          ...meta,
+          imageAssetIds: await Promise.all(
+            (meta.images || []).map(
+              (url, index) => Number(meta.imageAssetIds?.[index] || 0) || ensureAssetId(wsId, url, cache),
+            ),
+          ),
+        }
+      } catch (error: any) {
+        creationStartingRef.current = false
+        showToast(getBusinessErrorMessage(error, '参考图准备失败'), 'error')
+        return false
+      }
       const confirmedQuote = await confirmImageGenerationCost({
         workspaceId: wsId,
         referenceImageCount: (meta.images || []).length,
-        prompt: req,
+        refAssetIds: meta.imageAssetIds || [],
+        prompt: buildSmartImagePrompt(req, meta.imageAssetIds || [], meta.realPersonReferences),
         ratio: meta.ratio || '16:9',
         count: meta.outputCount || 1,
         generationModels: meta.generationModels,
@@ -8143,6 +8181,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     entryMeta?.mode === 'image' ? [activeImageGenerationOperation] : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video,
   )
   /** 制作图片的模型面板按当前对话参数预估一次出图费用，展示口径与真正提交保持一致。 */
+  const resolveImageQuoteModel = generationModelCatalog.resolveModel
   const estimateImageModelSelection = useCallback(
     async ({
       operationCode,
@@ -8153,31 +8192,40 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (operationCode !== 'image.text_to_image' && operationCode !== 'image.image_to_image') {
         throw new Error('当前模型不属于图片生成')
       }
-      const result: any = await estimateAiTaskCost({
+      const result: any = await estimateShotImageCost({
         workspaceId: ws,
-        modelVersionId,
-        operationCode,
-        prompt: imageComposerDraft.text.trim(),
-        params: {
-          ratio: imageComposerDraft.ratio || entryMeta?.ratio || '16:9',
-          count: Math.max(1, Number(imageComposerDraft.outputCount || entryMeta?.outputCount || 1)),
-        },
-        inputAssets:
+        modelVersionId: Number(modelVersionId),
+        modelVersion: resolveImageQuoteModel(operationCode, modelVersionId),
+        prompt: buildSmartImagePrompt(
+          imageComposerDraft.text,
+          imageComposerDraft.images.map((reference) => Number(reference.assetId || 0)),
+          entryMeta?.realPersonReferences,
+        ),
+        ratio: imageComposerDraft.ratio || entryMeta?.ratio || '16:9',
+        refAssetIds:
           operationCode === 'image.image_to_image'
-            ? imageComposerDraft.images
-                .map((reference) => Number(reference.assetId || 0))
-                .filter((id) => id > 0)
-                // 与正式提交同构的 { asset_id, role }；裸数字会被后端判为请求体格式不合法
-                .map((id) => ({ asset_id: id, role: resolveModelInputAssetRoleSafe(undefined, operationCode) }))
+            ? imageComposerDraft.images.map((reference) => Number(reference.assetId || 0))
             : [],
       })
       return {
-        estimatedCost: Number(result?.estimated_cost ?? 0),
+        estimatedCost: multiplyCredits(
+          result?.estimated_cost ?? 0,
+          Math.max(1, Number(imageComposerDraft.outputCount || entryMeta?.outputCount || 1)),
+        ),
+        estimateKind: result?.estimate_kind,
+        estimateNote: result?.estimate_note,
         balance: Number.isFinite(Number(result?.balance)) ? Number(result.balance) : undefined,
         canAfford: result?.can_afford,
       }
     },
-    [entryMeta?.outputCount, entryMeta?.ratio, imageComposerDraft, workspaceId],
+    [
+      entryMeta?.outputCount,
+      entryMeta?.ratio,
+      entryMeta?.realPersonReferences,
+      resolveImageQuoteModel,
+      imageComposerDraft,
+      workspaceId,
+    ],
   )
   const flowGenerationModelConflicts = entryMeta
     ? getGenerationModelSelectionConflicts(flowGenerationModelGroups, entryMeta.generationModels || {}, {
@@ -9218,7 +9266,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                             stepCost.estimate.canAfford === false ||
                             toMilli(stepCost.estimate.estimatedCost) > toMilli(stepCost.estimate.balance)
                             ? ''
-                            : `${stepCost.count > 1 ? `共 ${stepCost.count} 张` : ''}预计费用 ${creditsYuanLabel(stepCost.estimate.estimatedCost)}${stepCost.estimate.perOne != null ? ` · 每张${creditsYuanLabel(stepCost.estimate.perOne)}` : ''}`
+                            : `${stepCost.count > 1 ? `共 ${stepCost.count} 张` : ''}${stepCost.estimate.kind === 'reservation' ? '预冻结金额' : '预计费用'} ${creditsYuanLabel(stepCost.estimate.estimatedCost)}${stepCost.estimate.perOne != null ? ` · 每张${creditsYuanLabel(stepCost.estimate.perOne)}` : ''}${stepCost.estimate.note ? ` · ${stepCost.estimate.note}` : ''}`
                           : stepCost.error
                             ? `费用暂不可用：${stepCost.error}`
                             : ''

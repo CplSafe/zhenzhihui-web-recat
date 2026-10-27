@@ -166,7 +166,7 @@ const OPERATION_DECLARATION_KEYS = [
   'operationCode',
   'operations',
 ] as const
-const MODEL_CONFIGURATION_ERROR = '模型参数配置错误，暂不可用，请联系管理员'
+const MODEL_CONFIGURATION_ERROR = '模型参数配置错误，暂不可用，请联系平台管理员处理'
 
 /** 只包含产品阶段名称和 operation 映射，不包含任何具体模型名称。 */
 export const GENERATION_MODEL_GROUP_DEFINITIONS: readonly GenerationModelGroupDefinition[] = [
@@ -608,26 +608,6 @@ function isRetiredCreativeVideoRelayModel(model: BackendGenerationModel): boolea
   return /minimax|海螺/i.test(identity) && /秘塔|metaso/i.test(identity)
 }
 
-/** 视频模型按创作入口验收顺序展示；未知模型保持在已知模型之后且沿用后端相对顺序。 */
-export function sortCreativeVideoModels<T extends { displayName?: string }>(models: readonly T[]): T[] {
-  const order = [
-    /framora/i,
-    /happy\s*horse/i,
-    /(?:万相|wan)[\s-]*3[.\s]*0(?!.*(?:高速|fast|turbo))/i,
-    /(?:万相|wan)[\s-]*3[.\s]*0.*(?:高速|fast|turbo)/i,
-    /(?:minimax|海螺)/i,
-    /seedance\s*2[.]0(?!.*(?:fast|mini))/i,
-    /seedance\s*2[.]0.*fast/i,
-    /seedance\s*2[.]0.*mini/i,
-    /seedance\s*2[.]5/i,
-  ]
-  const rank = (name: string) => {
-    const index = order.findIndex((pattern) => pattern.test(name))
-    return index < 0 ? order.length : index
-  }
-  return [...models].sort((a, b) => rank(String(a.displayName || '')) - rank(String(b.displayName || '')))
-}
-
 /**
  * 按“生成脚本 / 生成图片 / 生成视频 / 修改视频”生成展示目录。
  *
@@ -643,10 +623,7 @@ export function buildGenerationModelGroups(
   return GENERATION_MODEL_GROUP_DEFINITIONS.map((definition) => {
     const operationGroups = definition.operationCodes.map<GenerationModelOperationGroup>((operationCode) => ({
       operationCode,
-      models:
-        operationCode === 'video.generate'
-          ? sortCreativeVideoModels(normalizedModels.filter((model) => model.operationCodes.includes(operationCode)))
-          : normalizedModels.filter((model) => model.operationCodes.includes(operationCode)),
+      models: normalizedModels.filter((model) => model.operationCodes.includes(operationCode)),
     }))
 
     return {

@@ -365,7 +365,7 @@ function isBackendRequest(url: URL): boolean {
 
 export async function installStrictAuthenticatedApp(
   page: Page,
-  options: { activeWorkspaceId?: number } = {},
+  options: { activeWorkspaceId?: number; preserveStorage?: boolean } = {},
 ): Promise<StrictApiState> {
   const initialWorkspaceId = Number(options.activeWorkspaceId || WORKSPACE_ID)
   const initialWorkspace = workspaceById(initialWorkspaceId)
@@ -376,11 +376,13 @@ export async function installStrictAuthenticatedApp(
     draftWrites: 0,
   }
 
-  await page.addInitScript(() => {
-    window.localStorage.clear()
-    window.sessionStorage.clear()
+  await page.addInitScript((preserveStorage) => {
+    if (!preserveStorage) {
+      window.localStorage.clear()
+      window.sessionStorage.clear()
+    }
     window.localStorage.setItem('zzh_has_auth_session', '1')
-  })
+  }, Boolean(options.preserveStorage))
 
   await page.route(isBackendRequest, async (route) => {
     const request = route.request()

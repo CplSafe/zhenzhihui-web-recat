@@ -67,7 +67,7 @@ for (const viewport of [
     await page.locator('.react-flow__node[data-id="source"]').click()
     const editor = page.locator('[data-canvas-node-panel]')
     await expect(editor).toBeVisible()
-    const hint = page.getByRole('button', { name: '使用已认证真人素材', exact: true })
+    const hint = page.getByRole('button', { name: '可使用已认证的真人素材', exact: true })
     await expect(hint).toBeVisible()
     expect(await hint.evaluate((element) => element.closest('[data-canvas-node-panel]') === null)).toBe(true)
     await expect(async () => {
