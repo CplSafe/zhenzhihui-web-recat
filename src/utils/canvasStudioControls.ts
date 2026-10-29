@@ -75,18 +75,22 @@ export function composeStudioPrompt(code: string, prompt: string, values: Record
       '右前侧观察，呈现侧面与遮挡关系',
       '右侧观察，以侧面轮廓和侧向纵深为主',
       '右后侧观察，展示背侧表面',
-      '背面观察，人物以背影和后脑为主',
+      '正后方背面机位',
       '左后侧观察，展示背侧表面',
       '左侧观察，以侧面轮廓和侧向纵深为主',
       '左前侧观察，呈现侧面与遮挡关系',
     ]
-    const view = views[Math.round(yaw / 45) % views.length]
+    const viewIndex = Math.round(yaw / 45) % views.length
+    const view = views[viewIndex]
     const elevation = pitch > 0 ? '增加顶部可见面积' : pitch < 0 ? '呈现底部可见面' : '保持原拍摄高度'
     return [
       `以参考图机位为0°，水平环绕${yaw}°，${pitch > 0 ? '俯拍' : pitch < 0 ? '仰拍' : '平视'}${Math.abs(pitch)}°，${framing}构图。`,
       `${view}；${elevation}。`,
+      viewIndex === 4
+        ? '主体及配套物品各绕竖直轴原地旋转180°，各自背面朝镜头；正面主标不可见，包装背标或条码朝镜头。全部保留并列，不删减或重排。'
+        : '',
       zoom >= 9 ? '极度特写镜头，广角镜头，边缘带有鱼眼畸变效果。' : '',
-      '保持主体身份，主体姿态和朝向保持；不锁定原构图、可见面或背景位置。不要用平移裁切、镜像代替机位变化。',
+      '保持参考图全部物件的设计、标识、比例和场景；无人物参考不得新增人物。背景不平移或镜像。',
       text,
     ]
       .filter(Boolean)

@@ -1,3 +1,10 @@
+import {
+  DEFAULT_CANVAS_SHORTCUTS,
+  matchesCanvasAction,
+  resolveTimelineShortcutStep,
+  formatCanvasShortcut,
+  type CanvasShortcutBindings,
+} from '@/utils/canvasKeyboard'
 import { resolveAudioTrackStart } from '@/utils/canvasTimelineAudioEditing'
 /**
  * 剪辑时间线编辑器：一条主视频轨道的基础剪辑（对标剪映的基础剪辑模式）。
@@ -57,6 +64,7 @@ import { CANVAS_AUDIO_NODES_ENABLED, CANVAS_PHASE_ONE_EXTRAS_ENABLED } from '@/u
 import styles from './CanvasTimelineEditor.module.css'
 
 interface CanvasTimelineEditorProps {
+  shortcuts?: CanvasShortcutBindings
   open: boolean
   workspaceId: number
   state: TimelineState
@@ -138,6 +146,7 @@ type DragState =
     }
 
 export default function CanvasTimelineEditor({
+  shortcuts = DEFAULT_CANVAS_SHORTCUTS,
   open,
   workspaceId,
   state,
@@ -155,6 +164,15 @@ export default function CanvasTimelineEditor({
   compatibilityNote = '',
   onAddClipToCanvas,
 }: CanvasTimelineEditorProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const previous = document.activeElement as HTMLElement | null
+    dialogRef.current?.focus()
+    return () => {
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [open])
   const [playheadSec, setPlayheadSec] = useState(0)
   const [previewPlaying, setPreviewPlaying] = useState(false)
   const [audioPreviewReady, setAudioPreviewReady] = useState(false)
@@ -643,19 +661,18 @@ export default function CanvasTimelineEditor({
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
-      const tag = target?.tagName || ''
+      if (event.defaultPrevented || !target || !dialogRef.current?.contains(target)) return
+      const tag = target.tagName
       // 正在输入框里打字时不抢键，否则删不掉字符、也退不出输入
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || event.isComposing)
         return
 
-      const meta = event.ctrlKey || event.metaKey
-      if (meta && event.key.toLowerCase() === 'z') {
+      if (matchesCanvasAction(event, 'undo', shortcuts)) {
         event.preventDefault()
-        if (event.shiftKey) redo()
-        else undo()
+        undo()
         return
       }
-      if (meta && event.key.toLowerCase() === 'y') {
+      if (matchesCanvasAction(event, 'redo', shortcuts)) {
         event.preventDefault()
         redo()
         return
@@ -665,30 +682,38 @@ export default function CanvasTimelineEditor({
         onClose()
         return
       }
-      const key = event.key.toLowerCase()
-      if (!meta && !event.altKey && (key === 'c' || key === 'b')) {
+      if (matchesCanvasAction(event, 'timelinePlay', shortcuts)) {
+        // 原生按钮保留空格激活，轨道和播放头使用预览播放器的同一播放入口。
+        if (event.key === ' ' && target.closest('button, a, video, audio, [role="button"]')) return
+        event.preventDefault()
+        event.stopPropagation()
+        if (!event.repeat) dialogRef.current?.querySelector<HTMLButtonElement>('[data-timeline-play]')?.click()
+        return
+      }
+      const split = matchesCanvasAction(event, 'timelineSplit', shortcuts)
+      if (split || matchesCanvasAction(event, 'timelineRippleDelete', shortcuts)) {
         event.preventDefault()
         event.stopPropagation()
         if (event.repeat) return
-        if (key === 'c') handleSplit()
+        if (split) handleSplit()
         else if (selectedClipId) handleRemove()
         return
       }
-      if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (matchesCanvasAction(event, 'delete', shortcuts)) {
         if (!selectedClipId) return
         event.preventDefault()
         handleRemove()
         return
       }
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      const step = resolveTimelineShortcutStep(event, shortcuts)
+      if (step !== null) {
         event.preventDefault()
-        const step = (event.shiftKey ? NUDGE_STEP_LARGE_SEC : NUDGE_STEP_SEC) * (event.key === 'ArrowLeft' ? -1 : 1)
         setPlayheadSec((current) => Math.min(Math.max(0, current + step), draftTotalSec))
       }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, redo, undo, onClose, selectedClipId, handleRemove, handleSplit, draftTotalSec])
+  }, [open, redo, undo, onClose, selectedClipId, handleRemove, handleSplit, draftTotalSec, shortcuts])
 
   // 点到别处收起添加菜单：它会盖住轨道，留着碍事
   useEffect(() => {
@@ -726,7 +751,7 @@ export default function CanvasTimelineEditor({
   const noTargetReason = '先在轨道上选一个片段'
 
   return (
-    <div className={styles.mask} role="dialog" aria-modal="true" aria-label="视频剪辑">
+    <div ref={dialogRef} tabIndex={-1} className={styles.mask} role="dialog" aria-modal="true" aria-label="视频剪辑">
       <div className={styles.panel}>
         <header className={styles.header}>
           <div className={styles.title}>
@@ -984,7 +1009,7 @@ export default function CanvasTimelineEditor({
                 canSplit ? `在播放头处把片段 ${(located?.index ?? 0) + 1} 分成两段` : '把播放头移到片段中间才能分割'
               }
             >
-              ✂ 分割 (C)
+              ✂ 分割 ({formatCanvasShortcut(shortcuts.timelineSplit)})
             </button>
             <button
               type="button"
@@ -992,7 +1017,7 @@ export default function CanvasTimelineEditor({
               disabled={!targetClip}
               title={targetClip ? `删除${targetLabel}` : noTargetReason}
             >
-              🗑 删除 (B)
+              🗑 删除 ({formatCanvasShortcut(shortcuts.timelineRippleDelete)})
             </button>
             <button
               type="button"
@@ -1385,13 +1410,10 @@ export default function CanvasTimelineEditor({
                 onPointerUp={handleScrubUp}
                 onPointerCancel={handleScrubUp}
                 onKeyDown={(event) => {
-                  const step = event.shiftKey ? NUDGE_STEP_LARGE_SEC : NUDGE_STEP_SEC
-                  if (event.key === 'ArrowLeft') {
+                  if (event.ctrlKey || event.metaKey || event.altKey) return
+                  if (event.key === 'Home' || event.key === 'End') {
                     event.preventDefault()
-                    seekTo(playheadSec - step)
-                  } else if (event.key === 'ArrowRight') {
-                    event.preventDefault()
-                    seekTo(playheadSec + step)
+                    seekTo(event.key === 'Home' ? 0 : draftTotalSec)
                   }
                 }}
               />

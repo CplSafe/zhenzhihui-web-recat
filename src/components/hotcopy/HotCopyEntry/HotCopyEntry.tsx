@@ -176,7 +176,7 @@ interface HotCopyEntryProps {
   /** 游客态：模型入口照常展示但置灰，点击交由 onAuthRequired 引导登录。 */
   authRequired?: boolean
   onAuthRequired?: () => void
-  /** 当前参数对应的实时费用预估；金额统一按公共积分汇率展示。 */
+  /** 当前参数对应的实时费用预估；消耗统一以积分展示。 */
   costEstimate?: { estimatedCost: number; balance: number; canAfford: boolean } | null
   costLoading?: boolean
   costError?: string

@@ -39,6 +39,14 @@ export function snapshotVideoAudio(
 
 export class VideoAudioCompositionError extends Error {}
 
+/** 成功状态不代表已完成配音：旧同步结果可能仍指向模型原片。 */
+export function needsVideoAudioComposition(data: Record<string, unknown>): boolean {
+  const composition = data.videoAudioComposition as VideoAudioComposition | undefined
+  return Boolean(
+    composition?.clips?.length && (!composition.result || Number(data.assetId) === composition.result.sourceAssetId),
+  )
+}
+
 /** 使用原音频替换模型声轨，入库后预览、下载、下游引用都使用同一份 MP4。 */
 export async function composeVideoAudio(
   workspaceId: number,

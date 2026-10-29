@@ -37,3 +37,12 @@ export function formatCredits(credits: unknown): string {
   if (Math.abs(n) < 0.005) return n > 0 ? '<0.01' : '-<0.01'
   return n.toLocaleString('en-US', { maximumFractionDigits: 2 })
 }
+
+/** 生成消耗直接展示积分，不折算人民币；非法值和负数按 0 展示。 */
+export function creditsLabel(credits: unknown): string {
+  const value = Number(credits)
+  return `${formatCredits(Number.isFinite(value) && value > 0 ? value : 0)} 积分`
+}
+
+/** 额度不足时的统一提示文案。 */
+export const INSUFFICIENT_CREDITS_TEXT = '积分不足，请充值积分'

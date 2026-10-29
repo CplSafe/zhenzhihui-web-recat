@@ -9,7 +9,7 @@ import type { ToolField } from '@/api/canvasTools'
 import type { HdTask, HdSource } from '@/api/canvasHd'
 import type { HdRequest } from './CanvasHdWorkspace'
 import { hdSources } from '@/utils/canvasHd'
-import { creditsYuanLabel } from '@/utils/creditsYuan'
+import { creditsLabel } from '@/utils/creditsFormat'
 import { activeToolParams, fieldOptions, fieldVisible, schemaDefaults, validateToolFields } from '@/utils/canvasTools'
 import CanvasToolFields from './CanvasToolFields'
 import { showToast } from '@/stores/ui'
@@ -193,7 +193,7 @@ export default function CanvasUpscale(props: {
         (option) => /^8k$/i.test(String(option.value)) || /^8k$/i.test(option.label),
       )
       if (/resolution/.test(field.name) && eightK) fixedValues[field.name] = eightK.value
-      if (field.display_name === '细节生成程度') fixedValues[field.name] = 100
+      if (field.display_name === '细节生成程度') fixedValues[field.name] = 40
     }
   }
   const values = { ...editableValues, ...fixedValues }
@@ -507,7 +507,7 @@ export default function CanvasUpscale(props: {
               .map((field) => (
                 <div className={styles.row} key={field.name}>
                   <span>{field.display_name || field.name}</span>
-                  <span>{fixedValues[field.name] === 100 ? '100' : '8K'}</span>
+                  <span>{field.display_name === '细节生成程度' ? String(fixedValues[field.name]) : '8K'}</span>
                 </div>
               ))}
             {upscaleDisplayFields(choiceFields)
@@ -619,14 +619,14 @@ export default function CanvasUpscale(props: {
           {currentQuote && (!currentQuote.can_afford || currentQuote.estimate_note) && (
             <Alert
               type={quote.can_afford ? 'info' : 'warning'}
-              message={`${quote.estimate_kind === 'reservation' ? '预冻结金额' : '预估费用'}：${creditsYuanLabel(quote.estimated_cost)} · 余额 ${quote.balance} 积分`}
+              message={`${quote.estimate_kind === 'reservation' ? '预冻结积分' : '预估费用'}：${creditsLabel(quote.estimated_cost)} · 余额 ${quote.balance} 积分`}
               description={quote.estimate_note}
             />
           )}
           <div className={styles.footer}>
             <span className={styles.cost} aria-live="polite">
               {currentQuote
-                ? `${currentQuote.estimate_kind === 'reservation' ? '预冻结' : '预计'} ${creditsYuanLabel(currentQuote.estimated_cost)}`
+                ? `${currentQuote.estimate_kind === 'reservation' ? '预冻结' : '预计'} ${creditsLabel(currentQuote.estimated_cost)}`
                 : quoting
                   ? '正在计算费用…'
                   : quoteError || '等待有效参数以计算费用'}

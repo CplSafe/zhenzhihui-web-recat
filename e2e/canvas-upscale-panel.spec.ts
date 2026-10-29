@@ -175,7 +175,7 @@ for (const dimensions of [
     const modal = page.getByRole('dialog', { name: '超分', exact: true })
     await expect(modal).toBeVisible()
     await expect(modal.getByText('8K', { exact: true })).toBeVisible()
-    await expect(modal.getByText('100', { exact: true })).toBeVisible()
+    await expect(modal.getByText('40', { exact: true })).toBeVisible()
     await expect(modal.getByText('4k', { exact: true })).toHaveCount(0)
     await expect(modal.getByRole('slider')).toHaveCount(0)
     await expect(modal.getByRole('spinbutton', { name: '细节生成程度' })).toHaveCount(0)
@@ -279,7 +279,7 @@ for (const dimensions of [
       workspace_id: WORKSPACE_ID,
       model_version_id: 42,
       operation_code: 'image.upscale',
-      params: { multiple: 2, resolution: '8k', detail: 100 },
+      params: { multiple: 2, resolution: '8k', detail: 40 },
       input_assets: [{ asset_id: oversized ? 702 : 701, role: 'image' }],
       idempotency_key: expect.any(String),
     })

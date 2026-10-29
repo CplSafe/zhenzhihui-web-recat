@@ -1,9 +1,9 @@
+import { INSUFFICIENT_CREDITS_TEXT, formatCredits, creditsLabel, sumCredits, toMilli } from '@/utils/creditsFormat'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircleFilled, CloseOutlined, ControlOutlined, DownOutlined, LoadingOutlined } from '@ant-design/icons'
 import { openMemberCenter } from '@/stores/ui'
 import ModelAvailabilityNotice, { useModelNotice } from '@/components/common/ModelAvailabilityNotice'
-import { INSUFFICIENT_CREDITS_TEXT, creditsToYuanAmount, creditsYuanLabel } from '@/utils/creditsYuan'
 import {
   getModelConstraintConflicts,
   getModelDurationLimitLabel,
@@ -19,7 +19,6 @@ import {
   type GenerationModelPickerProps,
   type GenerationModelSelection,
 } from './GenerationModelPicker'
-import { sumCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './GenerationModelDropdown.module.less'
 
 interface ModelSelectionSlot {
@@ -820,7 +819,7 @@ export default function GenerationModelDropdown({
                                 : estimate?.status === 'loading'
                                   ? '正在预估…'
                                   : estimate?.status === 'success'
-                                    ? `${estimate.estimateKind === 'reservation' ? '预冻结' : '预计'} ${creditsYuanLabel(estimate?.estimatedCost)}`
+                                    ? `${estimate.estimateKind === 'reservation' ? '预冻结' : '预计'} ${creditsLabel(estimate?.estimatedCost)}`
                                     : estimate?.status === 'error'
                                       ? '暂无法预估，不影响创作'
                                       : '等待预估'
@@ -851,7 +850,7 @@ export default function GenerationModelDropdown({
                   <div>
                     <strong>
                       {Object.values(estimates).some((estimate) => estimate.estimateKind === 'reservation')
-                        ? '模型预冻结金额'
+                        ? '模型预冻结积分'
                         : '模型参考预估'}
                     </strong>
                     <span>当前配置下，各模型分别执行 1 次</span>
@@ -865,8 +864,8 @@ export default function GenerationModelDropdown({
                       <>
                         {/* 「约」与全站估价口径一致:合计同样是估算值,不是准确报价 */}
                         <span>约</span>
-                        <b>{creditsToYuanAmount(estimateTotal) || '0'}</b>
-                        <span>元</span>
+                        <b>{formatCredits(estimateTotal) || '0'}</b>
+                        <span>积分</span>
                       </>
                     )}
                   </div>

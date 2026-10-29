@@ -51,11 +51,12 @@ export default function PanoramaCapturePanel({
         <strong>选择取景范围</strong>
         <p>4 视角：水平环绕一周。12 视角：俯视、平视、仰视各 4 张。批量取景以当前水平方向为起点，视野为 75°。</p>
       </div>
-      <div className={styles.presets}>
+      <div className={`${styles.presets} ${styles.captureActions}`}>
         {[1, 4, 12].map((count) => (
           <Button
             key={count}
             disabled={!ready || Boolean(error) || disabled || capturing}
+            loading={capturing && progress?.total === count}
             onClick={() => void captureFrames(count)}
           >
             {count === 1 ? '当前视角截图' : `${count}视角截图`}

@@ -1,5 +1,4 @@
-import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from './creditsYuan'
-import { multiplyCredits, toMilli } from './creditsFormat'
+import { INSUFFICIENT_CREDITS_TEXT, creditsLabel, multiplyCredits, toMilli } from './creditsFormat'
 import type { BackendGenerationModel, GenerationOperationCode } from './generationModelCatalog'
 import { buildGenerationModelExecutionFingerprint } from './generationQueueModelGuards'
 
@@ -177,7 +176,7 @@ export function getSmartImageQuoteValidationError(
     return '图片任务报价无效，请重新确认费用'
   }
   if (toMilli(quotedCost) !== toMilli(currentCost)) {
-    return `图片生成费用已由每张 ${creditsYuanLabel(quotedCost)}变为 ${creditsYuanLabel(currentCost)}，请重新确认后生成`
+    return `图片生成费用已由每张 ${creditsLabel(quotedCost)}变为 ${creditsLabel(currentCost)}，请重新确认后生成`
   }
 
   const remainingTotal = toMilli(currentCost) * remainingCount

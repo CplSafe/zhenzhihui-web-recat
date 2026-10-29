@@ -1,11 +1,18 @@
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
-import { installStrictAuthenticatedApp, expectNoUnexpectedApi, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
+import {
+  installStrictAuthenticatedApp,
+  expectNoUnexpectedApi,
+  waitForScopedApiResponse,
+  WORKSPACE_ID,
+} from './fixtures/strict-authenticated-app'
 
 for (const renamed of [false, true]) {
   test(`图片工具独立操作码${renamed ? '后台重命名' : '默认配置'}：模型隔离、估价、生成和保存`, async ({
     page,
   }, testInfo) => {
+    // 同一场景覆盖三种工具、三次生成及多个视口截图，保留每个交互的独立等待断言。
+    test.setTimeout(90_000)
     const operations = renamed
       ? ['studio.camera.rotate', 'studio.lighting.adjust', 'studio.scene.sphere']
       : ['image.multi_angle', 'image.relight', 'image.panorama']
@@ -125,6 +132,9 @@ for (const renamed of [false, true]) {
                     params_schema: {
                       fields: [
                         { name: 'count', display_name: '张数', type: 'integer', default: 1, min: 1, max: 6 },
+                        ...(index === 0
+                          ? [{ name: 'negative_prompt', display_name: '反向提示词', type: 'string', max_length: 500 }]
+                          : []),
                         ...(index === 1 && renamed
                           ? [
                               {
@@ -237,9 +247,15 @@ for (const renamed of [false, true]) {
         },
       }),
     )
+    const ready = waitForScopedApiResponse(page, {
+      method: 'GET',
+      path: '/api/v1/canvases/120/elements',
+      workspaceId: WORKSPACE_ID,
+    })
     await page.goto('/canvas/120')
+    await ready
     const source = page.locator('.react-flow__node[data-id="image-source"]')
-    await expect(source).toBeVisible()
+    await expect(source).toBeVisible({ timeout: 30000 })
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '多角度', exact: true }).click()
     const modal = page.getByRole('dialog')
@@ -261,17 +277,38 @@ for (const renamed of [false, true]) {
     // 浏览器指针的连续位移会产生小数，显示值和估价正文必须保持整度一致。
     const globe = await angleControl.boundingBox()
     expect(globe).not.toBeNull()
+    await angleControl.evaluate((element) => {
+      element.addEventListener(
+        'pointerdown',
+        (event) => {
+          const pointer = event as PointerEvent
+          element.setAttribute('data-test-drag-start', JSON.stringify({ x: pointer.clientX, y: pointer.clientY }))
+        },
+        { once: true },
+      )
+      element.addEventListener('pointermove', (event) => {
+        const pointer = event as PointerEvent
+        element.setAttribute('data-test-drag-end', JSON.stringify({ x: pointer.clientX, y: pointer.clientY }))
+      })
+    })
     await page.mouse.move(globe!.x + globe!.width / 2, globe!.y + globe!.height / 2)
     await page.mouse.down()
     await page.mouse.move(globe!.x + globe!.width / 2 + 67.85, globe!.y + globe!.height / 2 - 56.25)
     await page.mouse.up()
-    await expect(modal.getByRole('spinbutton', { name: '水平角', exact: true })).toHaveValue('54')
-    await expect(modal.getByRole('spinbutton', { name: '俯仰角', exact: true })).toHaveValue('28')
+    const drag = await angleControl.evaluate((element) => ({
+      start: JSON.parse(element.getAttribute('data-test-drag-start')!),
+      end: JSON.parse(element.getAttribute('data-test-drag-end')!),
+    }))
+    const expectedYaw = Math.round((drag.end.x - drag.start.x) * 0.8)
+    const expectedPitch = Math.round((drag.start.y - drag.end.y) * 0.5)
+    await expect(modal.getByRole('spinbutton', { name: '水平角', exact: true })).toHaveValue(String(expectedYaw))
+    await expect(modal.getByRole('spinbutton', { name: '俯仰角', exact: true })).toHaveValue(String(expectedPitch))
     await expect
       .poll(() =>
         quotes.some(
           (quote) =>
-            quote.params?.tool_params?.horizontal_angle === 54 && quote.params?.tool_params?.vertical_angle === 28,
+            quote.params?.tool_params?.horizontal_angle === expectedYaw &&
+            quote.params?.tool_params?.vertical_angle === expectedPitch,
         ),
       )
       .toBe(true)
@@ -289,6 +326,25 @@ for (const renamed of [false, true]) {
       .toBe(true)
     await page.screenshot({ path: testInfo.outputPath('multi-angle-fisheye.png') })
     await modal.getByRole('button', { name: '背面视角', exact: true }).click()
+    await modal.getByText('场景约束与提示词', { exact: true }).click()
+    await expect(
+      modal.getByText('背面视角下瓶身与包装盒分别转到背面，背标和条码朝向镜头；保留所有配件。'),
+    ).toBeVisible()
+    const sceneInput = modal.getByRole('textbox', { name: '多角度补充场景信息' })
+    await sceneInput.fill('红衣女子站在窗边，桌上有白杯')
+    const promptPreview = modal.getByLabel('多角度生成提示词')
+    await expect(promptPreview).toContainText('保持参考图全部物件的设计、标识、比例和场景')
+    await expect(promptPreview).toContainText('红衣女子站在窗边，桌上有白杯')
+    await modal.getByRole('button', { name: '正面仰拍', exact: true }).click()
+    await expect(sceneInput).toHaveValue('红衣女子站在窗边，桌上有白杯')
+    await expect(promptPreview).toContainText('仰拍20°')
+    await modal.getByRole('button', { name: '背面视角', exact: true }).click()
+    await page.setViewportSize({ width: 760, height: 1000 })
+    await sceneInput.scrollIntoViewIfNeeded()
+    await expect(sceneInput).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath('multi-angle-scene-760.png') })
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
     await modal.getByRole('button', { name: '生成新图片' }).click()
     await expect(modal).not.toBeVisible()
     expect(submissions[0]).toMatchObject({ operation_code: operations[0], model_version_id: 42 })
@@ -300,8 +356,14 @@ for (const renamed of [false, true]) {
     ).toBe(true)
     expect(submissions[0].params.tool_params).toMatchObject({ horizontal_angle: 180, vertical_angle: 0, zoom: 5 })
     expect(submissions[0].prompt).toContain('水平环绕180°')
-    expect(submissions[0].prompt).toContain('背影和后脑')
-    expect(submissions[0].prompt).toContain('不锁定原构图、可见面或背景位置')
+    expect(submissions[0].prompt).toContain('正后方背面机位')
+    expect(submissions[0].prompt).toContain('各绕竖直轴原地旋转180°，各自背面朝镜头')
+    expect(submissions[0].prompt).toContain('正面主标不可见，包装背标或条码朝镜头')
+    expect(submissions[0].params.negative_prompt).toContain('正面主标可见')
+    expect(submissions[0].params.negative_prompt).toContain('商品包装缺失')
+    expect(submissions[0].prompt).toContain('无人物参考不得新增人物')
+    expect(submissions[0].prompt).toContain('红衣女子站在窗边，桌上有白杯')
+    expect(quotes.some((quote) => quote.prompt === submissions[0].prompt)).toBe(true)
     expect(submissions[0].prompt).toContain('平视0°，中景')
     expect(Array.from(submissions[0].prompt).length).toBeLessThanOrEqual(200)
     await source.locator('.canvas-node-header').click()
@@ -447,6 +509,7 @@ for (const renamed of [false, true]) {
 }
 
 test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视角', async ({ page }, testInfo) => {
+  test.setTimeout(90_000)
   test.setTimeout(90000)
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
@@ -536,7 +599,10 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     })
   })
   await page.route('https://canvas-test.oss-cn-beijing.aliyuncs.com/upload', async (route) => {
-    const body = route.request().postDataBuffer()!
+    // WebKit 的网络协议可能省略 multipart 文件字节；从实际传给 fetch 的 File 读取，仍校验真实上传内容。
+    const bytes = await page.evaluate(() => (window as any).__panoramaUploadBytes as number[])
+    expect(bytes).toBeDefined()
+    const body = Buffer.from(bytes)
     const start = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     expect(start).toBeGreaterThanOrEqual(0)
     const end = body.indexOf(Buffer.from('49454e44ae426082', 'hex'), start) + 8
@@ -548,6 +614,20 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   await page.route('**/api/v1/assets/702/complete?**', (route) =>
     route.fulfill({ json: { id: 702, status: 'active' } }),
   )
+  await page.addInitScript(() => {
+    const fetch = window.fetch
+    window.fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url === 'https://canvas-test.oss-cn-beijing.aliyuncs.com/upload' && init?.body instanceof FormData) {
+        let file: Blob | undefined
+        init.body.forEach((value) => {
+          if (!file && value instanceof Blob) file = value
+        })
+        if (file) (window as any).__panoramaUploadBytes = [...new Uint8Array(await file.arrayBuffer())]
+      }
+      return fetch(input, init)
+    }
+  })
   await page.goto('/canvas/120')
   const source = page.locator('.react-flow__node[data-id="panorama-source"]')
   await source.locator('.canvas-node-header').click()
@@ -601,7 +681,7 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   await expect(collection).toBeVisible()
   await expect(collection).toContainText('共 17 张 · 已选 0 张')
   await expect(collection.getByRole('button', { name: '将选中截图加入画布' })).toBeDisabled()
-  expect(await collection.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await expect.poll(() => collection.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('panorama-capture-narrow.png') })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await modal.getByRole('button', { name: '当前视角截图' }).click()

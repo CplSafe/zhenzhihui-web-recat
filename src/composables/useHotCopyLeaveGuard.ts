@@ -1,14 +1,19 @@
 import { useEffect, useRef } from 'react'
-import { useBlocker } from 'react-router-dom'
+import { useBlocker, type Location } from 'react-router-dom'
 import { useConfirmDialog } from './useToast'
 
 /** 未提交入口只保留在当前页面；已提交任务由各流程原有恢复链路负责。 */
-export function useUnsavedEntryLeaveGuard(dirty: boolean, discard: () => void) {
+export function useUnsavedEntryLeaveGuard(
+  dirty: boolean,
+  discard: () => void,
+  allowNavigation?: (nextLocation: Location) => boolean,
+) {
   const { requestConfirm } = useConfirmDialog()
   const discardRef = useRef(discard)
   discardRef.current = discard
   const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname,
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname && !allowNavigation?.(nextLocation),
   )
   useEffect(() => {
     if (blocker.state !== 'blocked') return

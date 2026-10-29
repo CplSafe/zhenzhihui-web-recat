@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react'
-import { wrapStudioAngle } from '@/utils/canvasStudioControls'
+import { composeStudioPrompt, wrapStudioAngle } from '@/utils/canvasStudioControls'
 import styles from './CanvasImageTools.module.css'
 
 const presets = [
@@ -166,13 +166,7 @@ export default function CanvasAngleEditor({
             <input type="checkbox" checked={showPrompt} onChange={(event) => setShowPrompt(event.target.checked)} />
             显示机位提示词
           </label>
-          {showPrompt && (
-            <p className={styles.anglePrompt}>
-              以同一主体为中心，水平环绕 {Math.round(yaw)}°，{pitch > 0 ? '俯拍' : pitch < 0 ? '仰拍' : '平视'}{' '}
-              {Math.abs(Math.round(pitch))}°，{zoom < 3.5 ? '远景' : zoom > 6.5 ? '近景' : '中景'}
-              构图。保持主体身份、服装与场景一致。
-            </p>
-          )}
+          {showPrompt && <p className={styles.anglePrompt}>{composeStudioPrompt('image.multi_angle', '', values)}</p>}
           <button
             className={styles.relightCompare}
             type="button"

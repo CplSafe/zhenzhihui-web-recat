@@ -6,6 +6,7 @@ for (const compacted of [false, true]) {
     page,
   }) => {
     const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
     const oldError = 'Old asset is not suitable for this operation'
     const node = {
       element_id: 'generated-image',
@@ -126,13 +127,13 @@ for (const compacted of [false, true]) {
     })
     await page.clock.install()
     await page.goto('/canvas/112')
-    await expect(page.getByText('正在生成内容', { exact: true })).toBeVisible()
+    await expect(page.getByRole('status', { name: '生成中', exact: true })).toBeVisible()
     await page.clock.runFor(2500)
     await expect.poll(() => snapshotWaiting).toBe(true)
     releaseTask()
     const image = page.locator('.react-flow__node-image').getByRole('img', { name: 'image', exact: true })
     await expect(image).toBeVisible()
-    await expect(page.getByText('正在生成内容', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('status', { name: '生成中', exact: true })).toHaveCount(0)
     await page.clock.runFor(1500)
     await expect.poll(() => successSaved).toBe(true)
     releaseSnapshot()

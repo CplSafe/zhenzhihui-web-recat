@@ -3,7 +3,15 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { snapshot, changedFiles, stopDecision, hook, coversChanges, normalizeProjectPath } from './frontend-gate.mjs'
+import {
+  snapshot,
+  changedFiles,
+  stopDecision,
+  hook,
+  coversChanges,
+  normalizeProjectPath,
+  verificationBuildDirectory,
+} from './frontend-gate.mjs'
 
 const baseline = { files: { 'src/page.tsx': 'old' }, fingerprint: 'old' }
 const current = { files: { 'src/page.tsx': 'new' }, fingerprint: 'new' }
@@ -78,4 +86,12 @@ test('hash detects edits, deletions, new untracked source, test/config changes; 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('each verification builds into its own safe directory instead of the shared dist', () => {
+  const a = verificationBuildDirectory('11111111-1111-4111-8111-111111111111')
+  const b = verificationBuildDirectory('22222222-2222-4222-8222-222222222222')
+  assert.notEqual(a, b)
+  assert.ok(a.startsWith('.codex/frontend-verification/build-'))
+  assert.throws(() => verificationBuildDirectory('../dist'))
 })

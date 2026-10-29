@@ -12,7 +12,7 @@ import {
   validateHdQuote,
 } from '@/utils/canvasHd'
 import { assetStreamUrl } from '@/utils/assetUrl'
-import { creditsYuanLabel } from '@/utils/creditsYuan'
+import { creditsLabel } from '@/utils/creditsFormat'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import { openMemberCenterTab, requestConfirm, showToast } from '@/stores/ui'
 import styles from './CanvasHdWorkspace.module.css'
@@ -506,7 +506,7 @@ export default function CanvasHdWorkspace({
                   render: (_, item: HdItem) => {
                     if (!item.eligible) return item.reason || '暂不支持高清处理'
                     const credits = quote?.items.find((row) => row.node_id === item.node_id)?.credits
-                    return credits === undefined ? '待报价' : creditsYuanLabel(credits)
+                    return credits === undefined ? '待报价' : creditsLabel(credits)
                   },
                 },
               ]}
@@ -543,7 +543,7 @@ export default function CanvasHdWorkspace({
               {!quote.can_afford || quote.balance < quote.total_credits ? (
                 <Alert
                   type="error"
-                  message={`积分余额不足，预估费用${creditsYuanLabel(quote.total_credits)}，当前余额 ${quote.balance} 积分。已拦截下单——不会产生任务、不会扣分。`}
+                  message={`积分余额不足，预估费用${creditsLabel(quote.total_credits)}，当前余额 ${quote.balance} 积分。已拦截下单——不会产生任务、不会扣分。`}
                   action={<Button onClick={() => openMemberCenterTab('recharge')}>去充值</Button>}
                 />
               ) : null}
@@ -554,7 +554,7 @@ export default function CanvasHdWorkspace({
                     {quote.estimated_time ? `预计耗时约 ${quote.estimated_time}` : '耗时以服务端实际队列为准'}
                   </small>
                 </span>
-                <strong>{creditsYuanLabel(quote.total_credits)}</strong>
+                <strong>{creditsLabel(quote.total_credits)}</strong>
               </div>
             </>
           )}

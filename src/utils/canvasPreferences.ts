@@ -55,7 +55,7 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
 const STORAGE_KEY = 'zzh_canvas_preferences'
 
 // 旧版本会保存整份默认快捷键；仅升级旧默认值，保留用户自定义组合。
-const LEGACY_CANVAS_SHORTCUTS: CanvasShortcutBindings = {
+const LEGACY_CANVAS_SHORTCUTS: Partial<CanvasShortcutBindings> = {
   connect: 'L',
   duplicate: 'Shift+D',
   add: 'N',
@@ -68,7 +68,7 @@ const LEGACY_CANVAS_SHORTCUTS: CanvasShortcutBindings = {
   fitView: '1',
 }
 
-const PREVIOUS_CANVAS_SHORTCUTS: CanvasShortcutBindings = {
+const PREVIOUS_CANVAS_SHORTCUTS: Partial<CanvasShortcutBindings> = {
   connect: 'Mod+L',
   duplicate: 'Mod+D',
   add: 'Mod+N',

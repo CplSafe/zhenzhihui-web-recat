@@ -3,10 +3,17 @@ import {
   buildModelRestrictionSummary,
   getModelConstraintConflicts,
   getModelDurationLimitLabel,
+  getModelMaximumDurationSec,
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 
 describe('model restriction metadata', () => {
+  it('returns the declared maximum duration without inventing one when absent', () => {
+    expect(getModelMaximumDurationSec({ duration: { options: [5, 10, 15] } })).toBe(15)
+    expect(getModelMaximumDurationSec({ duration: { maximum: 20 } })).toBe(20)
+    expect(getModelMaximumDurationSec({})).toBeNull()
+  })
+
   it('builds user-facing restrictions and structured constraints only from backend metadata', () => {
     const result = buildModelRestrictionSummary({
       limitations: ['真人素材暂不支持', { message: '单次仅生成一个结果' }],

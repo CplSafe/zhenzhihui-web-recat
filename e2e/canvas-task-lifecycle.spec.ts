@@ -13,6 +13,7 @@ for (const scenario of [
   }) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: [] }))
     const oldError = 'read google image response: context canceled'
     const currentError = 'Current generation failed'
     let revision = 1
@@ -118,20 +119,18 @@ for (const scenario of [
         },
       }),
     )
-    if (scenario.edit) {
-      await page.route('**/api/v1/ai/tasks/estimate-cost', async (route) => {
-        const body = route.request().postDataJSON()
-        expect(body.operation_code).toBe('image.image_to_image')
-        expect(body.input_assets).toEqual([{ asset_id: 12391, role: 'reference_image' }])
-        estimates += 1
-        await route.fulfill({ json: { estimated_cost: 15, balance: 1000, can_afford: true } })
-      })
-    }
+    await page.route('**/api/v1/ai/tasks/estimate-cost', async (route) => {
+      const body = route.request().postDataJSON()
+      expect(body.operation_code).toBe(scenario.edit ? 'image.image_to_image' : 'image.text_to_image')
+      expect(body.input_assets || []).toEqual(scenario.edit ? [{ asset_id: 12391, role: 'reference_image' }] : [])
+      estimates += 1
+      await route.fulfill({ json: { estimated_cost: 15, balance: 1000, can_afford: true } })
+    })
     await page.route('**/api/v1/ai/tasks', async (route) => {
       if (scenario.edit) {
         const body = route.request().postDataJSON()
-        expect(body.operation_code).toBe('image.image_to_image')
-        expect(body.input_assets).toEqual([{ asset_id: 12391, role: 'reference_image' }])
+        expect(body.operation_code).toBe(scenario.edit ? 'image.image_to_image' : 'image.text_to_image')
+        expect(body.input_assets || []).toEqual(scenario.edit ? [{ asset_id: 12391, role: 'reference_image' }] : [])
       }
       submissions += 1
       await pendingSubmission
@@ -151,13 +150,18 @@ for (const scenario of [
       }),
     )
 
+    await page.route('**/api/v1/assets?**', (route) =>
+      route.fulfill({
+        json: { items: [{ id: 12391, type: 'image', status: 'active', workspace_id: WORKSPACE_ID }], total: 1 },
+      }),
+    )
     await page.clock.install()
     await page.goto('/canvas/108')
-    await expect(page.getByText(`上次生成失败：${oldError}`, { exact: true })).toBeVisible()
+    await expect(page.getByRole('alert', { name: `上次生成失败：${oldError}` })).toBeVisible()
     expect(oldTaskQueries).toBe(1)
     await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
-    await page.locator('.react-flow__node-image').filter({ hasText: oldError }).click()
-    const send = page.getByRole('button', { name: /约.*元/ })
+    await page.locator('.react-flow__node[data-id="image-retry"] .canvas-node-header').click()
+    const send = page.getByRole('button', { name: '生成', exact: true })
     await expect(send).toBeEnabled()
     await send.click()
     await expect.poll(() => submissions).toBe(1)
@@ -167,8 +171,8 @@ for (const scenario of [
     try {
       await page.clock.runFor(7000)
       expect(oldTaskQueries).toBe(1)
-      await expect(page.getByText(oldError, { exact: false })).toHaveCount(0)
-      await expect(page.getByText('正在提交任务', { exact: true })).toBeVisible()
+      await expect(page.getByRole('alert', { name: `上次生成失败：${oldError}` })).toHaveCount(0)
+      await expect(page.getByRole('status', { name: '提交中', exact: true })).toBeVisible()
       await expect(page.getByTitle('生成过程中不能修改，请添加新的节点使用其他模型')).toBeDisabled()
       expect(submissions).toBe(1)
       if (scenario.edit) expect(estimates).toBeGreaterThan(0)
@@ -176,9 +180,9 @@ for (const scenario of [
       releaseSubmission?.()
     }
     await submitted
-    await expect(page.getByText('正在提交任务', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('status', { name: '提交中', exact: true })).toHaveCount(0)
     await page.clock.runFor(7000)
-    await expect(page.getByText(currentError, { exact: true })).toBeVisible()
+    await expect(page.getByRole('alert', { name: `上次生成失败：${currentError}` })).toBeVisible()
     expect(oldTaskQueries).toBe(1)
     expect(submissions).toBe(1)
     expectNoUnexpectedApi(api)

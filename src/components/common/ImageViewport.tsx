@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import styles from './ImageViewport.module.css'
 
 const clamp = (value: number) => Math.min(8, Math.max(0.01, value))
@@ -9,13 +9,16 @@ export default function ImageViewport({
   alt,
   onError,
   onSize,
+  overlay,
 }: {
   src: string
   alt: string
   onError?: () => void
   onSize?: (size: { width: number; height: number }) => void
+  overlay?: ReactNode
 }) {
   const viewport = useRef<HTMLDivElement>(null)
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
   const [percent, setPercent] = useState<string | null>(null)
@@ -24,6 +27,7 @@ export default function ImageViewport({
   const fit = useCallback(() => {
     const box = viewport.current
     if (!box || !size.width || !size.height) return
+    setViewportSize({ width: box.clientWidth, height: box.clientHeight })
     setPercent(null)
     setView({ scale: clamp(Math.min(box.clientWidth / size.width, box.clientHeight / size.height)), x: 0, y: 0 })
   }, [size])
@@ -114,6 +118,7 @@ export default function ImageViewport({
           else setView({ scale: 1, x: 0, y: 0 })
         }}
         onPointerDown={(event) => {
+          if (event.target instanceof Element && event.target.closest('button')) return
           if (event.button !== 0 || !size.width) return
           event.preventDefault()
           event.stopPropagation()
@@ -161,6 +166,19 @@ export default function ImageViewport({
             transform: `translate(-50%, -50%) translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
           }}
         />
+        {overlay && size.width > 0 && size.height > 0 && (
+          <div
+            className={styles.imageOverlay}
+            style={{
+              left: viewportSize.width / 2 + view.x - (size.width * view.scale) / 2,
+              top: viewportSize.height / 2 + view.y - (size.height * view.scale) / 2,
+              width: size.width * view.scale,
+              height: size.height * view.scale,
+            }}
+          >
+            {overlay}
+          </div>
+        )}
       </div>
       <div className={styles.toolbar} role="group" aria-label="图片缩放工具">
         <button type="button" aria-label="缩小图片" disabled={view.scale <= 0.01} onClick={() => zoom(1 / 1.2)}>

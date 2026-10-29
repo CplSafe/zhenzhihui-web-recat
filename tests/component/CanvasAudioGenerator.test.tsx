@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasAudioGenerator from '@/components/canvas/CanvasAudioGenerator'
 import { setCopiedCanvasAudioReference } from '@/utils/canvasClipboard'
-import { saveVoiceSample } from '@/utils/voiceLibrary'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -18,7 +17,11 @@ const mocks = vi.hoisted(() => ({
   nodes: vi.fn(),
   node: vi.fn(),
   upload: vi.fn(),
+  renderAudioMix: vi.fn(),
+  audioBufferToWav: vi.fn(),
   voiceDetail: vi.fn(),
+  voices: vi.fn(),
+  voiceFilters: vi.fn(),
 }))
 vi.mock('@/stores/workspaceSession', () => ({
   useWorkspaceSessionStore: (selector: any) => selector({ authSession: { user: { id: 'test-user' } } }),
@@ -48,9 +51,15 @@ vi.mock('@/api/business', () => ({
   waitForAiTask: mocks.wait,
   uploadAssetFile: mocks.upload,
 }))
+vi.mock('@/utils/audioMix', () => ({
+  renderAudioMix: mocks.renderAudioMix,
+  audioBufferToWav: mocks.audioBufferToWav,
+}))
 vi.mock('@/api/voices', async (original) => ({
   ...(await original<typeof import('@/api/voices')>()),
   getVoice: mocks.voiceDetail,
+  listVoices: mocks.voices,
+  getVoiceFilters: mocks.voiceFilters,
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
@@ -64,7 +73,34 @@ const model = {
   params_schema: { properties: { speed: { type: 'number', default: 1 }, enabled: { type: 'boolean', default: true } } },
 }
 describe('音频生成任务提交', () => {
-  it('从音色库确认的参数同时用于报价和生成，恢复其他参数默认不清除音色', async () => {
+  it('挂载后恢复节点音色参数，生成使用恢复的音色而非旧本地状态', async () => {
+    const { rerender } = render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        data={{ modelVersionId: 91, operationCode: 'audio.tts', prompt: '原配音', params: { voice_id: 5 } }}
+        workspaceId={21}
+      />,
+    )
+    await screen.findByRole('button', { name: '生成音频' })
+    rerender(
+      <CanvasAudioGenerator
+        nodeId="a"
+        data={{
+          modelVersionId: 91,
+          operationCode: 'audio.tts',
+          prompt: '原配音',
+          params: { voice_id: 6 },
+          selectedPublicVoice: { id: 6, name: '恢复的音色' },
+        }}
+        workspaceId={21}
+      />,
+    )
+    await screen.findByText('恢复的音色')
+    fireEvent.click(screen.getByRole('button', { name: '生成音频' }))
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
+    expect(mocks.submit.mock.calls[0][0].params).toMatchObject({ voice_id: 6 })
+  })
+  it('从服务端音色库选用的 ID 同时用于报价和生成，恢复其他参数默认不清除音色', async () => {
     mocks.list.mockResolvedValue([
       {
         ...model,
@@ -79,21 +115,26 @@ describe('音频生成任务提交', () => {
     render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
     await choose()
     fireEvent.click(screen.getByRole('button', { name: '音色库' }))
-    fireEvent.click(await screen.findByRole('button', { name: '模型音色' }))
-    fireEvent.click(await screen.findByRole('radio', { name: /^8/ }))
-    fireEvent.click(screen.getByRole('button', { name: '确认使用' }))
+    fireEvent.click(await screen.findByRole('button', { name: '选用' }, { timeout: 5000 }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '音色库' })).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '生成参数' }))
     fireEvent.click(screen.getByRole('button', { name: '恢复全部默认' }))
     fireEvent.click(screen.getByRole('button', { name: '生成音频' }))
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
-    expect(mocks.submit.mock.calls[0][0].params).toMatchObject({ speaker: 8, speed: 1 })
-    expect(mocks.estimate).toHaveBeenCalledWith(expect.objectContaining({ params: { speaker: 8, speed: 1 } }))
+    expect(mocks.submit.mock.calls[0][0].params).toMatchObject({ voice_id: 5, speed: 1 })
+    expect(mocks.submit.mock.calls[0][0].params).not.toHaveProperty('speaker')
+    expect(mocks.estimate).toHaveBeenCalledWith(expect.objectContaining({ params: { voice_id: 5, speed: 1 } }))
   })
   beforeEach(() => {
     localStorage.clear()
     setCopiedCanvasAudioReference(null, 21)
     Object.values(mocks).forEach((mock) => mock.mockReset())
     mocks.list.mockResolvedValue([model])
+    mocks.voices.mockResolvedValue({
+      items: [{ id: 5, name: '在线旁白', status: 'ready', source: 'public' }],
+      total: 1,
+    })
+    mocks.voiceFilters.mockResolvedValue({})
     mocks.estimate.mockResolvedValue({ estimated_cost: 100, can_afford: true })
     mocks.confirm.mockResolvedValue(true)
     mocks.submit.mockResolvedValue({ id: 71 })
@@ -109,32 +150,49 @@ describe('音频生成任务提交', () => {
       workspace_id: 21,
     })
   })
-  it('声音样本库引用校验当前空间素材并接入参考列表', async () => {
+  it('粘贴当前空间音频节点作为声音样本，生成前校验素材并保留引用', async () => {
     mocks.list.mockResolvedValue([{ ...model, operation_codes: ['audio.clone'] }])
-    saveVoiceSample('test-user', 21, 55, '角色声音')
-    render(
-      <CanvasAudioGenerator nodeId="a" data={{ modelVersionId: 91, operationCode: 'audio.clone' }} workspaceId={21} />,
+    const reference = { assetId: 55, workspaceId: 21, title: '角色声音' }
+    setCopiedCanvasAudioReference(
+      {
+        nodes: [{ id: 'source', kind: 'audio', dx: 0, dy: 0, data: { assetId: 55, title: '角色声音' } }],
+        edges: [],
+        width: 100,
+        height: 100,
+      },
+      21,
     )
+    const { rerender } = render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
     await waitFor(() => expect(screen.getByRole('button', { name: '音频生成模型' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '音色库' }))
-    fireEvent.click(await screen.findByRole('button', { name: '引用' }))
-    await waitFor(() =>
-      expect(mocks.update).toHaveBeenCalledWith(
-        'a',
-        expect.objectContaining({ audioReferences: [{ assetId: 55, workspaceId: 21, title: '角色声音' }] }),
-      ),
-    )
+    fireEvent.paste(screen.getByLabelText('参考音频，可粘贴音频文件或已复制的画布音频节点'), {
+      clipboardData: { files: [] },
+    })
+    expect(mocks.update).toHaveBeenCalledWith('a', { audioReferences: [reference] })
+    rerender(<CanvasAudioGenerator nodeId="a" data={{ audioReferences: [reference] }} workspaceId={21} />)
+    await choose()
+    fireEvent.click(screen.getByRole('checkbox', { name: /音色克隆授权/ }))
+    fireEvent.click(screen.getByRole('button', { name: '生成音频' }))
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
     expect(mocks.findActive).toHaveBeenCalledWith(21, [55], 'audio')
+    expect(mocks.submit.mock.calls[0][0].inputAssets).toEqual([{ asset_id: 55, role: 'audio' }])
+    expect(screen.getByText('角色声音')).toBeInTheDocument()
   })
-  it('声音样本素材失效时保留收藏并提示，不写入节点', async () => {
+  it('声音样本素材失效时保留引用并提示，不提交付费任务', async () => {
     mocks.list.mockResolvedValue([{ ...model, operation_codes: ['audio.clone'] }])
     mocks.findActive.mockResolvedValue(new Set())
-    saveVoiceSample('test-user', 21, 55, '角色声音')
-    render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
-    fireEvent.click(screen.getByRole('button', { name: '音色库' }))
-    fireEvent.click(await screen.findByRole('button', { name: '引用' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('样本素材已失效')
-    expect(mocks.update.mock.calls.some((call) => call[1]?.audioReferences)).toBe(false)
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        data={{ audioReferences: [{ assetId: 55, workspaceId: 21, title: '角色声音' }] }}
+        workspaceId={21}
+      />,
+    )
+    await choose()
+    fireEvent.click(screen.getByRole('checkbox', { name: /音色克隆授权/ }))
+    fireEvent.click(screen.getByRole('button', { name: '生成音频' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('参考音频（素材 ID 55）已不可用')
+    expect(screen.getByText('角色声音')).toBeInTheDocument()
+    expect(mocks.submit).not.toHaveBeenCalled()
   })
   const choose = async () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '音频生成模型' })).toBeEnabled())
@@ -144,6 +202,188 @@ describe('音频生成任务提交', () => {
     fireEvent.click(screen.getByRole('option', { name: /配音模型/ }))
     fireEvent.change(screen.getByLabelText('配音文案或音乐描述'), { target: { value: '你好，欢迎使用帧智汇' } })
   }
+  const switchVoiceModel = async () => {
+    await waitFor(() => expect(screen.getByRole('button', { name: '音频生成模型' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '音频生成模型' }))
+    fireEvent.click(await screen.findByRole('option', { name: /新配音模型/ }))
+  }
+  const voiceSwitchModels = () => {
+    mocks.list.mockResolvedValue([
+      model,
+      {
+        ...model,
+        id: 92,
+        display_name: '新配音模型',
+        params_schema: {
+          properties: {
+            voice_id: { type: 'integer' },
+            speaker: { type: 'string', default: 'default-speaker' },
+            speed: { type: 'number', default: 1 },
+          },
+        },
+      },
+    ])
+  }
+  it('切换兼容模型保留后续分页中的音色，报价和提交继续使用原音色', async () => {
+    voiceSwitchModels()
+    mocks.voices.mockImplementation(async ({ modelVersionId, offset }: any) => {
+      expect(modelVersionId).toBe(92)
+      return offset === 0
+        ? { items: [{ id: 9, name: '其他音色', source: 'public', status: 'ready' }], total: 2 }
+        : { items: [{ id: 5, name: '在线旁白', source: 'cloned', workspace_id: 21, status: 'ready' }], total: 2 }
+    })
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        workspaceId={21}
+        data={{
+          modelVersionId: 91,
+          operationCode: 'audio.tts',
+          params: { voice_id: 5 },
+          selectedPublicVoice: { id: 5, name: '在线旁白' },
+        }}
+      />,
+    )
+    await switchVoiceModel()
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        'a',
+        expect.objectContaining({ modelVersionId: 92, selectedPublicVoice: { id: 5, name: '在线旁白' } }),
+      ),
+    )
+    fireEvent.change(screen.getByLabelText('配音文案或音乐描述'), { target: { value: '继续用原音色配音' } })
+    fireEvent.click(screen.getByRole('button', { name: '生成音频' }))
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
+    expect(mocks.submit.mock.calls[0][0]).toMatchObject({ modelVersionId: 92, params: { voice_id: 5 } })
+    expect(mocks.submit.mock.calls[0][0].params).not.toHaveProperty('speaker')
+    expect(mocks.voices).toHaveBeenCalledWith(
+      expect.objectContaining({ modelVersionId: 92, workspaceId: 21, offset: 1 }),
+    )
+  })
+  it.each(['missing', 'training', 'other-workspace'])(
+    '切换模型遇到 %s 音色提示重选，不自动换成其他声音或提交',
+    async (state) => {
+      voiceSwitchModels()
+      mocks.voices.mockResolvedValue({
+        items:
+          state === 'missing'
+            ? []
+            : [
+                {
+                  id: 5,
+                  name: '在线旁白',
+                  source: 'cloned',
+                  workspace_id: state === 'other-workspace' ? 22 : 21,
+                  status: state === 'training' ? 'training' : 'ready',
+                },
+              ],
+        total: state === 'missing' ? 0 : 1,
+      })
+      render(
+        <CanvasAudioGenerator
+          nodeId="a"
+          workspaceId={21}
+          data={{ modelVersionId: 91, operationCode: 'audio.tts', params: { voice_id: 5 } }}
+        />,
+      )
+      await switchVoiceModel()
+      await screen.findByText('原音色不兼容当前模型或已不可用，请在音色库中重新选择')
+      expect(mocks.update).toHaveBeenCalledWith(
+        'a',
+        expect.objectContaining({ modelVersionId: 92, requiresVoiceSelection: true }),
+      )
+      fireEvent.change(screen.getByLabelText('配音文案或音乐描述'), { target: { value: '需要重新选音色' } })
+      fireEvent.click(screen.getByRole('button', { name: '生成音频' }))
+      expect(mocks.submit).not.toHaveBeenCalled()
+      expect(mocks.estimate).not.toHaveBeenCalled()
+      expect(mocks.voices).toHaveBeenCalledTimes(1)
+    },
+  )
+  it('兼容检查失败保留原模型及音色，可重试切换', async () => {
+    voiceSwitchModels()
+    mocks.voices.mockRejectedValueOnce(new Error('连接失败'))
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        workspaceId={21}
+        data={{ modelVersionId: 91, operationCode: 'audio.tts', params: { voice_id: 5 } }}
+      />,
+    )
+    await switchVoiceModel()
+    await screen.findByText(/音色兼容性检查失败，已保留原模型和音色/)
+    expect(mocks.update).not.toHaveBeenCalledWith('a', expect.objectContaining({ modelVersionId: 92 }))
+    mocks.voices.mockResolvedValue({
+      items: [{ id: 5, name: '在线旁白', source: 'public', status: 'ready' }],
+      total: 1,
+    })
+    await switchVoiceModel()
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        'a',
+        expect.objectContaining({ modelVersionId: 92, requiresVoiceSelection: false }),
+      ),
+    )
+  })
+  it.each([true, false])('模型内置音色按目标枚举判断是否保留，兼容=%s', async (compatible) => {
+    mocks.list.mockResolvedValue([
+      { ...model, params_schema: { properties: { speaker: { type: 'string', enum: ['alice'], default: 'alice' } } } },
+      {
+        ...model,
+        id: 92,
+        display_name: '新配音模型',
+        params_schema: {
+          properties: { speaker: { type: 'string', enum: compatible ? ['alice', 'bob'] : ['bob'], default: 'bob' } },
+        },
+      },
+    ])
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        workspaceId={21}
+        data={{ modelVersionId: 91, operationCode: 'audio.tts', params: { speaker: 'alice' } }}
+      />,
+    )
+    await switchVoiceModel()
+    expect(mocks.update).toHaveBeenCalledWith(
+      'a',
+      expect.objectContaining({ modelVersionId: 92, requiresVoiceSelection: !compatible }),
+    )
+    if (compatible) expect(mocks.update).toHaveBeenCalledWith('a', { params: { speaker: 'alice' } })
+    else await screen.findByText('原音色不兼容当前模型或已不可用，请在音色库中重新选择')
+    expect(mocks.voices).not.toHaveBeenCalled()
+  })
+  it('不兼容后重新打开节点仍要求选音色，不自动采用默认声音', async () => {
+    mocks.list.mockResolvedValue([{ ...model, params_schema: { properties: { voice_id: { type: 'integer' } } } }])
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        workspaceId={21}
+        data={{ modelVersionId: 91, operationCode: 'audio.tts', requiresVoiceSelection: true, params: {} }}
+      />,
+    )
+    await screen.findByText('原音色不兼容当前模型或已不可用，请在音色库中重新选择')
+    await waitFor(() => expect(screen.getByRole('button', { name: '音频生成模型' })).toBeEnabled())
+    expect(mocks.voices).not.toHaveBeenCalled()
+  })
+  it('点击模型菜单保留焦点，Escape 只关闭菜单并阻止冒泡', async () => {
+    render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
+    await choose()
+    const trigger = screen.getByRole('button', { name: '音频生成模型' })
+    fireEvent.click(trigger)
+    expect(trigger).toHaveFocus()
+    const keydown = vi.fn()
+    document.addEventListener('keydown', keydown)
+    try {
+      const option = await screen.findByRole('option', { name: /配音模型/ })
+      option.focus()
+      fireEvent.keyDown(option, { key: 'Escape' })
+      expect(screen.queryByRole('listbox', { name: '音频生成模型列表' })).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+      expect(keydown).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', keydown)
+    }
+  })
   it('服务端音色 ID 持久化后重新核验，并传入报价及生成', async () => {
     render(
       <CanvasAudioGenerator
@@ -343,11 +583,11 @@ describe('音频生成任务提交', () => {
   it('预估回显费用但不创建任务，编辑文案后清除旧报价', async () => {
     render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
     await choose()
-    await screen.findByText('预计 约2元')
-    expect(screen.queryByText(/积分/)).not.toBeInTheDocument()
+    await screen.findByText('预计 100 积分')
+    expect(screen.queryByText(/约.*元|[¥￥]/)).not.toBeInTheDocument()
     expect(mocks.submit).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('配音文案或音乐描述'), { target: { value: '新文案' } })
-    expect(screen.queryByText('预计 约2元')).not.toBeInTheDocument()
+    expect(screen.queryByText('预计 100 积分')).not.toBeInTheDocument()
   })
   it('已保存的参考音频传入预估和任务，不持久化媒体地址', async () => {
     mocks.list.mockResolvedValue([
@@ -489,7 +729,7 @@ describe('音频生成任务提交', () => {
     })
     expect(mocks.upload).not.toHaveBeenCalled()
   })
-  it('异步报价在文案变化后返回也不会显示过期金额', async () => {
+  it('异步报价在文案变化后返回也不会显示过期积分报价', async () => {
     let resolveQuote!: (value: any) => void
     mocks.estimate.mockImplementationOnce(
       () =>
@@ -503,7 +743,7 @@ describe('音频生成任务提交', () => {
     fireEvent.change(screen.getByLabelText('配音文案或音乐描述'), { target: { value: '新文案' } })
     resolveQuote({ estimated_cost: 777, can_afford: true })
     await waitFor(() => expect(mocks.estimate).toHaveBeenCalledTimes(2))
-    expect(screen.queryByText(/约15\.54元/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/777 积分/)).not.toBeInTheDocument()
   })
   it('上游文案也计入 2000 字限制，超限不产生生成费用', async () => {
     mocks.edges.mockReturnValue([{ source: 'text', target: 'a' }])
@@ -618,6 +858,40 @@ describe('音频生成任务提交', () => {
       />,
     )
     await waitFor(() => expect(onGenerated).toHaveBeenCalledWith('a', 82, 8))
+  })
+  it('生成音频短于 3 秒时保留原声并在尾部补静音后保存新素材', async () => {
+    mocks.wait.mockResolvedValue({ id: 71, status: 'succeeded' })
+    mocks.result.mockResolvedValue(82)
+    mocks.duration.mockResolvedValue(0.828)
+    mocks.renderAudioMix.mockResolvedValue({ duration: 3 })
+    mocks.audioBufferToWav.mockReturnValue(new Blob(['wav']))
+    mocks.upload.mockResolvedValue({ asset: { id: 83 } })
+    const onGenerated = vi.fn()
+    render(
+      <CanvasAudioGenerator
+        nodeId="a"
+        data={{ taskId: 71, taskStatus: 'processing', prompt: '你好' }}
+        workspaceId={21}
+        onGenerated={onGenerated}
+      />,
+    )
+    await waitFor(() => expect(onGenerated).toHaveBeenCalledWith('a', 83, 3))
+    expect(mocks.renderAudioMix).toHaveBeenCalledWith(
+      [expect.objectContaining({ assetId: 82, inSec: 0, outSec: 0.828, volume: 1 })],
+      3,
+      21,
+      undefined,
+      1,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(mocks.upload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 21,
+        source: 'canvas-audio-minimum-duration',
+        signal: expect.any(AbortSignal),
+      }),
+    )
+    expect(mocks.update).toHaveBeenCalledWith('a', expect.objectContaining({ assetId: 83, taskStatus: 'succeeded' }))
   })
   it('任务完成时合并节点最新的编辑和历史，不用轮询开始时的旧数据覆盖', async () => {
     mocks.wait.mockResolvedValue({ id: 71, status: 'succeeded' })

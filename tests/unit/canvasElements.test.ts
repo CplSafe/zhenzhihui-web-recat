@@ -57,6 +57,30 @@ describe('canvasElements', () => {
     expect(graph.nodes[0].data.audioReferences).toEqual([{ assetId: 88, workspaceId: 21, title: '样音.wav' }])
     expect([...collectCanvasElementAssetIds([mutation])]).toEqual([88])
   })
+  it('视频节点引用保留连接音频的裁剪时长元数据', () => {
+    const audio = {
+      lane: 'voice',
+      durationSec: 11,
+      inSec: 0,
+      outSec: 11,
+      startSec: 0,
+      volume: 1,
+      muted: false,
+      loop: false,
+      fadeInSec: 0,
+      fadeOutSec: 0,
+      origin: 'generated',
+    }
+    const nodes = [
+      { id: 'voice', type: 'audio', position: { x: 0, y: 0 }, data: { kind: 'audio', assetId: 55, audio } },
+      { id: 'video', type: 'video', position: { x: 0, y: 0 }, data: { kind: 'video' } },
+    ] as Node[]
+    const edges = [{ id: 'voice-to-video', source: 'voice', target: 'video' }] as Edge[]
+
+    expect(collectCanvasSourceRefs('video', nodes, edges)).toEqual([
+      expect.objectContaining({ kind: 'audio', sourceId: 'voice', assetId: 55, audio }),
+    ])
+  })
   it('builds stable edge ids', () => {
     expect(buildEdgeId('source-node', 'target-node', 2)).toBe('e-source-node-target-node-2')
   })

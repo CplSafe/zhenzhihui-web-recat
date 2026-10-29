@@ -9,12 +9,14 @@ import {
   installStrictAuthenticatedApp,
   waitForScopedApiResponse,
 } from './fixtures/strict-authenticated-app'
-// 直接复用应用内的费用换算:文案或汇率再调整时断言自动跟随,不再手抄字符串(上次手抄在 CI 全浏览器炸过)
-import { creditsYuanLabel } from '../src/utils/creditsYuan'
 
 test.describe('已认证关键路由与读取链路', () => {
   test('模板库读取在线模板', async ({ page }) => {
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
 
     await page.goto('/templates')
 
@@ -30,6 +32,10 @@ test.describe('已认证关键路由与读取链路', () => {
     // 继续校验真实标题和当前 workspace 项目，只放宽跨浏览器时间预算。
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
 
     await page.goto('/projects')
 
@@ -46,6 +52,10 @@ test.describe('已认证关键路由与读取链路', () => {
 
   test('项目视频列表与详情保持同一 project/workspace 作用域', async ({ page }) => {
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
 
     const listProjectReady = waitForScopedApiResponse(page, {
       method: 'GET',
@@ -85,6 +95,10 @@ test.describe('已认证关键路由与读取链路', () => {
 
   test('素材管理按当前 workspace 分页读取并展示素材', async ({ page }) => {
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
 
     const assetsReady = waitForScopedApiResponse(page, {
       method: 'GET',
@@ -115,6 +129,10 @@ test.describe('已认证关键路由与读取链路', () => {
     // WebKit parallel cold-start can finish authentication before that chunk.
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
 
     await page.goto('/team')
 
@@ -139,6 +157,10 @@ test.describe('已认证关键路由与读取链路', () => {
     // but give that lazy boundary a realistic cross-browser budget.
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
     await page.route('**/api/v1/ai/models**', async (route) => {
       await route.fulfill({
         status: 200,
@@ -176,376 +198,408 @@ test.describe('已认证关键路由与读取链路', () => {
     expectNoUnexpectedApi(api)
   })
 
-  test('制作图片可批量生成、大图预览、下载并多选结果制作视频', async ({ page }) => {
-    // WebKit 冷启动大型智能成片 chunk 较慢；本用例还串行覆盖 3 次生成、下载、图生图和跨入口交接。
-    test.slow()
-    const api = await installStrictAuthenticatedApp(page)
-    let projectCreations = 0
-    let projectRevision = 0
-    let draftConflicts = 0
-    let imageCheckpointFailuresRemaining = 3
-    let failedCheckpointImageMessages: Record<string, unknown>[] = []
-    let releaseFirstImageTaskRequest: () => void = () => {}
-    let notifyFirstImageTaskRequestStarted: () => void
-    const firstImageTaskRequestStarted = new Promise<void>((resolve) => {
-      notifyFirstImageTaskRequestStarted = resolve
-    })
-    const acceptedDraftRevisions: number[] = []
-    // 新建项目在真实后端以占位标题返回，随后才由当前页面安全回写 AI 标题。
-    // 使用真实初态，避免把测试夹具预置的“正式标题”误判成另一标签页改名。
-    let projectTitle = '未命名项目'
-    let projectDraft: Record<string, unknown> = {
-      flow: 'smart',
-      smart: {
-        started: true,
-        requirement: '生成一张青绿色夏日饮品海报',
-        entryMeta: { mode: 'image', ratio: '16:9', images: [], imageAssetIds: [] },
-        projectId: 303,
-        imageMessages: [],
-      },
-    }
-    const imageTaskBodies: Record<string, unknown>[] = []
-    await page.route('**/api/v1/ai/models**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([
-          {
-            id: 9901,
-            enabled: true,
-            provider: 'openai',
-            model: 'gpt-image-2',
-            display_name: 'E2E 文生图模型',
-            operation_codes: ['image.text_to_image'],
-          },
-          {
-            id: 9902,
-            enabled: true,
-            provider: 'openai',
-            model: 'gpt-image-2-edit',
-            display_name: 'E2E 图生图模型',
-            operation_codes: ['image.image_to_image'],
-          },
-        ]),
-      })
-    })
-    await page.route('**/api/v1/creative/projects?*', async (route) => {
-      if (route.request().method() !== 'POST') {
-        await route.fallback()
-        return
-      }
-      projectCreations += 1
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ id: 303, title: projectTitle, draft_revision: projectRevision }),
-      })
-    })
-    await page.route('**/api/v1/creative/projects/303**', async (route) => {
-      const request = route.request()
-      const method = request.method()
-      if (method === 'GET') {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            id: 303,
-            title: projectTitle,
-            draft_revision: projectRevision,
-            draft_json: projectDraft,
-          }),
+  for (const checkpointFailure of [false, true]) {
+    test(
+      checkpointFailure
+        ? '图片队列保存失败不提交，确认重试后按当前参数创建新任务'
+        : '制作图片可批量生成、大图预览、下载并多选结果制作视频',
+      async ({ page }) => {
+        // WebKit 冷启动大型智能成片 chunk 较慢；本用例还串行覆盖 3 次生成、下载、图生图和跨入口交接。
+        test.slow()
+        const api = await installStrictAuthenticatedApp(page)
+        await page.addInitScript(() => {
+          localStorage.setItem('zzh_guide_seen_home_u7', '1')
+          localStorage.setItem('zzh_guide_seen_smart_u7', '1')
         })
-        return
-      }
-
-      const body = (request.postDataJSON() || {}) as Record<string, unknown>
-      if (method === 'PATCH') {
-        projectTitle = String(body.title || body.name || projectTitle)
-        projectRevision += 1
-      } else if (method === 'PUT' && request.url().includes('/draft')) {
-        const expectedRevision = Number(body.draft_revision)
-        if (Number.isFinite(expectedRevision) && expectedRevision !== projectRevision) {
-          draftConflicts += 1
-          await route.fulfill({
-            status: 409,
-            contentType: 'application/json',
-            body: JSON.stringify({ code: 409, message: 'draft revision conflict' }),
-          })
-          return
+        let projectCreations = 0
+        let projectRevision = 0
+        let draftConflicts = 0
+        let imageCheckpointFailuresRemaining = checkpointFailure ? 3 : 0
+        let failedCheckpointImageMessages: Record<string, unknown>[] = []
+        let releaseFirstImageTaskRequest: () => void = () => {}
+        let notifyFirstImageTaskRequestStarted: () => void
+        const firstImageTaskRequestStarted = new Promise<void>((resolve) => {
+          notifyFirstImageTaskRequestStarted = resolve
+        })
+        const acceptedDraftRevisions: number[] = []
+        // 新建项目在真实后端以占位标题返回，随后才由当前页面安全回写 AI 标题。
+        // 使用真实初态，避免把测试夹具预置的“正式标题”误判成另一标签页改名。
+        let projectTitle = '未命名项目'
+        let projectDraft: Record<string, unknown> = {
+          flow: 'smart',
+          smart: {
+            started: true,
+            requirement: '生成一张青绿色夏日饮品海报',
+            entryMeta: { mode: 'image', ratio: '16:9', images: [], imageAssetIds: [] },
+            projectId: 303,
+            imageMessages: [],
+          },
         }
-        const nextDraft = typeof body.draft === 'string' ? JSON.parse(body.draft) : body.draft
-        const nextImageMessages: Record<string, unknown>[] = Array.isArray(nextDraft?.smart?.imageMessages)
-          ? nextDraft.smart.imageMessages
-          : []
-        const pendingImageQueue = nextImageMessages.length
-          ? nextImageMessages.some(
-              (message: Record<string, unknown>) =>
-                message?.role === 'assistant' && message?.status === 'pending' && Number(message?.taskId || 0) === 0,
-            )
-          : false
-        // 首轮队列 checkpoint 连续失败到前端重试上限，验证不会创建任何付费任务；
-        // 用户点击“重新生成”后本 mock 恢复，必须原地恢复同一子任务并真正提交。
-        if (pendingImageQueue && imageCheckpointFailuresRemaining > 0) {
-          if (!failedCheckpointImageMessages.length) {
-            failedCheckpointImageMessages = nextImageMessages.map((message) => ({ ...message }))
+        const imageTaskBodies: Record<string, unknown>[] = []
+        await page.route('**/api/v1/ai/models**', async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+              {
+                id: 9901,
+                enabled: true,
+                provider: 'openai',
+                model: 'gpt-image-2',
+                display_name: 'E2E 文生图模型',
+                operation_codes: ['image.text_to_image'],
+              },
+              {
+                id: 9902,
+                enabled: true,
+                provider: 'openai',
+                model: 'gpt-image-2-edit',
+                display_name: 'E2E 图生图模型',
+                operation_codes: ['image.image_to_image'],
+              },
+            ]),
+          })
+        })
+        await page.route(
+          (url) => url.pathname === '/api/v1/creative/projects',
+          async (route) => {
+            if (route.request().method() !== 'POST') {
+              await route.fallback()
+              return
+            }
+            projectCreations += 1
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({ id: 303, title: projectTitle, draft_revision: projectRevision }),
+            })
+          },
+        )
+        await page.route('**/api/v1/creative/projects/303**', async (route) => {
+          const request = route.request()
+          const method = request.method()
+          if (method === 'GET') {
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                id: 303,
+                title: projectTitle,
+                draft_revision: projectRevision,
+                draft_json: projectDraft,
+              }),
+            })
+            return
           }
-          imageCheckpointFailuresRemaining -= 1
+
+          const body = (request.postDataJSON() || {}) as Record<string, unknown>
+          if (method === 'PATCH') {
+            projectTitle = String(body.title || body.name || projectTitle)
+            projectRevision += 1
+          } else if (method === 'PUT' && request.url().includes('/draft')) {
+            const expectedRevision = Number(body.draft_revision)
+            if (Number.isFinite(expectedRevision) && expectedRevision !== projectRevision) {
+              draftConflicts += 1
+              await route.fulfill({
+                status: 409,
+                contentType: 'application/json',
+                body: JSON.stringify({ code: 409, message: 'draft revision conflict' }),
+              })
+              return
+            }
+            const nextDraft = typeof body.draft === 'string' ? JSON.parse(body.draft) : body.draft
+            const nextImageMessages: Record<string, unknown>[] = Array.isArray(nextDraft?.smart?.imageMessages)
+              ? nextDraft.smart.imageMessages
+              : []
+            const pendingImageQueue = nextImageMessages.length
+              ? nextImageMessages.some(
+                  (message: Record<string, unknown>) =>
+                    message?.role === 'assistant' &&
+                    message?.status === 'pending' &&
+                    Number(message?.taskId || 0) === 0,
+                )
+              : false
+            // 首轮队列 checkpoint 连续失败到前端重试上限，验证不会创建任何付费任务；
+            // 用户点击“重新生成”后本 mock 恢复，必须原地恢复同一子任务并真正提交。
+            if (pendingImageQueue && !failedCheckpointImageMessages.length) {
+              failedCheckpointImageMessages = nextImageMessages.map((message) => ({ ...message }))
+            }
+            if (pendingImageQueue && imageCheckpointFailuresRemaining > 0) {
+              imageCheckpointFailuresRemaining -= 1
+              await route.fulfill({
+                status: 500,
+                contentType: 'application/json',
+                body: JSON.stringify({ code: 500, message: 'temporary draft storage failure' }),
+              })
+              return
+            }
+            if (nextDraft && typeof nextDraft === 'object') projectDraft = nextDraft as Record<string, unknown>
+            acceptedDraftRevisions.push(expectedRevision)
+            projectRevision += 1
+          }
+
           await route.fulfill({
-            status: 500,
+            status: 200,
             contentType: 'application/json',
-            body: JSON.stringify({ code: 500, message: 'temporary draft storage failure' }),
+            body: JSON.stringify({
+              id: 303,
+              title: projectTitle,
+              draft_revision: projectRevision,
+              draft_json: projectDraft,
+            }),
           })
+        })
+        await page.route('**/api/v1/ai/tasks', async (route) => {
+          if (route.request().method() !== 'POST') {
+            await route.fallback()
+            return
+          }
+          const taskBody = route.request().postDataJSON() as Record<string, unknown>
+          imageTaskBodies.push(taskBody)
+          const taskIndex = imageTaskBodies.length - 1
+          if (checkpointFailure && taskIndex === 0) {
+            notifyFirstImageTaskRequestStarted()
+            await new Promise<void>((resolve) => {
+              releaseFirstImageTaskRequest = resolve
+            })
+          }
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              id: 9902 + taskIndex,
+              status: 'succeeded',
+              operation_code: String(taskBody.operation_code || ''),
+              outputs: [{ asset_id: 703 + taskIndex }],
+            }),
+          })
+        })
+        await page.route('**/api/v1/assets/*/download**', async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: 'image/png',
+            body: Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              'base64',
+            ),
+          })
+        })
+        await page.route('**/api/v1/ai/responses', async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ output_text: '夏日饮品海报' }),
+          })
+        })
+        // 强制走 fetch + blob + a[download] 的浏览器下载链路，
+        // 避免 Chromium 的 File System Access API 在无头测试中弹出不可控的文件选择器。
+        await page.addInitScript(() => {
+          Object.defineProperty(window, 'showSaveFilePicker', {
+            configurable: true,
+            value: undefined,
+          })
+        })
+
+        await page.goto('/smart')
+        await page.getByRole('tab', { name: '制作图片' }).click()
+        const entryModelTrigger = page.getByRole('button', { name: /^生成模型，/ })
+        await expect(entryModelTrigger).toBeVisible()
+        await entryModelTrigger.click()
+        await page
+          .getByRole('dialog', { name: '生成模型', exact: true })
+          .getByRole('option', { name: 'E2E 文生图模型', exact: true })
+          .click()
+        const entryParamsTrigger = page.getByRole('button', { name: /^创作参数，当前/ })
+        await entryParamsTrigger.click()
+        await page.getByRole('dialog', { name: '创作参数' }).getByRole('button', { name: '3', exact: true }).click()
+        await entryParamsTrigger.click()
+        const input = page.getByRole('textbox', { name: '创作需求' })
+        await input.fill('生成一张青绿色夏日饮品海报')
+        await page.getByRole('button', { name: '去制作' }).click()
+
+        const confirm = page.getByRole('alertdialog', { name: '确认生成图片' })
+        await expect(confirm).toBeVisible()
+        await expect(confirm).toContainText('生成 3 张图片')
+        // 独立验证原始积分展示（100 积分/张 × 3 张），避免与应用共享错误的换算实现
+        await expect(confirm).toContainText('预计费用共 300 积分')
+        await expect(confirm).toContainText('每张100 积分')
+        expect(
+          api.seen.filter(
+            (request) =>
+              request.method === 'POST' &&
+              (request.path === '/api/v1/creative/projects' || request.path === '/api/v1/ai/tasks'),
+          ),
+        ).toHaveLength(0)
+
+        await confirm.getByRole('button', { name: '取消' }).click()
+        await expect(confirm).toBeHidden()
+        await expect(input).toHaveValue('生成一张青绿色夏日饮品海报')
+        await expect(page).toHaveURL(/\/smart$/)
+
+        await page.getByRole('button', { name: '去制作' }).click()
+        await page
+          .getByRole('alertdialog', { name: '确认生成图片' })
+          .getByRole('button', { name: '确认并生成' })
+          .click()
+        await expect(page).toHaveURL(/\/smart\/303$/)
+        await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
+        await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)
+        const preparedAssistantMessages = failedCheckpointImageMessages.filter(
+          (message) => message.role === 'assistant',
+        )
+        expect(preparedAssistantMessages).toHaveLength(3)
+        const originalIdempotencyKeys = preparedAssistantMessages.map((message) => String(message.idempotencyKey || ''))
+        expect(new Set(originalIdempotencyKeys).size).toBe(3)
+        expect(originalIdempotencyKeys.every(Boolean)).toBe(true)
+        if (checkpointFailure) {
+          const preparationErrors = page.getByText('生成队列保存失败，请稍后重试，未提交任何付费任务', { exact: true })
+          await expect(preparationErrors).toHaveCount(3)
+          expect(imageCheckpointFailuresRemaining).toBe(0)
+          expect(imageTaskBodies).toHaveLength(0)
+          await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
+          await page.getByRole('button', { name: '重新生成这张图片' }).first().click()
+          const retryConfirm = page.getByRole('alertdialog', { name: '确认生成图片' })
+          await expect(retryConfirm).toContainText('生成 1 张图片')
+          await expect(retryConfirm).toContainText('预计费用共 100 积分')
+          expect(imageTaskBodies).toHaveLength(0)
+          await retryConfirm.getByRole('button', { name: '确认并生成' }).click()
+          await expect.poll(() => imageTaskBodies.length).toBe(1)
+          await firstImageTaskRequestStarted
+          await expect
+            .poll(() =>
+              page.evaluate(() => {
+                const raw = localStorage.getItem('zzh_task_center_v1')
+                const tasks = raw ? JSON.parse(raw)?.state?.tasks || [] : []
+                return tasks
+                  .filter((task: { scope?: string }) => task.scope === 'image')
+                  .map((task: { status?: string }) => task.status)
+                  .sort()
+              }),
+            )
+            .toEqual(['failed', 'failed', 'failed', 'preparing'])
+          releaseFirstImageTaskRequest()
+          const retriedImage = page.locator('img[alt^="AI 生成图片 "]')
+          await expect(retriedImage).toHaveCount(1)
+          await expect(retriedImage).toBeVisible()
+          await expect
+            .poll(() => retriedImage.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0))
+            .toBe(true)
+          await expect(preparationErrors).toHaveCount(3)
+          await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(2)
+          expect(imageTaskBodies).toHaveLength(1)
+          expect(originalIdempotencyKeys.map((key) => `${key}_text_to_image`)).not.toContain(
+            imageTaskBodies[0].idempotency_key,
+          )
+          expect(imageTaskBodies[0]).toMatchObject({
+            operation_code: 'image.text_to_image',
+            model_version_id: 9901,
+            params: expect.objectContaining({ ratio: '16:9' }),
+          })
+          expect(projectCreations).toBe(1)
+          expect(draftConflicts).toBe(0)
+          expectNoUnexpectedApi(api)
           return
         }
-        if (nextDraft && typeof nextDraft === 'object') projectDraft = nextDraft as Record<string, unknown>
-        acceptedDraftRevisions.push(expectedRevision)
-        projectRevision += 1
-      }
-
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: 303,
-          title: projectTitle,
-          draft_revision: projectRevision,
-          draft_json: projectDraft,
-        }),
-      })
-    })
-    await page.route('**/api/v1/ai/tasks', async (route) => {
-      if (route.request().method() !== 'POST') {
-        await route.fallback()
-        return
-      }
-      const taskBody = route.request().postDataJSON() as Record<string, unknown>
-      imageTaskBodies.push(taskBody)
-      const taskIndex = imageTaskBodies.length - 1
-      if (taskIndex === 0) {
-        notifyFirstImageTaskRequestStarted()
-        await new Promise<void>((resolve) => {
-          releaseFirstImageTaskRequest = resolve
+        // 串行队列完成前，每个子消息里的首图都会暂时使用“AI 生成图片 1”作为 alt。
+        // 先等待真实结果总数，再用第 3 张的唯一选择按钮等待批次合并。
+        const generatedImages = page.locator('img[alt^="AI 生成图片 "]')
+        await expect(generatedImages).toHaveCount(3)
+        for (let index = 0; index < 3; index += 1) await expect(generatedImages.nth(index)).toBeVisible()
+        expect(projectCreations).toBe(1)
+        expect(imageTaskBodies).toHaveLength(3)
+        expect(imageTaskBodies[0]).toMatchObject({
+          workspace_id: WORKSPACE_ID,
+          operation_code: 'image.text_to_image',
+          model_version_id: 9901,
         })
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: 9902 + taskIndex,
-          status: 'succeeded',
-          operation_code: String(taskBody.operation_code || ''),
-          outputs: [{ asset_id: 703 + taskIndex }],
-        }),
-      })
-    })
-    await page.route('**/api/v1/assets/*/download**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'image/png',
-        body: Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-          'base64',
-        ),
-      })
-    })
-    await page.route('**/api/v1/ai/responses', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ output_text: '夏日饮品海报' }),
-      })
-    })
-    // 强制走 fetch + blob + a[download] 的浏览器下载链路，
-    // 避免 Chromium 的 File System Access API 在无头测试中弹出不可控的文件选择器。
-    await page.addInitScript(() => {
-      Object.defineProperty(window, 'showSaveFilePicker', {
-        configurable: true,
-        value: undefined,
-      })
-    })
+        expect(imageTaskBodies.map((body) => String(body.idempotency_key || ''))).toEqual(
+          originalIdempotencyKeys.map((key) => `${key}_text_to_image`),
+        )
 
-    await page.goto('/smart')
-    await page.getByRole('tab', { name: '制作图片' }).click()
-    const entryModelTrigger = page.getByRole('button', { name: /^生成模型，/ })
-    await expect(entryModelTrigger).toBeVisible()
-    await entryModelTrigger.click()
-    await page.getByRole('button', { name: '选择生成模型' }).click()
-    await page.getByRole('option', { name: /E2E 文生图模型/ }).click()
-    await entryModelTrigger.click()
-    const entryParamsTrigger = page.getByRole('button', { name: /^创作参数，当前/ })
-    await entryParamsTrigger.click()
-    await page.getByRole('dialog', { name: '创作参数' }).getByRole('button', { name: '3', exact: true }).click()
-    await entryParamsTrigger.click()
-    const input = page.getByRole('textbox', { name: '创作需求' })
-    await input.fill('生成一张青绿色夏日饮品海报')
-    await page.getByRole('button', { name: '去制作' }).click()
+        const selectThirdForVideo = page.getByRole('button', { name: '选择图片 3 用于制作视频' })
+        await expect(selectThirdForVideo).toBeVisible()
 
-    const confirm = page.getByRole('alertdialog', { name: '确认生成图片' })
-    await expect(confirm).toBeVisible()
-    await expect(confirm).toContainText('生成 3 张图片')
-    // 费用文案由 creditsYuanLabel 换算（fixture 估价 100 积分/张 × 3 张），与应用共用同一实现
-    await expect(confirm).toContainText(`预计费用共 ${creditsYuanLabel(300)}`)
-    await expect(confirm).toContainText(`每张${creditsYuanLabel(100)}`)
-    expect(
-      api.seen.filter(
-        (request) =>
-          request.method === 'POST' &&
-          (request.path === '/api/v1/creative/projects' || request.path === '/api/v1/ai/tasks'),
-      ),
-    ).toHaveLength(0)
+        await page.getByRole('button', { name: '预览图片 2' }).click()
+        const previewDialog = page.getByRole('dialog', { name: '图片预览' })
+        await expect(previewDialog).toBeVisible()
+        await expect(previewDialog.getByRole('img', { name: 'AI 生成图片 2大图预览' })).toBeVisible()
+        await previewDialog.getByRole('button', { name: '关闭图片预览' }).click()
+        await expect(previewDialog).toBeHidden()
 
-    await confirm.getByRole('button', { name: '取消' }).click()
-    await expect(confirm).toBeHidden()
-    await expect(input).toHaveValue('生成一张青绿色夏日饮品海报')
-    await expect(page).toHaveURL(/\/smart$/)
+        const downloadStarted = page.waitForEvent('download')
+        await page.getByRole('button', { name: '下载图片 2' }).click()
+        const download = await downloadStarted
+        expect(download.suggestedFilename()).toMatch(/\.png$/i)
+        expect(await download.failure()).toBeNull()
+        expect(await download.path()).toBeTruthy()
 
-    await page.getByRole('button', { name: '去制作' }).click()
-    await page.getByRole('alertdialog', { name: '确认生成图片' }).getByRole('button', { name: '确认并生成' }).click()
-    await expect(page).toHaveURL(/\/smart\/303$/)
-    await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
-    await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)
-    const preparationErrors = page.getByText('生成队列保存失败，请稍后重试，未提交任何付费任务', {
-      exact: true,
-    })
-    await expect(preparationErrors).toHaveCount(3)
-    expect(imageCheckpointFailuresRemaining).toBe(0)
-    expect(imageTaskBodies).toHaveLength(0)
-    expect(failedCheckpointImageMessages.filter((message) => message.role === 'user')).toHaveLength(1)
-    const failedCheckpointAssistantMessages = failedCheckpointImageMessages.filter(
-      (message) => message.role === 'assistant',
+        await page.getByRole('button', { name: '修改图片 2' }).click()
+        const imageComposer = page.getByRole('textbox', { name: '图片创作描述' })
+        await imageComposer.fill('把背景改为海边')
+        await page.getByRole('button', { name: '生成图片数量' }).click()
+        await page.getByRole('option', { name: '1张' }).click()
+        await page.getByRole('button', { name: '生成', exact: true }).click()
+        const editConfirm = page.getByRole('alertdialog', { name: '确认生成图片' })
+        await expect(editConfirm).toContainText('参考图创作将生成 1 张图片')
+        await editConfirm.getByRole('button', { name: '确认并生成' }).click()
+        await expect(generatedImages).toHaveCount(4)
+        await expect.poll(() => imageTaskBodies.length).toBe(4)
+        expect(imageTaskBodies[3]).toMatchObject({
+          workspace_id: WORKSPACE_ID,
+          operation_code: 'image.image_to_image',
+          model_version_id: 9902,
+          prompt: '把背景改为海边',
+          input_assets: [{ asset_id: 704, role: 'reference_image' }],
+        })
+
+        const continueToVideo = page.getByRole('button', { name: '做视频', exact: true })
+        await expect(continueToVideo).toBeDisabled()
+        await page.getByRole('button', { name: '选择图片 1 用于制作视频' }).click()
+        await selectThirdForVideo.click()
+        await expect(page.getByText('已选 2 张，最多 9 张', { exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: '取消选择图片 1 用于制作视频' })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        )
+        await expect(page.getByRole('button', { name: '取消选择图片 3 用于制作视频' })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        )
+        await expect(continueToVideo).toBeEnabled()
+        await continueToVideo.click()
+        await expect(page).toHaveURL(/\/smart$/)
+        await expect(page.getByRole('tab', { name: '制作视频' })).toHaveAttribute('aria-selected', 'true')
+        const carriedImageRemovals = page.getByRole('button', { name: '移除', exact: true })
+        await expect(carriedImageRemovals).toHaveCount(2)
+        await expect(carriedImageRemovals.nth(0).locator('xpath=preceding-sibling::img[1]')).toHaveAttribute(
+          'src',
+          /\/api\/v1\/assets\/703\/download/,
+        )
+        await expect(carriedImageRemovals.nth(1).locator('xpath=preceding-sibling::img[1]')).toHaveAttribute(
+          'src',
+          /\/api\/v1\/assets\/705\/download/,
+        )
+        await expect(page.locator('img[src*="/api/v1/assets/704/download"]')).toHaveCount(0)
+        await expect(page.locator('img[src*="/api/v1/assets/706/download"]')).toHaveCount(0)
+        expect(projectCreations).toBe(1)
+        expect(imageTaskBodies).toHaveLength(4)
+        expect(draftConflicts).toBe(0)
+        expect(acceptedDraftRevisions.length).toBeGreaterThan(0)
+        expect(acceptedDraftRevisions).toEqual([...acceptedDraftRevisions].sort((left, right) => left - right))
+        expectNoUnexpectedApi(api)
+      },
     )
-    expect(failedCheckpointAssistantMessages).toHaveLength(3)
-    expect(new Set(failedCheckpointAssistantMessages.map((message) => String(message.id || ''))).size).toBe(3)
-    const originalIdempotencyKeys = failedCheckpointAssistantMessages.map((message) =>
-      String(message.idempotencyKey || ''),
-    )
-    expect(originalIdempotencyKeys.every(Boolean)).toBe(true)
-    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
-
-    // 三张失败卡逐张原地恢复；不会追加重复用户消息，也不会重新弹费用确认。
-    const retryButtons = page.getByRole('button', { name: '重新生成这张图片' })
-    await retryButtons.first().click()
-    await firstImageTaskRequestStarted
-    await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const raw = window.localStorage.getItem('zzh_task_center_v1')
-          if (!raw) return []
-          const parsed = JSON.parse(raw)
-          return (parsed?.state?.tasks || [])
-            .filter((task: { scope?: string }) => task.scope === 'image')
-            .map((task: { status?: string }) => String(task.status || ''))
-            .sort()
-        }),
-      )
-      .toEqual(['failed', 'failed', 'preparing'])
-    releaseFirstImageTaskRequest()
-    await expect.poll(() => imageTaskBodies.length).toBe(1)
-    await expect(retryButtons).toHaveCount(2)
-    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
-    await retryButtons.first().click()
-    await expect.poll(() => imageTaskBodies.length).toBe(2)
-    await expect(retryButtons).toHaveCount(1)
-    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
-    await retryButtons.first().click()
-    await expect.poll(() => imageTaskBodies.length).toBe(3)
-    await expect(retryButtons).toHaveCount(0)
-    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
-    await expect(page.getByRole('alertdialog', { name: '确认生成图片' })).toHaveCount(0)
-    // 串行队列完成前，每个子消息里的首图都会暂时使用“AI 生成图片 1”作为 alt。
-    // 先等待真实结果总数，再用第 3 张的唯一选择按钮等待批次合并。
-    const generatedImages = page.locator('img[alt^="AI 生成图片 "]')
-    await expect(generatedImages).toHaveCount(3)
-    for (let index = 0; index < 3; index += 1) await expect(generatedImages.nth(index)).toBeVisible()
-    expect(projectCreations).toBe(1)
-    expect(imageTaskBodies).toHaveLength(3)
-    expect(imageTaskBodies[0]).toMatchObject({
-      workspace_id: WORKSPACE_ID,
-      operation_code: 'image.text_to_image',
-      model_version_id: 9901,
-    })
-    expect(imageTaskBodies.map((body) => String(body.idempotency_key || ''))).toEqual(
-      originalIdempotencyKeys.map((key) => `${key}_text_to_image`),
-    )
-
-    const selectThirdForVideo = page.getByRole('button', { name: '选择图片 3 用于制作视频' })
-    await expect(selectThirdForVideo).toBeVisible()
-
-    await page.getByRole('button', { name: '预览图片 2' }).click()
-    const previewDialog = page.getByRole('dialog', { name: '图片预览' })
-    await expect(previewDialog).toBeVisible()
-    await expect(previewDialog.getByRole('img', { name: 'AI 生成图片 2大图预览' })).toBeVisible()
-    await previewDialog.getByRole('button', { name: '关闭图片预览' }).click()
-    await expect(previewDialog).toBeHidden()
-
-    const downloadStarted = page.waitForEvent('download')
-    await page.getByRole('button', { name: '下载图片 2' }).click()
-    const download = await downloadStarted
-    expect(download.suggestedFilename()).toMatch(/\.png$/i)
-    expect(await download.failure()).toBeNull()
-    expect(await download.path()).toBeTruthy()
-
-    await page.getByRole('button', { name: '修改图片 2' }).click()
-    const imageComposer = page.getByRole('textbox', { name: '图片创作描述' })
-    await imageComposer.fill('把背景改为海边')
-    await page.getByRole('button', { name: '生成图片数量' }).click()
-    await page.getByRole('option', { name: '1张' }).click()
-    await page.getByRole('button', { name: '生成', exact: true }).click()
-    const editConfirm = page.getByRole('alertdialog', { name: '确认生成图片' })
-    await expect(editConfirm).toContainText('参考图创作将生成 1 张图片')
-    await editConfirm.getByRole('button', { name: '确认并生成' }).click()
-    await expect(generatedImages).toHaveCount(4)
-    await expect.poll(() => imageTaskBodies.length).toBe(4)
-    expect(imageTaskBodies[3]).toMatchObject({
-      workspace_id: WORKSPACE_ID,
-      operation_code: 'image.image_to_image',
-      model_version_id: 9902,
-      prompt: '把背景改为海边',
-      input_assets: [{ asset_id: 704, role: 'reference_image' }],
-    })
-
-    const continueToVideo = page.getByRole('button', { name: '做视频', exact: true })
-    await expect(continueToVideo).toBeDisabled()
-    await page.getByRole('button', { name: '选择图片 1 用于制作视频' }).click()
-    await selectThirdForVideo.click()
-    await expect(page.getByText('已选 2 张，最多 9 张', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '取消选择图片 1 用于制作视频' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    await expect(page.getByRole('button', { name: '取消选择图片 3 用于制作视频' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    await expect(continueToVideo).toBeEnabled()
-    await continueToVideo.click()
-    await expect(page).toHaveURL(/\/smart$/)
-    await expect(page.getByRole('tab', { name: '制作视频' })).toHaveAttribute('aria-selected', 'true')
-    const carriedImageRemovals = page.getByRole('button', { name: '移除', exact: true })
-    await expect(carriedImageRemovals).toHaveCount(2)
-    await expect(carriedImageRemovals.nth(0).locator('xpath=preceding-sibling::img[1]')).toHaveAttribute(
-      'src',
-      /\/api\/v1\/assets\/703\/download/,
-    )
-    await expect(carriedImageRemovals.nth(1).locator('xpath=preceding-sibling::img[1]')).toHaveAttribute(
-      'src',
-      /\/api\/v1\/assets\/705\/download/,
-    )
-    await expect(page.locator('img[src*="/api/v1/assets/704/download"]')).toHaveCount(0)
-    await expect(page.locator('img[src*="/api/v1/assets/706/download"]')).toHaveCount(0)
-    expect(projectCreations).toBe(1)
-    expect(imageTaskBodies).toHaveLength(4)
-    expect(draftConflicts).toBe(0)
-    expect(acceptedDraftRevisions.length).toBeGreaterThan(0)
-    expect(acceptedDraftRevisions).toEqual([...acceptedDraftRevisions].sort((left, right) => left - right))
-    expectNoUnexpectedApi(api)
-  })
+  }
 
   test('爆款复制项目按 URL 项目恢复且不新建或重复提交付费任务', async ({ page }) => {
     // This route owns another large lazy editor chunk. WebKit can finish the
     // project shell well before the editor chunk under parallel cold-start.
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh_guide_seen_home_u7', '1')
+      localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+    })
     await page.route('**/api/v1/ai/models**', async (route) => {
       await route.fulfill({
         status: 200,

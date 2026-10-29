@@ -2,6 +2,78 @@ import { expect, test, type Page } from '@playwright/test'
 import { setupVoiceLibrary } from './fixtures/canvas-voice-library'
 import { expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
 
+test('切换配音模型保留兼容音色，不兼容时重选，检查失败可恢复', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const { modal, state, errors, consoleErrors } = await setupVoiceLibrary(page)
+  await modal.getByRole('button', { name: '关闭', exact: true }).click()
+  const voice = { id: 2, name: '原旁白', source: 'public', status: 'ready' }
+  const replacement = { ...voice, id: 9, name: '新旁白' }
+  let failCheck = true
+  await page.route('**/api/v1/ai/models**', (route) =>
+    route.fulfill({
+      json: [91, 92, 93].map((id) => ({
+        id,
+        display_name: `配音模型 ${id}`,
+        operation_codes: ['audio.tts'],
+        params_schema: { type: 'object', required: ['voice_id'], properties: { voice_id: { type: 'integer' } } },
+      })),
+    }),
+  )
+  await page.route('**/api/v1/voices**', (route) => {
+    const url = new URL(route.request().url())
+    expect(url.searchParams.get('workspace_id')).toBe('21')
+    if (url.pathname.endsWith('/filters')) return route.fulfill({ json: {} })
+    if (/\/voices\/\d+$/.test(url.pathname))
+      return route.fulfill({ json: url.pathname.endsWith('/9') ? replacement : voice })
+    const model = Number(url.searchParams.get('model_version_id'))
+    expect([91, 92, 93]).toContain(model)
+    if (model === 92 && failCheck) return route.fulfill({ status: 503, json: { message: '兼容检查暂不可用' } })
+    const items = model === 93 ? [replacement] : [voice]
+    return route.fulfill({ json: { items, total: items.length } })
+  })
+  const estimates: any[] = []
+  await page.route('**/api/v1/ai/tasks/estimate-cost', (route) => {
+    estimates.push(route.request().postDataJSON())
+    return route.fulfill({ json: { estimated_cost: 100, can_afford: true } })
+  })
+  await page.reload()
+  await page.locator('.react-flow__node[data-id="audio"] .canvas-node-header').click()
+  const generator = page.locator('.canvas-audio-generator')
+  await expect(generator).toContainText('原旁白')
+  await generator.locator('textarea').fill('使用相同音色继续配音')
+  const chooseModel = async (id: number) => {
+    await generator.getByRole('button', { name: '音频生成模型' }).click()
+    await page.getByRole('option', { name: new RegExp(`配音模型 ${id}`) }).click()
+  }
+  await chooseModel(92)
+  await expect(generator).toContainText('音色兼容性检查失败，已保留原模型和音色')
+  await expect(generator.getByRole('button', { name: '音频生成模型' })).toContainText('91')
+  failCheck = false
+  await chooseModel(92)
+  await expect(generator.getByRole('button', { name: '音频生成模型' })).toContainText('92')
+  await expect(generator).toContainText('原旁白')
+  await expect.poll(() => estimates.at(-1)?.model_version_id).toBe(92)
+  expect(estimates.at(-1).params.voice_id).toBe(2)
+  await generator.screenshot({ path: testInfo.outputPath('compatible-voice.png') })
+  await chooseModel(93)
+  await expect(generator).toContainText('原音色不兼容当前模型或已不可用，请在音色库中重新选择')
+  const before = estimates.length
+  await generator.getByRole('button', { name: '生成音频', exact: true }).click()
+  expect(estimates.length).toBe(before)
+  expect(state.paidTaskSubmissions).toBe(0)
+  await generator.screenshot({ path: testInfo.outputPath('incompatible-voice.png') })
+  await generator.getByRole('button', { name: '音色库', exact: true }).click()
+  await modal.getByRole('button', { name: '选用', exact: true }).click()
+  await expect(generator).toContainText('新旁白')
+  await expect(generator).not.toContainText('原音色不兼容')
+  await expect.poll(() => estimates.at(-1)?.model_version_id).toBe(93)
+  expect(estimates.at(-1).params.voice_id).toBe(9)
+  expect(errors).toEqual([])
+  // 本用例主动覆盖 503 检查失败；其余请求由严格 fixture 审计。
+  expect(consoleErrors.filter((error) => !error.includes('503'))).toEqual([])
+  expectNoUnexpectedApi(state)
+})
+
 async function installVoiceModel(page: Page) {
   await page.route('**/api/v1/ai/models**', (route) =>
     route.fulfill({

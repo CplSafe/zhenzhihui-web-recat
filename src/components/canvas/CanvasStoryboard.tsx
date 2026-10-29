@@ -19,7 +19,7 @@ export default function CanvasStoryboard({
     onChange(items.map((item, i) => (i === index ? { ...item, prompt } : item)))
   return (
     <div
-      className={`${styles.card} nodrag nopan nowheel`}
+      className={`${styles.card} nopan nowheel`}
       aria-label={`分镜脚本，共 ${items.length} 个镜头`}
       onDoubleClick={(event) => event.stopPropagation()}
     >
@@ -28,7 +28,7 @@ export default function CanvasStoryboard({
           <span>分镜脚本</span>
           <strong>{items.length} 个镜头</strong>
         </div>
-        <button type="button" className={styles.expand} onClick={() => setOpen(true)}>
+        <button type="button" className={`${styles.expand} nodrag nopan`} onClick={() => setOpen(true)}>
           展开查看
         </button>
       </header>

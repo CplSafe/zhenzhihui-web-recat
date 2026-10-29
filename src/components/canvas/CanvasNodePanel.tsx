@@ -24,7 +24,8 @@ import type {
 } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost, uploadAssetFile } from '@/api/business'
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
-import { creditsYuanLabel } from '@/utils/creditsYuan'
+import { requiredVideoDurationForAudio, type AudioSettings } from '@/utils/canvasAudio'
+import { creditsLabel } from '@/utils/creditsFormat'
 import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
 import {
@@ -60,6 +61,7 @@ import ModelSelector from './CanvasModelSelector'
 import {
   buildModelRestrictionSummary,
   getModelDurationLimitLabel,
+  getModelMaximumDurationSec,
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 import { getModelReferenceImageMinimum } from '@/utils/modelInputConstraints'
@@ -133,7 +135,13 @@ function isRatioField(field: ParamsSchemaField): boolean {
 /** 视频时长字段名兼容：后端常见 duration / video_duration / duration_seconds。 */
 function isDurationField(field: ParamsSchemaField): boolean {
   const key = normalizeParamKey(field.name)
-  return key === 'duration' || key === 'videoduration' || key === 'durationseconds' || key === 'seconds'
+  return (
+    key === 'duration' ||
+    key === 'videoduration' ||
+    key === 'durationsec' ||
+    key === 'durationseconds' ||
+    key === 'seconds'
+  )
 }
 
 /**
@@ -424,11 +432,21 @@ function formatFieldValue(field: ParamsSchemaField, value: unknown, kind?: strin
  * 时长字段的滚轮档位。
  * schema 给了 options 就照用；只给数字范围时按整秒展开，保证滚轮始终有可停的档位。
  */
-function durationWheelOptions(field: ParamsSchemaField): WheelPickerOption[] {
-  const declared = (field.options || []).map((option) => ({
-    value: String(option),
-    label: formatFieldValue(field, option),
-  }))
+function durationWheelOptions(field: ParamsSchemaField, minimumSec = 0): WheelPickerOption[] {
+  const option = (value: string | number): WheelPickerOption => {
+    const tooShort = minimumSec > 0 && Number(value) + 1e-6 < minimumSec
+    return {
+      value: String(value),
+      label: formatFieldValue(field, value),
+      ...(tooShort
+        ? {
+            disabled: true,
+            disabledReason: `已连接的配音约 ${Math.ceil(minimumSec)} 秒，视频时长不能短于配音时长。`,
+          }
+        : {}),
+    }
+  }
+  const declared = (field.options || []).map((item) => option(item))
   if (declared.length) return declared
 
   const min = Math.ceil(Number(field.min))
@@ -436,10 +454,7 @@ function durationWheelOptions(field: ParamsSchemaField): WheelPickerOption[] {
   if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return []
   // 上限保护：范围异常大时不生成上千个档位把面板拖垮。
   if (max - min > 120) return []
-  return Array.from({ length: max - min + 1 }, (_, index) => ({
-    value: String(min + index),
-    label: formatFieldValue(field, min + index),
-  }))
+  return Array.from({ length: max - min + 1 }, (_, index) => option(min + index))
 }
 
 /**
@@ -475,6 +490,8 @@ export interface CanvasSourceRef {
   posterUrl?: string
   /** 来源节点的素材 asset_id（有素材内容时用于组装 input_assets） */
   assetId?: number
+  /** 音频来源的剪辑参数，用于约束生成视频时长。 */
+  audio?: AudioSettings
   source?: CanvasAssetSource
   workspaceId?: number
   /** 真人素材库引用：用于身份授权校验与生成时的身份约束注入。 */
@@ -900,6 +917,13 @@ export default function CanvasNodePanel({
       return true
     })
   }, [node?.sourceRefs])
+  const requiredAudioVideoDurationSec = useMemo(
+    () =>
+      kind === 'video'
+        ? requiredVideoDurationForAudio(sourceRefs.filter((ref) => ref.kind === 'audio').map((ref) => ref.audio || {}))
+        : 0,
+    [kind, sourceRefs],
+  )
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
 
@@ -1238,13 +1262,24 @@ export default function CanvasNodePanel({
         m.operationCodes?.some((code) => code === targetOperationCode) &&
         (kind !== 'image' || !isCanvasToolOnlyImageModel(m)),
     )
-    if (!needsVideoInputAsset) return matched
     return matched.map((model) => {
       if (model.unavailableReason) return model
-      if (resolveModelVideoInputSupport(model) !== 'unsupported') return model
-      return { ...model, unavailableReason: VIDEO_INPUT_UNSUPPORTED_REASON }
+      if (needsVideoInputAsset && resolveModelVideoInputSupport(model) === 'unsupported')
+        return { ...model, unavailableReason: VIDEO_INPUT_UNSUPPORTED_REASON }
+      if (targetOperationCode === 'video.generate' && requiredAudioVideoDurationSec > 0) {
+        const maximum = getModelMaximumDurationSec(buildModelRestrictionSummary(model.source).constraints)
+        if (maximum !== null && maximum + 1e-6 < requiredAudioVideoDurationSec) {
+          const audioSeconds = Math.ceil(requiredAudioVideoDurationSec)
+          const modelSeconds = Number.isInteger(maximum) ? String(maximum) : maximum.toFixed(1)
+          return {
+            ...model,
+            unavailableReason: `已连接的配音约 ${audioSeconds} 秒，该模型最长支持 ${modelSeconds} 秒，无法完整保留配音。请选择支持更长时长的模型。`,
+          }
+        }
+      }
+      return model
     })
-  }, [kindModels, targetOperationCode, needsVideoInputAsset, kind])
+  }, [kindModels, targetOperationCode, needsVideoInputAsset, kind, requiredAudioVideoDurationSec])
 
   const requiresImageModelSelection =
     kind === 'image' &&
@@ -1254,9 +1289,11 @@ export default function CanvasNodePanel({
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
     // 旧草稿不能静默改用另一个付费模型；必须由用户重新选择。
     if (requiresImageModelSelection) return undefined
+    const explicitOption = node?.modelVersionId
+      ? availableModels.find((m) => m.modelVersionId === node.modelVersionId)
+      : undefined
+    if (explicitOption) return explicitOption.unavailableReason ? undefined : explicitOption
     const usable = availableModels.filter((m) => !m.unavailableReason)
-    const explicit = node?.modelVersionId ? usable.find((m) => m.modelVersionId === node.modelVersionId) : undefined
-    if (explicit) return explicit
     if (!node?.modelVersionId) {
       const rememberedId = pickRememberedCanvasModel(
         kind,
@@ -1348,6 +1385,14 @@ export default function CanvasNodePanel({
     if (modelsLoading) return '正在加载模型…'
     if (catalogOperationState?.status === 'error') return '模型加载失败，请重新加载'
     if (catalogOperationState?.status === 'configuration-error') return '模型配置异常，请联系平台管理员'
+    if (
+      kind === 'video' &&
+      requiredAudioVideoDurationSec > 0 &&
+      availableModels.length > 0 &&
+      !availableModels.some((model) => !model.unavailableReason)
+    ) {
+      return `已连接的配音约 ${Math.ceil(requiredAudioVideoDurationSec)} 秒；请选择支持该时长的视频模型`
+    }
     const labels: Record<string, string> = {
       'image.image_to_image': '暂无可用的图生图模型',
       'image.text_to_image': '暂无可用的文生图模型',
@@ -1360,7 +1405,15 @@ export default function CanvasNodePanel({
       return '暂无支持视频输入的视频生成模型'
     }
     return labels[targetOperationCode] || ''
-  }, [targetOperationCode, needsVideoInputAsset, modelsLoading, catalogOperationState])
+  }, [
+    targetOperationCode,
+    needsVideoInputAsset,
+    modelsLoading,
+    catalogOperationState,
+    kind,
+    requiredAudioVideoDurationSec,
+    availableModels,
+  ])
 
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
@@ -1540,6 +1593,15 @@ export default function CanvasNodePanel({
     sourceVideoSeconds,
   ])
 
+  const audioVideoDurationError = useMemo(() => {
+    if (kind !== 'video' || operationCode !== 'video.generate' || requiredAudioVideoDurationSec <= 0) return ''
+    const durationField = schemaFields.find(isDurationField)
+    if (!durationField) return ''
+    const selectedDuration = Number(schemaParams[durationField.name])
+    if (!Number.isFinite(selectedDuration) || selectedDuration + 1e-6 >= requiredAudioVideoDurationSec) return ''
+    return `当前视频时长短于配音时长（约 ${Math.ceil(requiredAudioVideoDurationSec)} 秒），请先选择不短于配音的时长，再生成。`
+  }, [kind, operationCode, requiredAudioVideoDurationSec, schemaFields, schemaParams])
+
   /**
    * 拼接最终 prompt：继承来的文本在前（按连线顺序），用户自己的提示词在后；
    * 图片/视频来源作为素材引用（input_assets）单独传参，不拼进 prompt。
@@ -1655,6 +1717,7 @@ export default function CanvasNodePanel({
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
     if (kind === 'video') {
+      if (audioVideoDurationError) return audioVideoDurationError
       return validateCanvasVideoInputs({
         operationCode,
         videoMode,
@@ -1681,6 +1744,7 @@ export default function CanvasNodePanel({
     workspaceId,
     selectedModel?.displayName,
     selectedModel?.source,
+    audioVideoDurationError,
     maxVideoRefSec,
     videoRefTotalSec,
     buildFullPrompt,
@@ -1784,7 +1848,7 @@ export default function CanvasNodePanel({
       // 编辑 / 延长时比例跟随原视频，所选比例不生效，不在确认框里误导用户
       const ratioNote = videoRatioValue && !followSourceVideo ? `，画面比例 ${videoRatioValue}` : ''
       const confirmed = await requestConfirm(
-        `${operationLabel}${ratioNote}，预计消耗 ${creditsYuanLabel(cost)}，是否继续？`,
+        `${operationLabel}${ratioNote}，预计消耗 ${creditsLabel(cost)}，是否继续？`,
         {
           title: '确认生成费用',
           confirmLabel: '继续生成',
@@ -2490,6 +2554,7 @@ export default function CanvasNodePanel({
             <SchemaFieldMenu
               kind={kind}
               mode={kind === 'video' ? videoMode : undefined}
+              minimumVideoDurationSec={requiredAudioVideoDurationSec}
               followSourceVideo={followSourceVideo}
               fields={schemaFields}
               values={fieldValues}
@@ -2519,7 +2584,7 @@ export default function CanvasNodePanel({
                   : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
                     ? '积分不足'
                     : costEstimate.estimated_cost !== undefined
-                      ? `预计消耗：${creditsYuanLabel(costEstimate.estimated_cost)}`
+                      ? `预计消耗：${creditsLabel(costEstimate.estimated_cost)}`
                       : '—'}
             </span>
           }
@@ -2558,6 +2623,7 @@ export default function CanvasNodePanel({
 function SchemaFieldMenu({
   kind,
   mode,
+  minimumVideoDurationSec = 0,
   followSourceVideo,
   fields,
   values,
@@ -2566,6 +2632,7 @@ function SchemaFieldMenu({
 }: {
   kind: string
   mode?: VideoMode
+  minimumVideoDurationSec?: number
   /** 编辑 / 延长：比例与时长跟随原视频，这两项只展示说明、不可选。 */
   followSourceVideo?: boolean
   fields: ParamsSchemaField[]
@@ -2705,11 +2772,11 @@ function SchemaFieldMenu({
                           </button>
                         ))}
                       </div>
-                    ) : isDurationField(f) && durationWheelOptions(f).length ? (
+                    ) : isDurationField(f) && durationWheelOptions(f, minimumVideoDurationSec).length ? (
                       /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
                       <>
                         <WheelPicker
-                          options={durationWheelOptions(f)}
+                          options={durationWheelOptions(f, minimumVideoDurationSec)}
                           value={String(current ?? '')}
                           onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
                           ariaLabel={f.displayName}
@@ -2718,6 +2785,11 @@ function SchemaFieldMenu({
                           itemWidth={56}
                           className={styles.durationWheel}
                         />
+                        {minimumVideoDurationSec > 0 && (
+                          <div className={styles.videoMenuHint} role="status">
+                            已连接的配音约 {Math.ceil(minimumVideoDurationSec)} 秒，视频时长不能短于配音时长。
+                          </div>
+                        )}
                         {/* 档位范围由模型的 params_schema 决定；不写出来用户会以为「14/15 秒是灰的、点不了」是 bug */}
                         <div className={styles.videoMenuHint}>{describeDurationRange(durationWheelOptions(f))}</div>
                       </>

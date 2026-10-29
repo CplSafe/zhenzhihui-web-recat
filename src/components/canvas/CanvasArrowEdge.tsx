@@ -17,7 +17,7 @@ import { BaseEdge, getBezierPath, Position, useStore, useStoreApi, type EdgeProp
 import type { CanvasConnectionRole } from '@/utils/canvasGeneration'
 
 /** 箭头配色，与画布连线同色系；边自带 stroke 时以边为准。 */
-const CANVAS_EDGE_ARROW_COLOR = '#66717f'
+const CANVAS_EDGE_ARROW_COLOR = '#00e5be'
 
 /**
  * 箭头朝向由「连到目标节点的哪一侧」决定。
@@ -149,6 +149,8 @@ export default function CanvasArrowEdge({
   return (
     <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <BaseEdge id={id} path={path} style={style} markerStart={markerStart} interactionWidth={interactionWidth} />
+      {/* A restrained animated highlight keeps graph direction legible without changing edge data. */}
+      <path className="canvas-edge-flow-light" d={path} fill="none" aria-hidden="true" />
       {/* 只描边会得到一个空心的「>」，看着不像箭头：填充与描边同色，边缘才是实心的 */}
       <polygon
         className="canvas-edge-arrow"

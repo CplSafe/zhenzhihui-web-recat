@@ -143,9 +143,12 @@ describe('continuous studio controls', () => {
   })
   it('describes newly visible surfaces instead of preserving the original view', () => {
     const back = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 180 })
-    expect(back).toContain('背影和后脑')
-    expect(back).toContain('不锁定原构图、可见面或背景位置')
-    expect(back).toContain('主体姿态和朝向保持')
+    expect(back).toContain('正后方背面机位')
+    expect(back).toContain('主体及配套物品各绕竖直轴原地旋转180°，各自背面朝镜头')
+    expect(back).toContain('正面主标不可见，包装背标或条码朝镜头')
+    expect(back).toContain('全部保留并列，不删减或重排')
+    expect(back).toContain('保持参考图全部物件的设计、标识、比例和场景')
+    expect(back).toContain('无人物参考不得新增人物')
     expect(back).not.toContain('俯视透视')
     const side = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 90, vertical_angle: 30 })
     expect(side).toContain('侧面轮廓和侧向纵深')
@@ -160,7 +163,7 @@ describe('continuous studio controls', () => {
     const prompt = composeStudioPrompt('image.panorama', '花田', {})
     for (const text of ['等距柱状', '左右边缘无缝', '天顶和地面', '不要鱼眼', '人物仅出现一次', '花田'])
       expect(prompt).toContain(text)
-    expect(composeStudioPrompt('image.multi_angle', '', {})).toContain('不要用平移裁切')
+    expect(composeStudioPrompt('image.multi_angle', '', {})).toContain('背景不平移或镜像')
   })
   it('selects only advertised panorama sizes and never invents a supplier field', () => {
     expect(

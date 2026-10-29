@@ -3,6 +3,7 @@ import {
   audioGainAt,
   isAudioFile,
   normalizeAudioSettings,
+  requiredVideoDurationForAudio,
   parseTimelineAudio,
   readAudioDuration,
   syncTimelineAudio,
@@ -37,6 +38,17 @@ describe('音频编辑与画布持久化', () => {
     expect(syncTimelineAudio([edited], [clip, other])).toEqual([edited, other])
     expect(syncTimelineAudio([edited, other], [other])).toEqual([other])
     expect(clip.inSec).toBe(0)
+  })
+  it('视频时长按可听片段末尾计算，人声顺序接续且忽略循环背景音乐', () => {
+    expect(
+      requiredVideoDurationForAudio([
+        { lane: 'voice', durationSec: 11, inSec: 0, outSec: 11 },
+        { lane: 'voice', durationSec: 4, inSec: 1, outSec: 4 },
+        { lane: 'sfx', durationSec: 3, startSec: 14, outSec: 3 },
+        { lane: 'bgm', durationSec: 60, loop: true },
+        { lane: 'voice', durationSec: 20, muted: true },
+      ]),
+    ).toBe(17)
   })
   it('素材元数据稍后就绪时补齐时长，换素材重新初始化', () => {
     expect(syncTimelineAudio([{ ...clip, durationSec: 0, outSec: 0 }], [clip])[0].outSec).toBe(10)

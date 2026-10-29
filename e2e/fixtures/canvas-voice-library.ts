@@ -91,10 +91,17 @@ export async function setupVoiceLibrary(page: Page, failFilters = false) {
     const limit = Number(url.searchParams.get('limit'))
     return route.fulfill({ json: { items: filtered.slice(offset, offset + limit), total: filtered.length } })
   })
+  let revision = 1
   await page.route('**/api/v1/canvases/121**', (route) => {
-    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
+    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: ++revision } })
+    const url = new URL(route.request().url())
+    // 增量轮询只能返回新变更，不能重复下发初始节点把用户刚选的模型/音色覆盖掉。
+    if (url.pathname.endsWith('/elements') && Number(url.searchParams.get('after_revision')) > 0)
+      return route.fulfill({
+        json: { elements: [], sync_revision: revision, history_floor_revision: 0, has_more: false },
+      })
     return route.fulfill({
-      json: new URL(route.request().url()).pathname.endsWith('/elements')
+      json: url.pathname.endsWith('/elements')
         ? {
             elements: [
               {
@@ -119,6 +126,10 @@ export async function setupVoiceLibrary(page: Page, failFilters = false) {
   })
   await page.goto('/canvas/121')
   await page.locator('.react-flow__node[data-id="audio"] .canvas-node-header').click()
+  // 自动适配不应把单个节点过度放大，音频面板仍需可操作；手动缩放另有专项覆盖。
+  await expect
+    .poll(async () => Number(await page.getByRole('combobox', { name: '画布缩放' }).inputValue()))
+    .toBeLessThanOrEqual(100)
   await page.getByRole('button', { name: '音色库', exact: true }).click()
   const modal = page.getByRole('dialog', { name: '音色库', exact: true })
   await expect(modal).toBeVisible()

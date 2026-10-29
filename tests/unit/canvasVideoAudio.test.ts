@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { composeVideoAudio, snapshotVideoAudio } from '@/utils/canvasVideoAudio'
+import { composeVideoAudio, snapshotVideoAudio, needsVideoAudioComposition } from '@/utils/canvasVideoAudio'
 import { nodeToMutation, collectCanvasElementAssetIds } from '@/utils/canvasElements'
 import { restoreCanvasTaskState } from '@/utils/canvasTaskState'
 
@@ -34,6 +34,15 @@ const snapshot = () =>
   )!
 
 describe('生成视频保留原配音', () => {
+  it('已成功但仍指向模型原片时补做配音，合成结果和无配音任务不重复处理', () => {
+    const composition = snapshot()
+    expect(needsVideoAudioComposition({ assetId: 701, videoAudioComposition: composition })).toBe(true)
+    composition.result = { sourceAssetId: 701, assetId: 702 }
+    expect(needsVideoAudioComposition({ assetId: 701, videoAudioComposition: composition })).toBe(true)
+    expect(needsVideoAudioComposition({ assetId: 702, videoAudioComposition: composition })).toBe(false)
+    expect(needsVideoAudioComposition({ assetId: 600, videoAudioComposition: composition })).toBe(false)
+    expect(needsVideoAudioComposition({ assetId: 701 })).toBe(false)
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.demux.mockReturnValue({ video: { duration: 5000, timescale: 1000 } })

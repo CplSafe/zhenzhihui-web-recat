@@ -1,11 +1,18 @@
 import { expect, test } from '@playwright/test'
-import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
+import {
+  expectNoUnexpectedApi,
+  installStrictAuthenticatedApp,
+  WORKSPACE_ID,
+  waitForScopedApiResponse,
+} from './fixtures/strict-authenticated-app'
 
-test('画布超分按报价创建新产物，保留源节点、选区与谱系', async ({ page }) => {
+test('画布超分按报价创建新产物，保留源节点、选中新产物并连线', async ({ page }, testInfo) => {
+  // 保留完整提交和落盘断言，允许 WebKit 冷加载画布及媒体分片。
+  if (testInfo.project.name === 'webkit') test.slow()
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
   const source = { node_id: 'video-source', asset_id: 12391, kind: 'video' as const, name: '开场镜头.mp4' }
-  let tasks: Array<Record<string, unknown>> = []
+  const estimates: Array<Record<string, unknown>> = []
   let submissions = 0
   const saved: Array<Record<string, unknown>> = []
   // 视频卡片会尝试上传首帧封面；该测试验证封面服务失败也不影响高清产物。
@@ -43,107 +50,100 @@ test('画布超分按报价创建新产物，保留源节点、选区与谱系',
         : { id: 120, title: '超分验证', revision: 1 },
     })
   })
-  await page.route('**/api/v1/ai/hd/**', async (route) => {
-    const url = new URL(route.request().url())
-    const body = route.request().method() === 'POST' ? route.request().postDataJSON() : null
-    expect(Number(body?.workspace_id || url.searchParams.get('workspace_id'))).toBe(WORKSPACE_ID)
-    if (url.pathname.endsWith('/preflight')) {
-      expect(body.sources).toEqual([source])
-      await route.fulfill({
-        json: {
-          items: [
-            {
-              ...source,
-              eligible: true,
-              source_spec: '480P · 5s · 24fps',
-              resolutions: ['720P', '1080P'],
-              frame_rates: [60],
-            },
-          ],
-        },
-      })
-    } else if (url.pathname.endsWith('/quotes')) {
-      await route.fulfill({
-        json: {
-          quote_id: 'quote-hd-1',
-          expires_at: '2099-01-01',
-          items: [{ node_id: source.node_id, asset_id: source.asset_id, credits: 12 }],
-          total_credits: 12,
-          balance: 100,
-          can_afford: true,
-          estimated_time: '1～3 分钟',
-        },
-      })
-    } else if (url.pathname.endsWith('/batches')) {
-      submissions += 1
-      expect(body.quote_id).toBe('quote-hd-1')
-      expect(body.idempotency_key).toBeTruthy()
-      tasks = [
+  await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/v1/ai/models**', (route) =>
+    route.fulfill({
+      json: [
         {
-          id: 'HD-e2e-1',
-          workspace_id: WORKSPACE_ID,
-          canvas_id: 120,
-          canvas_name: '超分验证',
-          source,
-          source_spec: '480P · 24fps',
-          target: { resolution: '1080P', fps: 60 },
-          status: 'completed',
-          submitted_at: new Date().toISOString(),
-          credits: 12,
-          refund_status: 'none',
-          refunded_credits: 0,
-          result: {
-            asset_id: 12392,
-            name: '开场镜头-HD.mp4',
-            spec: '1080P · 60fps',
-            width: 1920,
-            height: 1080,
-            review_policy: 'reuse_source',
-            canvas_delivery: 'pending',
-          },
+          id: 98,
+          enabled: true,
+          display_name: '视频超分测试模型',
+          operation_codes: ['video.upscale'],
+          params_schema: { fields: [{ name: 'scale', type: 'integer', default: 2 }] },
         },
-      ]
-      await route.fulfill({ json: { tasks } })
-    } else if (url.pathname.endsWith('/tasks')) {
-      await route.fulfill({
-        json: {
-          items: tasks,
-          total: tasks.length,
-          stats: { total: tasks.length, active: 0, completed: tasks.length, failed: 0, refunded_credits: 0 },
-          canvases: [{ id: 120, name: '超分验证' }],
-        },
-      })
-    } else await route.fulfill({ status: 404, json: { message: 'Not found' } })
+      ],
+    }),
+  )
+  await page.route('**/api/v1/ai/tasks/estimate-cost', (route) => {
+    const body = route.request().postDataJSON()
+    expect(body).toMatchObject({
+      workspace_id: WORKSPACE_ID,
+      model_version_id: 98,
+      operation_code: 'video.upscale',
+      params: { scale: 2 },
+      input_assets: [{ asset_id: source.asset_id, role: 'video' }],
+    })
+    estimates.push(body)
+    return route.fulfill({ json: { estimated_cost: 12, balance: 100, can_afford: true } })
+  })
+  await page.route('**/api/v1/ai/tasks', (route) => {
+    const body = route.request().postDataJSON()
+    expect(body).toMatchObject({
+      workspace_id: WORKSPACE_ID,
+      model_version_id: 98,
+      operation_code: 'video.upscale',
+      params: { scale: 2 },
+      input_assets: [{ asset_id: source.asset_id, role: 'video' }],
+    })
+    expect(body.idempotency_key).toBeTruthy()
+    submissions++
+    return route.fulfill({ json: { id: 98, status: 'pending' } })
+  })
+  await page.route('**/api/v1/ai/tasks/98?**', (route) =>
+    route.fulfill({
+      json: {
+        id: 98,
+        status: 'succeeded',
+        outputs: [
+          { asset_id: 12392, type: 'video', url: `/api/v1/assets/12392/download?workspace_id=${WORKSPACE_ID}` },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/v1/assets?**', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          { id: source.asset_id, type: 'video', status: 'active', workspace_id: WORKSPACE_ID },
+          { id: 12392, type: 'video', status: 'active', workspace_id: WORKSPACE_ID },
+        ],
+        total: 2,
+      },
+    }),
+  )
+  const ready = waitForScopedApiResponse(page, {
+    method: 'GET',
+    path: '/api/v1/canvases/120/elements',
+    workspaceId: WORKSPACE_ID,
   })
   await page.goto('/canvas/120')
+  await ready
   const sourceNode = page.locator(`[data-id="${source.node_id}"]`).first()
-  await expect(sourceNode).toBeVisible()
+  await expect(sourceNode).toBeVisible({ timeout: 30_000 })
   await sourceNode.locator('.canvas-node-header').click()
   await expect(sourceNode).toHaveClass(/selected/)
   await page.getByRole('button', { name: '超分', exact: true }).click()
-  const modal = page.getByRole('dialog', { name: /高清处理确认/ })
-  await modal.getByText('逐条明细与跳过原因').click()
-  await expect(modal.getByText('480P · 5s · 24fps')).toBeVisible()
-  await modal.getByText('1080P', { exact: true }).click()
-  await modal.getByText('60fps', { exact: true }).click()
-  await expect(modal.getByRole('button', { name: '确认并开始（扣积分）' })).toBeEnabled()
-  await page.screenshot({ path: 'artifacts/canvas-hd-confirm.png' })
-  await modal.getByRole('button', { name: '确认并开始（扣积分）' }).click()
-  await expect(page.getByRole('dialog', { name: '高清任务', exact: true })).toBeVisible()
-  await page
-    .getByRole('dialog', { name: '高清任务', exact: true })
-    .getByRole('button', { name: '关闭', exact: true })
-    .click()
-  const result = page.locator('[data-id="hd-result-HD-e2e-1"]').first()
+  const modal = page.getByRole('dialog', { name: '超分', exact: true })
+  await expect(modal).toContainText('预计 12 积分')
+  await expect(modal.getByRole('button', { name: '确认超分' })).toBeEnabled()
+  expect(submissions).toBe(0)
+  expect(estimates.length).toBeGreaterThan(0)
+  await page.screenshot({ path: testInfo.outputPath('canvas-hd-confirm.png') })
+  await modal.getByRole('button', { name: '确认超分' }).click()
+  await expect(modal).toBeHidden()
+  await expect.poll(() => submissions).toBe(1)
+  const result = page.locator('.react-flow__node-video').filter({ hasText: `${source.name}超分结果` })
   await expect(result).toBeVisible()
+  await expect(result).toHaveClass(/selected/)
   await expect(sourceNode).toContainText(source.name)
-  await expect(result).toContainText('高清产物 · 新文件')
-  await expect(sourceNode).toHaveClass(/selected/)
+  await expect(sourceNode).not.toHaveClass(/selected/)
+  await expect.poll(() => JSON.stringify(saved)).toContain('12392')
+  const resultId = await result.getAttribute('data-id')
+  await expect.poll(() => JSON.stringify(saved)).toContain(`"target":"${resultId}"`)
+  expect(JSON.stringify(saved)).toContain('"source":"video-source"')
+  expect(JSON.stringify(saved)).toContain('"role":"source_video"')
   expect(submissions).toBe(1)
-  await expect.poll(() => JSON.stringify(saved)).toContain('hd-result-HD-e2e-1')
-  await expect.poll(() => JSON.stringify(saved)).toContain('"provenance":true')
   await page.getByRole('button', { name: '复位视图', exact: true }).click()
-  await page.locator('.react-flow__pane').click({ position: { x: 1100, y: 80 } })
-  await page.screenshot({ path: 'artifacts/canvas-hd-result.png' })
+  await page.screenshot({ path: testInfo.outputPath('canvas-hd-result.png') })
   expectNoUnexpectedApi(api)
 })

@@ -42,6 +42,11 @@
   user-select: none;
   border-radius: 0;
 }
+.imageOverlay {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
 .toolbar {
   position: relative;
   flex-shrink: 0;

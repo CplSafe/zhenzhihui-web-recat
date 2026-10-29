@@ -1,4 +1,4 @@
-import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
+import { INSUFFICIENT_CREDITS_TEXT, creditsLabel } from '@/utils/creditsFormat'
 import styles from './EntryCostEstimate.module.css'
 
 interface EntryCostEstimateProps {
@@ -32,7 +32,7 @@ export default function EntryCostEstimate({
         : failed
           ? '预估失败'
           : canAfford
-            ? `${estimateKind === 'reservation' ? '预冻结金额 ' : ''}${creditsYuanLabel(estimatedCost)}`
+            ? `${estimateKind === 'reservation' ? '预冻结积分 ' : ''}${creditsLabel(estimatedCost)}`
             : INSUFFICIENT_CREDITS_TEXT}
     </span>
   )

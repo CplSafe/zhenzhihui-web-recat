@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_CANVAS_SHORTCUTS,
+  canvasShortcutConflicts,
+  matchesCanvasAction,
+  resolveTimelineShortcutStep,
   canUseCanvasShortcuts,
   formatCanvasShortcut,
   isCanvasShortcutTarget,
@@ -43,7 +46,8 @@ describe('画布快捷键冲突处理', () => {
     expect(resolveCanvasCreationShortcut(key('D', { [modifier]: true }))).toBe('duplicate')
     expect(resolveCanvasCreationShortcut(key('Tab'))).toBe('add')
     expect(resolveCanvasCreationShortcut(key('n', { [modifier]: true }))).toBeNull()
-    for (const name of ['l', 'd', 'n']) expect(resolveCanvasCreationShortcut(key(name))).toBeNull()
+    expect(resolveCanvasCreationShortcut(key('l'))).toBe('connect')
+    for (const name of ['d', 'n']) expect(resolveCanvasCreationShortcut(key(name))).toBeNull()
     expect(resolveCanvasCreationShortcut(key('L', { [modifier]: true, shiftKey: true }))).toBeNull()
   })
 
@@ -152,4 +156,32 @@ describe('画布快捷键冲突处理', () => {
     expect(keys.CANVAS_MOD).toBe(mod)
     expect(keys.CANVAS_ALT).toBe(alt)
   })
+})
+
+it('自定义占用 L 时不触发兼容连线', () => {
+  const shortcuts = { ...DEFAULT_CANVAS_SHORTCUTS, add: 'L' }
+  expect(
+    resolveCanvasCreationShortcut(
+      { key: 'l', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false },
+      shortcuts,
+    ),
+  ).toBe('add')
+})
+
+it('画布与时间线分开校验，公共操作在两个作用域中占用按键', () => {
+  expect(canvasShortcutConflicts('panHold', 'timelinePlay')).toBe(false)
+  expect(canvasShortcutConflicts('undo', 'timelinePlay')).toBe(true)
+  expect(canvasShortcutConflicts('timelinePlay', 'timelineSplit')).toBe(true)
+})
+it('公共操作与时间线逐帧使用自定义绑定，旧绑定不再触发', () => {
+  const bindings = { ...DEFAULT_CANVAS_SHORTCUTS, undo: 'Mod+U', redo: 'Mod+Shift+U', timelineForward: 'K' }
+  expect(matchesCanvasAction(key('u', { ctrlKey: true }), 'undo', bindings)).toBe(true)
+  expect(matchesCanvasAction(key('z', { ctrlKey: true }), 'undo', bindings)).toBe(false)
+  expect(matchesCanvasAction(key('y', { ctrlKey: true }), 'redo', bindings)).toBe(false)
+  expect(resolveTimelineShortcutStep(key('k'), bindings)).toBe(0.04)
+  expect(resolveTimelineShortcutStep(key('ArrowRight'), bindings)).toBeNull()
+})
+
+it('时间线占用 L 不影响画布的兼容连线', () => {
+  expect(resolveCanvasCreationShortcut(key('l'), { ...DEFAULT_CANVAS_SHORTCUTS, timelineSplit: 'L' })).toBe('connect')
 })

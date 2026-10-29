@@ -129,7 +129,6 @@ interface PlanVM {
   discount: string // 折扣(8.8折),无则空
   credits: string
   creditUnit: string
-  rate: string // 1积分≈X元
   quota: string // 最多生成约 X 张图片,无则空
   features: Feature[]
   isTeam: boolean
@@ -353,8 +352,6 @@ function toVM(p: ApiPlan): PlanVM {
   // 价格必须保留后端的“分”精度；1 分套餐不能被四舍五入成 ￥0。
   const origin = enabled ? `￥${formatPriceCents(originCents)}` : ''
   const discount = enabled ? discountLabel(discountPercent) : ''
-  // 1积分≈X元 用折后实付价算(用户实际付的钱)
-  const rate = credits > 0 ? `1积分≈${(payCents / 100 / credits).toFixed(2)}元` : ''
 
   const subtitle =
     String(p.subtitle || p.description || p.display?.subtitle || '').trim() ||
@@ -375,7 +372,6 @@ function toVM(p: ApiPlan): PlanVM {
     discount,
     credits: formatCredits(credits),
     creditUnit,
-    rate,
     quota,
     features: isTeam ? FEATURES_TEAM : FEATURES_PERSONAL,
     isTeam,
@@ -502,19 +498,16 @@ interface PackageVM {
   subtitle: string
   credits: string
   price: string
-  rate: string
 }
-/** 将后端积分包转换为价格、积分和兑换率展示模型。 */
+/** 将后端积分包转换为价格和积分展示模型。 */
 function toPkgVM(p: ApiPackage): PackageVM {
   const credits = Number(p.credits ?? 0)
-  const rate = credits > 0 ? `1积分≈${(Number(p.amount_cents || 0) / 100 / credits).toFixed(2)}元` : ''
   return {
     id: Number(p.id),
     name: p.name || '积分包',
     subtitle: '一次性充值,积分永久有效',
     credits: formatCredits(credits),
     price: yuan(p.amount_cents),
-    rate,
   }
 }
 
