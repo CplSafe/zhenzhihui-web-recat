@@ -120,7 +120,7 @@
 
 /* 真禁用要跟渐隐明确拉开：更淡、更灰，且划线，一眼看出「不是滚远了，是不能选」 */
 .zzh-wheel__item:disabled {
-  cursor: not-allowed;
+  cursor: default;
   color: #b5bac4;
   opacity: 0.45;
   text-decoration: line-through;

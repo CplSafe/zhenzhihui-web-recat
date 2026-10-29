@@ -88,6 +88,7 @@ interface SerializableNodeData {
   imageGeneration?: { submissionKey: string; info: import('./canvasImageInfo').CanvasImageInfo }
   /** 公共音色的展示信息；生成参数仍只使用 params.voice_id。 */
   selectedPublicVoice?: { id: number; name: string }
+  requiresVoiceSelection?: boolean
   panoramaView?: Record<string, unknown>
   audioReferences?: Array<{ assetId: number; workspaceId: number; title: string }>
   croppedInputAssets?: Record<string, { originalAssetId: number; assetId: number; workspaceId: number }>
@@ -168,6 +169,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'imageGeneration',
   'imageOrigin',
   'selectedPublicVoice',
+  'requiresVoiceSelection',
   'panoramaView',
   'audioReferences',
   'croppedInputAssets',
@@ -245,6 +247,8 @@ export interface CanvasGraphSourceRef {
    */
   posterUrl?: string
   assetId?: number
+  /** 音频连线的裁剪参数，用于按当前可听片段时长校验视频时长。 */
+  audio?: AudioSettings
   source?: CanvasAssetSource
   workspaceId?: number
   role?: CanvasConnectionRole
@@ -337,6 +341,9 @@ export function collectCanvasSourceRefs(
         ...(data.resultUrl ? { thumbnailUrl: String(data.resultUrl) } : {}),
         ...(data.poster ? { posterUrl: String(data.poster) } : {}),
         ...(assetId > 0 ? { assetId } : {}),
+        ...(kind === 'audio' && data.audio && typeof data.audio === 'object'
+          ? { audio: data.audio as AudioSettings }
+          : {}),
         ...(data.assetSource || data.source || data.realPerson
           ? {
               source: normalizeCanvasAssetSource(

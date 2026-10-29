@@ -842,7 +842,7 @@ export async function estimateShotImageCost(args: {
   modelPlanCandidates?: string[]
   /**
    * 本次要提交的提示词。GPT Image 这类按输入 token 计费的模型，不带提示词估出来偏低——
-   * 入口按钮带着提示词估「约0.18元」、确认框不带估成「约0.1元」，同一次生成前后两个价。
+   * 入口按钮带着提示词估「9 积分」、确认框不带估成「5 积分」，同一次生成前后两个价。
    */
   prompt?: string
 }): Promise<any> {

@@ -11,7 +11,7 @@ import {
   CANVAS_ALT as ALT,
   CANVAS_IS_MAC,
   DEFAULT_CANVAS_SHORTCUTS,
-  formatCanvasShortcut,
+  canvasShortcutDisplayKeys,
   type CanvasShortcutAction,
   type CanvasShortcutBindings,
 } from '@/utils/canvasKeyboard'
@@ -31,14 +31,26 @@ interface ShortcutSection {
 
 export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
+    title: '时间线（仅聚焦时生效）',
+    rows: [
+      { keys: [], action: 'timelinePlay', label: '播放 / 暂停' },
+      { keys: [], action: 'timelineSplit', label: '分割' },
+      { keys: [], action: 'timelineRippleDelete', label: '波纹删除并补齐空隙' },
+      { keys: [], action: 'timelineBack', label: '上一帧（25 fps 预览）' },
+      { keys: [], action: 'timelineForward', label: '下一帧（25 fps 预览）' },
+      { keys: [], action: 'timelineBackSecond', label: '后退 1 秒' },
+      { keys: [], action: 'timelineForwardSecond', label: '前进 1 秒' },
+    ],
+  },
+  {
     title: '创作',
     rows: [
-      { keys: [`${MOD} + G`, `${ALT} + G`], label: '成组（至少选中两个节点）' },
+      { keys: [], action: 'group', label: '成组（至少选中两个节点）' },
       { keys: [`${MOD} + ${ALT} + G`], label: '合并分镜组：将可用视频合并为视频剪辑' },
-      { keys: [`${MOD} + Shift + G`, `${ALT} + Shift + G`], label: '解组' },
+      { keys: [], action: 'ungroup', label: '解组' },
       { keys: [], action: 'connect', label: '连线：选中两个节点，按选择顺序连接' },
       { keys: [], action: 'duplicate', label: '复制节点和连线' },
-      { keys: [`${MOD} + Enter`], label: '生成：发送当前节点面板（输入框外）' },
+      { keys: [], action: 'generate', label: '生成：发送当前节点面板（输入框外）' },
       { keys: [], action: 'add', label: '新建节点' },
       { keys: [`${ALT} + 拖动节点`], label: '节点复制：仅复制节点' },
       { keys: [`${MOD} + ${ALT} + 拖动`], label: '创建副本：复制节点及内部连线' },
@@ -51,14 +63,14 @@ export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: [], action: 'zoomOut', label: '缩小画布（支持小键盘）' },
       { keys: [], action: 'fitView', label: '适应画布：显示全部节点' },
       { keys: ['双指捏合'], label: '触控板缩放' },
-      { keys: [`${MOD} + 滚轮`], label: '鼠标缩放' },
+      { keys: [], action: 'zoomWheel', label: '鼠标缩放' },
       { keys: [], action: 'resetZoom', label: '回到 100%' },
     ],
   },
   {
     title: '移动画布',
     rows: [
-      { keys: ['空格 + 左键拖动'], label: '临时抓手：从节点或空白处平移' },
+      { keys: [], action: 'panHold', label: '临时抓手：从节点或空白处平移' },
       { keys: ['双指滑动'], label: '触控板平移' },
       { keys: ['中键拖动', '右键拖动'], label: '鼠标平移' },
       { keys: [], action: 'selectTool', label: '移动 / 选择工具：拖动节点、框选' },
@@ -70,10 +82,10 @@ export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
     title: '其他',
     rows: [
-      { keys: [`${MOD} + Z`], label: '撤销' },
-      { keys: [`${MOD} + Shift + Z`, `${MOD} + Y`], label: '重做' },
-      { keys: [`${MOD} + F`], label: '画布节点搜索' },
-      { keys: ['Delete', 'Backspace'], label: '删除选中的节点或连线' },
+      { keys: [], action: 'undo', label: '撤销' },
+      { keys: [], action: 'redo', label: '重做' },
+      { keys: [], action: 'search', label: '画布节点搜索' },
+      { keys: [], action: 'delete', label: '删除选中的节点或连线' },
       { keys: [`${MOD} + C`, `${MOD} + V`], label: '复制 / 粘贴节点及内部连线' },
       { keys: [`${MOD} + A`], label: '全选节点' },
       { keys: [`${MOD} + 点击`], label: '加选 / 减选' },
@@ -96,7 +108,11 @@ export interface CanvasShortcutsHelpProps {
 }
 
 function displayedKeys(row: ShortcutRow, shortcuts: CanvasShortcutBindings): string[] {
-  return row.action ? [formatCanvasShortcut(shortcuts[row.action])] : row.keys
+  return row.action
+    ? canvasShortcutDisplayKeys(row.action, shortcuts).map((key) =>
+        row.action === 'panHold' ? `${key} + 左键拖动` : key,
+      )
+    : row.keys
 }
 
 export default function CanvasShortcutsHelp({
@@ -134,8 +150,8 @@ export default function CanvasShortcutsHelp({
           </button>
         </header>
         <p className={styles.notice}>
-          点击画布后快捷键生效；画布聚焦时 Tab 新建节点，输入框、按钮和弹窗保留正常焦点导航。Ctrl / ⌘ + L
-          等浏览器保留键需开启全屏快捷键模式并授权。
+          点击画布后快捷键生效，键位以当前自定义设置为准；时间线操作仅在剪辑面板聚焦时生效。
+          输入框、按钮和弹窗保留正常焦点导航。浏览器保留组合键需开启全屏快捷键模式并授权。
         </p>
         <div className={styles.body}>
           {CANVAS_SHORTCUT_SECTIONS.map((section) => (

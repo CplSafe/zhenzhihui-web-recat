@@ -33,7 +33,7 @@ import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useStudioCostEstimate } from '@/composables/useStudioCostEstimate'
 import { useStudioHistory } from '@/composables/useStudioHistory'
 import { useToast } from '@/composables/useToast'
-import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
+import { INSUFFICIENT_CREDITS_TEXT, creditsLabel } from '@/utils/creditsFormat'
 import { notifyGenerationDone } from '@/utils/studioNotify'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { getBusinessErrorMessage, uploadAssetFile } from '@/api/business'
@@ -831,7 +831,7 @@ export default function StudioCreateView() {
                   {estimating && '费用预估中…'}
                   {!estimating && estimate && (
                     <span className={`studio-cost__value${estimate.canAfford ? '' : ' is-short'}`}>
-                      {estimate.canAfford ? creditsYuanLabel(estimate.total) : INSUFFICIENT_CREDITS_TEXT}
+                      {estimate.canAfford ? creditsLabel(estimate.total) : INSUFFICIENT_CREDITS_TEXT}
                     </span>
                   )}
                 </span>
@@ -842,9 +842,9 @@ export default function StudioCreateView() {
                   : submitting
                     ? '生成中…'
                     : pendingConfirm
-                      ? `确认生成${estimate ? ` · ${creditsYuanLabel(estimate.total)}` : ''}`
+                      ? `确认生成${estimate ? ` · ${creditsLabel(estimate.total)}` : ''}`
                       : estimate
-                        ? `生成 · ${creditsYuanLabel(estimate.total)}`
+                        ? `生成 · ${creditsLabel(estimate.total)}`
                         : '生成'}
               </button>
               <p className="studio-console__disclaimer">内容由 AI 生成，请遵守平台规范，禁止用于违法用途。</p>

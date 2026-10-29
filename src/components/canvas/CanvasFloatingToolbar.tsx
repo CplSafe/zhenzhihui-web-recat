@@ -8,11 +8,17 @@
  * 滚轮平移），不再需要切模式；只留下「锁定节点」——那是个明确的意图，不是模式。
  */
 import { memo, useState, useRef, useEffect } from 'react'
-import { CANVAS_MOD } from '@/utils/canvasKeyboard'
+import {
+  CANVAS_MOD,
+  DEFAULT_CANVAS_SHORTCUTS,
+  formatCanvasShortcut,
+  type CanvasShortcutBindings,
+} from '@/utils/canvasKeyboard'
 import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasFloatingToolbar.module.css'
 
 interface CanvasFloatingToolbarProps {
+  shortcuts?: CanvasShortcutBindings
   onAddNode: (type: string) => void
   /** 添加本地素材：打开文件选择框，选中的图片/视频上传后各自落成图片或视频节点 */
   onAddLocalImage: () => void
@@ -32,6 +38,7 @@ interface CanvasFloatingToolbarProps {
 }
 
 function CanvasFloatingToolbar({
+  shortcuts = DEFAULT_CANVAS_SHORTCUTS,
   onAddNode,
   onAddLocalImage,
   panModeEnabled,
@@ -219,7 +226,7 @@ function CanvasFloatingToolbar({
         title={
           panModeEnabled
             ? '抓手模式：左键拖空白处平移画布（按住 Shift 拖可框选）。点击切回框选'
-            : '切到抓手模式：左键拖空白处平移画布。当前左键拖空白是框选，平移用空格/中键/右键拖或滚轮'
+            : `切到抓手模式：左键拖空白处平移画布。当前左键拖空白是框选，平移用${formatCanvasShortcut(shortcuts.panHold)}/中键/右键拖或滚轮`
         }
         aria-pressed={panModeEnabled}
       >
@@ -243,7 +250,11 @@ function CanvasFloatingToolbar({
       </button>
 
       {/* 4. 节点搜索/定位：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
-      <button className={styles.toolBtn} onClick={onOpenSearch} title={`搜索 / 定位节点（${CANVAS_MOD} + F）`}>
+      <button
+        className={styles.toolBtn}
+        onClick={onOpenSearch}
+        title={`搜索 / 定位节点（${formatCanvasShortcut(shortcuts.search)}）`}
+      >
         <SearchIcon />
         <span className={styles.toolLabel}>搜索</span>
       </button>

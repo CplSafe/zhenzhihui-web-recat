@@ -39,6 +39,23 @@ export function normalizeAudioSettings(value: unknown): AudioSettings {
     origin: ['upload', 'generated', 'licensed'].includes(String(v.origin)) ? v.origin! : 'unknown',
   }
 }
+
+/** 返回当前连接音频需要覆盖的视频时长；默认从 0 开始的配音按顺序接续。 */
+export function requiredVideoDurationForAudio(values: unknown[]): number {
+  let voiceEnd = 0
+  let requiredEnd = 0
+  for (const value of values || []) {
+    const clip = normalizeAudioSettings(value)
+    const length = clip.outSec - clip.inSec
+    if (clip.muted || clip.volume <= 0 || length <= 0 || clip.loop) continue
+    const startSec = clip.lane === 'voice' && clip.startSec === 0 ? voiceEnd : clip.startSec
+    const endSec = startSec + length
+    if (clip.lane === 'voice') voiceEnd = Math.max(voiceEnd, endSec)
+    requiredEnd = Math.max(requiredEnd, endSec)
+  }
+  return requiredEnd
+}
+
 export function parseTimelineAudio(value: unknown): TimelineAudioClip[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((raw) => {

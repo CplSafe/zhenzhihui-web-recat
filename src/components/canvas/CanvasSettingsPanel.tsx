@@ -5,14 +5,15 @@
  * 有标准答案的（比如吸附网格）继续留在视图控制条上一键切换，不进这里绕两层。
  * 所有值经 canvasPreferences 落本机，不进云端。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styles from './CanvasSettingsPanel.module.css'
 import type { CanvasPreferences } from '@/utils/canvasPreferences'
 import {
   CANVAS_SHORTCUT_LABELS,
   CANVAS_RESERVED_SHORTCUTS,
   DEFAULT_CANVAS_SHORTCUTS,
-  formatCanvasShortcut,
+  canvasShortcutConflicts,
+  canvasShortcutDisplayKeys,
   shortcutFromKeyboardEvent,
   type CanvasShortcutAction,
 } from '@/utils/canvasKeyboard'
@@ -34,6 +35,26 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
   const [permission, setPermission] = useState(getNotificationPermission)
   const [recordingAction, setRecordingAction] = useState<CanvasShortcutAction | null>(null)
   const [shortcutError, setShortcutError] = useState('')
+  const wheelButtonRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const button = wheelButtonRef.current
+    if (recordingAction !== 'zoomWheel' || !button) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const modifiers = Number(event.ctrlKey || event.metaKey) + Number(event.altKey) + Number(event.shiftKey)
+      if (modifiers !== 1) {
+        setShortcutError('请只按住 Ctrl/⌘、Alt 或 Shift 中的一个并滚动')
+        return
+      }
+      const binding = event.ctrlKey || event.metaKey ? 'Mod+Wheel' : event.altKey ? 'Alt+Wheel' : 'Shift+Wheel'
+      onChange({ shortcuts: { ...preferences.shortcuts, zoomWheel: binding } })
+      setRecordingAction(null)
+      setShortcutError('')
+    }
+    button.addEventListener('wheel', onWheel, { passive: false })
+    return () => button.removeEventListener('wheel', onWheel)
+  }, [recordingAction, onChange, preferences.shortcuts])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -87,12 +108,19 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
       setShortcutError('请按一个非 Esc 的完整快捷键')
       return
     }
+    if (action === 'zoomWheel') {
+      setShortcutError('请按住 Ctrl/⌘、Alt 或 Shift 并滚动鼠标录入')
+      return
+    }
     if (CANVAS_RESERVED_SHORTCUTS.has(binding)) {
       setShortcutError('该快捷键已被浏览器或画布固定操作占用，请换一个组合')
       return
     }
     const duplicate = shortcutActions.find(
-      (candidate) => candidate !== action && preferences.shortcuts[candidate] === binding,
+      (candidate) =>
+        candidate !== action &&
+        canvasShortcutConflicts(action, candidate) &&
+        preferences.shortcuts[candidate] === binding,
     )
     if (duplicate) {
       setShortcutError(`该快捷键已用于“${CANVAS_SHORTCUT_LABELS[duplicate]}”`)
@@ -135,7 +163,10 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
               />
             </Row>
 
-            <Row label="滚轮默认操作" hint="按住 Ctrl/⌘ 滚动始终是缩放">
+            <Row
+              label="滚轮默认操作"
+              hint={`${canvasShortcutDisplayKeys('zoomWheel', preferences.shortcuts).join(' / ')} 临时缩放`}
+            >
               <Segmented
                 value={preferences.wheelMode}
                 options={[
@@ -186,7 +217,9 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
 
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>自定义快捷键</h3>
-            <p className={styles.sectionHint}>点击快捷键后直接按下新的按键组合；设置保存在当前浏览器。</p>
+            <p className={styles.sectionHint}>
+              点击录入新组合；滚轮缩放请按住修饰键并滚动录入。时间线操作仅在时间线聚焦时生效，其他操作仅作用于画布，输入框保留正常编辑。设置保存在当前浏览器。
+            </p>
             <div className={styles.shortcutList}>
               {shortcutActions.map((action) => (
                 <div key={action} className={styles.shortcutRow}>
@@ -194,6 +227,7 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
                   <button
                     type="button"
                     className={`${styles.shortcutButton} ${recordingAction === action ? styles.shortcutRecording : ''}`}
+                    ref={action === 'zoomWheel' ? wheelButtonRef : undefined}
                     aria-label={`修改${CANVAS_SHORTCUT_LABELS[action]}快捷键`}
                     aria-pressed={recordingAction === action}
                     onClick={() => {
@@ -202,7 +236,9 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
                     }}
                     onKeyDown={(event) => recordingAction === action && recordShortcut(action, event)}
                   >
-                    {recordingAction === action ? '请按新快捷键…' : formatCanvasShortcut(preferences.shortcuts[action])}
+                    {recordingAction === action
+                      ? '请按新快捷键…'
+                      : canvasShortcutDisplayKeys(action, preferences.shortcuts).join(' / ')}
                   </button>
                 </div>
               ))}

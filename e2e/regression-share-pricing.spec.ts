@@ -135,10 +135,10 @@ test('图片入口与确认框使用相同素材和schema估价，保留预冻�
   })
   await page.goto('/smart')
   await expect(page.getByRole('tab', { name: '制作图片' })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByText('预冻结金额 约0.27元', { exact: true })).toBeVisible()
+  await expect(page.getByText('预冻结积分 13.25 积分', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '去制作', exact: true }).click()
   const dialog = page.getByRole('alertdialog', { name: '确认生成图片' })
-  await expect(dialog).toContainText('预冻结金额共 约0.27元')
+  await expect(dialog).toContainText('预冻结积分共 13.25 积分')
   await expect(dialog).toContainText('完成后按实际用量结算')
   expect(quotes.length).toBeGreaterThanOrEqual(2)
   for (const quote of quotes) {
@@ -170,7 +170,7 @@ test('图片入口与确认框使用相同素材和schema估价，保留预冻�
     input_assets: lastQuote.input_assets,
     params: lastQuote.params,
   })
-  await expect(page.locator('#image-generation-cost')).toContainText('预冻结金额 约0.27元')
+  await expect(page.locator('#image-generation-cost')).toContainText('预冻结积分 13.25 积分')
   expect(errors).toEqual([])
   expectNoUnexpectedApi(api)
 })

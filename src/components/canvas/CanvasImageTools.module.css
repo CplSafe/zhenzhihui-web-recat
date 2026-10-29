@@ -610,6 +610,20 @@
   color: #526b5d;
 }
 
+.angleContext {
+  grid-column: 1 / -1;
+  min-width: 0;
+  font-size: 12px;
+}
+.angleContext summary {
+  cursor: pointer;
+  color: #526b5d;
+}
+.angleContext .anglePrompt {
+  margin: 10px 0 4px;
+  overflow-wrap: anywhere;
+}
+
 /* Compact canvas tools keep the source node visible behind the editor. */
 .dialog :global(.ant-modal-content) {
   padding: 20px;
@@ -694,8 +708,10 @@
 }
 .captureCollection {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 12px;
+  overflow-wrap: anywhere;
 }
 .captureSummary {
   display: flex;
@@ -1003,6 +1019,7 @@
 
 .capturePanel {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 14px;
 }
@@ -1105,5 +1122,436 @@
   }
   .panoramaStudio .studioFooter > :global(.ant-btn-primary) {
     flex: 1;
+  }
+}
+
+/* The panorama viewer is a focused, full-viewport workspace; other canvas tools
+   keep their existing floating-window treatment. */
+.panoramaWindow {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 4000 !important;
+  display: block !important;
+  overflow: hidden;
+  padding: 0 !important;
+  background: #f7f8fa;
+  pointer-events: auto;
+}
+.panoramaWindow .dialog {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100dvh;
+  margin: 0 !important;
+  padding: 0;
+}
+.panoramaWindow .dialog :global(.ant-modal-content) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+.panoramaWindow .dialog :global(.ant-modal-header),
+.panoramaWindow .dialog :global(.ant-modal-close) {
+  display: none;
+}
+.panoramaWindow .dialog :global(.ant-modal-body) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  background: #ffffff;
+}
+.panoramaWindow :global(.ant-spin-text) {
+  color: #475467;
+}
+.panoramaWindow :global(.ant-spin-dot-item) {
+  background: #5767e5;
+}
+.panoramaWindow :global(.ant-alert-error) {
+  border-color: #fecdca;
+  color: #b42318;
+  background: #fef3f2;
+}
+.panoramaWorkbench {
+  color-scheme: light;
+  --panorama-bg: #f7f8fa;
+  --panorama-panel: #ffffff;
+  --panorama-raised: #f3f5f9;
+  --panorama-line: #e5e7eb;
+  --panorama-text: #202b27;
+  --panorama-muted: #667085;
+  --panorama-accent: #5767e5;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--panorama-text);
+  background: var(--panorama-bg);
+}
+.panoramaHeader {
+  display: grid;
+  flex: 0 0 68px;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--panorama-line);
+  background: #ffffff;
+}
+.panoramaBack {
+  justify-self: start;
+  color: var(--panorama-muted);
+}
+.panoramaBack:hover,
+.panoramaBack:focus-visible {
+  color: var(--panorama-text) !important;
+  background: var(--panorama-raised) !important;
+}
+.panoramaSwitch {
+  justify-self: end;
+  color: var(--panorama-muted);
+}
+.panoramaSwitch:hover,
+.panoramaSwitch:focus-visible {
+  color: var(--panorama-accent) !important;
+  background: var(--panorama-raised) !important;
+}
+.panoramaTitle {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.panoramaTitle h1 {
+  margin: 0;
+  color: var(--panorama-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+.panoramaTitle span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--panorama-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panoramaHint {
+  justify-self: end;
+  color: var(--panorama-muted);
+  font-size: 12px;
+}
+.panoramaBody {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  flex: 1;
+  min-height: 0;
+  gap: 20px;
+  padding: 20px 24px;
+  align-items: stretch;
+  overflow: hidden;
+  background: var(--panorama-bg);
+}
+.panoramaBody .preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  padding: 0 6px 0 0;
+  overflow: hidden;
+  scrollbar-color: #c7ccd6 transparent;
+}
+.panoramaBody .sceneShell {
+  display: contents;
+}
+.panoramaBody .sceneShell > .hint {
+  display: none;
+}
+.panoramaBody .scene {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  flex-shrink: 1;
+  border-color: var(--panorama-line);
+  border-radius: 12px;
+  background: #eef1f5;
+}
+.captureFrameOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: auto;
+  box-sizing: border-box;
+  border: 1px solid rgb(87 103 229 / 72%);
+  box-shadow: 0 0 0 100vmax rgb(32 43 39 / 32%);
+  pointer-events: none;
+}
+.panoramaBody .sceneToolbar {
+  color: var(--panorama-muted);
+}
+.panoramaBody .sceneToolbar select {
+  border-color: var(--panorama-line);
+  color: var(--panorama-text);
+  background: var(--panorama-panel);
+}
+.panoramaBody .hint,
+.panoramaBody .captureIntro p,
+.panoramaBody .captureSummary,
+.panoramaBody .captureFrame label,
+.panoramaBody .captureAngle,
+.panoramaBody .captureCollection .hint {
+  color: var(--panorama-muted);
+}
+.panoramaBody .capturePanel {
+  min-height: 0;
+  max-height: min(32dvh, 300px);
+  overflow: auto;
+  gap: 10px;
+  scrollbar-color: #c7ccd6 transparent;
+}
+.panoramaCaptureTarget {
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--panorama-line);
+}
+.panoramaCaptureTarget .capturePanel {
+  max-height: none;
+  overflow: visible;
+}
+.panoramaCaptureTarget .captureIntro {
+  display: none;
+}
+.panoramaCaptureTarget .captureActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.panoramaCaptureTarget .captureActions :global(.ant-btn:nth-of-type(3)),
+.panoramaCaptureTarget .captureActions > span {
+  grid-column: 1 / -1;
+}
+.panoramaCaptureTarget .captureActions > span {
+  color: var(--panorama-muted);
+  font-size: 12px;
+}
+.panoramaCaptureTarget .captureResults {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 260px;
+}
+.panoramaBody .captureIntro {
+  display: none;
+}
+.panoramaBody .capturePanel > .presets {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  padding: 10px 0;
+  border-top: 1px solid var(--panorama-line);
+  background: var(--panorama-bg);
+}
+.panoramaBody .controls {
+  height: 100%;
+  max-height: none;
+  padding: 18px;
+  border-color: var(--panorama-line);
+  border-radius: 12px;
+  background: var(--panorama-panel);
+  scrollbar-color: #c7ccd6 transparent;
+}
+.panoramaBody .panelHeading strong,
+.panoramaBody .field,
+.panoramaBody .field > span {
+  color: var(--panorama-text);
+}
+.panoramaBody .panelHeading span,
+.panoramaBody .description,
+.panoramaBody .description summary,
+.panoramaBody .description p,
+.panoramaBody .field small {
+  color: var(--panorama-muted);
+}
+.panoramaBody .description {
+  border-color: var(--panorama-line);
+}
+.panoramaGuide {
+  color: var(--panorama-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.panoramaGuide strong {
+  display: block;
+  margin: 10px 0 4px;
+  color: var(--panorama-text);
+  font-weight: 600;
+}
+.panoramaGuide ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+.panoramaBody .field input:not([type='checkbox'], [type='range']),
+.panoramaBody .field select,
+.panoramaBody .field textarea,
+.panoramaBody .modelLine select {
+  border-color: var(--panorama-line);
+  color: var(--panorama-text);
+  background: var(--panorama-raised);
+}
+.panoramaBody .number input[type='range'],
+.panoramaBody .field input[type='checkbox'] {
+  accent-color: var(--panorama-accent);
+}
+.panoramaBody .captureFrame {
+  border-color: var(--panorama-line);
+  background: var(--panorama-panel);
+}
+.panoramaBody .captureFrame[data-selected='true'] {
+  border-color: var(--panorama-accent);
+  background: #eef0ff;
+}
+.panoramaBody .captureFrame[data-saved='true'] {
+  background: #f3f5f9;
+}
+.panoramaBody .captureResults img {
+  background: #f3f5f9;
+}
+.panoramaBody .captureCollection > :global(.ant-btn-primary) {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+}
+.panoramaBody .sceneError {
+  color: #b42318;
+  background: #fef3f2;
+}
+.panoramaBody .error {
+  color: #b42318;
+}
+.panoramaWorkbench :global(.ant-btn) {
+  border-color: var(--panorama-line);
+  color: var(--panorama-text);
+  background: var(--panorama-raised);
+  box-shadow: none;
+}
+.panoramaWorkbench :global(.ant-btn:hover:not(:disabled)),
+.panoramaWorkbench :global(.ant-btn:focus-visible) {
+  border-color: var(--panorama-accent) !important;
+  color: var(--panorama-accent) !important;
+  background: #eef0ff !important;
+}
+.panoramaWorkbench :global(.ant-btn-primary),
+.panoramaWorkbench :global(.ant-btn-primary:hover:not(:disabled)) {
+  border-color: var(--panorama-accent) !important;
+  color: #ffffff !important;
+  background: var(--panorama-accent) !important;
+}
+.panoramaWorkbench :global(.ant-btn:disabled) {
+  border-color: #e5e7eb;
+  color: #98a2b3;
+  background: #f3f4f6;
+}
+.panoramaWorkbench :global(.ant-btn:focus-visible),
+.panoramaBody .field input:focus-visible,
+.panoramaBody .field select:focus-visible,
+.panoramaBody .field textarea:focus-visible,
+.panoramaBody .scene:focus-visible {
+  outline: 2px solid var(--panorama-accent);
+  outline-offset: 2px;
+}
+.panoramaWorkbench .captureActions :global(.ant-btn) {
+  min-height: 42px;
+  padding-inline: 14px;
+  border-radius: 9px;
+  transition:
+    transform 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out,
+    background-color 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+.panoramaWorkbench .captureActions :global(.ant-btn:hover:not(:disabled)) {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 18px rgb(16 24 40 / 12%);
+}
+.panoramaWorkbench .captureActions :global(.ant-btn:active:not(:disabled)) {
+  transform: translateY(0) scale(0.98);
+  box-shadow: none;
+}
+.panoramaWorkbench .captureActions :global(.ant-btn:disabled) {
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .panoramaWorkbench .captureActions :global(.ant-btn) {
+    transition: none;
+  }
+  .panoramaWorkbench .captureActions :global(.ant-btn:hover:not(:disabled)),
+  .panoramaWorkbench .captureActions :global(.ant-btn:active:not(:disabled)) {
+    transform: none;
+  }
+}
+.panoramaBody .preview::-webkit-scrollbar,
+.panoramaBody .controls::-webkit-scrollbar,
+.panoramaBody .captureResults::-webkit-scrollbar {
+  width: 8px;
+}
+.panoramaBody .preview::-webkit-scrollbar-thumb,
+.panoramaBody .controls::-webkit-scrollbar-thumb,
+.panoramaBody .captureResults::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: #c7ccd6;
+  background-clip: padding-box;
+}
+@media (max-width: 760px) {
+  .panoramaHeader {
+    flex-basis: 60px;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .panoramaTitle {
+    align-items: flex-end;
+  }
+  .panoramaHint {
+    display: none;
+  }
+  .panoramaBody {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(55dvh, 1fr) minmax(280px, auto);
+    gap: 14px;
+    padding: 12px;
+    overflow: auto;
+  }
+  .panoramaBody .preview {
+    height: 55dvh;
+    overflow: hidden;
+  }
+  .panoramaBody .scene {
+    min-height: 240px;
+  }
+  .panoramaBody .controls {
+    height: auto;
+    overflow: visible;
+  }
+  .panoramaBody .capturePanel {
+    max-height: 30dvh;
   }
 }

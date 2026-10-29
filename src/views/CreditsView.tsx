@@ -3,7 +3,7 @@
  *
  * 展示当前工作空间的每一笔积分流水：消费、退回、冻结、充值等，配「可用余额 / 冻结中」概览与类型筛选。
  * 数据源 `/api/v1/billing/credit-ledgers`（listCreditLedgers，服务端 limit/offset 分页 + kind 过滤）。
- * 余额取自钱包 currentWallet（available / frozen）。金额↔人民币走 creditsYuan（1 积分 = 0.02 元）。
+ * 余额取自钱包 currentWallet（available / frozen）。统一展示积分，不折算人民币。
  *
  * 说明：流水记录本身不带「关联作品/任务」引用，故不做逐条「查看作品」跳转（后端补字段后再加）。
  */
@@ -18,7 +18,6 @@ import {
   formatCreditDelta,
   type CreditLedgerRecord,
 } from '@/utils/creditLedger'
-import { creditsToYuanAmount } from '@/utils/creditsYuan'
 import { formatCredits } from '@/utils/creditsFormat'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { openMemberCenterTab } from '@/stores/ui'
@@ -39,13 +38,6 @@ function formatDateTime(iso: string): string {
   if (Number.isNaN(date.getTime())) return iso
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-/** 积分 → 「¥12.34」；算不出显示 ¥0。 */
-function yuanLabel(credits: number): string {
-  const amount = creditsToYuanAmount(credits)
-  if (amount === '<0.01') return '<¥0.01'
-  return amount ? `¥${amount}` : '¥0'
 }
 
 export default function CreditsView() {
@@ -135,7 +127,6 @@ export default function CreditsView() {
                 工作空间 <b>{workspaceName}</b> · 每一笔积分的消费、退回与冻结都在这里
               </p>
             </div>
-            <span className="credits__rate">1 积分 = 0.02 元</span>
           </header>
 
           <section className="credits__cards">
@@ -148,7 +139,6 @@ export default function CreditsView() {
                 {formatCredits(available)}
                 <small>积分</small>
               </div>
-              <div className="credits__card-yuan">≈ {yuanLabel(Number(available || 0))} 可用</div>
             </div>
             <div className="credits__card">
               <div className="credits__card-k">
@@ -164,7 +154,6 @@ export default function CreditsView() {
                 {formatCredits(frozen)}
                 <small>积分</small>
               </div>
-              <div className="credits__card-yuan">≈ {yuanLabel(frozen)} 生成中占用</div>
             </div>
           </section>
 
@@ -192,26 +181,25 @@ export default function CreditsView() {
                     <th>事由</th>
                     <th>类型</th>
                     <th className="credits__num">积分变动</th>
-                    <th className="credits__num">折合</th>
                     <th className="credits__num">结算后余额</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td className="credits__state" colSpan={6}>
+                      <td className="credits__state" colSpan={5}>
                         正在加载积分明细…
                       </td>
                     </tr>
                   ) : error ? (
                     <tr>
-                      <td className="credits__state credits__state--err" colSpan={6}>
+                      <td className="credits__state credits__state--err" colSpan={5}>
                         {error}
                       </td>
                     </tr>
                   ) : records.length === 0 ? (
                     <tr>
-                      <td className="credits__state" colSpan={6}>
+                      <td className="credits__state" colSpan={5}>
                         暂无积分流水
                       </td>
                     </tr>
@@ -228,7 +216,6 @@ export default function CreditsView() {
                         <td className={`credits__num credits__delta credits__delta--${record.direction}`}>
                           {formatCreditDelta(record)}
                         </td>
-                        <td className="credits__num credits__yuan-cell">{yuanLabel(record.amount)}</td>
                         <td className="credits__num credits__bal">
                           {record.balanceAfter == null ? '—' : formatCredits(record.balanceAfter)}
                         </td>

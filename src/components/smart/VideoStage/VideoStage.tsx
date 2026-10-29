@@ -1,3 +1,4 @@
+import { creditsLabel, multiplyCredits, toMilli } from '@/utils/creditsFormat'
 /**
  * VideoStage — 第四步「生成视频」(2.1 改版,Figma 441-5139)。
  *
@@ -19,12 +20,10 @@ import {
   type VideoEditSegment,
   type VideoModificationDraft,
 } from '@/utils/videoModificationDraft'
-import { creditsYuanLabel } from '@/utils/creditsYuan'
 import { seekVideoToDecodedFrame } from '@/utils/videoFrameCapture'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import SeekableVideo from '@/components/common/SeekableVideo'
 import VideoLoading from './VideoLoading'
-import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './VideoStage.module.less'
 
 /** 一次视频生成或编辑的积分预估与余额可支付状态。 */
@@ -1521,7 +1520,7 @@ export default function VideoStage({
                 </button>
               </>
             ) : (
-              `预计费用 ${creditsYuanLabel(editCost.estimate.estimatedCost)}`
+              `预计费用 ${creditsLabel(editCost.estimate.estimatedCost)}`
             )}
           </span>
         </div>
@@ -1555,7 +1554,7 @@ export default function VideoStage({
                     </button>
                   </>
                 ) : (
-                  `预计费用 ${creditsYuanLabel(costEstimate.estimatedCost)}`
+                  `预计费用 ${creditsLabel(costEstimate.estimatedCost)}`
                 )}
               </span>
             </div>

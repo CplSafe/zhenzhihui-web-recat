@@ -142,7 +142,20 @@ describe('canvas tools backend contract', () => {
     })
     expect(angle.params).toMatchObject({ tool_version: 2, tool_params: { horizontal_angle: 0, watermark: false } })
     expect(angle.prompt).toContain('test')
-    expect(angle.prompt).toContain('不要用平移裁切')
+    expect(angle.prompt).toContain('保持参考图全部物件的设计、标识、比例和场景')
+    const angleWithNegativePrompt = buildToolGeneration({
+      ...input,
+      tool: {
+        ...tool,
+        code: 'image.multi_angle',
+        version: 2,
+        params_schema: { fields: [{ name: 'horizontal_angle', type: 'number' }] },
+      },
+      modelFields: [{ name: 'negative_prompt', type: 'string' }],
+      modelValues: { negative_prompt: '正面标签朝向镜头' },
+      values: { horizontal_angle: 180 },
+    })
+    expect(angleWithNegativePrompt.params).toHaveProperty('negative_prompt', '正面标签朝向镜头')
   })
   it.each(['image.relight', 'studio.lighting.custom'])('独立操作 %s 同样携带目录声明的模板版本', (operationCode) => {
     const result = buildToolGeneration({ ...input, tool: { ...tool, version: 2, operation_code: operationCode } })

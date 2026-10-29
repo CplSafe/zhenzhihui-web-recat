@@ -753,7 +753,21 @@ export default function SmartEntry({
   const hasDraftInput = Boolean(
     stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
   )
-  useUnsavedEntryLeaveGuard(hasDraftInput, clearSmartEntryDraft)
+  useUnsavedEntryLeaveGuard(hasDraftInput, clearSmartEntryDraft, (nextLocation) => {
+    // 首次建项是当前提交的内部绑定；不能被入口离开确认拦住，否则地址仍停在空白入口。
+    // 其他导航继续走原确认逻辑，路由包装再校验绑定标记所属的会话和工作空间。
+    const state = nextLocation.state
+    const projectId = Number(state?.smartCreationBindProjectId)
+    return Boolean(
+      submittingRef.current &&
+      Number.isSafeInteger(projectId) &&
+      projectId > 0 &&
+      typeof state?.smartCreationBindSessionToken === 'string' &&
+      state.smartCreationBindSessionToken &&
+      Number(state?.smartCreationBindWorkspaceId) > 0 &&
+      nextLocation.pathname === `${isRealPersonVariant ? '/real-person-video' : '/smart'}/${projectId}`,
+    )
+  })
   // 爆款成片的脚本模型自动选择，只向用户展示视频模型；校验与提交仍包含脚本模型。
   const displayedModelGroups = useMemo(
     () =>

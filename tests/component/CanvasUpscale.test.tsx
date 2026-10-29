@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/api/business', async (original) => ({
   ...(await original<typeof import('@/api/business')>()),
   listAiModels: mocks.models,
+  getSubscription: vi.fn().mockResolvedValue(undefined),
   estimateAiTaskCost: mocks.estimate,
   createAiTask: mocks.create,
   getAiTask: mocks.detail,

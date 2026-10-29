@@ -39,6 +39,14 @@
 .actions button:hover {
   background: #e2f2eb;
 }
+.actions .primaryAction {
+  background: #087c63;
+  border-color: #087c63;
+  color: #fff;
+}
+.actions .primaryAction:hover {
+  background: #066b56;
+}
 .starter .hint {
   font-size: 13px;
 }

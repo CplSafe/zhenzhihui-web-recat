@@ -105,7 +105,7 @@ describe('smart image queue quote safety', () => {
         canAfford: true,
         remainingCount: 3,
       }),
-    ).toContain('每张 约1元变为 约1.2元')
+    ).toContain('每张 50 积分变为 60 积分')
     expect(
       getSmartImageQuoteValidationError(quote, {
         ...binding,

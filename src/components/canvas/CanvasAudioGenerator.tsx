@@ -22,7 +22,7 @@ import { isAudioFile, normalizeAudioSettings, readAudioDuration } from '@/utils/
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
 import { getCopiedCanvasAudioReference } from '@/utils/canvasClipboard'
-import { creditsYuanLabel } from '@/utils/creditsYuan'
+import { creditsLabel } from '@/utils/creditsFormat'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import {
   archiveGenerationFailure,
@@ -56,6 +56,8 @@ const AUDIO_PARAM_LABELS: Record<string, string> = {
   pitch_rate: '音调',
   aigc_watermark: 'AIGC 标识',
 }
+
+const MINIMUM_GENERATED_AUDIO_DURATION_SEC = 3
 
 // 音频节点尚未接入字幕产物，旧草稿中的开关也不再提交。
 function withoutSubtitleParam(values: Record<string, unknown>): Record<string, unknown> {
@@ -135,6 +137,32 @@ export default function CanvasAudioGenerator({
   const [defaultVoiceLoading, setDefaultVoiceLoading] = useState(false)
   const [defaultVoiceError, setDefaultVoiceError] = useState('')
   const [defaultVoiceRetry, setDefaultVoiceRetry] = useState(0)
+  const [voiceSwitchLoading, setVoiceSwitchLoading] = useState(false)
+  const [requiresVoiceSelection, setRequiresVoiceSelection] = useState(Boolean(data.requiresVoiceSelection))
+  const configurationKey = JSON.stringify([
+    workspaceId,
+    nodeId,
+    data.params || {},
+    data.modelVersionId,
+    data.operationCode,
+    Boolean(data.requiresVoiceSelection),
+  ])
+  const syncedConfiguration = useRef(configurationKey)
+  // 撤销、云端恢复和切换节点可在组件仍挂载时替换配置，不能只读 useState 的初始值。
+  useEffect(() => {
+    // 初值已由 useState 读取；首次再写一份空参数会中断并重复发起默认音色查询。
+    if (syncedConfiguration.current === configurationKey) return
+    syncedConfiguration.current = configurationKey
+    setParams(withoutSubtitleParam(data.params || {}))
+    setModelKey(data.modelVersionId && data.operationCode ? `${data.modelVersionId}:${data.operationCode}` : '')
+    setRequiresVoiceSelection(Boolean(data.requiresVoiceSelection))
+    setResolvedVoice(null)
+  }, [configurationKey, nodeId, data.params, data.modelVersionId, data.operationCode, data.requiresVoiceSelection])
+  const voiceSwitchAbort = useRef<AbortController | null>(null)
+  useEffect(() => {
+    setVoiceSwitchLoading(false)
+    return () => voiceSwitchAbort.current?.abort()
+  }, [workspaceId, nodeId])
   const savedVoiceName =
     data.selectedPublicVoice?.id === serverVoiceId && typeof data.selectedPublicVoice?.name === 'string'
       ? data.selectedPublicVoice.name.trim()
@@ -296,17 +324,55 @@ export default function CanvasAudioGenerator({
       ...(cleaned.voice_id !== params.voice_id ? { selectedPublicVoice: null } : {}),
     })
   }
-  const selectModel = (key: string) => {
-    if (uploadingReference) return
+  const selectModel = async (key: string) => {
+    if (uploadingReference || voiceSwitchLoading) return
     setSettingsOpen(false)
     if (key === modelKey) {
       setModelMenuOpen(false)
       return
     }
-    setModelKey(key)
     setModelMenuOpen(false)
-    setAuthorized(false)
     const next = models.find((entry) => entry.key === key)
+    const nextSupportsVoice = next && ['voice', 'clone'].includes(getAudioGenerationMode(next.operationCode))
+    let retainedVoice: { id: number; name: string } | null = null
+    if (serverVoiceId && nextSupportsVoice) {
+      const abort = new AbortController()
+      voiceSwitchAbort.current?.abort()
+      voiceSwitchAbort.current = abort
+      setVoiceSwitchLoading(true)
+      setError('')
+      try {
+        // 兼容性由目标模型的服务端目录决定；不能按供应商或名称猜测，也不能只查第一页。
+        let offset = 0
+        while (!abort.signal.aborted) {
+          const page = await listVoices({
+            workspaceId,
+            modelVersionId: getBackendGenerationModelVersionId(next.model),
+            limit: 100,
+            offset,
+            signal: abort.signal,
+          })
+          if (abort.signal.aborted) return
+          const voice = page.items.find((item) => item.id === serverVoiceId)
+          if (voice) {
+            if (isVoiceReady(voice) && (voice.source !== 'cloned' || Number(voice.workspace_id) === workspaceId))
+              retainedVoice = { id: voice.id, name: voice.name }
+            break
+          }
+          offset += page.items.length
+          if (!page.items.length || offset >= page.total) break
+        }
+      } catch (error: any) {
+        if (!abort.signal.aborted)
+          setError(`音色兼容性检查失败，已保留原模型和音色，请重试：${error?.message || '网络异常'}`)
+        return
+      } finally {
+        if (!abort.signal.aborted) setVoiceSwitchLoading(false)
+      }
+      if (abort.signal.aborted) return
+    }
+    setModelKey(key)
+    setAuthorized(false)
     if (next) setMode(getAudioGenerationMode(next.operationCode))
     const nextParams: Record<string, unknown> = {}
     let resetCount = 0
@@ -336,15 +402,33 @@ export default function CanvasAudioGenerator({
       }
     }
     if (serverVoiceId) {
-      delete nextParams.voice_id
-      if (next && ['voice', 'clone'].includes(getAudioGenerationMode(next.operationCode)))
-        showToast('已切换模型，请重新选择兼容的公共音色', 'info')
+      // 公共音色优先于旧 schema 默认 speaker，避免同时携带两个声音选择。
+      for (const name of Object.keys(nextParams)) if (isModelVoiceField({ name })) delete nextParams[name]
+      if (retainedVoice) nextParams.voice_id = retainedVoice.id
+      else if (nextSupportsVoice) showToast('原音色不兼容当前模型或已不可用，请重新选择音色', 'info')
     }
+    const nativeVoiceEntries = Object.entries(params).filter(
+      ([name, value]) => !serverVoiceId && isModelVoiceField({ name }) && value != null && value !== '',
+    )
+    const nativeVoiceRetained =
+      nativeVoiceEntries.length > 0 && nativeVoiceEntries.every(([name, value]) => Object.is(nextParams[name], value))
+    const needsVoice = Boolean(
+      nextSupportsVoice &&
+      !retainedVoice &&
+      (serverVoiceId || requiresVoiceSelection || (nativeVoiceEntries.length && !nativeVoiceRetained)),
+    )
+    if (needsVoice) {
+      for (const name of Object.keys(nextParams)) if (isModelVoiceField({ name })) delete nextParams[name]
+    }
+    setRequiresVoiceSelection(needsVoice)
     changeParams(nextParams)
+    if (retainedVoice) setResolvedVoice({ ...retainedVoice, workspaceId })
     if (resetCount) showToast('部分参数不适用于当前模型，已恢复模型默认设置', 'info')
     updateNodeData(nodeId, {
       modelVersionId: next ? getBackendGenerationModelVersionId(next.model) : null,
       operationCode: next?.operationCode || '',
+      requiresVoiceSelection: needsVoice,
+      ...(retainedVoice ? { selectedPublicVoice: retainedVoice } : {}),
     })
   }
   const fields = useMemo(
@@ -364,7 +448,12 @@ export default function CanvasAudioGenerator({
       const value = params[field.name]
       return field.name === 'voice_id' ? true : value == null || (typeof value === 'string' && !value.trim())
     })
-  const voiceValidationError = missingRequiredVoice ? '请先选择音色' : ''
+  const voiceValidationError =
+    requiresVoiceSelection && supportsVoiceLibrary
+      ? '原音色不兼容当前模型或已不可用，请在音色库中重新选择'
+      : missingRequiredVoice
+        ? '请先选择音色'
+        : ''
   const settingsFields = fields.filter(
     (field) => !isModelVoiceField(field) || (!serverVoiceId && !getModelVoiceOptions(field).length),
   )
@@ -375,13 +464,15 @@ export default function CanvasAudioGenerator({
     hydratedModel.current = identity
     const missing = fields.filter(
       (field) =>
-        !(serverVoiceId && isModelVoiceField(field)) && params[field.name] === undefined && field.default !== undefined,
+        !((serverVoiceId || requiresVoiceSelection) && isModelVoiceField(field)) &&
+        params[field.name] === undefined &&
+        field.default !== undefined,
     )
     if (!missing.length) return
     const next = { ...params, ...Object.fromEntries(missing.map((field) => [field.name, field.default])) }
     setParams(next)
     updateNodeData(nodeId, { params: next })
-  }, [selected, fields, params, nodeId, workspaceId, modelKey, updateNodeData, serverVoiceId])
+  }, [selected, fields, params, nodeId, workspaceId, modelKey, updateNodeData, serverVoiceId, requiresVoiceSelection])
   const clone = /clone/i.test(selected?.operationCode || '')
   const linkedText = getEdges()
     .filter((edge) => edge.target === nodeId)
@@ -393,12 +484,14 @@ export default function CanvasAudioGenerator({
   const recoverableTask = ['processing', 'pending', 'queued', 'running', 'result_pending', 'reconnecting'].includes(
     data.taskStatus,
   )
-  const running = busy || recoverableTask
+  const running = busy || recoverableTask || voiceSwitchLoading
   useEffect(() => {
     setDefaultVoiceError('')
     setDefaultVoiceLoading(false)
     if (
       !selected ||
+      requiresVoiceSelection ||
+      sampleLibraryOpen ||
       running ||
       getAudioGenerationMode(selected.operationCode) !== 'voice' ||
       serverVoiceId ||
@@ -450,7 +543,19 @@ export default function CanvasAudioGenerator({
         if (!abort.signal.aborted) setDefaultVoiceLoading(false)
       })
     return () => abort.abort()
-  }, [selected, running, serverVoiceId, fields, params, workspaceId, nodeId, updateNodeData, defaultVoiceRetry])
+  }, [
+    selected,
+    running,
+    serverVoiceId,
+    fields,
+    params,
+    workspaceId,
+    nodeId,
+    updateNodeData,
+    defaultVoiceRetry,
+    requiresVoiceSelection,
+    sampleLibraryOpen,
+  ])
   const receive = async (task: any, signal: AbortSignal) => {
     const result = await waitForAiTask({
       workspaceId,
@@ -473,20 +578,61 @@ export default function CanvasAudioGenerator({
     if (!assetId) throw new Error('任务已完成，但音频素材尚未入库，请稍后再查看')
     if (signal.aborted || !alive.current) return
     // 元数据暂不可读不应把已经入库的成功结果变回“生成失败”。播放器加载后补全时长。
-    const durationSec = await readAudioDuration(assetStreamUrl(assetId, workspaceId)).catch(() => 0)
+    let resultAssetId = assetId
+    let durationSec = await readAudioDuration(assetStreamUrl(assetId, workspaceId)).catch(() => 0)
+    if (signal.aborted || !alive.current) return
+    if (durationSec > 0 && durationSec < MINIMUM_GENERATED_AUDIO_DURATION_SEC) {
+      const { audioBufferToWav, renderAudioMix } = await import('@/utils/audioMix')
+      const paddedAudio = await renderAudioMix(
+        [
+          {
+            sourceNodeId: nodeId,
+            assetId,
+            title: '生成音频',
+            lane: 'voice',
+            durationSec,
+            inSec: 0,
+            outSec: durationSec,
+            startSec: 0,
+            volume: 1,
+            muted: false,
+            loop: false,
+            fadeInSec: 0,
+            fadeOutSec: 0,
+            origin: 'generated',
+          },
+        ],
+        MINIMUM_GENERATED_AUDIO_DURATION_SEC,
+        workspaceId,
+        undefined,
+        1,
+        { signal },
+      )
+      if (signal.aborted || !alive.current) return
+      const file = new File([audioBufferToWav(paddedAudio)], '生成音频-补足3秒.wav', { type: 'audio/wav' })
+      const uploaded: any = await uploadAssetFile({
+        workspaceId,
+        file,
+        source: 'canvas-audio-minimum-duration',
+        signal,
+      })
+      resultAssetId = Number(uploaded?.asset?.id || 0)
+      if (!(resultAssetId > 0)) throw new Error('短音频补足静音后未能保存素材，请重试')
+      durationSec = MINIMUM_GENERATED_AUDIO_DURATION_SEC
+    }
     if (signal.aborted || !alive.current) return
     // The task may finish after the user has edited this node or another canvas update has landed.
     // Merge against the current node, not the props captured when polling started.
     const latestData = (getNode(nodeId)?.data as Record<string, any> | undefined) || data
     const history = Array.isArray(latestData.resultHistory) ? latestData.resultHistory : []
     updateNodeData(nodeId, {
-      assetId,
+      assetId: resultAssetId,
       assetWorkspaceId: workspaceId,
       assetSource: 'generated',
       taskStatus: 'succeeded',
       taskProgress: 100,
       taskError: '',
-      resultUrl: assetStreamUrl(assetId, workspaceId),
+      resultUrl: assetStreamUrl(resultAssetId, workspaceId),
       audio: normalizeAudioSettings({
         ...latestData.audio,
         durationSec,
@@ -495,11 +641,16 @@ export default function CanvasAudioGenerator({
         origin: 'generated',
       }),
       resultHistory: [
-        ...history.filter((entry: any) => Number(entry?.assetId) !== assetId),
-        { assetId, kind: 'audio', createdAt: new Date().toISOString(), prompt: String(latestData.prompt || '') },
+        ...history.filter((entry: any) => Number(entry?.assetId) !== resultAssetId),
+        {
+          assetId: resultAssetId,
+          kind: 'audio',
+          createdAt: new Date().toISOString(),
+          prompt: String(latestData.prompt || ''),
+        },
       ].slice(-20),
     })
-    onGenerated?.(nodeId, assetId, durationSec)
+    onGenerated?.(nodeId, resultAssetId, durationSec)
   }
   // 在途任务刷新后继续等同一个任务，不重新提交或重复扣费。
   useEffect(() => {
@@ -817,7 +968,7 @@ export default function CanvasAudioGenerator({
     try {
       const { text, inputAssets, modelVersionId, cost } = await prepare(abort.signal)
       if (cost >= 500) {
-        const confirm = await requestConfirm(`预计消耗 ${creditsYuanLabel(cost)}，用于生成音频，是否继续？`, {
+        const confirm = await requestConfirm(`预计消耗 ${creditsLabel(cost)}，用于生成音频，是否继续？`, {
           title: '生成音频',
         })
         if (!confirm || abort.signal.aborted) return
@@ -993,6 +1144,8 @@ export default function CanvasAudioGenerator({
             </span>
           )}
           {defaultVoiceLoading && <span role="status">正在选择默认音色…</span>}
+          {voiceSwitchLoading && <span role="status">正在检查音色兼容性…</span>}
+          {requiresVoiceSelection && <p role="alert">{voiceValidationError}</p>}
           {defaultVoiceError && (
             <div role="alert">
               {defaultVoiceError}
@@ -1018,8 +1171,12 @@ export default function CanvasAudioGenerator({
                     const next = { ...params }
                     for (const field of voiceFields) delete next[field.name]
                     changeParams({ ...next, voice_id: voice.id })
+                    setRequiresVoiceSelection(false)
                     setResolvedVoice({ id: voice.id, name: voice.name, workspaceId })
-                    updateNodeData(nodeId, { selectedPublicVoice: { id: voice.id, name: voice.name } })
+                    updateNodeData(nodeId, {
+                      selectedPublicVoice: { id: voice.id, name: voice.name },
+                      requiresVoiceSelection: false,
+                    })
                     showToast(`已选用音色：${voice.name}`, 'success')
                   }
                 : undefined
@@ -1032,6 +1189,8 @@ export default function CanvasAudioGenerator({
               const next = { ...params }
               delete next.voice_id
               changeParams({ ...next, ...values })
+              setRequiresVoiceSelection(false)
+              updateNodeData(nodeId, { requiresVoiceSelection: false })
             }}
             onUpload={(file) => uploadReference(file, true)}
             onReference={referenceLibrarySample}
@@ -1130,7 +1289,9 @@ export default function CanvasAudioGenerator({
           aria-haspopup="listbox"
           aria-expanded={modelMenuOpen}
           disabled={running || loadingModels || models.length === 0}
-          onClick={() => {
+          onClick={(event) => {
+            // Safari 点击按钮不自动聚焦；让菜单按键始终留在当前控件内。
+            event.currentTarget.focus()
             setModelMenuOpen((open) => !open)
           }}
           onKeyDown={(event) => {
@@ -1141,7 +1302,11 @@ export default function CanvasAudioGenerator({
                 modelOptionsRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(),
               )
             }
-            if (event.key === 'Escape') setModelMenuOpen(false)
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              setModelMenuOpen(false)
+            }
           }}
         >
           <span className={styles.modelTriggerText}>
@@ -1171,6 +1336,8 @@ export default function CanvasAudioGenerator({
             aria-label="音频生成模型列表"
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
+                event.preventDefault()
+                event.stopPropagation()
                 setModelMenuOpen(false)
                 modelMenuRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')?.focus()
               }
@@ -1283,7 +1450,7 @@ export default function CanvasAudioGenerator({
           >
             {quote !== null && (
               <span className={styles.costValue} role="status">
-                预计 {creditsYuanLabel(quote)}
+                预计 {creditsLabel(quote)}
               </span>
             )}
             {quoting && <span role="status">预估中…</span>}

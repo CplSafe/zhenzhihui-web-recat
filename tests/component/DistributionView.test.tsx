@@ -520,10 +520,12 @@ describe('DistributionView', () => {
     // calendar opening on a hard-coded current month.
     await user.type(startDateInput, '2026年07月01日')
     await user.keyboard('{Enter}')
-    await user.type(endDateInput, '2026年07月02日')
+    await waitFor(() => expect(startDateInput).toHaveValue('2026年07月01日'))
+    await waitFor(() => expect(endDateInput).toHaveFocus())
+    await user.keyboard('2026年07月02日')
     await user.keyboard('{Enter}')
-    expect(startDateInput).toHaveValue('2026年07月01日')
-    expect(endDateInput).toHaveValue('2026年07月02日')
+    await waitFor(() => expect(startDateInput).toHaveValue('2026年07月01日'))
+    await waitFor(() => expect(endDateInput).toHaveValue('2026年07月02日'))
 
     await user.click(screen.getByRole('button', { name: '查询' }))
 

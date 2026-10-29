@@ -466,7 +466,7 @@ describe('VideoStage playback loading', () => {
 
     const confirm = screen.getByRole('button', { name: '确认修改' })
     expect(confirm).toBeDisabled()
-    expect(await screen.findByText(/预计费用 约30元/)).toBeInTheDocument()
+    expect(await screen.findByText(/预计费用 1,500 积分/)).toBeInTheDocument()
     // 结算免责说明已按产品要求移除：估价行只保留金额本身
     expect(screen.queryByText(/最低计费时长/)).not.toBeInTheDocument()
     await waitFor(() => expect(confirm).toBeEnabled())
@@ -577,7 +577,7 @@ describe('VideoStage playback loading', () => {
     )
 
     expect(screen.getByText(hint)).toBeInTheDocument()
-    expect(await screen.findByText(/预计费用 约30元/)).toBeInTheDocument()
+    expect(await screen.findByText(/预计费用 1,500 积分/)).toBeInTheDocument()
   })
 
   it('没有修改意见时不显示修改链路提示', () => {

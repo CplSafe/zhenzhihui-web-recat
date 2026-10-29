@@ -1,3 +1,4 @@
+import { INSUFFICIENT_CREDITS_TEXT, creditsLabel, multiplyCredits, toMilli } from '@/utils/creditsFormat'
 /**
  * 页面效果：完成一条可恢复、可编辑的「智能成片 2.1」创作流程。
  *
@@ -98,8 +99,6 @@ import {
   type VideoModificationPlan,
 } from '@/api/smartVideo'
 import { listRealPeople } from '@/api/realPeople'
-import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
-import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
 import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import { isVideoResolutionLower, readVideoMetadata, type VideoMetadata } from '@/utils/videoDuration'
 import { resolveVideoEditResolution } from '@/utils/videoEditResolution'
@@ -3884,7 +3883,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const modelName = String(modelSelection.displayName || `模型 ${modelSelection.modelVersionId}`).trim()
       const confirmed =
         (await requestConfirm(
-          `本次将使用「${modelName}」${opts?.edit ? '修改' : '生成'} ${total} 个视频，当前准确报价共 ${creditsYuanLabel(estimatedCost)}。系统会在每个付费任务提交前按相同模型与参数重新核价；价格变化时会停止任务并要求重新确认。`,
+          `本次将使用「${modelName}」${opts?.edit ? '修改' : '生成'} ${total} 个视频，当前准确报价共 ${creditsLabel(estimatedCost)}。系统会在每个付费任务提交前按相同模型与参数重新核价；价格变化时会停止任务并要求重新确认。`,
           {
             title: opts?.edit ? '确认修改视频' : '确认生成视频',
             confirmLabel: '确认并生成',
@@ -7120,7 +7119,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
       if (!canAfford) {
         const recharge = await requestConfirm(
-          `本次生成 ${count} 张图片，预计费用共 ${creditsYuanLabel(estimatedCost)}。${INSUFFICIENT_CREDITS_TEXT}，系统不会创建生成任务。`,
+          `本次生成 ${count} 张图片，预计费用共 ${creditsLabel(estimatedCost)}。${INSUFFICIENT_CREDITS_TEXT}，系统不会创建生成任务。`,
           {
             title: '积分不足',
             confirmLabel: '前往充值',
@@ -7134,7 +7133,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const operationLabel = args.referenceImageCount > 0 ? '参考图创作' : '文字生成图片'
       const confirmed =
         (await requestConfirm(
-          `${operationLabel}将生成 ${count} 张图片，${estimate?.estimate_kind === 'reservation' ? '预冻结金额' : '预计费用'}共 ${creditsYuanLabel(estimatedCost)}（每张${creditsYuanLabel(perImageCost)}）。${estimate?.estimate_note ? `${estimate.estimate_note}。` : ''}图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
+          `${operationLabel}将生成 ${count} 张图片，${estimate?.estimate_kind === 'reservation' ? '预冻结积分' : '预计费用'}共 ${creditsLabel(estimatedCost)}（每张${creditsLabel(perImageCost)}）。${estimate?.estimate_note ? `${estimate.estimate_note}。` : ''}图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
           {
             title: '确认生成图片',
             confirmLabel: '确认并生成',
@@ -9266,7 +9265,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                             stepCost.estimate.canAfford === false ||
                             toMilli(stepCost.estimate.estimatedCost) > toMilli(stepCost.estimate.balance)
                             ? ''
-                            : `${stepCost.count > 1 ? `共 ${stepCost.count} 张` : ''}${stepCost.estimate.kind === 'reservation' ? '预冻结金额' : '预计费用'} ${creditsYuanLabel(stepCost.estimate.estimatedCost)}${stepCost.estimate.perOne != null ? ` · 每张${creditsYuanLabel(stepCost.estimate.perOne)}` : ''}${stepCost.estimate.note ? ` · ${stepCost.estimate.note}` : ''}`
+                            : `${stepCost.count > 1 ? `共 ${stepCost.count} 张` : ''}${stepCost.estimate.kind === 'reservation' ? '预冻结积分' : '预计费用'} ${creditsLabel(stepCost.estimate.estimatedCost)}${stepCost.estimate.perOne != null ? ` · 每张${creditsLabel(stepCost.estimate.perOne)}` : ''}${stepCost.estimate.note ? ` · ${stepCost.estimate.note}` : ''}`
                           : stepCost.error
                             ? `费用暂不可用：${stepCost.error}`
                             : ''
@@ -9455,11 +9454,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                                     : stepCost.count > 1
                                       ? `共 ${stepCost.count} 张 `
                                       : ''}
-                                  预计费用 {creditsYuanLabel(stepCost.estimate.estimatedCost)}
+                                  预计费用 {creditsLabel(stepCost.estimate.estimatedCost)}
                                   {stepCost.estimate.perOne != null && step !== STEP_SCRIPT && (
                                     <span className="smart__cost-per">
                                       {' '}
-                                      · 每加一张{creditsYuanLabel(stepCost.estimate.perOne)}
+                                      · 每加一张{creditsLabel(stepCost.estimate.perOne)}
                                     </span>
                                   )}
                                 </>

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
 import { estimateAiTaskCost } from '@/api/business'
 import * as uiStore from '@/stores/ui'
@@ -14,6 +14,11 @@ import { createGenerationModelOperationStateMap } from '@/utils/generationModelC
 vi.mock('@/api/business', () => ({
   estimateAiTaskCost: vi.fn().mockResolvedValue({ estimated_cost: 10, balance: 100, can_afford: true }),
 }))
+
+// 组件测试由宿主确认弹窗返回允许；浏览器回归另行验证实际确认交互。
+beforeEach(() => {
+  vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(true)
+})
 
 /** 一个接了参考图的图片节点：走 image.image_to_image。 */
 function imageNodeWithReference() {
@@ -51,7 +56,7 @@ describe('CanvasNodePanel unified real-person material entry', () => {
   it('零费用预估也显示金额', async () => {
     vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({ estimated_cost: 0, balance: 100, can_afford: true })
     renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
-    expect(await screen.findByText('预计消耗：约0元', {}, { timeout: 2000 })).toBeInTheDocument()
+    expect(await screen.findByText('预计消耗：0 积分', {}, { timeout: 2000 })).toBeInTheDocument()
   })
 
   it('参考来源菜单脱离可滚动面板，并支持关闭和选用素材', async () => {
@@ -306,7 +311,7 @@ describe('CanvasNodePanel 模型选择器', () => {
   it('把预估费用显示为独立文字，右侧使用文字生成按钮', async () => {
     renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }])
 
-    const cost = await screen.findByText('预计消耗：约0.2元')
+    const cost = await screen.findByText('预计消耗：10 积分')
     expect(cost.closest('button')).toBeNull()
     expect(screen.getByRole('button', { name: '生成' })).toBeEnabled()
     expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
@@ -1725,6 +1730,7 @@ it.each([
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   expect(screen.getByRole('button', { name: '自由生成 · 无水印' })).toBeInTheDocument()
   await user.click(screen.getByTitle('发送生成'))
+  await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   expect(onGenerate.mock.calls[0]![0].params[field.name]).toBe(false)
 })
 
@@ -1880,6 +1886,7 @@ it('模型未声明声音能力时不显示声音控件，也不提交声音参�
   expect(screen.queryByText('生成声音')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   await user.click(screen.getByTitle('发送生成'))
+  await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   for (const key of ['generate_audio', 'audio', 'with_audio', 'enable_audio'])
     expect(onGenerate.mock.lastCall?.[0].params).not.toHaveProperty(key)
 })
@@ -1913,4 +1920,112 @@ it('参数浮层脱离输入面板裁切，层级高于真实画布的 1200 编�
   expect(menu.closest('.ant-popover')).toHaveStyle({ zIndex: 1400 })
   await user.click(screen.getByRole('button', { name: '高画质' }))
   expect(screen.getByRole('button', { name: '高画质', expanded: true })).toBeInTheDocument()
+})
+
+it('连接11秒配音时禁用短时长档位和上限不足的视频模型', async () => {
+  const user = userEvent.setup()
+  const voice = {
+    lane: 'voice',
+    durationSec: 11,
+    inSec: 0,
+    outSec: 11,
+    startSec: 0,
+    volume: 1,
+    muted: false,
+    loop: false,
+    fadeInSec: 0,
+    fadeOutSec: 0,
+    origin: 'generated',
+  }
+  const model = (modelVersionId: number, displayName: string, options: number[]) => ({
+    modelVersionId,
+    displayName,
+    operationCodes: ['video.generate'],
+    source: {
+      params_schema: { fields: [{ name: 'duration', display_name: '时长', options, default: 5 }] },
+    },
+  })
+  renderPanel(
+    [],
+    {
+      id: 'video',
+      kind: 'video',
+      prompt: '根据配音生成视频',
+      videoMode: 'auto',
+      params: { duration: 5 },
+      sourceRefs: [{ kind: 'audio', sourceId: 'voice', edgeId: 'voice-to-video', slotIndex: 0, audio: voice }],
+    },
+    {
+      models: {
+        text: [],
+        image: [],
+        video: [model(10, '最长10秒模型', [5, 10]), model(15, '最长15秒模型', [5, 10, 15])],
+      },
+    },
+  )
+
+  await user.click(screen.getByRole('button', { name: '最长15秒模型' }))
+  const shortModel = screen.getByRole('option', { name: /最长10秒模型/ })
+  expect(shortModel).toHaveAttribute('aria-disabled', 'true')
+  expect(shortModel).toHaveTextContent('已连接的配音约 11 秒')
+  expect(screen.getByRole('option', { name: /最长15秒模型/ })).not.toHaveAttribute('aria-disabled', 'true')
+
+  await user.click(screen.getByRole('button', { name: /自由生成 · 5秒/ }))
+  const durationOptions = screen.getByRole('listbox', { name: '时长' })
+  expect(within(durationOptions).getByRole('option', { name: '5秒' })).toBeDisabled()
+  expect(within(durationOptions).getByRole('option', { name: '10秒' })).toBeDisabled()
+  expect(within(durationOptions).getByRole('option', { name: '15秒' })).toBeEnabled()
+  const generateButton = screen.getByRole('button', { name: '生成' })
+  expect(generateButton).toBeDisabled()
+  expect(generateButton.getAttribute('title')).toContain('视频时长短于配音时长')
+})
+
+it('配音超过15秒时禁用最多生成15秒的视频模型', async () => {
+  const user = userEvent.setup()
+  const voice = {
+    lane: 'voice',
+    durationSec: 16,
+    inSec: 0,
+    outSec: 16,
+    startSec: 0,
+    volume: 1,
+    muted: false,
+    loop: false,
+    fadeInSec: 0,
+    fadeOutSec: 0,
+    origin: 'generated',
+  }
+  const model = (modelVersionId: number, displayName: string, options: number[]) => ({
+    modelVersionId,
+    displayName,
+    operationCodes: ['video.generate'],
+    source: {
+      params_schema: {
+        fields: [{ name: 'duration', display_name: '时长', options, default: options[options.length - 1] }],
+      },
+    },
+  })
+  renderPanel(
+    [],
+    {
+      id: 'video',
+      kind: 'video',
+      prompt: '根据配音生成视频',
+      videoMode: 'auto',
+      sourceRefs: [{ kind: 'audio', sourceId: 'voice', edgeId: 'voice-to-video', slotIndex: 0, audio: voice }],
+    },
+    {
+      models: {
+        text: [],
+        image: [],
+        video: [model(15, '最多15秒模型', [5, 10, 15]), model(20, '最多20秒模型', [5, 10, 15, 20])],
+      },
+    },
+  )
+
+  await user.click(screen.getByRole('button', { name: '最多20秒模型' }))
+  const fifteenSecondModel = screen.getByRole('option', { name: /最多15秒模型/ })
+  expect(fifteenSecondModel).toHaveAttribute('aria-disabled', 'true')
+  expect(fifteenSecondModel).toHaveTextContent('已连接的配音约 16 秒')
+  expect(screen.getByRole('option', { name: /最多20秒模型/ })).not.toHaveAttribute('aria-disabled', 'true')
 })

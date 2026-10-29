@@ -180,6 +180,11 @@ function collect(suites) {
   return suites.flatMap((suite) => [...(suite.specs || []), ...collect(suite.suites || [])])
 }
 
+export function verificationBuildDirectory(runId) {
+  if (!/^[\da-f-]{36}$/.test(runId)) throw new Error('Invalid verification run ID')
+  return `.codex/frontend-verification/build-${runId}`
+}
+
 function verify(tests) {
   if (!tests.length || tests.some((name) => !/^e2e\/[\w./-]+\.spec\.ts$/.test(name) || name.includes('..'))) {
     throw new Error('Provide explicit affected e2e/*.spec.ts files (no shell commands or arbitrary flags).')
@@ -192,6 +197,7 @@ function verify(tests) {
   // A new attempt supersedes earlier approval, including a failed rerun of identical source.
   fs.rmSync(path.join(storage, 'approved.json'), { force: true })
   const runId = crypto.randomUUID()
+  const buildDirectory = verificationBuildDirectory(runId)
   write(path.join(storage, `${runId}.snapshot.json`), initial)
   const dir = path.join(root, 'test-results/frontend-gate', runId)
   fs.mkdirSync(dir, { recursive: true })
@@ -200,11 +206,11 @@ function verify(tests) {
   // Base config is two levels above this generated config; keep owned production preview.
   fs.writeFileSync(
     config,
-    `import base from '../../playwright.config'\nexport default { ...base, testDir: '../../e2e', outputDir: ${JSON.stringify(dir)}, retries: 0, forbidOnly: true, use: { ...base.use, baseURL: 'http://127.0.0.1:${port}', screenshot: 'on' }, webServer: { ...base.webServer, cwd: ${JSON.stringify(root)}, command: base.webServer.command.replaceAll('4173', '${port}'), url: 'http://127.0.0.1:${port}/home', reuseExistingServer: false }, reporter: [['list'], ['json', { outputFile: ${JSON.stringify(path.join(dir, 'report.json'))} }]] }\n`,
+    `import base from '../../playwright.config'\nexport default { ...base, testDir: '../../e2e', outputDir: ${JSON.stringify(dir)}, retries: 0, forbidOnly: true, use: { ...base.use, baseURL: 'http://127.0.0.1:${port}', screenshot: 'on' }, webServer: { ...base.webServer, cwd: ${JSON.stringify(root)}, command: base.webServer.command.replaceAll('4173', '${port}') + ' --outDir ${buildDirectory}', url: 'http://127.0.0.1:${port}/home', reuseExistingServer: false }, reporter: [['list'], ['json', { outputFile: ${JSON.stringify(path.join(dir, 'report.json'))} }]] }\n`,
   )
   try {
     runNode(['node_modules/typescript/bin/tsc', '-b'])
-    runNode(['node_modules/vite/bin/vite.js', 'build'])
+    runNode(['node_modules/vite/bin/vite.js', 'build', '--outDir', buildDirectory])
     runNode(['node_modules/@playwright/test/cli.js', 'test', ...tests, '--config', config, '--project=chromium'])
     const reportPath = path.join(dir, 'report.json')
     const report = read(reportPath)

@@ -149,11 +149,13 @@ function clampPos(p: Pos): Pos {
 function creativeSafeBallPos(pathname: string): Pos | null {
   const isHotCopy = pathname.startsWith('/hot-copy')
   const isSmart = pathname.startsWith('/smart')
-  if (!isHotCopy && !isSmart) return null
+  const isCanvasEditor = /^\/canvas\/[^/]+$/.test(pathname) && !pathname.startsWith('/canvas/share/')
+  if (!isHotCopy && !isSmart && !isCanvasEditor) return null
   const compactMargin = isHotCopy && window.innerWidth <= COMPACT_HOT_COPY_BREAKPOINT ? COMPACT_HOT_COPY_MARGIN : 24
+  const bottomSafeArea = isCanvasEditor ? 112 : CREATIVE_BOTTOM_SAFE_AREA
   return clampPos({
     x: window.innerWidth - BALL - compactMargin,
-    y: window.innerHeight - BALL - CREATIVE_BOTTOM_SAFE_AREA,
+    y: window.innerHeight - BALL - bottomSafeArea,
   })
 }
 

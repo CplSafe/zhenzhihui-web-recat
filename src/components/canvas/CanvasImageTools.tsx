@@ -1,7 +1,8 @@
 import CanvasToolSelect from './CanvasToolSelect'
+import { ArrowLeftOutlined } from '@ant-design/icons'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, ConfigProvider, Modal, Spin } from 'antd'
 import { listCanvasTools, type CreativeTool, type ToolField } from '@/api/canvasTools'
 import { estimateAiTaskCost, listAiModels } from '@/api/business'
@@ -13,8 +14,13 @@ import {
   type ToolGeneration,
 } from '@/utils/canvasTools'
 import { assetStreamUrl } from '@/utils/assetUrl'
-import { creditsYuanLabel } from '@/utils/creditsYuan'
-import { panoramaModelDefaults, studioLightPosition, studioLightDirection } from '@/utils/canvasStudioControls'
+import { creditsLabel } from '@/utils/creditsFormat'
+import {
+  composeStudioPrompt,
+  panoramaModelDefaults,
+  studioLightPosition,
+  studioLightDirection,
+} from '@/utils/canvasStudioControls'
 import CanvasToolFields from './CanvasToolFields'
 import CanvasToolScene from './CanvasToolScene'
 import CanvasAngleEditor from './CanvasAngleEditor'
@@ -135,12 +141,12 @@ export default function CanvasImageTools(props: Props) {
           </div>
         }
         footer={null}
-        width={code === 'panorama.view' ? 960 : 640}
+        width={code === 'panorama.view' ? '100vw' : 640}
         mask={false}
         modalRender={(modal) => <CanvasPortalBoundary floating>{modal}</CanvasPortalBoundary>}
-        wrapClassName={styles.toolWindow}
+        wrapClassName={`${styles.toolWindow} ${code === 'panorama.view' ? styles.panoramaWindow : ''}`}
         style={
-          props.anchor
+          code !== 'panorama.view' && props.anchor
             ? {
                 left: Math.max(
                   16,
@@ -172,17 +178,17 @@ export default function CanvasImageTools(props: Props) {
                 <Button onClick={() => setCode('panorama.view')}>浏览已有全景图</Button>
               </div>
             )}
-            {code === 'panorama.view' && tools.some((entry) => entry.code === 'image.panorama') && (
-              <Button type="text" onClick={() => setCode('image.panorama')}>
-                返回全景生成
-              </Button>
-            )}
             {tool ? (
               <ToolEditor
                 key={code}
                 {...props}
                 tool={tool}
                 models={models}
+                onSwitchToGeneration={
+                  code === 'panorama.view' && tools.some((entry) => entry.code === 'image.panorama')
+                    ? () => setCode('image.panorama')
+                    : undefined
+                }
                 onReload={() => setAttempt((value) => value + 1)}
               />
             ) : (
@@ -198,12 +204,14 @@ export default function CanvasImageTools(props: Props) {
 function ToolEditor({
   tool,
   models,
+  onSwitchToGeneration,
   onReload,
   ...props
-}: Props & { tool: CreativeTool; models: Model[]; onReload: () => void }) {
+}: Props & { tool: CreativeTool; models: Model[]; onSwitchToGeneration?: () => void; onReload: () => void }) {
   const browser = tool.execution === 'browser' && tool.code === 'panorama.view'
   const { onHeightChange } = props
   const compactRoot = useRef<HTMLDivElement>(null)
+  const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
     const content = compactRoot.current?.closest('.ant-modal-content')
     if (!content || !onHeightChange) return
@@ -240,17 +248,28 @@ function ToolEditor({
       ),
     [selectedModel, tool.operation_code, tool.code],
   )
-  const nativeDefaults = (list: ToolField[]) =>
-    tool.code === 'image.panorama' ? panoramaModelDefaults(list, schemaDefaults(list)) : schemaDefaults(list)
+  const nativeDefaults = useCallback(
+    (list: ToolField[]) => {
+      const defaults =
+        tool.code === 'image.panorama' ? panoramaModelDefaults(list, schemaDefaults(list)) : schemaDefaults(list)
+      if (tool.code === 'image.multi_angle' && list.some((field) => field.name === 'negative_prompt')) {
+        const backViewNegativePrompt = '正面视角，正面主标可见，正面标签朝向镜头，商品包装缺失，参考物件被删除或替换'
+        defaults.negative_prompt = [String(defaults.negative_prompt || '').trim(), backViewNegativePrompt]
+          .filter(Boolean)
+          .join('，')
+      }
+      return defaults
+    },
+    [tool.code],
+  )
   const [nativeValues, setNativeValues] = useState(() => nativeDefaults(nativeFields))
   useEffect(() => {
     if (allowed.some((model) => Number(model.id) === modelId)) return
     const next = allowed[0]
     setModelId(Number(next?.id || 0))
     const nextFields = modelFields(next, tool.operation_code)
-    const nextValues = schemaDefaults(nextFields)
-    setNativeValues(tool.code === 'image.panorama' ? panoramaModelDefaults(nextFields, nextValues) : nextValues)
-  }, [allowed, modelId, tool.code, tool.operation_code])
+    setNativeValues(nativeDefaults(nextFields))
+  }, [allowed, modelId, nativeDefaults, tool.operation_code])
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const [submitError, setSubmitError] = useState('')
@@ -496,6 +515,30 @@ function ToolEditor({
             disabled={busy}
           />
         </div>
+        {angle && (
+          <details className={styles.angleContext}>
+            <summary>场景约束与提示词</summary>
+            <p className={styles.hint}>背面视角下瓶身与包装盒分别转到背面，背标和条码朝向镜头；保留所有配件。</p>
+            <label className={styles.field}>
+              <span>补充场景信息（可选）</span>
+              <textarea
+                aria-label="多角度补充场景信息"
+                placeholder="例如：红衣女子站在咖啡馆窗边，桌上有白色杯子"
+                value={prompt}
+                disabled={busy}
+                rows={2}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+            </label>
+            <p className={styles.anglePrompt} aria-label="多角度生成提示词">
+              {composeStudioPrompt(tool.code, prompt, normalizeMultiAngleValues(values))}
+            </p>
+            <span className={styles.hint}>
+              {Array.from(composeStudioPrompt(tool.code, prompt, normalizeMultiAngleValues(values))).length}/200
+              字（含机位说明）
+            </span>
+          </details>
+        )}
         {(validation || quoteError || submitError || (currentQuote && !currentQuote.canAfford)) && (
           <div className={styles.studioError} role="alert">
             {validation || quoteError || submitError || '积分不足，请充值后重新估价'}
@@ -514,7 +557,7 @@ function ToolEditor({
             {estimating
               ? '估价中…'
               : currentQuote
-                ? `${currentQuote.kind === 'reservation' ? '预冻结' : '预计'}${creditsYuanLabel(currentQuote.cost)}`
+                ? `${currentQuote.kind === 'reservation' ? '预冻结' : '预计'}${creditsLabel(currentQuote.cost)}`
                 : '待估价'}
           </span>
           <Button
@@ -544,212 +587,247 @@ function ToolEditor({
     )
   }
   return (
-    <div className={styles.body}>
-      {!browser && !allowed.length && (
-        <EmptyModelNotice workspaceId={props.workspaceId} label="当前工具模型" onReload={onReload} />
-      )}
-      <div className={styles.preview}>
-        {tool.code === 'image.multi_angle' && (
-          <CanvasAngleEditor
-            url={assetStreamUrl(props.source.assetId, props.workspaceId)}
-            values={values}
-            onChange={updateValues}
-            disabled={busy}
-          />
-        )}
-        {(tool.code === 'image.relight' || browser) && (
-          <CanvasToolScene
-            mode={browser ? 'panorama' : tool.code === 'image.relight' ? 'light' : 'angle'}
-            url={assetStreamUrl(props.source.assetId, props.workspaceId)}
-            values={values}
-            disabled={busy}
-            onChange={updateValues}
-            onBusyChange={setBusy}
-            onCapture={browser ? (blob, frame) => props.onCapture(blob, frame || values) : undefined}
-          />
-        )}
-        {tool.code === 'image.panorama' && (
-          <img
-            className={styles.panoramaSource}
-            src={assetStreamUrl(props.source.assetId, props.workspaceId)}
-            alt="全景生成参考图"
-          />
-        )}
-      </div>
-      <div className={styles.controls}>
-        <div className={styles.panelHeading}>
-          <strong>{tool.display_name}</strong>
-          <span>{browser ? '旋转视角，保存理想画面' : '调整参数，生成独立的新图片'}</span>
-        </div>
-        {tool.description && (
-          <details className={styles.description}>
-            <summary>使用说明</summary>
-            <p>{tool.description}</p>
-          </details>
-        )}
-        {!browser && allowed.length > 1 && (
-          <label className={styles.field}>
-            <span>生成模型</span>
-            <CanvasToolSelect
-              disabled={busy}
-              value={modelId}
-              onChange={(event) => {
-                const id = Number(event.target.value)
-                setModelId(id)
-                setNativeValues(
-                  nativeDefaults(
-                    modelFields(
-                      allowed.find((m) => Number(m.id) === id),
-                      tool.operation_code,
-                    ),
-                  ),
-                )
-              }}
-            >
-              {!allowed.length && <option value={0}>当前空间暂无可用模型</option>}
-              {allowed.map((model) => (
-                <option value={model.id} key={model.id}>
-                  {model.display_name || model.name || `模型 ${model.id}`}
-                </option>
-              ))}
-            </CanvasToolSelect>
-          </label>
-        )}
-        <CanvasToolFields
-          fields={browser ? viewFields : fields}
-          values={values}
-          onChange={updateValues}
-          disabled={busy}
-        />
-        {tool.code === 'image.relight' && values.mode === 'smart' && (
-          <div className={styles.presets} role="group" aria-label="智能光效预设">
-            {[
-              ['柔和日光', '使用柔和自然的窗边日光，保留人物与场景，光影过渡自然。'],
-              ['蓝色边光', '使用冷蓝色轮廓边光，保留人物身份和构图，营造电影氛围。'],
-              ['伦勃朗光', '使用伦勃朗人像布光，面部形成自然三角光，保留人物身份。'],
-              ['落日暖光', '使用低角度金色落日暖光，保留人物与背景，呈现温暖氛围。'],
-              ['电影暗调', '使用低调电影布光，控制高光并保留暗部层次，保持人物身份。'],
-              ['霓虹氛围', '使用青色与品红霓虹氛围光，保持主体、服装与场景构图。'],
-            ].map(([label, text]) => (
-              <button
-                type="button"
-                key={label}
-                disabled={busy}
-                aria-pressed={prompt === text}
-                onClick={() => setPrompt(text)}
-              >
-                {label}
-              </button>
-            ))}
+    <div className={browser ? styles.panoramaWorkbench : undefined}>
+      {browser && (
+        <header className={styles.panoramaHeader}>
+          <Button type="text" className={styles.panoramaBack} onClick={props.onClose}>
+            <ArrowLeftOutlined aria-hidden="true" />
+            返回图片预览
+          </Button>
+          <div className={styles.panoramaTitle}>
+            <h1>360° 全景取景</h1>
+            <span title={props.source.title}>{props.source.title || '全景素材'}</span>
           </div>
+          {onSwitchToGeneration ? (
+            <Button type="text" className={styles.panoramaSwitch} onClick={onSwitchToGeneration}>
+              返回全景生成
+            </Button>
+          ) : (
+            <span className={styles.panoramaHint}>拖动预览调整视角 · 方向键可微调</span>
+          )}
+        </header>
+      )}
+      <div className={`${styles.body} ${browser ? styles.panoramaBody : ''}`}>
+        {!browser && !allowed.length && (
+          <EmptyModelNotice workspaceId={props.workspaceId} label="当前工具模型" onReload={onReload} />
         )}
-        {tool.code === 'image.relight' && values.mode === 'reference' && (
-          <label className={styles.field}>
-            <span>打光参考图</span>
-            <CanvasToolSelect disabled={busy} value={referenceId} onChange={(e) => setReferenceId(e.target.value)}>
-              <option value="">选择画布中的另一张图片</option>
-              {props.images
-                .filter((image) => image.assetId !== props.source.assetId)
-                .map((image) => (
-                  <option key={image.nodeId} value={image.nodeId}>
-                    {image.title}
-                  </option>
-                ))}
-            </CanvasToolSelect>
-          </label>
-        )}
-        {!browser && (
-          <>
-            <CanvasToolFields
-              fields={nativeFields.filter((field) => ['count', 'n', 'num_images', 'batch_size'].includes(field.name))}
-              values={nativeValues}
-              onChange={setNativeValues}
+        <div className={styles.preview}>
+          {tool.code === 'image.multi_angle' && (
+            <CanvasAngleEditor
+              url={assetStreamUrl(props.source.assetId, props.workspaceId)}
+              values={values}
+              onChange={updateValues}
               disabled={busy}
             />
-            <details
-              className={styles.description}
-              open={tool.code === 'image.relight' && values.mode === 'smart' ? true : undefined}
-            >
-              <summary>补充描述（可选）</summary>
-              <label className={styles.field}>
-                <textarea
-                  aria-label="补充描述"
-                  value={prompt}
-                  disabled={busy}
-                  rows={2}
-                  onChange={(e) => setPrompt(e.target.value)}
-                />
-              </label>
+          )}
+          {(tool.code === 'image.relight' || browser) && (
+            <CanvasToolScene
+              mode={browser ? 'panorama' : tool.code === 'image.relight' ? 'light' : 'angle'}
+              url={assetStreamUrl(props.source.assetId, props.workspaceId)}
+              values={values}
+              disabled={busy}
+              onChange={updateValues}
+              onBusyChange={setBusy}
+              capturePanelTarget={browser ? capturePanelTarget : undefined}
+              onCapture={browser ? (blob, frame) => props.onCapture(blob, frame || values) : undefined}
+            />
+          )}
+          {tool.code === 'image.panorama' && (
+            <img
+              className={styles.panoramaSource}
+              src={assetStreamUrl(props.source.assetId, props.workspaceId)}
+              alt="全景生成参考图"
+            />
+          )}
+        </div>
+        <div className={styles.controls}>
+          <div className={styles.panelHeading}>
+            <strong>{tool.display_name}</strong>
+            <span>{browser ? '旋转视角，保存理想画面' : '调整参数，生成独立的新图片'}</span>
+          </div>
+          {(tool.description || browser) && (
+            <details className={styles.description}>
+              <summary>使用说明</summary>
+              {tool.description && <p>{tool.description}</p>}
+              {browser && (
+                <div className={styles.panoramaGuide}>
+                  <strong>取景与截图</strong>
+                  <ul>
+                    <li>拖动全景画面旋转视角，也可用方向键微调；右侧参数支持精确调整。</li>
+                    <li>当前视角截图保存眼前画面；4 视角截图从当前水平角度起，每隔 90° 环绕一周，视野为 75°。</li>
+                    <li>12 视角截图从当前水平角度开始，俯视、平视、仰视各环绕 4 张，视野为 75°。</li>
+                    <li>截图会显示在右侧预览中，可下载或选择后加入画布；多张截图会自动排成分镜组。</li>
+                    <li>本地取景不创建 AI 任务，也不消耗生成积分；关闭页面会清除尚未加入画布的截图。</li>
+                  </ul>
+                </div>
+              )}
             </details>
-            {validation && (
-              <p role="status" className={styles.hint}>
-                {validation}
-              </p>
-            )}
-            {estimating && <p role="status">正在预估费用…</p>}
-            {quoteError && (
-              <Alert
-                type="error"
-                message={quoteError}
-                action={<Button onClick={() => setRetryQuote((n) => n + 1)}>重新估价</Button>}
+          )}
+          {!browser && allowed.length > 1 && (
+            <label className={styles.field}>
+              <span>生成模型</span>
+              <CanvasToolSelect
+                disabled={busy}
+                value={modelId}
+                onChange={(event) => {
+                  const id = Number(event.target.value)
+                  setModelId(id)
+                  setNativeValues(
+                    nativeDefaults(
+                      modelFields(
+                        allowed.find((m) => Number(m.id) === id),
+                        tool.operation_code,
+                      ),
+                    ),
+                  )
+                }}
+              >
+                {!allowed.length && <option value={0}>当前空间暂无可用模型</option>}
+                {allowed.map((model) => (
+                  <option value={model.id} key={model.id}>
+                    {model.display_name || model.name || `模型 ${model.id}`}
+                  </option>
+                ))}
+              </CanvasToolSelect>
+            </label>
+          )}
+          <CanvasToolFields
+            fields={browser ? viewFields : fields}
+            values={values}
+            onChange={updateValues}
+            disabled={busy}
+          />
+          {browser && <div ref={setCapturePanelTarget} className={styles.panoramaCaptureTarget} />}
+          {tool.code === 'image.relight' && values.mode === 'smart' && (
+            <div className={styles.presets} role="group" aria-label="智能光效预设">
+              {[
+                ['柔和日光', '使用柔和自然的窗边日光，保留人物与场景，光影过渡自然。'],
+                ['蓝色边光', '使用冷蓝色轮廓边光，保留人物身份和构图，营造电影氛围。'],
+                ['伦勃朗光', '使用伦勃朗人像布光，面部形成自然三角光，保留人物身份。'],
+                ['落日暖光', '使用低角度金色落日暖光，保留人物与背景，呈现温暖氛围。'],
+                ['电影暗调', '使用低调电影布光，控制高光并保留暗部层次，保持人物身份。'],
+                ['霓虹氛围', '使用青色与品红霓虹氛围光，保持主体、服装与场景构图。'],
+              ].map(([label, text]) => (
+                <button
+                  type="button"
+                  key={label}
+                  disabled={busy}
+                  aria-pressed={prompt === text}
+                  onClick={() => setPrompt(text)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {tool.code === 'image.relight' && values.mode === 'reference' && (
+            <label className={styles.field}>
+              <span>打光参考图</span>
+              <CanvasToolSelect disabled={busy} value={referenceId} onChange={(e) => setReferenceId(e.target.value)}>
+                <option value="">选择画布中的另一张图片</option>
+                {props.images
+                  .filter((image) => image.assetId !== props.source.assetId)
+                  .map((image) => (
+                    <option key={image.nodeId} value={image.nodeId}>
+                      {image.title}
+                    </option>
+                  ))}
+              </CanvasToolSelect>
+            </label>
+          )}
+          {!browser && (
+            <>
+              <CanvasToolFields
+                fields={nativeFields.filter((field) => ['count', 'n', 'num_images', 'batch_size'].includes(field.name))}
+                values={nativeValues}
+                onChange={setNativeValues}
+                disabled={busy}
               />
-            )}
-            {currentQuote && (
-              <div className={styles.quote} role="status">
-                {currentQuote.kind === 'reservation' ? '预冻结金额' : '预估费用'}：{creditsYuanLabel(currentQuote.cost)}{' '}
-                <details className={styles.feeDetails}>
-                  <summary>费用说明</summary>
-                  <p>余额 {currentQuote.balance} 积分</p>
-                  {currentQuote.note && <p>{currentQuote.note}</p>}
-                </details>
-                {!currentQuote.canAfford && <p className={styles.error}>积分不足，请充值后重新估价</p>}
-                <Button size="small" disabled={busy} onClick={() => setRetryQuote((n) => n + 1)}>
-                  刷新估价
-                </Button>
-              </div>
-            )}
-            {submitError && <Alert type="error" message={submitError} />}
-            <Button
-              type="primary"
-              className={styles.generateButton}
-              loading={busy}
-              disabled={!request || !currentQuote?.canAfford || estimating || busy}
-              onClick={async () => {
-                if (lock.current || !request || currentQuote?.key !== requestKey || !currentQuote.canAfford) return
-                lock.current = true
-                setBusy(true)
-                setSubmitError('')
-                try {
-                  await props.onGenerate({ request, images, title: tool.display_name })
-                  props.onClose()
-                } catch (err) {
-                  setSubmitError(err instanceof Error ? err.message : '提交失败')
-                } finally {
-                  lock.current = false
-                  setBusy(false)
-                }
-              }}
-            >
-              生成新图片
-            </Button>
-          </>
-        )}
-        <Button
-          type="text"
-          size="small"
-          disabled={busy}
-          onClick={() => {
-            updateValues(browser ? { yaw: 0, pitch: 0, fov: 65 } : defaults())
-            setNativeValues(nativeDefaults(nativeFields))
-            setPrompt('')
-            setReferenceId('')
-          }}
-        >
-          重置参数
-        </Button>
-        {browser && (
-          <p className={styles.hint}>浏览和截图不创建 AI 任务。截图先集中预览，确认后再将选中的截图加入画布。</p>
-        )}
+              <details
+                className={styles.description}
+                open={tool.code === 'image.relight' && values.mode === 'smart' ? true : undefined}
+              >
+                <summary>补充描述（可选）</summary>
+                <label className={styles.field}>
+                  <textarea
+                    aria-label="补充描述"
+                    value={prompt}
+                    disabled={busy}
+                    rows={2}
+                    onChange={(e) => setPrompt(e.target.value)}
+                  />
+                </label>
+              </details>
+              {validation && (
+                <p role="status" className={styles.hint}>
+                  {validation}
+                </p>
+              )}
+              {estimating && <p role="status">正在预估费用…</p>}
+              {quoteError && (
+                <Alert
+                  type="error"
+                  message={quoteError}
+                  action={<Button onClick={() => setRetryQuote((n) => n + 1)}>重新估价</Button>}
+                />
+              )}
+              {currentQuote && (
+                <div className={styles.quote} role="status">
+                  {currentQuote.kind === 'reservation' ? '预冻结积分' : '预估费用'}：{creditsLabel(currentQuote.cost)}{' '}
+                  <details className={styles.feeDetails}>
+                    <summary>费用说明</summary>
+                    <p>余额 {currentQuote.balance} 积分</p>
+                    {currentQuote.note && <p>{currentQuote.note}</p>}
+                  </details>
+                  {!currentQuote.canAfford && <p className={styles.error}>积分不足，请充值后重新估价</p>}
+                  <Button size="small" disabled={busy} onClick={() => setRetryQuote((n) => n + 1)}>
+                    刷新估价
+                  </Button>
+                </div>
+              )}
+              {submitError && <Alert type="error" message={submitError} />}
+              <Button
+                type="primary"
+                className={styles.generateButton}
+                loading={busy}
+                disabled={!request || !currentQuote?.canAfford || estimating || busy}
+                onClick={async () => {
+                  if (lock.current || !request || currentQuote?.key !== requestKey || !currentQuote.canAfford) return
+                  lock.current = true
+                  setBusy(true)
+                  setSubmitError('')
+                  try {
+                    await props.onGenerate({ request, images, title: tool.display_name })
+                    props.onClose()
+                  } catch (err) {
+                    setSubmitError(err instanceof Error ? err.message : '提交失败')
+                  } finally {
+                    lock.current = false
+                    setBusy(false)
+                  }
+                }}
+              >
+                生成新图片
+              </Button>
+            </>
+          )}
+          <Button
+            type="text"
+            size="small"
+            disabled={busy}
+            onClick={() => {
+              updateValues(browser ? { yaw: 0, pitch: 0, fov: 65 } : defaults())
+              setNativeValues(nativeDefaults(nativeFields))
+              setPrompt('')
+              setReferenceId('')
+            }}
+          >
+            重置参数
+          </Button>
+          {browser && (
+            <p className={styles.hint}>浏览和截图不创建 AI 任务。截图先集中预览，确认后再将选中的截图加入画布。</p>
+          )}
+        </div>
       </div>
     </div>
   )

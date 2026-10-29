@@ -190,8 +190,8 @@ describe('CanvasTimelineEditor', () => {
 
     const clips = lastState(onState).clips
     expect(clips).toHaveLength(3)
-    expect(clips[0]).toMatchObject({ inSec: 0, outSec: 2 })
-    expect(clips[1]).toMatchObject({ inSec: 2, outSec: 5 })
+    expect(clips[0]).toMatchObject({ inSec: 0, outSec: 0.8 })
+    expect(clips[1]).toMatchObject({ inSec: 0.8, outSec: 5 })
   })
 
   it('裁剪手柄支持方向键微调，且不会顺带挪动播放头', async () => {

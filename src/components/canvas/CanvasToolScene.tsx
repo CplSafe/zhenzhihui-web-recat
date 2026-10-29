@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import * as THREE from 'three/src/Three.Core.js'
 import { WebGLRenderer } from 'three/src/renderers/WebGLRenderer.js'
 import PanoramaCapturePanel, { type PanoramaFrame } from './PanoramaCapturePanel'
@@ -27,6 +28,7 @@ export default function CanvasToolScene({
   values,
   onChange,
   onCapture,
+  capturePanelTarget,
   disabled = false,
   onBusyChange,
   compact = false,
@@ -36,6 +38,7 @@ export default function CanvasToolScene({
   values: Record<string, unknown>
   onChange: (values: Record<string, unknown>) => void
   onCapture?: (blob: Blob, view?: Record<string, unknown>) => Promise<void>
+  capturePanelTarget?: HTMLElement | null
   disabled?: boolean
   compact?: boolean
   onBusyChange?: (busy: boolean) => void
@@ -76,21 +79,21 @@ export default function CanvasToolScene({
     const pitch = THREE.MathUtils.degToRad(Number(v.vertical_angle ?? v.pitch ?? 0))
     if (mode === 'panorama') {
       const [captureWidth, captureHeight] = studioCaptureSize(v)
-      const aspect = captureWidth / captureHeight
-      const width = Math.min(viewport.x, viewport.y * aspect)
-      const height = width / aspect
-      const left = (viewport.x - width) / 2
-      const bottom = (viewport.y - height) / 2
+      const aspect = viewport.x / viewport.y
       state.renderer.setScissorTest(false)
       state.renderer.clear()
-      const guideElement = host.current?.querySelector<HTMLElement>(`[data-guide]`)
-      if (guideElement) {
-        guideElement.style.width = `${width}px`
-        guideElement.style.height = `${height}px`
-      }
-      state.renderer.setViewport(left, bottom, width, height)
-      state.renderer.setScissor(left, bottom, width, height)
+      state.renderer.setViewport(0, 0, viewport.x, viewport.y)
+      state.renderer.setScissor(0, 0, viewport.x, viewport.y)
       state.renderer.setScissorTest(true)
+      const guideElement = host.current?.querySelector<HTMLElement>('[data-capture-frame]')
+      if (guideElement) {
+        const hostWidth = host.current?.clientWidth || viewport.x
+        const hostHeight = host.current?.clientHeight || viewport.y
+        const frameAspect = captureWidth / captureHeight
+        const frameWidth = Math.min(hostWidth, hostHeight * frameAspect)
+        guideElement.style.width = `${frameWidth}px`
+        guideElement.style.height = `${frameWidth / frameAspect}px`
+      }
       state.camera.aspect = aspect
       state.camera.position.set(0, 0, 0)
       state.camera.fov = Math.max(30, Math.min(110, Number(v.fov ?? 75)))
@@ -158,7 +161,7 @@ export default function CanvasToolScene({
     }
     let disposed = false
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color('#edf2f2')
+    scene.background = new THREE.Color(mode === 'panorama' ? '#f7f8fa' : '#edf2f2')
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100)
     const light = new THREE.DirectionalLight('#ffffff', 2.5)
     const rim = new THREE.DirectionalLight('#b9d9ff', 0)
@@ -370,6 +373,23 @@ export default function CanvasToolScene({
     }
   }
 
+  const capturePanel = mode === 'panorama' && onCapture && (
+    <PanoramaCapturePanel
+      ready={ready}
+      error={error}
+      disabled={disabled}
+      capturing={capturing}
+      progress={captureProgress}
+      frames={frames}
+      setFrames={setFrames}
+      captureFrames={captureFrames}
+      captureLock={captureLock}
+      setCapturing={setCapturing}
+      setCaptureError={setCaptureError}
+      onCapture={onCapture}
+    />
+  )
+
   return (
     <div className={`${styles.sceneShell} ${expanded ? styles.sceneExpanded : ''}`}>
       <div className={styles.sceneToolbar} hidden={compact}>
@@ -492,6 +512,14 @@ export default function CanvasToolScene({
           })
         }}
       >
+        {mode === 'panorama' && (
+          <div
+            aria-hidden="true"
+            className={styles.captureFrameOverlay}
+            style={{ aspectRatio: `${captureWidth} / ${captureHeight}` }}
+            data-capture-frame
+          />
+        )}
         {mode === 'panorama' && guide !== 'none' && (
           <div
             aria-hidden="true"
@@ -523,24 +551,7 @@ export default function CanvasToolScene({
           {qualityNote}
         </p>
       )}
-      {mode === 'panorama' && onCapture && (
-        <>
-          <PanoramaCapturePanel
-            ready={ready}
-            error={error}
-            disabled={disabled}
-            capturing={capturing}
-            progress={captureProgress}
-            frames={frames}
-            setFrames={setFrames}
-            captureFrames={captureFrames}
-            captureLock={captureLock}
-            setCapturing={setCapturing}
-            setCaptureError={setCaptureError}
-            onCapture={onCapture}
-          />
-        </>
-      )}
+      {capturePanel && (capturePanelTarget ? createPortal(capturePanel, capturePanelTarget) : capturePanel)}
       {captureError && (
         <p role="alert" className={styles.error}>
           {captureError}

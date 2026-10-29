@@ -631,6 +631,7 @@ export default function CanvasTimelinePlayer({
           <button
             type="button"
             className={styles.play}
+            data-timeline-play
             onClick={() => void togglePlay()}
             disabled={playbackBlocked || starting}
             aria-label={playing ? '暂停' : '播放'}

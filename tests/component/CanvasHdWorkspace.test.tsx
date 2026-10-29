@@ -71,7 +71,7 @@ describe('CanvasHdWorkspace', () => {
   it('shows the authoritative quote and blocks insufficient balance', async () => {
     mocks.quoteHd.mockResolvedValue({ ...quote, balance: 5, can_afford: false })
     mount()
-    expect(await screen.findByText(/积分余额不足，预估费用约0.24元，当前余额 5 积分/)).toBeInTheDocument()
+    expect(await screen.findByText(/积分余额不足，预估费用12 积分，当前余额 5 积分/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认并开始（扣积分）' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '去充值' })).toBeEnabled()
   })

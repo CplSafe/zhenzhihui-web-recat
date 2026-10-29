@@ -359,6 +359,16 @@ export function getModelDurationLimitLabel(constraints: GenerationModelConstrain
   return minimum !== null && minimum > 0 ? `最短 ${minimum} 秒` : ''
 }
 
+/** 模型声明的最大视频时长；未声明最大值时返回 null，不替模型假定上限。 */
+export function getModelMaximumDurationSec(constraints: GenerationModelConstraints | undefined): number | null {
+  const duration = constraints?.duration
+  if (!duration) return null
+  const options = (duration.options || []).map(Number).filter((value) => Number.isFinite(value) && value > 0)
+  if (options.length) return Math.max(...options)
+  const maximum = Number(duration.maximum)
+  return Number.isFinite(maximum) && maximum > 0 ? maximum : null
+}
+
 /**
  * 模型声明的参考图数量上限（张）。
  *

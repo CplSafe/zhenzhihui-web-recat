@@ -232,12 +232,6 @@ export default function CanvasImagePreviewModal({
             ) : null}
           </div>
         )}
-        {current.panorama && onPanorama && (
-          <button type="button" className={styles.panoramaAction} onClick={() => onPanorama(current.id)}>
-            360° 沉浸浏览／取景
-          </button>
-        )}
-
         <div className={styles.content}>
           <div className={styles.stage}>
             {items.length > 1 && (
@@ -263,6 +257,18 @@ export default function CanvasImagePreviewModal({
                 setMediaSize({ id: current.id + current.url, ...size })
               }}
               onError={() => setFailedMediaId(current.id + current.url)}
+              overlay={
+                current.panorama && onPanorama ? (
+                  <button
+                    type="button"
+                    className={styles.panoramaAction}
+                    onClick={() => onPanorama(current.id)}
+                    aria-label="打开 360° 沉浸浏览与取景"
+                  >
+                    360° 沉浸浏览／取景
+                  </button>
+                ) : undefined
+              }
             />
             {items.length > 1 && (
               <button

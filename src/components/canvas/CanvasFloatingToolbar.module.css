@@ -8,22 +8,23 @@
   zoom: var(--canvas-ui-scale, 1);
   max-height: calc(100dvh / var(--canvas-ui-scale, 1) - 140px);
   position: absolute;
-  top: 50%;
-  left: 46px;
+  top: auto;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 50%;
   /* chrome 档（见 CanvasView.css 顶部的层级口径）：低于 1000 会被选中的节点盖住 */
   z-index: 1100;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 18px;
-  padding: 20px 12px;
+  gap: 4px;
+  padding: 8px;
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(12px);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
   animation: toolbar-enter 0.2s ease-out;
-  transform: translateY(-50%);
+  transform: translateX(-50%);
   will-change: opacity, transform;
 }
 
@@ -36,22 +37,22 @@
 @keyframes toolbar-enter {
   from {
     opacity: 0;
-    transform: translate(-16px, -50%);
+    transform: translate(-50%, 12px);
   }
   to {
     opacity: 1;
-    transform: translate(0, -50%);
+    transform: translate(-50%, 0);
   }
 }
 
 @keyframes toolbar-leave {
   from {
     opacity: 1;
-    transform: translate(0, -50%);
+    transform: translate(-50%, 0);
   }
   to {
     opacity: 0;
-    transform: translate(-28px, -50%) scale(0.96);
+    transform: translate(-50%, 12px) scale(0.96);
   }
 }
 
@@ -111,9 +112,9 @@
 
 .toolLabel {
   position: absolute;
-  left: calc(100% + 12px);
-  top: 50%;
-  transform: translateY(-50%) translateX(-4px);
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%) translateY(4px);
   padding: 7px 12px;
   border-radius: 6px;
   background: #404040;
@@ -132,7 +133,7 @@
 .toolBtn:hover .toolLabel,
 .toolBtn:focus-visible .toolLabel {
   opacity: 1;
-  transform: translateY(-50%) translateX(0);
+  transform: translateX(-50%) translateY(0);
 }
 
 .addBtnWrap {
@@ -255,7 +256,8 @@
  */
 @media (max-width: 900px) {
   .toolbar {
-    top: max(82px, env(safe-area-inset-top));
+    top: auto;
+    bottom: max(12px, env(safe-area-inset-bottom));
     left: 50%;
     max-width: calc(100vw / var(--canvas-ui-scale, 1) - 32px);
     flex-direction: row;

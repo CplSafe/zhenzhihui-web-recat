@@ -45,6 +45,19 @@ test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步�
   await expect(node).toBeVisible()
   await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(1\)/)
+  const storyboard = node.getByLabel(/分镜脚本，共/)
+  const storyboardHeader = await storyboard.locator('header').boundingBox()
+  const beforeDrag = await node.boundingBox()
+  expect(storyboardHeader).not.toBeNull()
+  expect(beforeDrag).not.toBeNull()
+  // 卡片标题区域可拖动画布节点；展开按钮与镜头提示词编辑区继续保留各自交互。
+  await page.mouse.move(storyboardHeader!.x + 120, storyboardHeader!.y + storyboardHeader!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(storyboardHeader!.x + 200, storyboardHeader!.y + storyboardHeader!.height / 2 + 48, {
+    steps: 8,
+  })
+  await page.mouse.up()
+  await expect.poll(async () => (await node.boundingBox())!.x).toBeGreaterThan(beforeDrag!.x + 40)
   const list = page.getByLabel('分镜列表', { exact: true })
   await expect(list).toBeVisible()
   const firstPrompt = node.getByRole('textbox', { name: '镜头 1 提示词', exact: true })

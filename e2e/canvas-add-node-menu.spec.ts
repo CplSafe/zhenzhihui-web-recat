@@ -275,3 +275,72 @@ test('图片、文本、视频可以按语义反复接成新的下游节点', as
 
   expectNoUnexpectedApi(api)
 })
+
+test('视频连接到下游视频时自动补上源视频已连接的音频', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/v1/assets', (route) =>
+    route.fulfill({ status: 503, json: { message: '测试环境不保存视频封面' } }),
+  )
+  await page.route('**/api/v1/canvases/116**', async (route) => {
+    const url = new URL(route.request().url())
+    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
+    await route.fulfill({
+      json: url.pathname.endsWith('/elements')
+        ? {
+            elements: [
+              {
+                element_id: 'audio-source',
+                kind: 'node',
+                payload: {
+                  id: 'audio-source',
+                  type: 'audio',
+                  position: { x: 80, y: 300 },
+                  style: { width: 320, height: 116 },
+                  data: { kind: 'audio', assetId: 701, assetWorkspaceId: WORKSPACE_ID, audio: { durationSec: 12 } },
+                },
+              },
+              {
+                element_id: 'video-source',
+                kind: 'node',
+                payload: {
+                  id: 'video-source',
+                  type: 'video',
+                  position: { x: 480, y: 250 },
+                  style: { width: 320, height: 240 },
+                  data: { kind: 'video', assetId: 702, assetWorkspaceId: WORKSPACE_ID },
+                },
+              },
+              {
+                element_id: 'audio-to-source-video',
+                kind: 'edge',
+                payload: {
+                  id: 'audio-to-source-video',
+                  source: 'audio-source',
+                  target: 'video-source',
+                  data: { slotIndex: 0, role: 'audio_model_reference' },
+                },
+              },
+            ],
+            sync_revision: 1,
+            history_floor_revision: 0,
+            has_more: false,
+          }
+        : { id: 116, title: 'Video audio inheritance', status: 'active', revision: 1 },
+    })
+  })
+
+  await page.goto('/canvas/116')
+  const source = page.locator('.react-flow__node[data-id="video-source"]')
+  await expect(source).toBeVisible()
+  await source.hover()
+  await source.getByRole('button', { name: '添加下一步' }).last().click()
+  await page
+    .locator('.canvas-add-menu')
+    .getByRole('button', { name: /^视频节点/ })
+    .click()
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3)
+  await page.screenshot({ path: testInfo.outputPath('video-connection-inherits-audio.png') })
+  expectNoUnexpectedApi(api)
+})

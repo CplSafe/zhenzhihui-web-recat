@@ -2,8 +2,14 @@ import { readFile } from 'node:fs/promises'
 import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
 
-for (const failOnce of [false, true])
-  test(`恢复视频任务合入原配音、关闭模型原声，刷新不重复生成 failOnce=${failOnce}`, async ({ page }, testInfo) => {
+for (const { failOnce, completed } of [
+  { failOnce: false, completed: false },
+  { failOnce: true, completed: false },
+  { failOnce: false, completed: true },
+])
+  test(`恢复视频任务合入原配音、关闭模型原声，刷新不重复生成 failOnce=${failOnce} completed=${completed}`, async ({
+    page,
+  }, testInfo) => {
     test.setTimeout(90000)
     const api = await installStrictAuthenticatedApp(page)
     const video = await readFile('public/tutorials/hot-copy.mp4')
@@ -37,7 +43,8 @@ for (const failOnce of [false, true])
           prompt: '画面描述',
           operationCode: 'video.generate',
           taskId: 801,
-          taskStatus: 'processing',
+          taskStatus: completed ? 'succeeded' : 'processing',
+          ...(completed ? { assetId: 701 } : {}),
           posterAssetId: 703,
           taskRunId: 'voice-run',
           taskIdempotencyKey: 'voice-key',

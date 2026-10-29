@@ -121,7 +121,7 @@ describe('getSmartVideoQuoteValidationError', () => {
         balance: 4500,
         canAfford: true,
       }),
-    ).toContain('已由 约10元变为 约13元')
+    ).toContain('已由 500 积分变为 650 积分')
   })
 
   it('在模型身份变化或余额不足时阻止付费任务', () => {

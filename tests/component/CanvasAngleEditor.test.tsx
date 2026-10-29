@@ -20,7 +20,7 @@ describe('球形机位编辑器', () => {
     fireEvent.keyDown(screen.getByRole('application'), { key: 'ArrowRight' })
     expect(screen.getByTestId('values')).toHaveTextContent('"horizontal_angle":185')
     fireEvent.click(screen.getByRole('checkbox', { name: '显示机位提示词' }))
-    expect(screen.getByText(/水平环绕 185°/)).toBeInTheDocument()
+    expect(screen.getByText(/水平环绕185°/)).toHaveTextContent('人物、背景、道具作为同一三维场景共同换机位')
     fireEvent.click(screen.getByRole('button', { name: '全景俯拍' }))
     expect(screen.getByTestId('values')).toHaveTextContent('"zoom":2')
     fireEvent.click(screen.getByRole('button', { name: '重置机位' }))
