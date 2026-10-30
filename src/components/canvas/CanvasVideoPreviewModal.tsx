@@ -152,18 +152,37 @@ export default function CanvasVideoPreviewModal({
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
+    // 把焦点交给播放器：否则空格会激活关闭按钮并收起放大预览。
+    const focusFrame = window.requestAnimationFrame(() => videoRef.current?.focus())
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closePreview()
+        return
+      }
+      if (event.code !== 'Space' || event.repeat) return
+      const target = event.target
+      const targetButton = target instanceof Element ? target.closest('button') : null
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
+          (targetButton && targetButton !== closeButtonRef.current))
+      )
+        return
       event.preventDefault()
-      closePreview()
+      event.stopPropagation()
+      const activeVideo = videoRef.current
+      if (!activeVideo) return
+      if (activeVideo.paused) void activeVideo.play().catch(() => {})
+      else activeVideo.pause()
     }
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
     return () => {
       video?.pause()
       if (video) video.muted = true
       window.cancelAnimationFrame(focusFrame)
-      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDown, true)
       document.body.style.overflow = previousOverflow
       window.requestAnimationFrame(() => {
         if (previouslyFocused?.isConnected) previouslyFocused.focus()
@@ -214,6 +233,8 @@ export default function CanvasVideoPreviewModal({
             poster={poster || undefined}
             controls
             autoPlay
+            tabIndex={0}
+            aria-label="视频播放器"
             muted={muted}
             onVolumeChange={(event) => setMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
             allowMutedAutoplayFallback={false}

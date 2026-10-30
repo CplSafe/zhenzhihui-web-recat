@@ -616,11 +616,29 @@ test.describe('已认证关键路由与读取链路', () => {
     })
 
     await page.goto('/hot-copy')
-    await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
     await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}`)
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
+    const hotCopyPrompt = page.locator('textarea.hotcopy__text')
+    await expect(hotCopyPrompt).toHaveValue('')
+
+    // 只有明确进入编辑时才恢复项目草稿；消费编辑标记后切回该路由应为空白入口。
+    await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}?edit=1`)
 
     const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
     await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
+    await expect(hotCopyPrompt).toHaveValue('E2E 爆款恢复描述')
+    await page.goto('/projects')
+    await page.goto('/hot-copy')
+    await expect(page).toHaveURL(/\/hot-copy$/)
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
+    await expect(hotCopyPrompt).toHaveValue('')
+
+    await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}`)
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
+    await expect(hotCopyPrompt).toHaveValue('')
+
+    await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}?edit=1`)
+    await expect(page.getByRole('button', { name: '返回下一步' })).toBeVisible({ timeout: 30_000 })
     await resumeGeneration.click()
     await expect(page.getByRole('button', { name: '修改项目名称：E2E 爆款项目' })).toBeVisible({
       timeout: 30_000,

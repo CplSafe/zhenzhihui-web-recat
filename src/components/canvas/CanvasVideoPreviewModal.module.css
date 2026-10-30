@@ -5,9 +5,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  background: rgba(15, 23, 42, 0.72);
-  backdrop-filter: blur(4px);
+  padding: 0;
+  background: #000;
+  backdrop-filter: none;
   animation: canvas-video-preview-fade 0.16s ease-out;
 }
 
@@ -16,11 +16,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  max-width: min(1200px, 100%);
-  max-height: 100%;
-  border-radius: 14px;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
   background: #000;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  box-shadow: none;
 }
 
 /*
@@ -30,8 +33,8 @@
 .media {
   position: relative;
   flex: 0 1 auto;
-  width: min(960px, calc((100vh - 80px) * var(--preview-aspect-ratio)), calc(100vw - 380px));
-  max-height: calc(100vh - 80px);
+  width: min(960px, calc(100dvh * var(--preview-aspect-ratio)), calc(100vw - 380px));
+  max-height: 100dvh;
   overflow: hidden;
   aspect-ratio: var(--preview-aspect-ratio);
   border-radius: 14px 0 0 14px;
@@ -41,8 +44,8 @@
 }
 
 .dialog[data-has-info='false'] .media {
-  width: min(960px, calc((100vh - 80px) * var(--preview-aspect-ratio)), calc(100vw - 80px));
-  border-radius: 14px;
+  width: min(960px, calc(100dvh * var(--preview-aspect-ratio)), 100vw);
+  border-radius: 0;
 }
 
 .player {
@@ -59,7 +62,7 @@
 .info {
   flex: 0 0 260px;
   align-self: stretch;
-  max-height: calc(100vh - 80px);
+  max-height: 100dvh;
   overflow-y: auto;
   padding: 20px 22px;
   border-radius: 0 14px 14px 0;
@@ -349,11 +352,11 @@
   position: static;
 }
 
-/* 先扣除边距和参数栏，再将剩余区域交给播放器，避免固有尺寸挤出视口。 */
+/* 全屏预览直接占满浏览器视口，播放器在可用区域内按原比例完整显示。 */
 .mask {
   box-sizing: border-box;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.88);
+  padding: 0;
+  background: #000;
   backdrop-filter: none;
 }
 .dialog {
@@ -364,7 +367,7 @@
   min-width: 0;
   min-height: 0;
   width: 100%;
-  height: 100%;
+  height: 100dvh;
   max-width: none;
   max-height: none;
   align-items: stretch;
@@ -412,7 +415,7 @@
 }
 @media (max-width: 768px) {
   .mask {
-    padding: 12px;
+    padding: 0;
   }
   .dialog {
     grid-template-columns: minmax(0, 1fr);

@@ -39,6 +39,7 @@ export interface CanvasNodeToolbarProps {
   hdDisabledReason?: string
   imageToolCodes?: string[]
   onImageTool?: (code: string) => void
+  onReversePrompt?: () => void
 }
 
 const CAPTURE_ITEMS: Array<{ position: CanvasCapturePosition; label: string; hint?: string }> = [
@@ -65,6 +66,7 @@ export default function CanvasNodeToolbar({
   onCompareHd,
   hdDisabledReason,
   onImageTool,
+  onReversePrompt,
   imageToolCodes = [],
 }: CanvasNodeToolbarProps) {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
@@ -112,6 +114,8 @@ export default function CanvasNodeToolbar({
   // 图片与视频都支持放大预览；图片预览还带全部图片的画廊导航
   const showPreview = Boolean(onPreview) && isMedia && hasContent && !uploading
   const showCapture = Boolean(onCapture) && kind === 'video' && hasContent
+  // 空图片/视频节点还没有可处理的素材；时间线继续保留现有超分入口。
+  const showHd = Boolean(onHd) && (kind === 'timeline' || (isMedia && hasContent && !uploading))
 
   return (
     <div
@@ -219,7 +223,19 @@ export default function CanvasNodeToolbar({
         </>
       )}
 
-      {onHd && (isMedia || kind === 'timeline') && (
+      {isMedia && hasContent && !uploading && onReversePrompt && (
+        <button
+          type="button"
+          className={`${styles.action} ${styles.textAction} ${styles.reversePromptHidden}`}
+          onClick={onReversePrompt}
+          aria-label="反推提示词"
+          data-tip="点击后立即分析当前素材，无需输入提示词"
+        >
+          反推提示词
+        </button>
+      )}
+
+      {showHd && onHd && (
         <span title={hdDisabledReason || '提升画质，保留原文件'}>
           <button
             type="button"

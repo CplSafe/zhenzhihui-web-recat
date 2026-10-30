@@ -16,6 +16,11 @@ import { humanizeProviderErrorText } from '@/api/business'
 const PROVIDER_SERVICE_RE =
   /PROVIDER_FAILED|billing usage|AccountOverdue|AccountForbidden|InvalidEndpointOrModel|EndpointIsInvalid|ModelNotOpen|ModelNotFound|QuotaExceeded|RateLimitExceeded|ThrottlingException|ServiceUnavailable|InvalidAccessKey|SignatureDoesNotMatch|AccessDenied/i
 
+export interface CanvasTaskErrorContext {
+  kind?: string
+  operationCode?: string
+}
+
 /**
  * 命中即改写的规则表。
  *
@@ -40,9 +45,16 @@ const REWRITE_RULES: { match: RegExp; text: string }[] = [
  * 把后端错误文案改写成用户能据此行动的说法；画布自己的规则没命中时，再走 business 里全链路共用的
  * 供应商原文翻译（参考图尺寸/宽高比、供应商余额、provider task failed 等），仍没命中才原样返回。
  */
-export function humanizeCanvasTaskError(message: unknown): string {
+export function humanizeCanvasTaskError(message: unknown, context: CanvasTaskErrorContext = {}): string {
   const text = String(message ?? '').trim()
   if (!text) return ''
+  if (
+    context.kind === 'image' &&
+    context.operationCode === 'image.image_to_image' &&
+    /素材数量超过该操作的上限/i.test(text)
+  ) {
+    return '图生图最多支持 3 张参考图片，请减少图片数量后重试'
+  }
   const hit = REWRITE_RULES.find((rule) => rule.match.test(text))
   if (hit) return hit.text
   return humanizeProviderErrorText(text) || text

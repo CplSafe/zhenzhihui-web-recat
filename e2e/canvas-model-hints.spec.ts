@@ -32,6 +32,12 @@ for (const viewport of [
               operation_codes: ['video.generate'],
               description: '另一模型的真实说明，用于比较不同选项。',
             },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              id: 44 + index,
+              display_name: `画布视频模型 ${index + 3}`,
+              capability: 'video',
+              operation_codes: ['video.generate'],
+            })),
           ],
         },
       }),
@@ -78,6 +84,8 @@ for (const viewport of [
     await expect(option).not.toContainText(/最强|最便宜|0.02|999/)
     const menu = page.getByRole('listbox', { name: '生成模型列表' })
     const before = await menu.boundingBox()
+    await expect.poll(() => menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+    expect(await menu.evaluate((element) => element.clientHeight)).toBeLessThanOrEqual(740)
     await option.hover()
     await expect(option).toHaveAttribute('data-expanded', 'true')
     await expect(option.getByText(/目录提供的模型说明/)).toBeVisible()

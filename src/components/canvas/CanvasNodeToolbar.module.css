@@ -61,14 +61,19 @@
   padding-inline: 8px;
 }
 
-.imageBar {
-  max-width: calc(100vw - 24px);
-  overflow-x: auto;
-  scrollbar-width: none;
+.reversePromptHidden {
+  display: none !important;
 }
 
-.imageBar > button {
-  flex-shrink: 0;
+.imageBar {
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+  white-space: normal;
+}
+
+.imageBar > :is(button, span) {
+  flex: 0 0 auto;
 }
 
 /*

@@ -68,8 +68,8 @@ describe('resolveProjectPath', () => {
   })
 
   it.each([
-    [{ flow: 'hot-copy' }, '/hot-copy/171'],
-    [{ smart: { flow: 'HOT-COPY' } }, '/hot-copy/171'],
+    [{ flow: 'hot-copy' }, '/hot-copy/171?edit=1'],
+    [{ smart: { flow: 'HOT-COPY' } }, '/hot-copy/171?edit=1'],
     [{ flow: 'real-person-video' }, '/real-person-video/171'],
     [{ smart: { flow: 'REAL-PERSON-VIDEO' } }, '/real-person-video/171'],
     [{ flow: 'smart' }, '/smart/171'],
@@ -84,7 +84,7 @@ describe('resolveProjectPath', () => {
 
   it('parses nested and string draft response shapes', async () => {
     mocks.getCreativeProject.mockResolvedValue({ data: { draft_json: JSON.stringify({ flow: 'hot-copy' }) } })
-    await expect(resolveProjectPath('88', 22)).resolves.toBe('/hot-copy/88')
+    await expect(resolveProjectPath('88', 22)).resolves.toBe('/hot-copy/88?edit=1')
   })
 
   it('falls back safely for malformed JSON', async () => {

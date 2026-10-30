@@ -118,6 +118,26 @@
   font-size: 12px;
 }
 
+.expiryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.expirySelect {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #e3e7ee;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+}
+
 .error {
   margin: 10px 0 0;
   color: #d94c4c;

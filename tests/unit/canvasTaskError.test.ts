@@ -23,6 +23,14 @@ describe('humanizeCanvasTaskError', () => {
     expect(humanizeCanvasTaskError('素材角色不被支持')).toBe(ASSET_NOT_APPLICABLE)
   })
 
+  it('图生图素材超限时明确提示最多 3 张，其他操作保留后端原文', () => {
+    const message = '上传的素材数量超过该操作的上限，请减少后重试。'
+    expect(humanizeCanvasTaskError(message, { kind: 'image', operationCode: 'image.image_to_image' })).toBe(
+      '图生图最多支持 3 张参考图片，请减少图片数量后重试',
+    )
+    expect(humanizeCanvasTaskError(message, { kind: 'video', operationCode: 'video.generate' })).toBe(message)
+  })
+
   it('供应商账户/计费/接入类服务级失败改写成「换模型/联系管理员」，不甩英文原码', () => {
     // Google 图片计费缺失（PROVIDER_FAILED 10502）
     expect(humanizeCanvasTaskError('Google image billing usage is missing or inconsistent')).toBe(PROVIDER_UNAVAILABLE)

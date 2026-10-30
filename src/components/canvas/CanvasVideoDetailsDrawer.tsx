@@ -10,13 +10,13 @@ export default function CanvasVideoDetailsDrawer({
   onClose: () => void
 }) {
   const rows = [
-    ['提示词', info.prompt],
     ['模型', info.modelName],
     ['分辨率', info.mediaWidth && info.mediaHeight ? `${info.mediaWidth} × ${info.mediaHeight}` : ''],
     ['宽高比', info.ratio],
     ['时长', info.durationLabel],
     ['生成音频', typeof info.generateAudio === 'boolean' ? (info.generateAudio ? '开启' : '关闭') : ''],
     ['生成时间', info.createdAt],
+    ['提示词', info.prompt],
   ].filter(([, value]) => value)
   return (
     <Drawer

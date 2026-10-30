@@ -1,6 +1,40 @@
 import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
+for (const { platform, shortcut } of [
+  { platform: 'MacIntel', shortcut: 'Meta+z' },
+  { platform: 'Win32', shortcut: 'Control+z' },
+]) {
+  test(`${platform}：创建并选中节点后可用撤销快捷键撤销创建`, async ({ page }, testInfo) => {
+    await page.addInitScript((value) => {
+      Object.defineProperty(navigator, 'platform', { configurable: true, get: () => value })
+    }, platform)
+    const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))
+    await page.route('**/api/v1/canvases/118**', async (route) => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
+      await route.fulfill({
+        json: url.pathname.endsWith('/elements')
+          ? { elements: [], sync_revision: 1, history_floor_revision: 0, has_more: false }
+          : { id: 118, title: 'Mac undo focus', status: 'active', revision: 1 },
+      })
+    })
+    await page.goto('/canvas/118')
+    const pane = page.locator('.react-flow__pane')
+    await pane.click({ button: 'right', position: { x: 540, y: 320 } })
+    await page.locator('.canvas-context-menu').getByRole('button', { name: '文本节点' }).click()
+    await expect(page.locator('.react-flow__node')).toHaveCount(1)
+    await expect(page.locator('.react-flow__node')).toHaveClass(/selected/)
+    await expect(page.locator('.canvas-view')).not.toBeFocused()
+    await page.screenshot({ path: testInfo.outputPath(`${platform}-selected-node-before-undo.png`) })
+
+    await page.keyboard.press(shortcut)
+    await expect(page.locator('.react-flow__node')).toHaveCount(0)
+    expectNoUnexpectedApi(api)
+  })
+}
+
 test('画布快捷键遵守焦点范围并保留浏览器与 Tab 行为', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))

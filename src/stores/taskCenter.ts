@@ -34,6 +34,8 @@ export interface TaskCenterTask {
   thumbnailUrl: string
   thumbnailAssetId?: number
   operationCode: string
+  /** 本次任务实际提交的提示词；仅用于任务中心悬停预览。 */
+  prompt?: string
   startedAt: number
   updatedAt: number
   /** 后端真实任务百分比，统一规范到 0～100。 */

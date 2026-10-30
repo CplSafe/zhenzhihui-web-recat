@@ -2849,6 +2849,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       thumbnailUrl: thumbnail?.url || '',
       thumbnailAssetId: Number(thumbnail?.assetId || 0) || undefined,
       operationCode: message.operationCode || 'image.text_to_image',
+      prompt: String(message.request?.text || message.text || existing?.prompt || ''),
       startedAt: Number(message.startedAt || existing?.startedAt || Date.now()),
       updatedAt: Date.now(),
       ownerUserId: currentUserId || undefined,
@@ -5664,7 +5665,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
     const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
     if (isHotCopyDraft(draftJson)) {
-      navigate(`/hot-copy/${rid}`, { replace: true })
+      navigate(`/hot-copy/${rid}?edit=1`, { replace: true })
       return
     }
     const parsedProjectDraft = parseDraftObject(draftJson)

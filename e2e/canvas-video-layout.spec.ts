@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const viewportWidth of [1440, 1024, 820, 760, 390]) {
-  test(`视频节点双击聚焦60%、按钮全屏预览与详情抽屉 ${viewportWidth}`, async ({ page }, testInfo) => {
+  test(`视频节点双击聚焦68%、按钮全屏预览与详情抽屉 ${viewportWidth}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: viewportWidth, height: viewportWidth === 1440 ? 1000 : 640 })
     const api = await installStrictAuthenticatedApp(page)
     const errors: string[] = []
@@ -138,7 +138,7 @@ for (const viewportWidth of [1440, 1024, 820, 760, 390]) {
         const size = page.viewportSize()!
         return rect ? Math.max(rect.width / size.width, rect.height / size.height) : 0
       })
-      .toBeCloseTo(0.6, 1)
+      .toBeCloseTo(0.68, 1)
     await page.screenshot({ path: testInfo.outputPath('video-node-focused.png') })
     const initialZoom = await page
       .locator('.react-flow__viewport')
@@ -183,6 +183,14 @@ for (const viewportWidth of [1440, 1024, 820, 760, 390]) {
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('video')).toBeVisible()
     await expect(dialog.locator('aside')).toHaveCount(0)
+    const previewVideo = dialog.locator('video')
+    await expect(previewVideo).toBeFocused()
+    const initiallyPaused = await previewVideo.evaluate((video) => video.paused)
+    await page.keyboard.press('Space')
+    await expect.poll(() => previewVideo.evaluate((video) => video.paused)).toBe(!initiallyPaused)
+    await expect(dialog).toBeVisible()
+    await page.keyboard.press('Space')
+    await expect.poll(() => previewVideo.evaluate((video) => video.paused)).toBe(initiallyPaused)
     await expect.poll(() => dialog.evaluate((el) => Number(getComputedStyle(el.parentElement!).opacity))).toBe(1)
     const assertPreviewBounds = async () => {
       const bounds = await dialog.evaluate((element) => {
@@ -201,6 +209,7 @@ for (const viewportWidth of [1440, 1024, 820, 760, 390]) {
           mediaCentered: Math.abs((media.left + media.right - player.left - player.right) / 2),
           overflow: element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
           inViewport: panel.left >= 0 && panel.top >= 0 && panel.right <= innerWidth && panel.bottom <= innerHeight,
+          fillsViewport: Math.abs(panel.width - innerWidth) < 1 && Math.abs(panel.height - innerHeight) < 1,
         }
       })
       expect(bounds.contained).toBe(true)
@@ -208,6 +217,7 @@ for (const viewportWidth of [1440, 1024, 820, 760, 390]) {
       expect(bounds.mediaCentered).toBeLessThan(1)
       expect(bounds.overflow).toBe(false)
       expect(bounds.inViewport).toBe(true)
+      expect(bounds.fillsViewport).toBe(true)
       await expect(dialog.getByRole('button', { name: '收起', exact: true })).toBeInViewport()
     }
     await assertPreviewBounds()

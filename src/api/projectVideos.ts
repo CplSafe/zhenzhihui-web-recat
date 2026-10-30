@@ -31,6 +31,8 @@ export interface ProjectVideo {
   projectId: number
   workspaceId: number
   title: string
+  /** 版本级提示词（若项目草稿/版本记录有保存），供任务中心预览。 */
+  prompt?: string
   coverUrl: string
   videoUrl: string
   /** 成片素材 ID；任务中心用它在签名地址失效后重新取得播放地址。 */
@@ -525,6 +527,9 @@ function buildDerivedVideos({
         projectId: Number(project?.id || 0),
         workspaceId,
         title: label === projectTitle ? label : `${projectTitle} · ${label}`,
+        ...(pickString(item?.prompt, item?.replicatePrompt, item?.replicate_prompt)
+          ? { prompt: pickString(item?.prompt, item?.replicatePrompt, item?.replicate_prompt) }
+          : {}),
         coverUrl,
         videoUrl,
         videoAssetId,

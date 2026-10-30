@@ -70,6 +70,7 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [expiryDays, setExpiryDays] = useState('7')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -96,7 +97,8 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     setBusy(true)
     setError('')
     try {
-      const next = await createCanvasShare({ workspaceId, canvasId })
+      const expiresAt = expiryDays ? new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000).toISOString() : ''
+      const next = await createCanvasShare({ workspaceId, canvasId, expiresAt })
       setShare(next)
       onToast?.(hasShare ? '已重新生成链接，原链接失效' : '分享已开启', 'success')
     } catch (err) {
@@ -162,6 +164,24 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
         ) : share ? (
           <p className={styles.meta}>这块画布还没有分享链接。</p>
         ) : null}
+
+        {!loading && share && !hasShare && (
+          <label className={styles.expiryRow}>
+            <span>链接有效期</span>
+            <select
+              aria-label="分享链接有效期"
+              className={styles.expirySelect}
+              value={expiryDays}
+              onChange={(event) => setExpiryDays(event.target.value)}
+              disabled={busy}
+            >
+              <option value="1">1 天</option>
+              <option value="7">7 天（默认）</option>
+              <option value="30">30 天</option>
+              <option value="">长期有效</option>
+            </select>
+          </label>
+        )}
 
         {error && <p className={styles.error}>{error}</p>}
 
