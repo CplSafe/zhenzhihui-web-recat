@@ -1060,6 +1060,8 @@ const MAX_WHEEL_ZOOM_RATIO = 1.12
 /** 自定义画布节点 */
 function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const canvasZoom = useStore((state) => state.transform[2])
+  const selectedNodeCount = useStore((state) => state.nodes.reduce((count, node) => count + Number(node.selected), 0))
+  const isBoxSelecting = useStore((state) => state.userSelectionActive)
   const [nodeHovered, setNodeHovered] = useState(false)
   const [leftHovered, setLeftHovered] = useState(false)
   const [rightHovered, setRightHovered] = useState(false)
@@ -1337,7 +1339,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   useEffect(() => {
     const v = videoRef.current
     if (!v || !videoUrl || videoPreviewOpen) return
-    if (!selected) {
+    if (!selected || selectedNodeCount > 1 || isBoxSelecting) {
       if (selectionAutoPlayedRef.current) {
         selectionAutoPlayedRef.current = false
         v.pause()
@@ -1380,7 +1382,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )
       },
     )
-  }, [selected, videoPreviewOpen, videoUrl])
+  }, [isBoxSelecting, selected, selectedNodeCount, videoPreviewOpen, videoUrl])
   const enableSelectionSound = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
     const v = videoRef.current
@@ -8255,6 +8257,10 @@ function CanvasInner() {
    */
   const handleSelectionChange = useCallback(
     ({ nodes: picked }: { nodes: Node[] }) => {
+      // Stop every video synchronously when selection becomes multi-node, before queued play() promises settle.
+      if (picked.length > 1) {
+        document.querySelectorAll<HTMLVideoElement>('.canvas-node-video-wrap video').forEach((video) => video.pause())
+      }
       if (!picked.length) {
         setSelectedNodeIds([])
         return
