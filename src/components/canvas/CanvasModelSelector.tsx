@@ -116,6 +116,7 @@ export default function CanvasModelSelector({
   disabled,
   emptyLabel,
   onChange,
+  onOpen,
 }: {
   models: GenerationModelOption[]
   durationLabel: (model: GenerationModelOption) => string
@@ -126,6 +127,8 @@ export default function CanvasModelSelector({
   /** 没有可用模型时的说明，用于区分「目录还没加载出来」和「这个操作没有可用模型」。 */
   emptyLabel?: string
   onChange?: (modelVersionId: number) => void
+  /** 打开模型菜单时通知同级新手提示收起，避免提示层遮挡模型选项。 */
+  onOpen?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -142,6 +145,10 @@ export default function CanvasModelSelector({
     clearHoverTimers()
     setInspected(null)
     setOpen(false)
+  }
+  const openMenu = () => {
+    onOpen?.()
+    setOpen(true)
   }
   const inspect = (id: number) => {
     // 悬停时立即展开模型说明；延迟会让菜单显得迟钝。
@@ -176,7 +183,7 @@ export default function CanvasModelSelector({
     if (!canOpen || open) return
     if (hoverOpenTimerRef.current !== null) window.clearTimeout(hoverOpenTimerRef.current)
     hoverOpenTimerRef.current = window.setTimeout(() => {
-      setOpen(true)
+      openMenu()
       hoverOpenTimerRef.current = null
     }, 160)
   }
@@ -205,14 +212,14 @@ export default function CanvasModelSelector({
           if (!canOpen) return
           clearHoverTimers()
           if (open) close()
-          else setOpen(true)
+          else openMenu()
         }}
         aria-expanded={open && canOpen}
         onKeyDown={(event) => {
           if (event.key === 'Escape') setOpen(false)
           if (canOpen && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
             event.preventDefault()
-            setOpen(true)
+            openMenu()
             requestAnimationFrame(() =>
               document
                 .querySelector<HTMLElement>(

@@ -21,6 +21,27 @@ export function validateCanvasGenerationPrompt(kind: string | undefined, prompt:
   return null
 }
 
+/** Responses 多模态分镜只接收图片上下文；视频须先截帧转成图片再接入。 */
+export function validateCanvasTextInputs(args: {
+  sourceRefs: CanvasGenerationSourceRef[]
+  /** 仅使用模型目录明确声明的图片上限；未声明时不臆造数量限制。 */
+  maxImageRefs?: number
+}): string | null {
+  const refs = args.sourceRefs || []
+  if (refs.some((ref) => ref.kind === 'video' || ref.kind === 'timeline')) {
+    return '文本/分镜节点暂不支持视频输入。请移除视频连线，或先从视频截取画面并连接图片节点；图片参考可以保留。'
+  }
+  if (refs.some((ref) => ref.kind === 'audio')) {
+    return '文本/分镜节点暂不支持音频输入，请移除音频连线。'
+  }
+  const imageCount = refs.filter((ref) => ref.kind === 'image').length
+  const maxImageRefs = Math.floor(Number(args.maxImageRefs) || 0)
+  if (maxImageRefs > 0 && imageCount > maxImageRefs) {
+    return `当前分镜模型最多支持 ${maxImageRefs} 张参考图片，请移除多余图片连线或切换模型。`
+  }
+  return null
+}
+
 export type CanvasAssetSource = 'canvas' | 'upload' | 'materials' | 'generated' | 'real_person' | 'unknown'
 
 export function normalizeCanvasAssetSource(value: unknown): CanvasAssetSource {

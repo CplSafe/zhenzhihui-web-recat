@@ -35,6 +35,7 @@ import {
   isCanvasVideoSourceKind,
   validateCanvasGenerationPrompt,
   validateCanvasImageInputs,
+  validateCanvasTextInputs,
   validateCanvasVideoInputs,
   type CanvasInputAsset,
   type CanvasAssetSource,
@@ -542,6 +543,8 @@ export interface CanvasNodeInfo {
 
 interface CanvasNodePanelProps {
   node: CanvasNodeInfo | null
+  /** Number of direct incoming media wires. Unlike sourceRefs, this deliberately counts repeated asset IDs. */
+  mediaConnectionCounts?: { images: number; videos: number }
   /** 工作空间 ID：预估费用 / 提交生成需要 */
   workspaceId: number
   /** 从画布上点选一个已有节点作为参考。slotIndex 标识槽位：0=首帧, 1=尾帧(视频)；其他节点按顺序 */
@@ -647,6 +650,7 @@ function RefAddButton({
   onPickFromLibrary,
   onPickRealPerson,
   hintUserId,
+  hintDismissed,
 }: {
   disabled?: boolean
   title: string
@@ -654,6 +658,7 @@ function RefAddButton({
   onPickFromLibrary?: () => void
   onPickRealPerson?: () => void
   hintUserId?: string | number
+  hintDismissed?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const userId = String(hintUserId || '')
@@ -668,7 +673,7 @@ function RefAddButton({
   }, [hintEligible, disabled, userId])
   const wrapRef = useRef<HTMLSpanElement>(null)
   const hintRef = useRef<HTMLButtonElement>(null)
-  const showHint = Boolean(hintOwner === userId && userId && onPickRealPerson && !disabled && !open)
+  const showHint = Boolean(hintOwner === userId && userId && onPickRealPerson && !disabled && !open && !hintDismissed)
 
   useEffect(() => {
     if (!showHint) return
@@ -822,6 +827,7 @@ const readPromptHistory = (nodeId?: string): string[] => (nodeId && promptHistor
 
 export default function CanvasNodePanel({
   node,
+  mediaConnectionCounts,
   workspaceId,
   currentUserId,
   onStartPickRef,
@@ -849,6 +855,7 @@ export default function CanvasNodePanel({
   onPolishText,
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
+  const [realPersonHintDismissed, setRealPersonHintDismissed] = useState(false)
   const taskRunning = [
     'submitting',
     'queued',
@@ -885,6 +892,10 @@ export default function CanvasNodePanel({
   // 提示词放大：多提示词短剧的文案很长，默认输入框最高 220px 不够写（反馈 #5）。
   const [promptExpanded, setPromptExpanded] = useState(false)
   const [checkingAssets, setCheckingAssets] = useState(false)
+
+  useEffect(() => {
+    setRealPersonHintDismissed(false)
+  }, [node?.id])
 
   // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
   // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
@@ -1716,6 +1727,12 @@ export default function CanvasNodePanel({
     if (kind === 'image') {
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
+    if (kind === 'text') {
+      const imageRole = getModelInputConstraints(selectedModel?.source, operationCode).roles.find((role) =>
+        ['image', 'reference_image'].includes(role.role),
+      )
+      return validateCanvasTextInputs({ sourceRefs, maxImageRefs: imageRole?.maxCount })
+    }
     if (kind === 'video') {
       if (audioVideoDurationError) return audioVideoDurationError
       return validateCanvasVideoInputs({
@@ -1934,6 +1951,12 @@ export default function CanvasNodePanel({
     <div className={styles.panel} data-canvas-node-panel>
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
+        {(kind === 'image' || kind === 'video') && (
+          <div className={styles.inputLimitHint} role="status">
+            图片参考线 {mediaConnectionCounts?.images ?? 0}/{maxRefs}
+            {kind === 'video' && ` · 源视频线 ${mediaConnectionCounts?.videos ?? 0}/1`}
+          </div>
+        )}
         {catalogOperationState &&
           (modelsLoading || ['error', 'empty', 'configuration-error'].includes(catalogOperationState.status)) && (
             <div className={styles.catalogNotice} role={catalogOperationState.status === 'error' ? 'alert' : 'status'}>
@@ -2000,6 +2023,7 @@ export default function CanvasNodePanel({
                     ) : (
                       <RefAddButton
                         hintUserId={currentUserId}
+                        hintDismissed={realPersonHintDismissed}
                         disabled={taskRunning}
                         title={taskRunning ? '生成中不可修改素材' : title}
                         onPickFromCanvas={() => onStartPickRef?.(slot)}
@@ -2055,6 +2079,7 @@ export default function CanvasNodePanel({
             {mediaRefCount < maxRefs && (
               <RefAddButton
                 hintUserId={currentUserId}
+                hintDismissed={realPersonHintDismissed}
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
                 onPickRealPerson={
@@ -2116,6 +2141,7 @@ export default function CanvasNodePanel({
             {mediaRefCount < maxRefs && (
               <RefAddButton
                 hintUserId={currentUserId}
+                hintDismissed={realPersonHintDismissed}
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
                 onPickFromCanvas={() => onStartPickRef?.(sourceRefs.length)}
@@ -2126,6 +2152,7 @@ export default function CanvasNodePanel({
         ) : (
           <RefAddButton
             hintUserId={currentUserId}
+            hintDismissed={realPersonHintDismissed}
             disabled={taskRunning}
             title={taskRunning ? '生成中不可修改素材' : '添加参考'}
             onPickFromCanvas={() => onStartPickRef?.(0)}
@@ -2535,6 +2562,7 @@ export default function CanvasNodePanel({
               value={selectedModel?.modelVersionId}
               loading={modelsLoading}
               disabled={taskRunning}
+              onOpen={() => setRealPersonHintDismissed(true)}
               // 缺模型时要说清缺的是哪一种能力：接了参考图走图生图、没接走文生图，
               // 两者在后端是不同的 operation_code，可用性也各自独立。
               // 只说一句「暂无可用模型」，用户会以为是素材或连线出了问题。

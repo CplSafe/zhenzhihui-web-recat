@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 760]) {
-  test(`生成结果节点标题不显示绿对钩 ${width}`, async ({ page }) => {
+  test(`生成结果节点标题不显示绿对钩 ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     const api = await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/assets/701/stream**', (route) =>
@@ -51,6 +51,30 @@ for (const width of [1440, 760]) {
     await expect(page.locator('.canvas-node-header__done')).toHaveCount(0)
     await page.locator('.react-flow__node').first().click()
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+    const toolbar = page.getByRole('toolbar', { name: '节点操作', exact: true })
+    const panel = page.locator('.canvas-panel-area')
+    await expect(toolbar).toBeVisible()
+    await expect(panel).toHaveCSS('visibility', 'visible')
+
+    // 平移画布，使选中节点完全离开可视区；关联工具栏和面板应随之隐藏。
+    const paneBounds = await page.locator('.react-flow').boundingBox()
+    if (!paneBounds) throw new Error('画布缺少可视区域')
+    const dragY = paneBounds.y + paneBounds.height * 0.75
+    await page.mouse.move(paneBounds.x + paneBounds.width - 24, dragY)
+    await page.mouse.down({ button: 'middle' })
+    await page.mouse.move(paneBounds.x + 8, dragY, { steps: 10 })
+    await page.mouse.up({ button: 'middle' })
+    await expect(toolbar).toHaveCount(0)
+    await expect(panel).toHaveCSS('visibility', 'hidden')
+    await page.screenshot({ path: testInfo.outputPath('selected-node-offscreen-controls-hidden.png') })
+
+    // 把视口平移回来，确认两组控件可以恢复。
+    await page.mouse.move(paneBounds.x + 8, dragY)
+    await page.mouse.down({ button: 'middle' })
+    await page.mouse.move(paneBounds.x + paneBounds.width - 24, dragY, { steps: 10 })
+    await page.mouse.up({ button: 'middle' })
+    await expect(toolbar).toBeVisible()
+    await expect(panel).toHaveCSS('visibility', 'visible')
     expect(api.paidTaskSubmissions).toBe(0)
     expectNoUnexpectedApi(api)
   })

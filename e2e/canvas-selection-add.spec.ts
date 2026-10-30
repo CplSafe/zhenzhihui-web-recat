@@ -198,10 +198,13 @@ test('分组多选整批校验，混合类型禁止丢弃来源', async ({ page 
   await expect(menu).toContainText('脚本生成尚未开放')
   await expect(menu.getByRole('button', { name: /^智能剪辑/ })).toBeDisabled()
   await page.screenshot({ path: testInfo.outputPath('selection-limits.png') })
-  await menu.getByRole('button', { name: /^文本生成/ }).click()
-  await expect(page.locator('.react-flow__node')).toHaveCount(4)
-  await expect(page.locator('.react-flow__edge')).toHaveCount(3)
-  for (let i = 0; i < 3; i++) await expect(page.locator(`.react-flow__edge[data-id*="source-${i}"]`)).toHaveCount(1)
+  const textCreation = menu.getByRole('button', { name: /^文本生成/ })
+  await expect(textCreation).toBeDisabled()
+  await expect(textCreation).toContainText('不支持视频输入')
+  await expect(textCreation).toContainText('请移除视频节点')
+  // 所选集合中包含视频时，不能创建部分引用的文本节点。
+  await expect(page.locator('.react-flow__node')).toHaveCount(3)
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })
@@ -312,6 +315,86 @@ test('多选菜单等待生成中的来源，完成后完整连接且不重提�
   expect(taskWrites).toBe(0)
   expect(api.paidTaskSubmissions).toBe(0)
   expect(errors).toEqual([])
+  expectNoUnexpectedApi(api)
+})
+
+test('相同素材 ID 也按已占用参考线名额拦截超限连接', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  let revision = 1
+  const elements: CanvasElementMutation[] = [
+    ...Array.from({ length: 6 }, (_, index) => ({
+      element_id: `image-${index}`,
+      kind: 'node',
+      op: 'upsert' as const,
+      payload: {
+        id: `image-${index}`,
+        type: 'image',
+        position: { x: 100, y: index < 5 ? 100 + index * 44 : 430 },
+        style: { width: 220, height: 220 },
+        data: {
+          kind: 'image',
+          title: `图片${index + 1}`,
+          assetId: 701,
+          resultUrl: '/fixture/same-image.png',
+        },
+      },
+    })),
+    ...Array.from({ length: 5 }, (_, index) => ({
+      element_id: `image-${index}-target-video`,
+      kind: 'edge',
+      op: 'upsert' as const,
+      payload: {
+        id: `image-${index}-target-video`,
+        source: `image-${index}`,
+        target: 'target-video',
+        sourceHandle: `image-${index}-right-source`,
+        targetHandle: 'target-video-left-target',
+        data: { slotIndex: index },
+      },
+    })),
+    {
+      element_id: 'target-video',
+      kind: 'node',
+      op: 'upsert',
+      payload: {
+        id: 'target-video',
+        type: 'video',
+        position: { x: 1000, y: 480 },
+        style: { width: 300, height: 200 },
+        data: { kind: 'video', title: '目标视频' },
+      },
+    },
+  ]
+  await page.route('**/api/v1/canvases/131**', async (route) => {
+    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: ++revision } })
+    const url = new URL(route.request().url())
+    return route.fulfill({
+      json: url.pathname.endsWith('/elements')
+        ? {
+            elements: Number(url.searchParams.get('after_revision')) > 0 ? [] : elements,
+            sync_revision: revision,
+            history_floor_revision: 0,
+            has_more: false,
+          }
+        : { id: 131, title: '参考线数量上限', status: 'active', revision },
+    })
+  })
+
+  await page.goto('/canvas/131')
+  await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('50')
+  const sourceNode = page.locator('.react-flow__node[data-id="image-5"]')
+  const sourceHandle = sourceNode.locator('.canvas-handle-icon--right')
+  await sourceNode.hover()
+  await expect(sourceHandle).toBeVisible()
+  await sourceHandle.dragTo(page.locator('.react-flow__node[data-id="target-video"]'))
+  await expect(page.getByText(/最多连接 5 条图片参考线/)).toBeVisible()
+  await expect(page.locator('.react-flow__edge')).toHaveCount(5)
+  await page.locator('.react-flow__node[data-id="target-video"]').click()
+  await expect(page.locator('[role="status"]').filter({ hasText: '图片参考线 5/5' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('reference-connections-capped.png') })
+  expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })
 

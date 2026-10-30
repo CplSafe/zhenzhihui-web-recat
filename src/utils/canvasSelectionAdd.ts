@@ -7,7 +7,8 @@
 export type CanvasSelectionAddTarget = 'text' | 'image' | 'video' | 'timeline' | 'audio' | 'audio-editor' | 'script'
 
 const SELECTION_ADD_SOURCE_KINDS: Record<CanvasSelectionAddTarget, readonly string[]> = {
-  text: ['text', 'image', 'video', 'timeline'],
+  // 分镜文本可汇总文字和图片上下文，但不接收视频/时间线输入。
+  text: ['text', 'image'],
   image: ['text', 'image'],
   // B7：音频仅作为视频生成的独立输入支持，不在多选「+」矩阵内开放。
   video: ['text', 'image', 'video', 'timeline'],

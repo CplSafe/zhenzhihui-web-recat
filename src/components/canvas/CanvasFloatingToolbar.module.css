@@ -28,6 +28,11 @@
   will-change: opacity, transform;
 }
 
+/* 添加菜单展开时提升到画布浮动菜单层级，避免被选中面板和节点控件遮挡。 */
+.toolbarMenuOpen {
+  z-index: 1450;
+}
+
 /* 抽屉打开前：工具栏向左收起并淡出 */
 .toolbarLeaving {
   animation: toolbar-leave 0.22s ease-in forwards;
@@ -122,11 +127,18 @@
   box-shadow: 0 2px 8px rgb(31 207 169 / 32%);
 }
 
-/* 「新建」主按钮按 Figma 设计稿保持黑底白字；展开菜单的激活态走上面的绿色 toolBtnActive */
+/* 闭合时主按钮保持黑底白字；菜单展开时加号使用与其他激活工具一致的薄荷绿。 */
 .addBtnWrap:first-child .toolBtn {
   border-radius: 50%;
   background: #333;
   color: #fff;
+}
+
+.addBtnWrap:first-child .toolBtnActive,
+.addBtnWrap:first-child .toolBtnActive:hover {
+  background: #1fcfa9;
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(31 207 169 / 32%);
 }
 
 .toolLabel {
@@ -168,7 +180,8 @@
 .addMenu {
   position: absolute;
   left: 0;
-  bottom: 0;
+  /* 菜单底边贴住底部导航栏上沿，列表完整向上展开。 */
+  bottom: calc(100% + 8px);
   box-sizing: border-box;
   background: #fff;
   border: 1px solid rgba(15, 23, 42, 0.1);
@@ -183,35 +196,6 @@
   z-index: 20;
   scrollbar-width: thin;
   scrollbar-color: #cfd6d3 transparent;
-}
-
-.addMenuHeader {
-  display: flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 5px 7px 8px;
-  color: #26342f;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.addMenuHeader button {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: #737f7a;
-  cursor: pointer;
-}
-
-.addMenuHeader button:hover {
-  background: #f1f5f3;
-  color: #24332d;
 }
 
 /*

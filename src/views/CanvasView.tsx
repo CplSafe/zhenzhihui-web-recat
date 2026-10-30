@@ -250,6 +250,7 @@ import {
   inferCanvasConnectionRole,
   validateCanvasGenerationPrompt,
   validateCanvasImageInputs,
+  validateCanvasTextInputs,
   validateCanvasVideoInputs,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
@@ -322,6 +323,7 @@ import {
   diffCanvasMutations,
   elementsToGraph,
   collectCanvasSourceRefs,
+  isCanvasProvenanceEdge,
   wouldCreateCanvasCycle,
   type ComparableNode,
   type ComparableEdge,
@@ -879,7 +881,7 @@ const allowedSourceKinds: Record<string, string[]> = {
   // 文本连到视频后作为提示词拼接；图片/视频/时间线作为生成素材。
   video: ['text', 'image', 'video', 'timeline', 'audio'],
   image: ['text', 'image'],
-  text: ['text', 'image', 'video', 'timeline'],
+  text: ['text', 'image'],
   // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
   timeline: ['video', 'timeline', 'audio'],
   audio: ['text', 'audio'],
@@ -2232,7 +2234,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 ? '配音合成失败'
                 : data.operationCode === 'video.upscale'
                   ? '上次超分失败'
-                  : '上次生成失败'
+                  : '生成失败'
           }
           failedAt={
             connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
@@ -2840,6 +2842,24 @@ function CanvasInner() {
     return { left, top, width: width * tz, height: height * tz, bottom: top + height * tz }
   }, [selectedNode, nodes, transform])
 
+  const selectedNodeVisible = useMemo(() => {
+    if (!selectedNodeScreenRect) return false
+    const viewport = canvasRootRef.current?.querySelector('.react-flow')?.getBoundingClientRect()
+    if (!viewport) return false
+    const viewportRight = viewport.left + (canvasViewportWidth || viewport.width)
+    const viewportBottom = viewport.top + (canvasViewportHeight || viewport.height)
+    return (
+      selectedNodeScreenRect.left < viewportRight &&
+      selectedNodeScreenRect.left + selectedNodeScreenRect.width > viewport.left &&
+      selectedNodeScreenRect.top < viewportBottom &&
+      selectedNodeScreenRect.bottom > viewport.top
+    )
+  }, [selectedNodeScreenRect, canvasViewportWidth, canvasViewportHeight])
+
+  useEffect(() => {
+    panelRef.current?.toggleAttribute('inert', !selectedNodeVisible)
+  }, [selectedNodeVisible])
+
   const imageToolAnchor =
     imageTool && selectedNode?.id === imageTool.source.nodeId && selectedNodeScreenRect
       ? {
@@ -2878,7 +2898,7 @@ function CanvasInner() {
   }, [imageTool, imageToolHeight, transform, setViewport])
 
   const panelAnchor = useMemo(() => {
-    if (!selectedNodeScreenRect) return null
+    if (!selectedNodeScreenRect || !selectedNodeVisible) return null
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
     const bottomY = selectedNodeScreenRect.bottom
     const isVideoUpscale = selectedNode?.operationCode === 'video.upscale'
@@ -2899,7 +2919,7 @@ function CanvasInner() {
       top: below,
     }
     // 面板固定显示在节点下方，不为避开其它节点横向偏移。
-  }, [selectedNodeScreenRect, selectedNode?.operationCode, panelSize.width, canvasViewportWidth])
+  }, [selectedNodeScreenRect, selectedNodeVisible, selectedNode?.operationCode, panelSize.width, canvasViewportWidth])
 
   /**
    * 单选工具条的位置：贴在节点上方。
@@ -2909,7 +2929,7 @@ function CanvasInner() {
    * 两端做夹取，节点被拖到视口外时工具条仍留在屏幕内。
    */
   const nodeToolbarAnchor = useMemo(() => {
-    if (!selectedNodeScreenRect || selectedNodeIds.length > 1) return null
+    if (!selectedNodeScreenRect || !selectedNodeVisible || selectedNodeIds.length > 1) return null
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
     const topY = selectedNodeScreenRect.top
     // 让开节点上方的标题行，否则工具条会压住刚做好的名称
@@ -2920,7 +2940,7 @@ function CanvasInner() {
       centerX: Math.min(Math.max(centerX, 150), Math.max(150, viewportWidth - 150)),
       bottom: Math.min(Math.max(viewportHeight - topY + gap, 16), Math.max(16, viewportHeight - 72)),
     }
-  }, [selectedNodeScreenRect, selectedNodeIds.length, canvasViewportWidth, canvasViewportHeight])
+  }, [selectedNodeScreenRect, selectedNodeVisible, selectedNodeIds.length, canvasViewportWidth, canvasViewportHeight])
 
   // 详情面板与工具条按选中节点当前屏幕位置定位，画布平移或节点移动后持续跟随。
 
@@ -3166,6 +3186,24 @@ function CanvasInner() {
     )
   }, [])
 
+  /** Count incoming media connections as slots, even when multiple nodes point to the same asset ID. */
+  const countIncomingMediaConnections = useCallback(
+    (
+      targetId: string,
+      kind: 'image' | 'video',
+      additionalEdges: Array<Pick<Edge, 'source' | 'target' | 'data'>> = [],
+    ) => {
+      const nodesById = new Map(latestRef.current.nodes.map((node) => [node.id, node]))
+      return [...latestRef.current.edges, ...additionalEdges].filter((edge) => {
+        if (edge.target !== targetId || isCanvasProvenanceEdge(edge)) return false
+        const source = nodesById.get(edge.source)
+        const sourceKind = String(source?.data?.kind || source?.type || '')
+        return kind === 'image' ? sourceKind === 'image' : sourceKind === 'video' || sourceKind === 'timeline'
+      }).length
+    },
+    [],
+  )
+
   /**
    * 目标节点还能再接几个素材参考（多选的上限）。
    * 图片/视频节点按参考图名额算；视频节点另有一个源视频名额，还空着时一并计入。
@@ -3176,24 +3214,38 @@ function CanvasInner() {
       if (!targetNode) return 0
       const targetKind = (targetNode.data?.kind as string) || 'text'
       const refs = collectCanvasSourceRefs(targetId, latestRef.current.nodes, latestRef.current.edges)
-      const imageCount = refs.filter((ref) => ref.kind === 'image').length
-      const videoCount = refs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
+      const imageCount = Math.max(
+        refs.filter((ref) => ref.kind === 'image').length,
+        countIncomingMediaConnections(targetId, 'image'),
+      )
+      const videoCount = Math.max(
+        refs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length,
+        countIncomingMediaConnections(targetId, 'video'),
+      )
       const limit = resolveTargetRefLimit(targetNode)
       if (targetKind === 'timeline') return Math.max(0, limit - videoCount)
       if (targetKind !== 'image' && targetKind !== 'video') return 0
       const videoRoom = targetKind === 'video' && videoCount === 0 ? 1 : 0
       return Math.max(0, limit - imageCount) + videoRoom
     },
-    [resolveTargetRefLimit],
+    [countIncomingMediaConnections, resolveTargetRefLimit],
   )
 
   const validateConnection = useCallback(
-    (sourceId: string, targetId: string): string | null => {
-      if (hasEdgeBetween(sourceId, targetId)) return DUPLICATE_EDGE_MESSAGE
-      if (wouldCreateCanvasCycle(sourceId, targetId, latestRef.current.edges)) return '不能创建循环依赖连线'
+    (sourceId: string, targetId: string, additionalEdges: Edge[] = []): string | null => {
+      if (
+        hasEdgeBetween(sourceId, targetId) ||
+        additionalEdges.some((edge) => edge.source === sourceId && edge.target === targetId)
+      )
+        return DUPLICATE_EDGE_MESSAGE
+      const currentEdges = [...latestRef.current.edges, ...additionalEdges]
+      if (wouldCreateCanvasCycle(sourceId, targetId, currentEdges)) return '不能创建循环依赖连线'
       const targetNode = latestRef.current.nodes.find((n) => n.id === targetId)
       const targetKind = (targetNode?.data?.kind as string) || 'text'
       const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
+      if (targetKind === 'text' && (sourceKind === 'video' || sourceKind === 'timeline')) {
+        return '文本/分镜节点暂不支持视频输入。请先从视频截取画面并连接图片节点。'
+      }
       if (targetNode?.data?.audioRole === 'editor') {
         if (sourceKind !== 'audio') return '音频编辑节点只能连接音频来源'
         if (latestRef.current.edges.some((edge) => edge.target === targetId)) return '音频编辑节点只能连接一个音频来源'
@@ -3202,13 +3254,13 @@ function CanvasInner() {
       if (!allowed.includes(sourceKind)) return '该节点类型不能作为此节点的参考来源'
       // 数量上限只统计素材类来源（图片/视频）；文本来源不计入（其内容拼入 prompt，可无限连接）。
       // 血缘边（截帧图 ← 源视频）同样不计入：它不参与生成，占掉参考名额纯属误伤
-      const existingSlots = latestRef.current.edges
+      const existingSlots = currentEdges
         .filter((edge) => edge.target === targetId)
         .map((edge) => Number(edge.data?.slotIndex || 0))
       let prospectiveSlot = 0
       while (existingSlots.includes(prospectiveSlot)) prospectiveSlot += 1
       const prospectiveRefs = collectCanvasSourceRefs(targetId, latestRef.current.nodes, [
-        ...latestRef.current.edges,
+        ...currentEdges,
         {
           id: `prospective-${sourceId}-${targetId}`,
           source: sourceId,
@@ -3223,20 +3275,26 @@ function CanvasInner() {
       if (foreignRef) return '参考素材属于其他团队，请从当前团队素材库重新选择'
       const imageRefCount = prospectiveRefs.filter((ref) => ref.kind === 'image').length
       const videoRefCount = prospectiveRefs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
+      const sourceNode = latestRef.current.nodes.find((node) => node.id === sourceId)
+      const sourceIsImage = String(sourceNode?.data?.kind || sourceNode?.type || '') === 'image'
+      const sourceIsVideo = ['video', 'timeline'].includes(String(sourceNode?.data?.kind || sourceNode?.type || ''))
+      const directImageCount = countIncomingMediaConnections(targetId, 'image', additionalEdges) + Number(sourceIsImage)
+      const directVideoCount = countIncomingMediaConnections(targetId, 'video', additionalEdges) + Number(sourceIsVideo)
       // 上限跟随目标节点所选模型声明的参考图数量，与 CanvasNodePanel 的槽位数保持同一来源——
       // 两边算法不一致会出现「面板给了 9 个槽，连第 6 根线却被拦下」这种自相矛盾的状态。
       const maxRefs = resolveTargetRefLimit(targetNode)
-      if ((targetKind === 'image' || targetKind === 'video') && imageRefCount > maxRefs) {
-        return `当前模型最多支持 ${maxRefs} 张参考图片`
+      if ((targetKind === 'image' || targetKind === 'video') && Math.max(imageRefCount, directImageCount) > maxRefs) {
+        return `当前模型最多连接 ${maxRefs} 条图片参考线（最多 ${maxRefs} 张参考图片）`
       }
-      if (targetKind === 'video' && videoRefCount > 1) {
+      if (targetKind === 'video' && Math.max(videoRefCount, directVideoCount) > 1) {
         return '视频生成只能连接一条源视频；多条视频请先汇入视频剪辑节点合成'
       }
-      if (targetKind === 'timeline' && videoRefCount > maxRefs) return `时间线最多支持 ${maxRefs} 个视频片段`
+      if (targetKind === 'timeline' && Math.max(videoRefCount, directVideoCount) > maxRefs)
+        return `时间线最多连接 ${maxRefs} 条视频参考线`
       return null
     },
     // allowedSourceKinds 现在真的是模块常量，不必再进依赖数组，也不再需要 exhaustive-deps 豁免
-    [hasEdgeBetween, workspaceId, resolveTargetRefLimit],
+    [hasEdgeBetween, workspaceId, resolveTargetRefLimit, countIncomingMediaConnections],
   )
 
   useEffect(() => {
@@ -3948,7 +4006,7 @@ function CanvasInner() {
         if (target.data?.audioRole === 'editor' && created.length) break
         // validateConnection 只看已落地的连线；同一批里前面刚连上的用 created 补上重复判断
         if (created.some((edge) => edge.source === sourceId)) continue
-        if (validateConnection(sourceId, targetId)) continue
+        if (validateConnection(sourceId, targetId, created)) continue
         let slotIndex = 0
         while (usedSlots.has(slotIndex)) slotIndex++
         usedSlots.add(slotIndex)
@@ -3982,7 +4040,25 @@ function CanvasInner() {
   const confirmBatchConnection = useCallback(
     async (sourceIds: string[], targetId: string): Promise<boolean> => {
       if (sourceIds.length < 2) return true
-      const eligible = sourceIds.filter((sourceId) => !validateConnection(sourceId, targetId))
+      const plannedEdges: Edge[] = []
+      const eligible: string[] = []
+      for (const sourceId of sourceIds) {
+        if (validateConnection(sourceId, targetId, plannedEdges)) continue
+        eligible.push(sourceId)
+        const usedSlots = new Set(
+          [...latestRef.current.edges, ...plannedEdges]
+            .filter((edge) => edge.target === targetId)
+            .map((edge) => Number(edge.data?.slotIndex ?? 0)),
+        )
+        let slotIndex = 0
+        while (usedSlots.has(slotIndex)) slotIndex += 1
+        plannedEdges.push({
+          id: `planned-${sourceId}-${targetId}`,
+          source: sourceId,
+          target: targetId,
+          data: { slotIndex },
+        } as Edge)
+      }
       const skipped = sourceIds.length - eligible.length
       if (!eligible.length) return true
       return Boolean(
@@ -4238,6 +4314,12 @@ function CanvasInner() {
         return { sources, reason: '部分所选节点已删除或隐藏，请重新选择' }
       if (type === 'script') return { sources, reason: '脚本生成尚未开放，请使用文本生成' }
       const sourceKinds = sources.map((node) => String(node.data?.kind || node.type || 'text'))
+      if (type === 'text' && sourceKinds.some((kind) => kind === 'video' || kind === 'timeline')) {
+        return {
+          sources,
+          reason: '文本/分镜节点只接收文字和图片，不支持视频输入。请移除视频节点，或先截取画面后作为图片连接。',
+        }
+      }
       if (!isCanvasSelectionAddAllowed(type, sourceKinds)) {
         const unsupported = getCanvasSelectionAddUnsupportedSources(type, sourceKinds)
         if (!unsupported.length) {
@@ -5194,10 +5276,24 @@ function CanvasInner() {
       // 真人素材也可以暂存到图片节点中作为展示/中转素材；图片节点自身的
       // 生成会由 CanvasNodePanel 拦截，只有连接到视频节点后才可用于生成视频。
       const existingRefs = collectCanvasSourceRefs(pending.targetId, latestRef.current.nodes, latestRef.current.edges)
-      let imageRoom = Math.max(0, resolveTargetRefLimit(target) - existingRefs.filter((r) => r.kind === 'image').length)
+      let imageRoom = Math.max(
+        0,
+        resolveTargetRefLimit(target) -
+          Math.max(
+            existingRefs.filter((r) => r.kind === 'image').length,
+            countIncomingMediaConnections(pending.targetId, 'image'),
+          ),
+      )
       let videoRoom =
         targetKind === 'video'
-          ? Math.max(0, 1 - existingRefs.filter((r) => r.kind === 'video' || r.kind === 'timeline').length)
+          ? Math.max(
+              0,
+              1 -
+                Math.max(
+                  existingRefs.filter((r) => r.kind === 'video' || r.kind === 'timeline').length,
+                  countIncomingMediaConnections(pending.targetId, 'video'),
+                ),
+            )
           : Number.POSITIVE_INFINITY
       const accepted: Array<{ material: (typeof materials)[number]; sourceKind: string }> = []
       let rejectedKind = 0
@@ -5349,6 +5445,7 @@ function CanvasInner() {
       setSaveStatus,
       getSourceRefs,
       resolveTargetRefLimit,
+      countIncomingMediaConnections,
     ],
   )
 
@@ -6122,6 +6219,9 @@ function CanvasInner() {
     null,
   )
   const pendingNodeSubmissionsRef = useRef(new Set<string>())
+  // 同步占位必须早于素材预检、授权检查和请求指纹等异步操作，防止快速双击并发穿透。
+  // 与 pendingNodeSubmissionsRef 分开，避免原有的“本次提交已占用”校验把自己的锁误判为重复。
+  const submissionClaimsRef = useRef(new Set<string>())
   const pendingVideoUpscaleModelsRef = useRef(new Set<number>())
   const submitNodeGeneration = useCallback(
     async (
@@ -6131,434 +6231,486 @@ function CanvasInner() {
       resume?: { idempotencyKey: string },
     ) => {
       if (!generate || !latestRef.current.nodes.some((node) => node.id === targetNodeId)) return
-      // 工具指令由后端生成，用户可以不填写补充描述。
-      const promptError =
-        generate.params?.tool || generate.operationCode === 'video.upscale'
-          ? null
-          : validateCanvasGenerationPrompt(generate.kind, generate.prompt)
-      if (promptError) {
-        showToast(promptError, 'error')
-        return
-      }
-      const currentData = latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data
-      if (
-        generate.operationCode === 'video.upscale' &&
-        hasActiveVideoUpscale(
-          latestRef.current.nodes,
-          generate.modelVersionId,
-          targetNodeId,
-          pendingNodeSubmissionsRef.current,
-        )
-      ) {
-        showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
-        return
-      }
-      // 续提时节点本来就停在 submitting（被算作「运行中」），不能被下面的防重复提交拦掉
-      const isResumableOrphan = (data: Record<string, unknown> | undefined) =>
-        Boolean(resume) && normalizeAiTaskStatus(data?.taskStatus) === 'submitting' && Number(data?.taskId || 0) <= 0
-      if (
-        pendingNodeSubmissionsRef.current.has(targetNodeId) ||
-        (!isResumableOrphan(currentData) &&
-          getCanvasTaskPresentation({
-            status: currentData?.taskStatus,
-            hasResult: Boolean(currentData?.resultUrl || currentData?.assetId),
-          }).running)
-      )
-        return
-      const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
-        (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
-      )
-      const submitMaxImageRefs =
-        getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
-      if (generate.kind === 'video' && generate.operationCode !== 'video.upscale') {
-        const videoValidationArgs = {
-          operationCode: generate.operationCode,
-          videoMode: generate.videoMode,
-          sourceRefs: generate.sourceRefs || [],
-          workspaceId,
-          maxImageRefs: submitMaxImageRefs,
-          maxAudioRefs:
-            getModelInputConstraints(submitModel?.source, generate.operationCode).roles.find((role) =>
-              /audio/i.test(role.role),
-            )?.maxCount || 0,
-          minImageRefs: getModelReferenceImageMinimum(submitModel?.source, 'video.generate'),
-          modelLabel: submitModel?.displayName,
-        }
-        const inputError = validateCanvasVideoInputs(videoValidationArgs)
-        if (inputError) {
-          showToast(inputError, 'error')
-          return
-        }
-        const videoAssetIds = generate.inputAssets
-          .filter((asset) => asset.role === 'video')
-          .map((asset) => Number(asset.asset_id))
-        const maxVideoRefSec = resolveRefVideoLimits(submitModel?.source).maxDurationSec
-        let videoRefTotalSec = 0
-        if (maxVideoRefSec !== null && videoAssetIds.length) {
-          const durations = await Promise.all(
-            videoAssetIds.map((assetId) => readTimelineAssetDurationSec(assetId, Number(workspaceId || 0))),
-          )
-          if (durations.some((seconds) => seconds <= 0)) {
-            showToast('无法读取参考视频时长，请确认素材可播放后重试', 'error')
-            return
-          }
-          videoRefTotalSec = durations.reduce((sum, seconds) => sum + seconds, 0)
-        }
-        const validationError = validateCanvasVideoInputs({
-          ...videoValidationArgs,
-          maxVideoRefSec: maxVideoRefSec ?? undefined,
-          videoRefTotalSec,
-        })
-        if (validationError) {
-          showToast(validationError, 'error')
-          return
-        }
-      }
-      // 真人素材：一次生成只允许一个身份基准；连入两个不同真人时无法判断该保谁的脸。
-      // 普通画布生成与真人成片严格隔离：只有明确的真人 operation 才读取真人身份快照。
-      // 图片内容、人脸检测结果或素材缩略图都不能隐式切换业务流程。
-      const isRealPersonOperation = (generate.sourceRefs || []).some((ref) => ref.source === 'real_person')
-      const realPerson = isRealPersonOperation
-        ? resolveCanvasRealPersonReference(generate.sourceRefs || [])
-        : { reference: null, error: null }
-      if (realPerson.error) {
-        showToast(realPerson.error, 'error')
-        return
-      }
-      if (isRealPersonOperation && !realPerson.reference) {
-        showToast('真人素材缺少身份信息，请通过加号重新选择素材', 'error')
-        return
-      }
-      // 授权是会变的（人被删、认证被撤销、素材失效），必须在扣费提交前按最新列表复核一次。
-      if (realPerson.reference) {
-        const stillAuthorized = await isRealPersonReferenceAuthorizedNow(realPerson.reference)
-        if (!stillAuthorized) {
-          showToast('无法确认真人素材的认证状态，请重新选择素材或稍后重试', 'error')
-          return
-        }
-      }
-      if (!isRealPersonOperation) {
-        const imageValidationError = validateCanvasImageInputs({
-          operationCode: generate.operationCode,
-          sourceRefs: generate.sourceRefs || [],
-          workspaceId,
-          maxImageRefs: submitMaxImageRefs,
-        })
-        if (imageValidationError) {
-          showToast(imageValidationError, 'error')
-          return
-        }
-      }
-      if (generate.kind === 'video') {
-        try {
-          const invalid = await Promise.all(
-            (generate.sourceRefs || [])
-              .filter((ref) => ref.kind === 'image')
-              .map(async (ref) => {
-                const url =
-                  Number(ref.assetId) > 0 ? assetStreamUrl(Number(ref.assetId), Number(workspaceId)) : ref.thumbnailUrl
-                if (!url) throw new Error('参考图尚未就绪，请重新选择素材')
-                const size = await readImageDimensions(url)
-                const issue = videoReferenceImageIssue(size)
-                return issue ? { ref, url, ...size, issue } : null
-              }),
-          )
-          const images = invalid.filter((item): item is InvalidCanvasImage => item !== null)
-          if (images.length) {
-            setImageCropRequest({ targetId: targetNodeId, images })
-            return
-          }
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : '无法读取参考图尺寸', 'error')
-          return
-        }
-      }
-      const assetError = await preflightCanvasAssets({
-        workspaceId: Number(workspaceId || 0),
-        sourceRefs: generate.sourceRefs || [],
-        inputAssets: generate.inputAssets || [],
-      })
-      if (assetError) {
-        showToast(assetError, 'error')
-        return
-      }
-      // 素材角色以模型 schema 为准，与智能成片同口径；模型查不到时退回历史默认值。
-      // 身份约束必须在这里注入：润色只改用户提示词，约束由提交环节兜底，避免被润色覆盖。
-      const identity = applyCanvasRealPersonIdentity({
-        kind: generate.kind,
-        videoMode: generate.videoMode,
-        prompt: generate.prompt,
-        // 面板的费用预估已经使用这份清单，提交原样复用，避免两处规则漂移导致预估与实扣不一致。
-        inputAssets: generate.inputAssets,
-        reference: realPerson.reference,
-      })
-      const inputAssets = identity.inputAssets
-      // 视频模型画不了字，提示词里的文字只会渲染成乱码；整片生成 / video.edit / 爆款复刻都挂了这条守卫，
-      // 画布视频节点此前漏掉，灯牌、包装、贴字一律照抄出乱码。图片模型不在此列。
-      const submitPrompt =
-        generate.kind === 'video' && generate.operationCode !== 'video.upscale'
-          ? withNoOnscreenTextGuard(identity.prompt)
-          : identity.prompt
-      const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-      // Validation can await remote authorization; acquire once before any paid submission.
-      const latestNode = latestRef.current.nodes.find((node) => node.id === targetNodeId)
-      if (
-        !latestNode ||
-        pendingNodeSubmissionsRef.current.has(targetNodeId) ||
-        (!isResumableOrphan(latestNode.data) &&
-          getCanvasTaskPresentation({
-            status: latestNode.data?.taskStatus,
-            hasResult: Boolean(latestNode.data?.resultUrl || latestNode.data?.assetId),
-          }).running)
-      )
-        return
-      // 幂等键：续提用原来那把；上次提交中断、这次原样重来也沿用（后端若其实收到了，直接拿回那个任务，不重复扣费）；
-      // 其余情况新建。必须在发请求前写进节点——请求途中页面没了，下次打开才有据可查。
-      const taskSubmissionFingerprint = await generationSubmissionFingerprint({
-        workspaceId,
-        modelVersionId: generate.modelVersionId,
-        operationCode: generate.operationCode,
-        prompt: submitPrompt,
-        params: generate.params,
-        inputAssets,
-      })
-      // 指纹计算期间可能发生重复点击或节点删除，再核对一次提交锁。
-      if (
-        pendingNodeSubmissionsRef.current.has(targetNodeId) ||
-        !latestRef.current.nodes.some(
-          (node) => node.id === targetNodeId && node.data.taskRunId === latestNode.data.taskRunId,
-        )
-      )
-        return
-      const uncertainSubmissionKey = unknownSubmissionKey(latestNode.data, taskSubmissionFingerprint)
-      const previousComposition = latestNode.data.videoAudioComposition as VideoAudioComposition | undefined
-      if (
-        previousComposition?.failed &&
-        Number(latestNode.data.taskId) > 0 &&
-        latestNode.data.taskSubmissionFingerprint === taskSubmissionFingerprint
-      ) {
-        const patch = {
-          taskStatus: 'result_pending',
-          taskError: '',
-          videoAudioComposition: { ...previousComposition, failed: false },
-        }
-        setNodes((items) =>
-          items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, ...patch } } : item)),
-        )
-        setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...patch } : current))
-        setSaveStatus('dirty')
-        return
-      }
-      const taskIdempotencyKey =
-        resume?.idempotencyKey ||
-        uncertainSubmissionKey ||
-        reusableInterruptedIdempotencyKey((latestNode.data || {}) as Record<string, unknown>, generate) ||
-        createCanvasTaskIdempotencyKey()
-      if (
-        generate.operationCode === 'video.upscale' &&
-        hasActiveVideoUpscale(
-          latestRef.current.nodes,
-          generate.modelVersionId,
-          targetNodeId,
-          pendingNodeSubmissionsRef.current,
-        )
-      ) {
-        showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
-        return
-      }
-      pendingNodeSubmissionsRef.current.add(targetNodeId)
+      if (submissionClaimsRef.current.has(targetNodeId)) return
+      submissionClaimsRef.current.add(targetNodeId)
       try {
-        const taskStartedAt = new Date().toISOString()
-        // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
-        const configData: Record<string, unknown> = {
-          operationCode: generate.operationCode,
+        if (generate.kind === 'text') {
+          const model = canvasModels.text.find(
+            (item) => Number(item.modelVersionId || 0) === Number(generate.modelVersionId || 0),
+          )
+          const imageRole = getModelInputConstraints(model?.source, generate.operationCode).roles.find((role) =>
+            ['image', 'reference_image'].includes(role.role),
+          )
+          const inputError = validateCanvasTextInputs({
+            sourceRefs: generate.sourceRefs || [],
+            maxImageRefs: imageRole?.maxCount,
+          })
+          if (inputError) {
+            showToast(inputError, 'error')
+            return
+          }
+        }
+        // 工具指令由后端生成，用户可以不填写补充描述。
+        const promptError =
+          generate.params?.tool || generate.operationCode === 'video.upscale'
+            ? null
+            : validateCanvasGenerationPrompt(generate.kind, generate.prompt)
+        if (promptError) {
+          showToast(promptError, 'error')
+          return
+        }
+        const currentData = latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data
+        if (
+          generate.operationCode === 'video.upscale' &&
+          hasActiveVideoUpscale(
+            latestRef.current.nodes,
+            generate.modelVersionId,
+            targetNodeId,
+            pendingNodeSubmissionsRef.current,
+          )
+        ) {
+          showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
+          return
+        }
+        // 续提时节点本来就停在 submitting（被算作「运行中」），不能被下面的防重复提交拦掉
+        const isResumableOrphan = (data: Record<string, unknown> | undefined) =>
+          Boolean(resume) && normalizeAiTaskStatus(data?.taskStatus) === 'submitting' && Number(data?.taskId || 0) <= 0
+        if (
+          pendingNodeSubmissionsRef.current.has(targetNodeId) ||
+          (!isResumableOrphan(currentData) &&
+            getCanvasTaskPresentation({
+              status: currentData?.taskStatus,
+              hasResult: Boolean(currentData?.resultUrl || currentData?.assetId),
+            }).running)
+        )
+          return
+        const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
+          (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
+        )
+        const submitMaxImageRefs =
+          getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
+        if (generate.kind === 'video' && generate.operationCode !== 'video.upscale') {
+          const videoValidationArgs = {
+            operationCode: generate.operationCode,
+            videoMode: generate.videoMode,
+            sourceRefs: generate.sourceRefs || [],
+            workspaceId,
+            maxImageRefs: submitMaxImageRefs,
+            maxAudioRefs:
+              getModelInputConstraints(submitModel?.source, generate.operationCode).roles.find((role) =>
+                /audio/i.test(role.role),
+              )?.maxCount || 0,
+            minImageRefs: getModelReferenceImageMinimum(submitModel?.source, 'video.generate'),
+            modelLabel: submitModel?.displayName,
+          }
+          const inputError = validateCanvasVideoInputs(videoValidationArgs)
+          if (inputError) {
+            showToast(inputError, 'error')
+            return
+          }
+          const videoAssetIds = generate.inputAssets
+            .filter((asset) => asset.role === 'video')
+            .map((asset) => Number(asset.asset_id))
+          const maxVideoRefSec = resolveRefVideoLimits(submitModel?.source).maxDurationSec
+          let videoRefTotalSec = 0
+          if (maxVideoRefSec !== null && videoAssetIds.length) {
+            const durations = await Promise.all(
+              videoAssetIds.map((assetId) => readTimelineAssetDurationSec(assetId, Number(workspaceId || 0))),
+            )
+            if (durations.some((seconds) => seconds <= 0)) {
+              showToast('无法读取参考视频时长，请确认素材可播放后重试', 'error')
+              return
+            }
+            videoRefTotalSec = durations.reduce((sum, seconds) => sum + seconds, 0)
+          }
+          const validationError = validateCanvasVideoInputs({
+            ...videoValidationArgs,
+            maxVideoRefSec: maxVideoRefSec ?? undefined,
+            videoRefTotalSec,
+          })
+          if (validationError) {
+            showToast(validationError, 'error')
+            return
+          }
+        }
+        // 真人素材：一次生成只允许一个身份基准；连入两个不同真人时无法判断该保谁的脸。
+        // 普通画布生成与真人成片严格隔离：只有明确的真人 operation 才读取真人身份快照。
+        // 图片内容、人脸检测结果或素材缩略图都不能隐式切换业务流程。
+        const isRealPersonOperation = (generate.sourceRefs || []).some((ref) => ref.source === 'real_person')
+        const realPerson = isRealPersonOperation
+          ? resolveCanvasRealPersonReference(generate.sourceRefs || [])
+          : { reference: null, error: null }
+        if (realPerson.error) {
+          showToast(realPerson.error, 'error')
+          return
+        }
+        if (isRealPersonOperation && !realPerson.reference) {
+          showToast('真人素材缺少身份信息，请通过加号重新选择素材', 'error')
+          return
+        }
+        // 授权是会变的（人被删、认证被撤销、素材失效），必须在扣费提交前按最新列表复核一次。
+        if (realPerson.reference) {
+          const stillAuthorized = await isRealPersonReferenceAuthorizedNow(realPerson.reference)
+          if (!stillAuthorized) {
+            showToast('无法确认真人素材的认证状态，请重新选择素材或稍后重试', 'error')
+            return
+          }
+        }
+        if (!isRealPersonOperation) {
+          const imageValidationError = validateCanvasImageInputs({
+            operationCode: generate.operationCode,
+            sourceRefs: generate.sourceRefs || [],
+            workspaceId,
+            maxImageRefs: submitMaxImageRefs,
+          })
+          if (imageValidationError) {
+            showToast(imageValidationError, 'error')
+            return
+          }
+        }
+        if (generate.kind === 'video') {
+          try {
+            const invalid = await Promise.all(
+              (generate.sourceRefs || [])
+                .filter((ref) => ref.kind === 'image')
+                .map(async (ref) => {
+                  const url =
+                    Number(ref.assetId) > 0
+                      ? assetStreamUrl(Number(ref.assetId), Number(workspaceId))
+                      : ref.thumbnailUrl
+                  if (!url) throw new Error('参考图尚未就绪，请重新选择素材')
+                  const size = await readImageDimensions(url)
+                  const issue = videoReferenceImageIssue(size)
+                  return issue ? { ref, url, ...size, issue } : null
+                }),
+            )
+            const images = invalid.filter((item): item is InvalidCanvasImage => item !== null)
+            if (images.length) {
+              setImageCropRequest({ targetId: targetNodeId, images })
+              return
+            }
+          } catch (error) {
+            showToast(error instanceof Error ? error.message : '无法读取参考图尺寸', 'error')
+            return
+          }
+        }
+        const assetError = await preflightCanvasAssets({
+          workspaceId: Number(workspaceId || 0),
+          sourceRefs: generate.sourceRefs || [],
+          inputAssets: generate.inputAssets || [],
+        })
+        if (assetError) {
+          showToast(assetError, 'error')
+          return
+        }
+        // 素材角色以模型 schema 为准，与智能成片同口径；模型查不到时退回历史默认值。
+        // 身份约束必须在这里注入：润色只改用户提示词，约束由提交环节兜底，避免被润色覆盖。
+        const identity = applyCanvasRealPersonIdentity({
+          kind: generate.kind,
+          videoMode: generate.videoMode,
+          prompt: generate.prompt,
+          // 面板的费用预估已经使用这份清单，提交原样复用，避免两处规则漂移导致预估与实扣不一致。
+          inputAssets: generate.inputAssets,
+          reference: realPerson.reference,
+        })
+        const inputAssets = identity.inputAssets
+        // 视频模型画不了字，提示词里的文字只会渲染成乱码；整片生成 / video.edit / 爆款复刻都挂了这条守卫，
+        // 画布视频节点此前漏掉，灯牌、包装、贴字一律照抄出乱码。图片模型不在此列。
+        const submitPrompt =
+          generate.kind === 'video' && generate.operationCode !== 'video.upscale'
+            ? withNoOnscreenTextGuard(identity.prompt)
+            : identity.prompt
+        const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        // Validation can await remote authorization; acquire once before any paid submission.
+        const latestNode = latestRef.current.nodes.find((node) => node.id === targetNodeId)
+        if (
+          !latestNode ||
+          pendingNodeSubmissionsRef.current.has(targetNodeId) ||
+          (!isResumableOrphan(latestNode.data) &&
+            getCanvasTaskPresentation({
+              status: latestNode.data?.taskStatus,
+              hasResult: Boolean(latestNode.data?.resultUrl || latestNode.data?.assetId),
+            }).running)
+        )
+          return
+        // 幂等键：续提用原来那把；上次提交中断、这次原样重来也沿用（后端若其实收到了，直接拿回那个任务，不重复扣费）；
+        // 其余情况新建。必须在发请求前写进节点——请求途中页面没了，下次打开才有据可查。
+        const taskSubmissionFingerprint = await generationSubmissionFingerprint({
+          workspaceId,
           modelVersionId: generate.modelVersionId,
-          params: generate.params || {},
-          generationRequest: generate,
-          videoAudioComposition:
-            generate.kind === 'video' && generate.operationCode !== 'video.upscale'
-              ? snapshotVideoAudio(
-                  generate.sourceRefs || [],
-                  latestRef.current.nodes,
-                  Number(workspaceId),
-                  taskIdempotencyKey,
-                )
-              : undefined,
-          ...(generate.kind === 'image'
-            ? {
-                imageGeneration: {
-                  submissionKey: taskIdempotencyKey,
-                  info: imageGenerationInfo(
-                    { ...generate, prompt: submitPrompt },
-                    submitModel?.displayName || '',
-                    taskStartedAt,
-                  ),
-                },
-              }
-            : {}),
-          textGenerationMode: generate.kind === 'text' ? 'storyboard' : undefined,
-          taskIdempotencyKey,
-          taskSubmissionFingerprint,
-          taskSubmitInterrupted: false,
-          taskId: 0,
-          taskFailure: undefined,
-          taskFailureHistory: archiveGenerationFailure(
-            latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data || {},
-          ),
-          taskRunId,
-          taskStatus: 'submitting',
-          taskProgress: 0,
-          taskError: '',
-          taskErrorHistorical: false,
-          taskStatusQueryFailures: 0,
-          resultSyncAttempts: 0,
-          taskStartedAt,
-          taskUpdatedAt: taskStartedAt,
-        }
-        // 并发检查直接读取 ref，不能等待 React 提交后才看到本次占用的模型。
-        latestRef.current = {
-          ...latestRef.current,
-          nodes: latestRef.current.nodes.map((n) =>
-            n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n,
-          ),
-        }
-        setNodes((nds) => nds.map((n) => (n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n)))
-        setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
-        setSaveStatus('dirty')
-        // 保存节点提示词和提交凭证后再发起请求，刷新页面时可恢复真实提交现场。
-        await flushCanvasSyncRef.current()
-        // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
-        const task =
-          generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
-            ? await createAiResponse({
-                workspaceId,
-                operationCode: generate.operationCode,
-                prompt: submitPrompt,
-                params: generate.params,
-                inputAssets,
-                modelVersionId: generate.modelVersionId,
-                idempotencyKey: taskIdempotencyKey,
-              })
-            : await createAiTask({
-                workspaceId,
-                capability: generate.kind,
-                operationCode: generate.operationCode,
-                // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。视频再叠加禁文字守卫。
-                prompt: submitPrompt,
-                params: generate.params,
-                inputAssets,
-                modelVersionId: generate.modelVersionId,
-                onImagePartial: (event: Record<string, unknown>) => {
-                  const b64 = event.b64_json || event.partial_image_b64
-                  if (typeof b64 !== 'string' || !b64) return
-                  const format = ['png', 'jpeg', 'webp'].includes(String(event.output_format))
-                    ? String(event.output_format)
-                    : 'png'
-                  setImagePreviews((prev) => ({ ...prev, [targetNodeId]: `data:image/${format};base64,${b64}` }))
-                },
-                idempotencyKey: taskIdempotencyKey,
-              })
-        const immediateText =
-          generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
-            ? String(extractTaskText(task) || '').trim()
-            : ''
-        if (immediateText) {
-          if (!isCanvasStoryboardText(immediateText)) {
-            throw new Error('模型返回内容无法解析为有效分镜，原结果已保留，请调整需求后重试')
-          }
-          const completedAt = new Date().toISOString()
-          const resultData = {
-            taskId: 0,
-            taskStatus: 'succeeded',
-            taskProgress: 100,
+          operationCode: generate.operationCode,
+          prompt: submitPrompt,
+          params: generate.params,
+          inputAssets,
+        })
+        // 指纹计算期间可能发生重复点击或节点删除，再核对一次提交锁。
+        if (
+          pendingNodeSubmissionsRef.current.has(targetNodeId) ||
+          !latestRef.current.nodes.some(
+            (node) => node.id === targetNodeId && node.data.taskRunId === latestNode.data.taskRunId,
+          )
+        )
+          return
+        const uncertainSubmissionKey = unknownSubmissionKey(latestNode.data, taskSubmissionFingerprint)
+        const previousComposition = latestNode.data.videoAudioComposition as VideoAudioComposition | undefined
+        if (
+          previousComposition?.failed &&
+          Number(latestNode.data.taskId) > 0 &&
+          latestNode.data.taskSubmissionFingerprint === taskSubmissionFingerprint
+        ) {
+          const patch = {
+            taskStatus: 'result_pending',
             taskError: '',
-            resultSyncAttempts: 0,
-            text: immediateText,
-            taskUpdatedAt: completedAt,
+            videoAudioComposition: { ...previousComposition, failed: false },
           }
-          if (!(window as any).__canvasTextContents) {
-            ;(window as any).__canvasTextContents = new Map<string, string>()
-          }
-          ;((window as any).__canvasTextContents as Map<string, string>).set(targetNodeId, immediateText)
-          bumpTextRevisionRef.current()
           setNodes((items) =>
-            items.map((item) =>
-              item.id === targetNodeId
-                ? {
-                    ...item,
-                    data: { ...item.data, ...resultData },
-                    style: { ...item.style, width: STORYBOARD_NODE_WIDTH, height: STORYBOARD_NODE_HEIGHT },
-                  }
-                : item,
+            items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, ...patch } } : item)),
+          )
+          setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...patch } : current))
+          setSaveStatus('dirty')
+          return
+        }
+        const taskIdempotencyKey =
+          resume?.idempotencyKey ||
+          uncertainSubmissionKey ||
+          reusableInterruptedIdempotencyKey((latestNode.data || {}) as Record<string, unknown>, generate) ||
+          createCanvasTaskIdempotencyKey()
+        if (
+          generate.operationCode === 'video.upscale' &&
+          hasActiveVideoUpscale(
+            latestRef.current.nodes,
+            generate.modelVersionId,
+            targetNodeId,
+            pendingNodeSubmissionsRef.current,
+          )
+        ) {
+          showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
+          return
+        }
+        pendingNodeSubmissionsRef.current.add(targetNodeId)
+        submissionClaimsRef.current.delete(targetNodeId)
+        try {
+          const taskStartedAt = new Date().toISOString()
+          // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
+          const configData: Record<string, unknown> = {
+            operationCode: generate.operationCode,
+            modelVersionId: generate.modelVersionId,
+            params: generate.params || {},
+            generationRequest: generate,
+            videoAudioComposition:
+              generate.kind === 'video' && generate.operationCode !== 'video.upscale'
+                ? snapshotVideoAudio(
+                    generate.sourceRefs || [],
+                    latestRef.current.nodes,
+                    Number(workspaceId),
+                    taskIdempotencyKey,
+                  )
+                : undefined,
+            ...(generate.kind === 'image'
+              ? {
+                  imageGeneration: {
+                    submissionKey: taskIdempotencyKey,
+                    info: imageGenerationInfo(
+                      { ...generate, prompt: submitPrompt },
+                      submitModel?.displayName || '',
+                      taskStartedAt,
+                    ),
+                  },
+                }
+              : {}),
+            textGenerationMode: generate.kind === 'text' ? 'storyboard' : undefined,
+            taskIdempotencyKey,
+            taskSubmissionFingerprint,
+            taskSubmitInterrupted: false,
+            taskId: 0,
+            taskFailure: undefined,
+            taskFailureHistory: archiveGenerationFailure(
+              latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data || {},
+            ),
+            taskRunId,
+            taskStatus: 'submitting',
+            taskProgress: 0,
+            taskError: '',
+            taskErrorHistorical: false,
+            taskStatusQueryFailures: 0,
+            resultSyncAttempts: 0,
+            taskStartedAt,
+            taskUpdatedAt: taskStartedAt,
+          }
+          // 并发检查直接读取 ref，不能等待 React 提交后才看到本次占用的模型。
+          latestRef.current = {
+            ...latestRef.current,
+            nodes: latestRef.current.nodes.map((n) =>
+              n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n,
+            ),
+          }
+          setNodes((nds) => nds.map((n) => (n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n)))
+          setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
+          setSaveStatus('dirty')
+          // 保存节点提示词和提交凭证后再发起请求，刷新页面时可恢复真实提交现场。
+          await flushCanvasSyncRef.current()
+          // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
+          const task =
+            generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
+              ? await createAiResponse({
+                  workspaceId,
+                  operationCode: generate.operationCode,
+                  prompt: submitPrompt,
+                  params: generate.params,
+                  inputAssets,
+                  modelVersionId: generate.modelVersionId,
+                  idempotencyKey: taskIdempotencyKey,
+                })
+              : await createAiTask({
+                  workspaceId,
+                  capability: generate.kind,
+                  operationCode: generate.operationCode,
+                  // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。视频再叠加禁文字守卫。
+                  prompt: submitPrompt,
+                  params: generate.params,
+                  inputAssets,
+                  modelVersionId: generate.modelVersionId,
+                  onImagePartial: (event: Record<string, unknown>) => {
+                    const b64 = event.b64_json || event.partial_image_b64
+                    if (typeof b64 !== 'string' || !b64) return
+                    const format = ['png', 'jpeg', 'webp'].includes(String(event.output_format))
+                      ? String(event.output_format)
+                      : 'png'
+                    setImagePreviews((prev) => ({ ...prev, [targetNodeId]: `data:image/${format};base64,${b64}` }))
+                  },
+                  idempotencyKey: taskIdempotencyKey,
+                })
+          const immediateText =
+            generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
+              ? String(extractTaskText(task) || '').trim()
+              : ''
+          if (immediateText) {
+            if (!isCanvasStoryboardText(immediateText)) {
+              throw new Error('模型返回内容无法解析为有效分镜，原结果已保留，请调整需求后重试')
+            }
+            const completedAt = new Date().toISOString()
+            const resultData = {
+              taskId: 0,
+              taskStatus: 'succeeded',
+              taskProgress: 100,
+              taskError: '',
+              resultSyncAttempts: 0,
+              text: immediateText,
+              taskUpdatedAt: completedAt,
+            }
+            if (!(window as any).__canvasTextContents) {
+              ;(window as any).__canvasTextContents = new Map<string, string>()
+            }
+            ;((window as any).__canvasTextContents as Map<string, string>).set(targetNodeId, immediateText)
+            bumpTextRevisionRef.current()
+            setNodes((items) =>
+              items.map((item) =>
+                item.id === targetNodeId
+                  ? {
+                      ...item,
+                      data: { ...item.data, ...resultData },
+                      style: { ...item.style, width: STORYBOARD_NODE_WIDTH, height: STORYBOARD_NODE_HEIGHT },
+                    }
+                  : item,
+              ),
+            )
+            setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...resultData } : current))
+            rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
+            setSaveStatus('dirty')
+            scheduleSyncRef.current(true)
+            showToast('分镜已生成，可编辑后连接视频节点', 'success')
+            return
+          }
+          const taskId = getAiTaskId(task)
+          if (!taskId)
+            throw new Error(generate.kind === 'text' ? '分镜生成请求未返回文本或任务 ID' : '任务创建后未返回任务 ID')
+          // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
+          rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
+          // 3) 回写 task_id/task_status 到节点
+          const createdStatus = normalizeAiTaskStatus(task?.status) || 'pending'
+          const immediateTaskError =
+            humanizeCanvasTaskError(task?.error_message || task?.error?.message || task?.message, generate) ||
+            '生成失败，请重试'
+          const immediateFailure = ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(createdStatus)
+          // 创建接口可能直接返回 succeeded，但完整 outputs 通常仍需从任务详情读取。
+          // 在结果真正落到节点前保持可见的等待态，并让恢复轮询继续读取详情。
+          const taskData: Record<string, unknown> = {
+            taskId,
+            taskFailure: immediateFailure
+              ? {
+                  ...buildGenerationFailure(
+                    { ...task, message: immediateTaskError },
+                    {
+                      taskId,
+                      submissionId: taskIdempotencyKey,
+                      submitted: true,
+                      operationCode: generate.operationCode,
+                      modelVersionId: generate.modelVersionId,
+                      workspaceId: Number(workspaceId),
+                      canvasId: Number(canvasId),
+                    },
+                  ),
+                  message: immediateTaskError,
+                }
+              : undefined,
+            taskError: immediateFailure ? immediateTaskError : '',
+            taskStatus: ['succeeded', 'completed', 'success'].includes(createdStatus)
+              ? 'result_pending'
+              : createdStatus,
+            taskUpdatedAt: new Date().toISOString(),
+          }
+          // 提交锁释放前同步任务身份，避免同一事件批次内再次提交绕过检查。
+          latestRef.current = {
+            ...latestRef.current,
+            nodes: latestRef.current.nodes.map((n) =>
+              n.id === targetNodeId && n.data?.taskRunId === taskRunId ? { ...n, data: { ...n.data, ...taskData } } : n,
+            ),
+          }
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === targetNodeId && (n.data as any)?.taskRunId === taskRunId
+                ? { ...n, data: { ...n.data, ...taskData } }
+                : n,
             ),
           )
-          setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...resultData } : current))
-          rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
+          setSelectedNode((prev) =>
+            prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
+          )
           setSaveStatus('dirty')
           scheduleSyncRef.current(true)
-          showToast('分镜已生成，可编辑后连接视频节点', 'success')
-          return
-        }
-        const taskId = getAiTaskId(task)
-        if (!taskId)
-          throw new Error(generate.kind === 'text' ? '分镜生成请求未返回文本或任务 ID' : '任务创建后未返回任务 ID')
-        // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
-        rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
-        // 3) 回写 task_id/task_status 到节点
-        const createdStatus = normalizeAiTaskStatus(task?.status) || 'pending'
-        const immediateTaskError =
-          humanizeCanvasTaskError(task?.error_message || task?.error?.message || task?.message, generate) ||
-          '生成失败，请重试'
-        const immediateFailure = ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(createdStatus)
-        // 创建接口可能直接返回 succeeded，但完整 outputs 通常仍需从任务详情读取。
-        // 在结果真正落到节点前保持可见的等待态，并让恢复轮询继续读取详情。
-        const taskData: Record<string, unknown> = {
-          taskId,
-          taskFailure: immediateFailure
-            ? {
-                ...buildGenerationFailure(
-                  { ...task, message: immediateTaskError },
-                  {
-                    taskId,
-                    submissionId: taskIdempotencyKey,
-                    submitted: true,
-                    operationCode: generate.operationCode,
-                    modelVersionId: generate.modelVersionId,
-                    workspaceId: Number(workspaceId),
-                    canvasId: Number(canvasId),
-                  },
-                ),
-                message: immediateTaskError,
-              }
-            : undefined,
-          taskError: immediateFailure ? immediateTaskError : '',
-          taskStatus: ['succeeded', 'completed', 'success'].includes(createdStatus) ? 'result_pending' : createdStatus,
-          taskUpdatedAt: new Date().toISOString(),
-        }
-        // 提交锁释放前同步任务身份，避免同一事件批次内再次提交绕过检查。
-        latestRef.current = {
-          ...latestRef.current,
-          nodes: latestRef.current.nodes.map((n) =>
-            n.id === targetNodeId && n.data?.taskRunId === taskRunId ? { ...n, data: { ...n.data, ...taskData } } : n,
-          ),
-        }
-        setNodes((nds) =>
-          nds.map((n) =>
-            n.id === targetNodeId && (n.data as any)?.taskRunId === taskRunId
-              ? { ...n, data: { ...n.data, ...taskData } }
-              : n,
-          ),
-        )
-        setSelectedNode((prev) =>
-          prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
-        )
-        setSaveStatus('dirty')
-        scheduleSyncRef.current(true)
-      } catch (error: any) {
-        if (isInsufficientCreditsError(error)) {
-          const taskData = {
-            taskStatus: 'submit_failed',
-            taskFailure: buildGenerationFailure(error, {
+        } catch (error: any) {
+          if (isInsufficientCreditsError(error)) {
+            const taskData = {
+              taskStatus: 'submit_failed',
+              taskFailure: buildGenerationFailure(error, {
+                submissionId: taskIdempotencyKey,
+                submitted: true,
+                operationCode: generate.operationCode,
+                modelVersionId: generate.modelVersionId,
+                workspaceId: Number(workspaceId),
+                canvasId: Number(canvasId),
+              }),
+              taskProgress: 0,
+              taskError: '积分不足',
+              taskUpdatedAt: new Date().toISOString(),
+            }
+            setNodes((nds) =>
+              nds.map((node) =>
+                node.id === targetNodeId && (node.data as any)?.taskRunId === taskRunId
+                  ? { ...node, data: { ...node.data, ...taskData } }
+                  : node,
+              ),
+            )
+            setSelectedNode((prev) =>
+              prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
+            )
+            setSaveStatus('dirty')
+            await handleInsufficientCredits()
+            return
+          }
+          const friendlyError = humanizeCanvasTaskError(error?.message, generate) || '任务创建失败，请稍后重试'
+          const taskFailure = {
+            ...buildGenerationFailure(error, {
               submissionId: taskIdempotencyKey,
               submitted: true,
               operationCode: generate.operationCode,
@@ -6566,64 +6718,39 @@ function CanvasInner() {
               workspaceId: Number(workspaceId),
               canvasId: Number(canvasId),
             }),
+            message: friendlyError,
+          }
+          const taskData = {
+            taskStatus: 'submit_failed',
+            taskFailure,
+            taskSubmitInterrupted: taskFailure.stage === 'unknown',
             taskProgress: 0,
-            taskError: '积分不足',
+            taskError: friendlyError,
             taskUpdatedAt: new Date().toISOString(),
           }
           setNodes((nds) =>
-            nds.map((node) =>
-              node.id === targetNodeId && (node.data as any)?.taskRunId === taskRunId
-                ? { ...node, data: { ...node.data, ...taskData } }
-                : node,
+            nds.map((n) =>
+              n.id === targetNodeId && (n.data as any)?.taskRunId === taskRunId
+                ? { ...n, data: { ...n.data, ...taskData } }
+                : n,
             ),
           )
           setSelectedNode((prev) =>
             prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
           )
           setSaveStatus('dirty')
-          await handleInsufficientCredits()
-          return
+          // 顶部提示与节点上的错误必须是同一句：两处说法不一致时，用户会以为是两个问题
+          showToast(friendlyError, 'error')
+        } finally {
+          pendingNodeSubmissionsRef.current.delete(targetNodeId)
+          setImagePreviews((prev) => {
+            const next = { ...prev }
+            delete next[targetNodeId]
+            return next
+          })
         }
-        const friendlyError = humanizeCanvasTaskError(error?.message, generate) || '任务创建失败，请稍后重试'
-        const taskFailure = {
-          ...buildGenerationFailure(error, {
-            submissionId: taskIdempotencyKey,
-            submitted: true,
-            operationCode: generate.operationCode,
-            modelVersionId: generate.modelVersionId,
-            workspaceId: Number(workspaceId),
-            canvasId: Number(canvasId),
-          }),
-          message: friendlyError,
-        }
-        const taskData = {
-          taskStatus: 'submit_failed',
-          taskFailure,
-          taskSubmitInterrupted: taskFailure.stage === 'unknown',
-          taskProgress: 0,
-          taskError: friendlyError,
-          taskUpdatedAt: new Date().toISOString(),
-        }
-        setNodes((nds) =>
-          nds.map((n) =>
-            n.id === targetNodeId && (n.data as any)?.taskRunId === taskRunId
-              ? { ...n, data: { ...n.data, ...taskData } }
-              : n,
-          ),
-        )
-        setSelectedNode((prev) =>
-          prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
-        )
-        setSaveStatus('dirty')
-        // 顶部提示与节点上的错误必须是同一句：两处说法不一致时，用户会以为是两个问题
-        showToast(friendlyError, 'error')
       } finally {
-        pendingNodeSubmissionsRef.current.delete(targetNodeId)
-        setImagePreviews((prev) => {
-          const next = { ...prev }
-          delete next[targetNodeId]
-          return next
-        })
+        submissionClaimsRef.current.delete(targetNodeId)
       }
     },
     [
@@ -6691,7 +6818,8 @@ function CanvasInner() {
         const data = (node.data || {}) as Record<string, unknown>
         const verdict = classifyOrphanSubmission(data, {
           now,
-          submittingInThisPage: pendingNodeSubmissionsRef.current.has(node.id),
+          submittingInThisPage:
+            pendingNodeSubmissionsRef.current.has(node.id) || submissionClaimsRef.current.has(node.id),
         })
         if (verdict === 'none') continue
         const key = String(data.taskIdempotencyKey || '')
@@ -6706,6 +6834,7 @@ function CanvasInner() {
             if (
               after &&
               !pendingNodeSubmissionsRef.current.has(node.id) &&
+              !submissionClaimsRef.current.has(node.id) &&
               normalizeAiTaskStatus(afterData.taskStatus) === 'submitting' &&
               Number(afterData.taskId || 0) <= 0
             ) {
@@ -8257,7 +8386,8 @@ function CanvasInner() {
    */
   const handleSelectionChange = useCallback(
     ({ nodes: picked }: { nodes: Node[] }) => {
-      // Stop every video synchronously when selection becomes multi-node, before queued play() promises settle.
+      // Multi-select can be reported after each video node's selection effect has queued play().
+      // Pause synchronously here so box-selecting videos never overlap during that render window.
       if (picked.length > 1) {
         document.querySelectorAll<HTMLVideoElement>('.canvas-node-video-wrap video').forEach((video) => video.pause())
       }
@@ -11181,6 +11311,7 @@ function CanvasInner() {
 
         {/* 单选节点操作条：贴在节点上方，收纳改名/上传/截帧/下载/删除 */}
         {nodeToolbarAnchor &&
+          selectedNodeVisible &&
           selectedNode &&
           !imageTool &&
           !reversePromptTarget &&
@@ -11900,7 +12031,8 @@ function CanvasInner() {
           !hdModalOpen && (
             <div
               ref={panelRef}
-              className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}`}
+              aria-hidden={!selectedNodeVisible}
+              className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
               style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
             >
               {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
@@ -11921,6 +12053,14 @@ function CanvasInner() {
               ) : (
                 <CanvasNodePanel
                   node={selectedNodeForPanel}
+                  mediaConnectionCounts={
+                    selectedNode
+                      ? {
+                          images: countIncomingMediaConnections(selectedNode.id, 'image'),
+                          videos: countIncomingMediaConnections(selectedNode.id, 'video'),
+                        }
+                      : undefined
+                  }
                   currentUserId={currentUserId}
                   workspaceId={workspaceId}
                   onPickRealPerson={(slotIndex) => {

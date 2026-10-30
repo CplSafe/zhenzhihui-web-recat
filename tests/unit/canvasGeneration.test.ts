@@ -7,6 +7,7 @@ import {
   normalizeCanvasAssetSource,
   validateCanvasGenerationPrompt,
   validateCanvasImageInputs,
+  validateCanvasTextInputs,
   validateCanvasVideoInputs,
 } from '@/utils/canvasGeneration'
 
@@ -76,6 +77,23 @@ describe('canvas image generation source validation', () => {
         maxImageRefs: 2,
       }),
     ).toContain('最多支持 2 张')
+  })
+})
+
+describe('canvas storyboard input validation', () => {
+  it('允许文字与图片作为上下文，且遵守模型声明的图片上限', () => {
+    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'text' }, { kind: 'image' }], maxImageRefs: 4 })).toBeNull()
+    expect(
+      validateCanvasTextInputs({
+        sourceRefs: [{ kind: 'image' }, { kind: 'image' }, { kind: 'image' }],
+        maxImageRefs: 2,
+      }),
+    ).toContain('最多支持 2 张参考图片')
+  })
+
+  it('明确拒绝视频或时间线输入，并指导用户改为截图图片', () => {
+    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'video', assetId: 12 }] })).toContain('暂不支持视频输入')
+    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'timeline', assetId: 13 }] })).toContain('截取画面')
   })
 })
 
