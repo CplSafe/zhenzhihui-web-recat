@@ -44,11 +44,42 @@ export function extractImageFiles(data: DataTransfer | null | undefined): File[]
  */
 export const LOCAL_VIDEO_MAX_BYTES = 512 * 1024 * 1024
 
+/** File.type 在部分 Windows 拖放来源中为空；常见后缀用于兜底识别。 */
+const VIDEO_FILE_EXTENSIONS = new Set([
+  'mp4',
+  'mov',
+  'm4v',
+  'webm',
+  'avi',
+  'mkv',
+  'mpeg',
+  'mpg',
+  '3gp',
+  '3g2',
+  'ogv',
+  'ts',
+])
+
+/** MIME 或常见视频后缀命中即可识别本地视频。 */
+export function isCanvasVideoFile(file: File | null | undefined): file is File {
+  if (!file) return false
+  if (
+    String(file.type || '')
+      .toLowerCase()
+      .startsWith('video/')
+  )
+    return true
+  const extension =
+    String(file.name || '')
+      .split('.')
+      .pop()
+      ?.toLowerCase() || ''
+  return VIDEO_FILE_EXTENSIONS.has(extension)
+}
+
 /** 从文件列表中挑出视频文件 */
 export function pickVideoFiles(files: ArrayLike<File | null> | null | undefined): File[] {
-  return Array.from(files || []).filter(
-    (file): file is File => Boolean(file) && String(file!.type || '').startsWith('video/'),
-  )
+  return Array.from(files || []).filter(isCanvasVideoFile)
 }
 
 /** 一次导入中按类型分好的本地素材。 */
@@ -56,6 +87,7 @@ export interface LocalMediaFiles {
   images: File[]
   videos: File[]
   audios: File[]
+  unsupported: File[]
 }
 
 /**
@@ -66,17 +98,21 @@ export interface LocalMediaFiles {
  * files 包含任一支持的素材时直接使用，避免又从 items 重复导入。
  */
 export function extractMediaFiles(data: DataTransfer | null | undefined): LocalMediaFiles {
-  if (!data) return { images: [], videos: [], audios: [] }
-  const images = pickImageFiles(data.files)
-  const videos = pickVideoFiles(data.files)
-  const audios = Array.from(data.files || []).filter(isAudioFile)
-  if (images.length > 0 || videos.length > 0 || audios.length > 0) return { images, videos, audios }
+  if (!data) return { images: [], videos: [], audios: [], unsupported: [] }
+  const listedFiles = Array.from(data.files || [])
   const items = Array.from(data.items || [])
   const fromItems = items.filter((item) => item && item.kind === 'file').map((item) => item.getAsFile())
+  // 拖放时优先使用原始 FileList，即使其中只有不支持的文件，也不要误落到重复的 items 分支。
+  const files = listedFiles.length ? listedFiles : fromItems.filter((file): file is File => Boolean(file))
+  const images = pickImageFiles(files)
+  const videos = pickVideoFiles(files)
+  const audios = files.filter(isAudioFile)
+  const supported = new Set([...images, ...videos, ...audios])
   return {
-    images: pickImageFiles(fromItems),
-    videos: pickVideoFiles(fromItems),
-    audios: fromItems.filter((file): file is File => Boolean(file) && isAudioFile(file!)),
+    images,
+    videos,
+    audios,
+    unsupported: files.filter((file) => !supported.has(file)),
   }
 }
 

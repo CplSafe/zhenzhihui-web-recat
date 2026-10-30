@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   filterTaskCenterHistoricalProjects,
+  formatHistoricalTaskTitle,
   getAccessibleTaskCenterProjectIds,
   getRestrictedTaskCenterProjectIds,
   isTaskCenterTaskAccessible,
@@ -40,5 +41,18 @@ describe('filterTaskCenterHistoricalProjects', () => {
     const owned = project(1, 7, [7])
 
     expect(filterTaskCenterHistoricalProjects([owned], 7)).toEqual([owned])
+  })
+})
+
+describe('formatHistoricalTaskTitle', () => {
+  it('uses the same prompt-summary and numbered-media naming for video and image history', () => {
+    expect(formatHistoricalTaskTitle('一只猫在花园里奔跑', '项目名', '视频', 2)).toBe('一只猫在花园里奔跑 · 视频 2')
+    expect(formatHistoricalTaskTitle('一只猫在花园里奔跑', '项目名', '图片', 1)).toBe('一只猫在花园里奔跑 · 图片 1')
+  })
+
+  it('falls back to project title and truncates long prompts without splitting emoji', () => {
+    expect(formatHistoricalTaskTitle('', '项目名', '视频', 1)).toBe('项目名 · 视频 1')
+    const prompt = `${'猫'.repeat(29)}🐱还有更多`
+    expect(formatHistoricalTaskTitle(prompt, '项目名', '图片', 3)).toBe(`${'猫'.repeat(29)}🐱… · 图片 3`)
   })
 })

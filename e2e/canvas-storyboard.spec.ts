@@ -4,6 +4,8 @@ import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-a
 test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步编辑', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  await page.addInitScript(() => localStorage.setItem('zzh_canvas_preferences', JSON.stringify({ wheelMode: 'pan' })))
   const items = Array.from({ length: 16 }, (_, index) => ({
     title: `场景 ${index + 1}`,
     prompt: '主体在温暖的客厅中缓缓走动，镜头推进并呈现柔和的光线。'.repeat(20),
@@ -77,6 +79,13 @@ test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步�
   await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(1\)/)
   await expect.poll(layout).toEqual(initialLayout)
+  const viewport = page.locator('.react-flow__viewport')
+  const beforeHeaderWheel = await viewport.getAttribute('style')
+  const headerBounds = await storyboard.locator('header').boundingBox()
+  expect(headerBounds).not.toBeNull()
+  await page.mouse.move(headerBounds!.x + headerBounds!.width / 2, headerBounds!.y + headerBounds!.height / 2)
+  await page.mouse.wheel(0, 120)
+  await expect.poll(() => viewport.getAttribute('style')).not.toBe(beforeHeaderWheel)
   const transform = await page.locator('.react-flow__viewport').getAttribute('style')
   const bounds = await list.boundingBox()
   // 滚轮落在输入框正文上时，也应滚动外层列表，而非缩放画布。
@@ -100,6 +109,11 @@ test('分镜滚轮只滚动列表，展开后长提示词完整展示并同步�
     '完整窗口编辑后的第十六个镜头',
   )
   await page.setViewportSize({ width: 640, height: 850 })
+  // 先取消选区以收起移动端悬浮节点面板，避免面板覆盖底部视图工具栏。
+  const paneBounds = await page.locator('.react-flow__pane').boundingBox()
+  expect(paneBounds).not.toBeNull()
+  await page.mouse.click(paneBounds!.x + paneBounds!.width * 0.3, paneBounds!.y + paneBounds!.height * 0.45)
+  await page.getByRole('button', { name: '复位视图', exact: true }).click()
   await node.getByRole('button', { name: '展开查看' }).click()
   await expect(modal).toBeVisible()
   await expect(modal).not.toHaveClass(/ant-zoom-appear/)

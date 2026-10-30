@@ -456,7 +456,12 @@ function deriveHistoricalImageTasks(project: any, workspaceId: number, ownerUser
         generationId,
         taskId: Number(message?.taskId || message?.task_id || 0) || 0,
         status: 'succeeded',
-        title: latestPrompt || `${projectTitle} · 图片 ${resultIndex}`,
+        title: formatHistoricalTaskTitle(
+          String(message?.request?.text || latestPrompt || ''),
+          projectTitle,
+          '图片',
+          resultIndex,
+        ),
         prompt: String(message?.request?.text || latestPrompt || ''),
         ratio: String(message?.ratio || message?.request?.ratio || entryRatio),
         durationSec: 0,
@@ -474,6 +479,20 @@ function deriveHistoricalImageTasks(project: any, workspaceId: number, ownerUser
     })
   })
   return tasks
+}
+
+/** 任务中心历史视频和图片统一用提示词摘要 + 类型序号命名。 */
+export function formatHistoricalTaskTitle(
+  prompt: string,
+  projectTitle: string,
+  mediaLabel: '图片' | '视频',
+  index: number,
+) {
+  const source = String(prompt || '').trim() || String(projectTitle || '').trim() || `历史${mediaLabel}`
+  const characters = Array.from(source)
+  const excerpt = characters.slice(0, 30).join('')
+  const summary = characters.length > 30 ? `${excerpt}…` : excerpt
+  return `${summary} · ${mediaLabel} ${Math.max(1, Math.floor(Number(index) || 1))}`
 }
 
 /** 项目级创作者：归属人 ID + 后端给的展示名；名字缺失时由卡片按成员列表补。 */
@@ -516,7 +535,7 @@ async function loadHistoricalTasks(
   const tasks = filterTaskCenterHistoricalProjects(projects, ownerUserId).flatMap((project) => {
     const videoTasks = deriveProjectVideos({ project, workspaceId, currentUserId: ownerUserId })
       .filter((video) => video.status === 'published' && Boolean(video.videoUrl) && !video.manual)
-      .map((video) => {
+      .map((video, videoIndex) => {
         const scope: TaskCenterScope = String(video.flow || '').toLowerCase() === 'hot-copy' ? 'hot-copy' : 'smart'
         const projectId = Number(video.projectId || project?.id || 0) || 0
         const generationId = `history:${video.id}`
@@ -532,7 +551,12 @@ async function loadHistoricalTasks(
           generationId,
           taskId: 0,
           status: 'succeeded' as const,
-          title: String(video.title || project?.title || project?.name || '历史视频'),
+          title: formatHistoricalTaskTitle(
+            String(video.prompt || ''),
+            String(project?.title || project?.name || '历史视频'),
+            '视频',
+            videoIndex + 1,
+          ),
           ratio: String(video.ratio || ''),
           durationSec: Number(video.durationSeconds || 0) || 0,
           thumbnailUrl: String(video.coverUrl || ''),

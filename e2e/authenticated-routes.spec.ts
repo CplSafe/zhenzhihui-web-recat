@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import {
   HOT_COPY_PROJECT_ID,
   PROJECT_VIDEO_ID,
+  SECOND_TEAM_WORKSPACE_ID,
   SMART_PROJECT_ID,
   WORKSPACE_ID,
   expectNoUnexpectedApi,
@@ -622,11 +623,17 @@ test.describe('已认证关键路由与读取链路', () => {
     await expect(hotCopyPrompt).toHaveValue('')
 
     // 只有明确进入编辑时才恢复项目草稿；消费编辑标记后切回该路由应为空白入口。
-    await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}?edit=1`)
+    await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}?workspace_id=${SECOND_TEAM_WORKSPACE_ID}&edit=1`)
 
     const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
     await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
-    await expect(hotCopyPrompt).toHaveValue('E2E 爆款恢复描述')
+    await expect(hotCopyPrompt).toHaveValue('团队 B 独立爆款草稿')
+    expectScopedRequest(api, {
+      method: 'GET',
+      path: `/api/v1/creative/projects/${HOT_COPY_PROJECT_ID}`,
+      workspaceId: SECOND_TEAM_WORKSPACE_ID,
+      projectId: HOT_COPY_PROJECT_ID,
+    })
     await page.goto('/projects')
     await page.goto('/hot-copy')
     await expect(page).toHaveURL(/\/hot-copy$/)

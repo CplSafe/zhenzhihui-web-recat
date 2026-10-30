@@ -57,7 +57,7 @@ export default function CanvasNodeFailure({
       {requestId && (
         <button
           type="button"
-          className={`${styles.requestId} nodrag nopan nowheel`}
+          className={`${styles.requestId} nodrag nopan`}
           data-failure-info
           aria-label={`复制 RequestID：${requestId}`}
           title="点击复制 RequestID"

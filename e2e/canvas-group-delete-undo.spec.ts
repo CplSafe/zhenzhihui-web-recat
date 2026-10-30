@@ -66,14 +66,21 @@ test('分组多选创建节点后删除只移除新节点连线，快捷键立�
   const edges = page.locator('.react-flow__edge')
   await expect(nodes).toHaveCount(4)
   await expect(edges).toHaveCount(1)
-  await page.locator('.react-flow__node[data-id="a"]').click({ position: { x: 80, y: 80 } })
+  // 框选三节点时也扫过既有边的线段，模拟实际中旧线残留选中态的情形。
+  await page.mouse.move(80, 350)
+  await page.mouse.down()
+  await page.mouse.move(950, 610, { steps: 8 })
+  await page.mouse.up()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(3)
+  // 框选可能把穿过范围的既有连线一并选中；新建节点后快捷删除仍应只作用于新节点。
+  await expect(page.locator('.react-flow__edge.selected[data-id="existing-edge"]')).toHaveCount(1)
   await page.getByRole('button', { name: '从所选节点创建下游节点' }).click()
   const menu = page.locator('.canvas-add-menu')
   await menu.getByRole('button', { name: /^文本生成/ }).click()
 
   await expect(nodes).toHaveCount(5)
   await expect(edges).toHaveCount(4)
+  await expect(page.locator('.react-flow__edge.selected')).toHaveCount(0)
   await expect(page.locator('.canvas-view')).toBeFocused()
   // 新节点创建后不重新点击画布，Delete 应只删除新节点及其三条输入线。
   await page.keyboard.press('Delete')

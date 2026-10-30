@@ -9,7 +9,7 @@
  */
 import { memo, useState, useRef, useEffect, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { Plus, X } from 'lucide-react'
+import { Keyboard, Plus, X } from 'lucide-react'
 import {
   CANVAS_MOD,
   DEFAULT_CANVAS_SHORTCUTS,
@@ -441,7 +441,7 @@ function CanvasFloatingToolbar({
         title="快捷键说明（?）"
         aria-label="打开快捷键说明"
       >
-        {renderGlyph(<span className={styles.keyboardGlyph}>⌨</span>, 5)}
+        {renderGlyph(<Keyboard className={styles.keyboardGlyph} aria-hidden="true" />, 5)}
         <span className={styles.toolLabel}>快捷键</span>
       </button>
       <button className={styles.toolBtn} onClick={onOpenHistory} title="历史记录">
@@ -453,15 +453,6 @@ function CanvasFloatingToolbar({
 }
 
 /* ---------- icons ---------- */
-
-function PlusIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="12" y1="5" x2="12" y2="19" />
-      <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  )
-}
 
 /** 抓手：设计工具里「平移画布」的通用图标 */
 function HandIcon() {

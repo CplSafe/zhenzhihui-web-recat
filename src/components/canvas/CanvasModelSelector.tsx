@@ -15,12 +15,16 @@ function SelectorPopover({
   open,
   onClose,
   expansionSpace,
+  anchorElement,
+  onEnter,
   onLeave,
 }: {
   children: React.ReactNode
   open: boolean
   onClose: () => void
   expansionSpace: number
+  anchorElement: HTMLElement | null
+  onEnter: () => void
   onLeave: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -56,10 +60,13 @@ function SelectorPopover({
     <div ref={anchorRef}>
       <ViewportFloatingPanel
         panelRef={ref}
+        anchorElement={anchorElement}
         expansionSpace={expansionSpace}
+        layer={1500}
         className={`${styles.popover} ${styles.modelPopover} nodrag nopan nowheel`}
         role="listbox"
         aria-label="生成模型列表"
+        onPointerEnter={onEnter}
         onPointerLeave={onLeave}
         onPointerDown={(event) => event.stopPropagation()}
         onMouseDown={(event) => event.stopPropagation()}
@@ -121,12 +128,22 @@ export default function CanvasModelSelector({
   onChange?: (modelVersionId: number) => void
 }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const [inspected, setInspected] = useState<number | null>(null)
+  const hoverOpenTimerRef = useRef<number | null>(null)
+  const hoverCloseTimerRef = useRef<number | null>(null)
+  const clearHoverTimers = () => {
+    if (hoverOpenTimerRef.current !== null) window.clearTimeout(hoverOpenTimerRef.current)
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverOpenTimerRef.current = null
+    hoverCloseTimerRef.current = null
+  }
   const close = () => {
+    clearHoverTimers()
     setInspected(null)
     setOpen(false)
   }
-  const inspect = (id: number, keyboard = false) => {
+  const inspect = (id: number) => {
     // 悬停时立即展开模型说明；延迟会让菜单显得迟钝。
     setInspected(id)
   }
@@ -146,16 +163,47 @@ export default function CanvasModelSelector({
     : selected?.displayName || (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')
   // 有被挡住的模型时仍然允许展开：列表里逐条写明为什么用不了
   const canOpen = !disabled && (availableModels.length > 0 || blockedModels.length > 0)
+  useEffect(
+    () => () => {
+      if (hoverOpenTimerRef.current !== null) window.clearTimeout(hoverOpenTimerRef.current)
+      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    },
+    [],
+  )
+  const scheduleHoverOpen = () => {
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverCloseTimerRef.current = null
+    if (!canOpen || open) return
+    if (hoverOpenTimerRef.current !== null) window.clearTimeout(hoverOpenTimerRef.current)
+    hoverOpenTimerRef.current = window.setTimeout(() => {
+      setOpen(true)
+      hoverOpenTimerRef.current = null
+    }, 160)
+  }
+  const scheduleHoverClose = () => {
+    if (hoverOpenTimerRef.current !== null) window.clearTimeout(hoverOpenTimerRef.current)
+    hoverOpenTimerRef.current = null
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      setInspected(null)
+      setOpen(false)
+      hoverCloseTimerRef.current = null
+    }, 180)
+  }
   return (
     <div className={styles.selectorWrap}>
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="listbox"
         aria-disabled={!canOpen}
         className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
         title={selected ? undefined : blockedReason || emptyLabel || undefined}
+        onPointerEnter={scheduleHoverOpen}
+        onPointerLeave={scheduleHoverClose}
         onClick={() => {
           if (!canOpen) return
+          clearHoverTimers()
           if (open) close()
           else setOpen(true)
         }}
@@ -180,11 +228,17 @@ export default function CanvasModelSelector({
       {open && canOpen && (
         <SelectorPopover
           open={open}
+          anchorElement={triggerRef.current}
           // 留出模型简介展开空间，并确保长目录仍可显示约十行后内部滚动。
           expansionSpace={models.length > 10 ? 360 : models.some((model) => readModelDescription(model)) ? 60 : 0}
           onClose={close}
+          onEnter={() => {
+            if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+            hoverCloseTimerRef.current = null
+          }}
           onLeave={() => {
             setInspected(null)
+            scheduleHoverClose()
           }}
         >
           {/* 可用的排在前面：被锁住的混在中间会让人以为列表到此为止 */}
@@ -193,7 +247,7 @@ export default function CanvasModelSelector({
               key={m.modelVersionId}
               model={m}
               expanded={inspected === m.modelVersionId}
-              onInspect={(keyboard) => inspect(m.modelVersionId, keyboard)}
+              onInspect={() => inspect(m.modelVersionId)}
               onBlur={() => {
                 setInspected(null)
               }}
@@ -210,7 +264,7 @@ export default function CanvasModelSelector({
               key={m.modelVersionId}
               model={m}
               expanded={inspected === m.modelVersionId}
-              onInspect={(keyboard) => inspect(m.modelVersionId, keyboard)}
+              onInspect={() => inspect(m.modelVersionId)}
               onBlur={() => {
                 setInspected(null)
               }}
@@ -248,7 +302,7 @@ function ModelOptionRow({
   blockedReason?: string
   onSelect?: () => void
   expanded: boolean
-  onInspect: (keyboard?: boolean) => void
+  onInspect: () => void
   onBlur: () => void
 }) {
   const info = readModelPresentation(model)
@@ -342,7 +396,7 @@ function ModelOptionRow({
       onPointerMove={(event) => {
         if (event.pointerType === 'mouse' && (event.movementX || event.movementY)) onInspect()
       }}
-      onFocus={() => onInspect(true)}
+      onFocus={onInspect}
       // 指针选择保持当前焦点，避免浏览器为浮层按钮滚动底层画布；键盘仍可正常聚焦。
       onMouseDown={(event) => event.preventDefault()}
       onBlur={onBlur}

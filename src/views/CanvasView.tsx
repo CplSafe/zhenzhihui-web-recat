@@ -307,6 +307,7 @@ import {
   LOCAL_VIDEO_MAX_BYTES,
   extractMediaFiles,
   hasFileDrag,
+  isCanvasVideoFile,
   naturalImageRatio,
   pickImageFiles,
   pickVideoFiles,
@@ -1504,7 +1505,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     setTextContent(trimmed)
     if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
     ;(window as any).__canvasTextContents.set(id, trimmed)
-    ;(window as any).__canvasMarkDirty?.()
+    // 点生成/刷新前先同步写入本地草稿，并立即启动云端保存；避免 1 秒防抖窗口内离开页面丢正文。
+    ;(window as any).__canvasMarkDirty?.(true)
   }
 
   const kind = (data.kind as string) || 'text'
@@ -1855,7 +1857,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       )}
 
       {/* 主体：文本节点可编辑；图片/视频显示素材内容或占位图标 */}
-      <div className={`canvas-node-body${kind === 'text' ? ' nowheel' : ''}`} onDoubleClick={handleDoubleClick}>
+      <div className="canvas-node-body" onDoubleClick={handleDoubleClick}>
         {kind === 'text' ? (
           editing ? (
             <textarea
@@ -2239,7 +2241,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
             <button
               type="button"
-              className="canvas-node-voice-retry nodrag nopan nowheel"
+              className="canvas-node-voice-retry nodrag nopan"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation()
@@ -3682,19 +3684,19 @@ function CanvasInner() {
     }
   }, [contextMenu])
 
-  // 撤销与重做遵循当前绑定；输入框保留浏览器的文本编辑行为。
+  // 撤销与重做是画布级命令：菜单按钮或工具栏失焦后仍能直接操作，
+  // 但输入框、文本编辑区和弹窗继续保留各自的键盘行为。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // 从右键菜单或工具栏创建节点后，菜单按钮会卸载，焦点可能落到 body。
-      // 节点仍选中时允许 body 接收画布撤销；其它页面控件和输入框仍不接管。
-      const pageBodyFocused =
-        (e.target === document.body || e.target === document.documentElement) &&
-        (document.activeElement === document.body || document.activeElement === document.documentElement)
-      const hasCanvasSelection =
-        latestRef.current.nodes.some((node) => node.selected) || latestRef.current.edges.some((edge) => edge.selected)
-      const selectedCanvasFallback = pageBodyFocused && hasCanvasSelection && !shortcutsBlockedRef.current
+      const isTextEditing = (target: EventTarget | null) =>
+        target instanceof Element &&
+        Boolean(
+          target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'),
+        )
       if (
-        (!acceptsCanvasShortcut(e.target) && !selectedCanvasFallback) ||
+        shortcutsBlockedRef.current ||
+        isTextEditing(e.target) ||
+        isTextEditing(document.activeElement) ||
         e.defaultPrevented ||
         e.isComposing ||
         e.repeat
@@ -3705,11 +3707,13 @@ function CanvasInner() {
       if (!isUndo && !isRedo) return
       if (!(isUndo ? historyRef.current.undo.length : historyRef.current.redo.length)) return
       e.preventDefault()
+      e.stopPropagation()
       if (isUndo) undo()
       else redo()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // 捕获阶段优先于 React Flow、播放器和浏览器控件，避免它们先吞掉撤销/重做。
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [undo, redo, acceptsCanvasShortcut, preferences.shortcuts])
 
   useEffect(() => {
@@ -4162,6 +4166,15 @@ function CanvasInner() {
         ...nds.map((n) => (options?.select !== false && n.selected ? { ...n, selected: false } : n)),
         newNode,
       ])
+      // 新节点成为当前操作目标；同时取消旧连线的选中态，避免随后按 Delete/Backspace
+      // 把框选时碰巧选中的既有连线也一并删除。
+      if (options?.select !== false) {
+        setEdges((items) =>
+          items.some((edge) => edge.selected)
+            ? items.map((edge) => (edge.selected ? { ...edge, selected: false } : edge))
+            : items,
+        )
+      }
       // 同步选中态回显：新节点默认选中，立即显示节点编辑面板（首个节点同样弹出）
       if (options?.select !== false)
         setSelectedNode({
@@ -4184,7 +4197,7 @@ function CanvasInner() {
       // 返回新节点 id，供调用方（如连线创建）建立后续关系
       return id
     },
-    [setNodes, commitHistory],
+    [setNodes, setEdges, commitHistory],
   )
 
   // 仅首次接入时载入源素材，后续重新生成不会覆盖编辑成果。
@@ -4798,6 +4811,7 @@ function CanvasInner() {
   // 增量保存调度：防抖 1 秒后统一执行（本地草稿 + 云端），支持立即 flush
   const saveTimerRef = useRef<number | null>(null)
   const scheduleSyncRef = useRef<(immediate?: boolean) => void>(() => undefined)
+  const flushCanvasSyncRef = useRef<() => Promise<void>>(async () => undefined)
   scheduleSyncRef.current = (immediate?: boolean) => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
     // 草稿必须绑定当前画布 id：所有数据保存都对应画布，防止串画布
@@ -4816,6 +4830,10 @@ function CanvasInner() {
       pushCanvasMutations()
     }, 1000)
   }
+  flushCanvasSyncRef.current = async () => {
+    scheduleSyncRef.current(true)
+    await syncQueueRef.current
+  }
 
   // nodes/edges 变化 → 防抖调度保存
   useEffect(() => {
@@ -4828,9 +4846,9 @@ function CanvasInner() {
 
   // 文本编辑时标记「未保存」并触发保存（文本内容不经过 nodes/edges，需显式驱动）
   useEffect(() => {
-    ;(window as any).__canvasMarkDirty = () => {
+    ;(window as any).__canvasMarkDirty = (immediate = false) => {
       setSaveStatus('dirty')
-      scheduleSyncRef.current()
+      scheduleSyncRef.current(Boolean(immediate))
       bumpTextRevisionRef.current()
     }
     return () => {
@@ -5631,12 +5649,27 @@ function CanvasInner() {
       // 否则用户会看着一个占位节点转很久最后失败，还不知道原因是文件太大。
       const allVideos = pickVideoFiles(files)
       const allAudios = CANVAS_AUDIO_NODES_ENABLED ? files.filter(isAudioFile) : []
+      const unsupportedFiles = files.filter(
+        (file) =>
+          !String(file.type || '')
+            .toLowerCase()
+            .startsWith('image/') &&
+          !isCanvasVideoFile(file) &&
+          !isAudioFile(file),
+      )
       const audios = allAudios.filter((file) => file.size <= 100 * 1024 * 1024)
       const oversizedAudios = allAudios.length - audios.length
       const videos = allVideos.filter((file) => file.size <= LOCAL_VIDEO_MAX_BYTES)
       const oversized = allVideos.length - videos.length
       if (allImages.length === 0 && allVideos.length === 0 && allAudios.length === 0) {
-        showToast(CANVAS_AUDIO_NODES_ENABLED ? '支持图片、视频和音频文件' : '支持图片和视频文件', 'error')
+        showToast(
+          unsupportedFiles.length
+            ? '文件格式不受支持；视频请使用 MP4、MOV、M4V、WEBM、AVI、MKV、MPEG、MPG 或 3GP 格式'
+            : CANVAS_AUDIO_NODES_ENABLED
+              ? '支持图片、视频和音频文件'
+              : '支持图片和视频文件',
+          'error',
+        )
         return
       }
       // 图片同样先做生成输入合规：<256px 的不建节点并说明原因，>5760px 的自动缩到范围内再上传。
@@ -5652,10 +5685,13 @@ function CanvasInner() {
       const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
       const rejectedImages = imageChecks.filter((item) => item.error).map((item) => item.error)
       if (images.length === 0 && videos.length === 0 && audios.length === 0) {
-        showToast(
-          rejectedImages[0] || (oversizedAudios ? '音频超过 100MB，请压缩后再导入' : '视频超过 512MB，请压缩后再导入'),
-          'error',
-        )
+        const rejected = [
+          ...rejectedImages,
+          oversized ? `${oversized} 个视频超过 512MB，请压缩后再导入` : '',
+          oversizedAudios ? `${oversizedAudios} 个音频超过 100MB，请压缩后再导入` : '',
+          unsupportedFiles.length ? `${unsupportedFiles.length} 个文件格式不受支持` : '',
+        ].filter(Boolean)
+        showToast(rejected.join('；') || '没有可导入的素材，请检查文件格式', 'error')
         return
       }
       // 图片在前、视频在后，保证超限被裁掉的总是排在后面的那些，顺序稳定可预期
@@ -5739,15 +5775,16 @@ function CanvasInner() {
       setSaveStatus('dirty')
       if (failures.length > 0) {
         showToast(failures.length > 1 ? `${failures.length} 个素材未能导入：${failures[0]}` : failures[0], 'error')
-      } else if (oversized > 0 || oversizedAudios > 0) {
+      } else if (oversized > 0 || oversizedAudios > 0 || unsupportedFiles.length > 0) {
         // 已成功导入的部分不受影响，这里只解释被跳过的那些为什么没进来
         showToast(
           [
             oversized ? `${oversized} 个视频超过 512MB 已跳过` : '',
             oversizedAudios ? `${oversizedAudios} 个音频超过 100MB 已跳过` : '',
+            unsupportedFiles.length ? `${unsupportedFiles.length} 个文件格式不受支持已跳过` : '',
           ]
             .filter(Boolean)
-            .join('；') + '，请压缩后再导入',
+            .join('；') + '，请检查文件格式并压缩超限素材',
           'info',
         )
       } else if (skipped > 0) {
@@ -5800,11 +5837,20 @@ function CanvasInner() {
   // 粘贴导入：Ctrl+V 把剪贴板里的图片（截图或复制的图片文件）落到画布
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
-      // 文本编辑中保留浏览器默认粘贴；素材库弹窗、参考选择模式下不接管
-      if (event.defaultPrevented || !acceptsCanvasShortcut(event.target)) return
+      // 文本编辑中保留浏览器默认粘贴；素材库弹窗、参考选择模式下不接管。
+      // 节点副本已在画布剪贴板时，允许从工具栏/页面主体直接粘贴，不要求先重新点画布。
+      const target = event.target
+      const editingText =
+        target instanceof Element &&
+        Boolean(
+          target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'),
+        )
+      const hasSelection = Boolean(selectedNode || selectedNodeIds.length)
+      const canPasteCanvasNodes = Boolean(canvasClipboard && (hasSelection || target === document.body))
+      if (event.defaultPrevented || editingText || (!acceptsCanvasShortcut(target) && !canPasteCanvasNodes)) return
       if (drawerPanel || isPickingRef) return
-      const { images, videos, audios } = extractMediaFiles(event.clipboardData)
-      const files = [...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : [])]
+      const { images, videos, audios, unsupported } = extractMediaFiles(event.clipboardData)
+      const files = [...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : []), ...unsupported]
       // 画布内 Ctrl+C 的节点剪贴板优先于系统剪贴板，避免系统里残留的图片抢走 Ctrl+V。
       // Ctrl+Shift+V 明确表示导入系统媒体；没有画布节点剪贴板时，普通 Ctrl+V 仍可导入媒体。
       const preferSystemMedia = preferSystemClipboardPasteRef.current
@@ -5821,9 +5867,9 @@ function CanvasInner() {
       event.preventDefault()
       void importLocalMedia(files, pointerRef.current || undefined)
     }
-    window.addEventListener('paste', onPaste)
-    return () => window.removeEventListener('paste', onPaste)
-  }, [drawerPanel, isPickingRef, importLocalMedia, acceptsCanvasShortcut])
+    window.addEventListener('paste', onPaste, true)
+    return () => window.removeEventListener('paste', onPaste, true)
+  }, [drawerPanel, isPickingRef, importLocalMedia, acceptsCanvasShortcut, selectedNode, selectedNodeIds.length])
 
   const handleFileDragEnter = useCallback((event: React.DragEvent) => {
     if (!hasFileDrag(event.dataTransfer)) return
@@ -5853,8 +5899,8 @@ function CanvasInner() {
       setFileDragActive(false)
       // 参考选择模式下画布正在等待点选来源节点，此时不接受导入
       if (isPickingRef) return
-      const { images, videos, audios } = extractMediaFiles(event.dataTransfer)
-      void importLocalMedia([...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : [])], {
+      const { images, videos, audios, unsupported } = extractMediaFiles(event.dataTransfer)
+      void importLocalMedia([...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : []), ...unsupported], {
         x: event.clientX,
         y: event.clientY,
       })
@@ -5944,11 +5990,25 @@ function CanvasInner() {
     (prompt: string) => {
       const targetNodeId = selectedNode?.id
       if (!targetNodeId) return
+      const current = latestRef.current.nodes.find((item) => item.id === targetNodeId)
+      const isTextNode = current?.type === 'text' || current?.data?.kind === 'text'
+      const nextData = isTextNode ? { prompt, text: prompt } : { prompt }
+      if (isTextNode) {
+        if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map<string, string>()
+        ;((window as any).__canvasTextContents as Map<string, string>).set(targetNodeId, prompt)
+      }
+      latestRef.current = {
+        ...latestRef.current,
+        nodes: latestRef.current.nodes.map((item) =>
+          item.id === targetNodeId ? { ...item, data: { ...item.data, ...nextData } } : item,
+        ),
+      }
       setNodes((items) =>
-        items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, prompt } } : item)),
+        items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, ...nextData } } : item)),
       )
-      setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, prompt } : current))
+      setSelectedNode((item) => (item?.id === targetNodeId ? { ...item, ...nextData } : item))
       setSaveStatus('dirty')
+      scheduleSyncRef.current()
     },
     [selectedNode?.id, setNodes, setSaveStatus],
   )
@@ -6363,6 +6423,8 @@ function CanvasInner() {
         setNodes((nds) => nds.map((n) => (n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n)))
         setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
         setSaveStatus('dirty')
+        // 保存节点提示词和提交凭证后再发起请求，刷新页面时可恢复真实提交现场。
+        await flushCanvasSyncRef.current()
         // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
         const task =
           generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
@@ -11957,7 +12019,10 @@ function CanvasInner() {
             onClick={(event) => event.stopPropagation()}
           >
             {addMenu.sourceIds && (
-              <div className="canvas-add-menu__heading">引用选中的 {addMenu.sourceIds.length} 个节点</div>
+              <div className="canvas-add-menu__heading">
+                <strong>引用选中的 {addMenu.sourceIds.length} 个节点</strong>
+                <span>选择要连接的后续节点</span>
+              </div>
             )}
             {(addMenu.sourceIds ? SELECTION_ADD_MENU_ITEMS : ADD_MENU_ITEMS).map((item) => {
               const sourceNode = nodes.find((n) => n.id === addMenu.sourceId)

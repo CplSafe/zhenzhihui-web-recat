@@ -345,7 +345,7 @@
 .taskCard {
   position: relative;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -355,6 +355,7 @@
 
   &:hover,
   &:focus-within {
+    z-index: 11;
     background: #f7faf9;
     box-shadow: 0 0 0 6px #f7faf9;
   }
