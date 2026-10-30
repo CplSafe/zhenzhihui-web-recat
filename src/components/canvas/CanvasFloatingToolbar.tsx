@@ -9,7 +9,7 @@
  */
 import { memo, useState, useRef, useEffect, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { Keyboard, Plus, X } from 'lucide-react'
+import { Keyboard, Plus } from 'lucide-react'
 import {
   CANVAS_MOD,
   DEFAULT_CANVAS_SHORTCUTS,
@@ -56,7 +56,7 @@ function CanvasFloatingToolbar({
   const [menuOpen, setMenuOpen] = useState(false)
   const [addSink, setAddSink] = useState(false)
   const addPressTimerRef = useRef<number | null>(null)
-  const addMenuCloseRef = useRef<HTMLButtonElement>(null)
+  const addTriggerRef = useRef<HTMLButtonElement>(null)
   const reduceMotion = useReducedMotion()
   const menuRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -108,7 +108,7 @@ function CanvasFloatingToolbar({
 
   useEffect(() => {
     if (!menuOpen) return
-    addMenuCloseRef.current?.focus()
+    addTriggerRef.current?.focus()
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMenuOpen(false)
     }
@@ -150,7 +150,9 @@ function CanvasFloatingToolbar({
   return (
     <div
       ref={toolbarRef}
-      className={[styles.toolbar, leaving ? styles.toolbarLeaving : ''].filter(Boolean).join(' ')}
+      className={[styles.toolbar, menuOpen ? styles.toolbarMenuOpen : '', leaving ? styles.toolbarLeaving : '']
+        .filter(Boolean)
+        .join(' ')}
       aria-hidden={leaving || undefined}
       onPointerDownCapture={(event) => {
         pointerDownRef.current = true
@@ -174,20 +176,19 @@ function CanvasFloatingToolbar({
       {/* 1. 加号 — 弹出节点类型菜单 */}
       <div className={`${styles.addBtnWrap} ${menuOpen ? styles.addBtnWrapOpen : ''}`} ref={menuRef}>
         <motion.button
+          ref={addTriggerRef}
           className={`${styles.toolBtn} ${menuOpen ? styles.toolBtnActive : ''}`}
           onClick={pressAdd}
-          title="添加节点"
+          title={menuOpen ? undefined : '添加节点'}
           aria-label="添加节点"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           aria-controls="canvas-add-menu"
-          aria-hidden={menuOpen || undefined}
-          tabIndex={menuOpen ? -1 : undefined}
-          animate={{ scale: addSink ? 0.94 : 1, opacity: menuOpen ? 0 : 1 }}
+          animate={{ scale: addSink ? 0.94 : 1, opacity: 1 }}
           transition={reduceMotion ? { duration: 0.01 } : { scale: { duration: 0.11 }, opacity: { duration: 0.12 } }}
         >
           <Plus size={24} strokeWidth={1.8} aria-hidden="true" />
-          <span className={styles.toolLabel}>添加</span>
+          {!menuOpen && <span className={styles.toolLabel}>添加</span>}
         </motion.button>
         <AnimatePresence>
           {menuOpen && (
@@ -201,17 +202,6 @@ function CanvasFloatingToolbar({
               exit={{ width: 44, height: 44, borderRadius: 22, opacity: 0 }}
               transition={shapeTransition}
             >
-              <div className={styles.addMenuHeader}>
-                <span>创建或添加</span>
-                <button
-                  ref={addMenuCloseRef}
-                  type="button"
-                  aria-label="关闭添加菜单"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  <X size={18} />
-                </button>
-              </div>
               {/*
               分成两组是因为它们回答的是两个不同的问题：
               上面一组「新建节点」创建的是空节点，内容还要靠生成；

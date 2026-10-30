@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
-test('文本节点提交分镜前先持久化最新提示词，刷新后仍可恢复', async ({ page }, testInfo) => {
+test('文本节点快速重复提交只创建一次任务且提示词可恢复', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
   const pageErrors: string[] = []
@@ -50,9 +50,13 @@ test('文本节点提交分镜前先持久化最新提示词，刷新后仍可�
     })
   })
   let submittedPrompt = ''
+  let submitCount = 0
   await page.route('**/api/v1/ai/responses**', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
+    submitCount += 1
     submittedPrompt = String(route.request().postDataJSON().prompt || '')
+    // 保持提交请求在途，确保第二次点击撞上异步请求窗口。
+    await new Promise((resolve) => setTimeout(resolve, 250))
     await route.fulfill({ status: 400, json: { message: '模拟拒绝生成，确保不会产生真实任务' } })
   })
 
@@ -69,8 +73,13 @@ test('文本节点提交分镜前先持久化最新提示词，刷新后仍可�
   const latestPrompt = '刷新验证专用提示词：清晨海边，镜头缓慢推进，人物从画面左侧走向阳光。'
   await prompt.fill(latestPrompt)
   await expect(panel.getByRole('button', { name: '生成分镜', exact: true })).toBeEnabled()
-  await panel.getByRole('button', { name: '生成分镜', exact: true }).click()
+  const generateButton = panel.getByRole('button', { name: '生成分镜', exact: true })
+  await generateButton.evaluate((button) => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
   await expect.poll(() => submittedPrompt).toContain(latestPrompt)
+  await expect.poll(() => submitCount).toBe(1)
   expect(mutationsBeforeSubmit.length).toBeGreaterThan(0)
   expect(JSON.stringify(mutationsBeforeSubmit)).toContain(latestPrompt)
   await page.screenshot({ path: testInfo.outputPath('prompt-saved-before-submit.png') })

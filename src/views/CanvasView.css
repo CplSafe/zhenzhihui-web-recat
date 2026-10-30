@@ -173,6 +173,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   bottom: auto;
 }
 
+.canvas-panel-area.is-out-of-view {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* 拖动节点期间隐藏：面板锚在选中节点下方，会一路跟着指针跳，还挡住正要放节点的那片区域。
    用不透明度而不是 display:none——保持挂载，输入框内容与积分预估不会在松手后重来一遍。 */
 .canvas-panel-area.is-drag-hidden {

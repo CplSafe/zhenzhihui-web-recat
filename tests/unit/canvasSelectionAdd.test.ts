@@ -13,6 +13,13 @@ describe('canvas selection add source matrix', () => {
     expect(isCanvasSelectionAddAllowed('video', ['audio', 'audio'])).toBe(false)
   })
 
+  it('allows text and image sources for text nodes but blocks video or timeline sources', () => {
+    expect(isCanvasSelectionAddAllowed('text', ['text', 'image'])).toBe(true)
+    expect(isCanvasSelectionAddAllowed('text', ['image', 'video'])).toBe(false)
+    expect(isCanvasSelectionAddAllowed('text', ['text', 'timeline'])).toBe(false)
+    expect(getCanvasSelectionAddUnsupportedSources('text', ['image', 'video'])).toEqual(['video'])
+  })
+
   it('requires every source to be supported and keeps images out of video-only timelines', () => {
     expect(isCanvasSelectionAddAllowed('video', ['image', 'audio'])).toBe(false)
     expect(isCanvasSelectionAddAllowed('timeline', ['image', 'video'])).toBe(false)
