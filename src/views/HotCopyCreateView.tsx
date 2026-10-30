@@ -588,6 +588,45 @@ function withResolvedHotCopyAssets(
   }
 }
 
+/** 用同一项目的本机副本补齐旧版/部分云端草稿缺失的入口字段；云端已有值始终优先。 */
+function mergeHotCopyEntryInitial(
+  primary?: Partial<HotCopyEntryPayload> | null,
+  fallback?: Partial<HotCopyEntryPayload> | null,
+): Partial<HotCopyEntryPayload> | undefined {
+  if (!primary && !fallback) return undefined
+  const current = primary || {}
+  const backup = fallback || {}
+  const primaryVideo = current.libraryVideo
+  const fallbackVideo = backup.libraryVideo
+  const products = Array.isArray(current.products) && current.products.length ? current.products : backup.products || []
+  return {
+    ...backup,
+    ...current,
+    ...(String(current.text || '').trim() ? {} : { text: backup.text || '' }),
+    ...(products.length ? { products } : {}),
+    ...(Number(primaryVideo?.assetId || 0) > 0 || primaryVideo?.src
+      ? {}
+      : fallbackVideo
+        ? { libraryVideo: fallbackVideo, videoSource: backup.videoSource || 'library' }
+        : {}),
+    ...(String(current.videoPreview || '').trim() ? {} : { videoPreview: backup.videoPreview || '' }),
+    ...(String(current.ratio || '').trim() ? {} : { ratio: backup.ratio || '' }),
+    ...(String(current.duration || '').trim() ? {} : { duration: backup.duration || '' }),
+    ...(String(current.resolution || '').trim() ? {} : { resolution: backup.resolution || '' }),
+    ...(Number(current.modelVersionId || 0) > 0
+      ? {}
+      : backup.modelVersionId
+        ? { modelVersionId: backup.modelVersionId }
+        : {}),
+    ...(typeof current.generateAudio === 'boolean' ? {} : { generateAudio: backup.generateAudio }),
+    ...(Number(current.sourceVideoDurationSec || 0) > 0
+      ? {}
+      : backup.sourceVideoDurationSec
+        ? { sourceVideoDurationSec: backup.sourceVideoDurationSec }
+        : {}),
+  }
+}
+
 // 从后端 draft_json 还原爆款复制草稿(我们把字段存在 .smart 块里;兼容字符串/对象)
 function parseHotCopyDraft(draftJson: any): { obj: any; smart: any } | null {
   const inspection = inspectHotCopyProjectDraft(draftJson)
@@ -843,7 +882,16 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const { isAuthenticated, isCheckingSession } = useAuth()
   const currentUser = useCurrentUser() as any
   const currentUserId = resolveUserId(currentUser)
-  const workspaceId = useWorkspaceId()
+  const activeWorkspaceId = useWorkspaceId()
+  // 从项目管理进入编辑时，项目所属工作区可能与当前全局工作区不同。
+  // 以路由携带的项目工作区为准，确保草稿、素材和模型目录都从同一工作区读取。
+  const routeWorkspaceId = Number(
+    new URLSearchParams(location.search).get('workspace_id') ||
+      (location.state as any)?.projectVideoSelection?.workspaceId ||
+      0,
+  )
+  const workspaceId =
+    routeId > 0 && Number.isFinite(routeWorkspaceId) && routeWorkspaceId > 0 ? routeWorkspaceId : activeWorkspaceId
   const hotCopyModelCatalog = useHotCopyModelCatalog(Number(workspaceId || 0))
   // 模型目录按 workspace 拉取，游客拿不到任何模型：入口置灰，点击走统一登录引导。
   // 会话仍在校验时不算游客，否则刷新瞬间入口会闪一下「登录后选择模型」。
@@ -2336,6 +2384,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             smart.entryInitial && typeof smart.entryInitial === 'object'
               ? (smart.entryInitial as Partial<HotCopyEntryPayload>)
               : localDraft?.entryInitial
+          const mergedEntryInitial = mergeHotCopyEntryInitial(rawEntryInitial, localDraft?.entryInitial)
           const backendSourceVideo =
             smart.sourceVideo && typeof smart.sourceVideo === 'object' ? smart.sourceVideo : null
           const sourceSeed = {
@@ -2354,16 +2403,16 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             restoredProductAssetIds = resolveHotCopyProductAssetIds(localDraft.productAssetIds, localDraft.entryInitial)
           }
           const restoredEntryInitial = withResolvedHotCopyAssets(
-            rawEntryInitial,
+            mergedEntryInitial,
             restoredSourceVideo,
             restoredProductAssetIds,
           )
-          const restoredBasePrompt = String(smart.basePrompt || obj.description || localFallback?.basePrompt || '')
+          const restoredBasePrompt = String(smart.basePrompt || localDraft?.basePrompt || obj.description || '')
           const restoredNameTouched = Boolean(smart.nameTouched || localFallback?.nameTouched)
           const restoredGenDurationSec =
-            parseDurationSeconds(smart.genDurationSec || localFallback?.genDurationSec) || DEFAULT_DURATION_SEC
+            parseDurationSeconds(smart.genDurationSec || localDraft?.genDurationSec) || DEFAULT_DURATION_SEC
           const restoredGenResolution = String(
-            smart.genResolution || localFallback?.genResolution || LEGACY_DEFAULT_VIDEO_RESOLUTION,
+            smart.genResolution || localDraft?.genResolution || LEGACY_DEFAULT_VIDEO_RESOLUTION,
           )
           const restoredSourceDuration = resolveStoredSourceDuration(restoredSourceVideo.assetId, smart, localDraft)
           // 留存项目视频清单存档(归类记录),保存时原样写回,避免被本编辑器的草稿快照覆盖
@@ -2434,7 +2483,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           setSourceVideoDurAssetId(sourceDurationForEditor ? sourceVideoForEditor.assetId : 0)
           setProductAssetIds(productAssetIdsForEditor)
           if (restoredIsGenerating && !restoredTaskId) setHotCopyPhase('素材准备中…')
-          if (smart.genRatio || localFallback?.genRatio) setGenRatio(String(smart.genRatio || localFallback?.genRatio))
+          if (smart.genRatio || localDraft?.genRatio) setGenRatio(String(smart.genRatio || localDraft?.genRatio))
           setGenDurationSec(restoredGenDurationSec)
           setGenResolution(restoredGenResolution)
           const t = String(proj?.title || proj?.name || '').trim()

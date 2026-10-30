@@ -68,15 +68,26 @@ describe('canvas local image import helpers', () => {
 
   it('keeps only video files', () => {
     const mp4 = videoFile()
-    expect(pickVideoFiles([mp4, imageFile(), null])).toEqual([mp4])
+    const mp4WithoutMime = videoFile('dragged.MP4', '')
+    const movWithoutMime = videoFile('clip.MOV', '')
+    expect(pickVideoFiles([mp4, mp4WithoutMime, movWithoutMime, imageFile(), null])).toEqual([
+      mp4,
+      mp4WithoutMime,
+      movWithoutMime,
+    ])
     expect(pickVideoFiles(null)).toEqual([])
   })
 
   it('extracts images and videos together so a pasted video is not dropped', () => {
     const png = imageFile()
     const mp4 = videoFile()
-    expect(extractMediaFiles(dataTransfer({ files: [png, mp4] }))).toEqual({ images: [png], videos: [mp4], audios: [] })
-    expect(extractMediaFiles(null)).toEqual({ images: [], videos: [], audios: [] })
+    expect(extractMediaFiles(dataTransfer({ files: [png, mp4] }))).toEqual({
+      images: [png],
+      videos: [mp4],
+      audios: [],
+      unsupported: [],
+    })
+    expect(extractMediaFiles(null)).toEqual({ images: [], videos: [], audios: [], unsupported: [] })
   })
 
   it('does not fall through to items when the file list holds only a video', () => {
@@ -88,6 +99,7 @@ describe('canvas local image import helpers', () => {
       images: [],
       videos: [dropped],
       audios: [],
+      unsupported: [],
     })
   })
 
@@ -102,7 +114,7 @@ describe('canvas local image import helpers', () => {
           ],
         }),
       ),
-    ).toEqual({ images: [], videos: [mp4], audios: [] })
+    ).toEqual({ images: [], videos: [mp4], audios: [], unsupported: [] })
   })
 
   it('extracts dropped audio with images and videos, including files with no MIME type', () => {
@@ -114,6 +126,18 @@ describe('canvas local image import helpers', () => {
       images: [png],
       videos: [mp4],
       audios: [mp3, wav],
+      unsupported: [],
+    })
+  })
+
+  it('reports unsupported files from the original file list without reading duplicate items', () => {
+    const rejected = new File(['binary'], 'source.wmv', { type: 'application/octet-stream' })
+    const duplicate = videoFile('duplicate.mp4')
+    expect(extractMediaFiles(dataTransfer({ files: [rejected], items: [{ kind: 'file', file: duplicate }] }))).toEqual({
+      images: [],
+      videos: [],
+      audios: [],
+      unsupported: [rejected],
     })
   })
 
@@ -130,7 +154,7 @@ describe('canvas local image import helpers', () => {
           ],
         }),
       ),
-    ).toEqual({ images: [], videos: [], audios: [audio] })
+    ).toEqual({ images: [], videos: [], audios: [audio], unsupported: [expect.any(File)] })
   })
 
   it('prefers the file list for audio to avoid importing clipboard items twice', () => {
@@ -139,6 +163,7 @@ describe('canvas local image import helpers', () => {
       images: [],
       videos: [],
       audios: [audio],
+      unsupported: [],
     })
   })
 

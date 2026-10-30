@@ -29,6 +29,13 @@ for (const { platform, shortcut } of [
     await expect(page.locator('.canvas-view')).not.toBeFocused()
     await page.screenshot({ path: testInfo.outputPath(`${platform}-selected-node-before-undo.png`) })
 
+    await page.evaluate(() => {
+      const button = document.createElement('button')
+      button.textContent = '撤销时焦点所在的无关按钮'
+      button.style.cssText = 'position:fixed;top:0;left:0;z-index:99999'
+      document.body.append(button)
+      button.focus()
+    })
     await page.keyboard.press(shortcut)
     await expect(page.locator('.react-flow__node')).toHaveCount(0)
     expectNoUnexpectedApi(api)

@@ -904,8 +904,8 @@
 }
 
 .modelPopover {
-  --floating-max-height: 740px;
-  max-height: min(740px, calc(100dvh - 24px));
+  --floating-max-height: 700px;
+  max-height: min(700px, calc(100dvh - 24px));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;

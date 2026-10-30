@@ -794,9 +794,9 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: transparent;
   border: none;
   box-shadow:
-    0px 2px 5px rgba(0, 0, 0, 0.1),
-    0px 9px 9px rgba(0, 0, 0, 0.09),
-    0px 21px 12px rgba(0, 0, 0, 0.05);
+    0px 3px 8px rgba(24, 38, 34, 0.12),
+    0px 12px 18px rgba(24, 38, 34, 0.1),
+    0px 26px 28px rgba(24, 38, 34, 0.07);
   width: 100%;
   height: 100%;
   display: flex;
@@ -810,14 +810,19 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 /* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
 .react-flow__node.selected {
   outline: #16a88b solid 1.5px !important;
-  outline-offset: 1px;
+  outline-offset: 0;
   border-radius: 14px;
+}
+
+.react-flow__node.selected:is(.react-flow__node-image, .react-flow__node-video) {
+  border-radius: 10px;
 }
 
 .react-flow__node.selected .canvas-default-node {
   box-shadow:
     0 0 0 3px rgb(22 168 139 / 7%),
-    0 4px 14px rgb(26 57 46 / 10%);
+    0 8px 20px rgb(26 57 46 / 14%),
+    0 22px 32px rgb(26 57 46 / 10%);
 }
 
 /* React Flow hover 阴影清除 */
@@ -1351,7 +1356,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 10px;
+  border-radius: inherit;
   pointer-events: none;
 }
 
@@ -1916,6 +1921,37 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: rgba(87, 103, 229, 0.08);
 }
 
+.canvas-add-menu.is-selection {
+  min-width: 230px;
+  padding: 8px;
+  border: 1px solid rgb(22 168 139 / 14%);
+  box-shadow:
+    0 14px 34px rgb(28 51 45 / 14%),
+    0 3px 10px rgb(28 51 45 / 8%);
+}
+
+.canvas-add-menu__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid #edf1ef;
+  margin-bottom: 4px;
+}
+
+.canvas-add-menu__heading strong {
+  color: #263b36;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.canvas-add-menu__heading span {
+  color: #83908c;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 /* 空连线菜单：来源限制不满足的节点类型，禁用灰显 */
 .canvas-add-menu__item.is-disabled,
 .canvas-add-menu__item.is-disabled:hover {
@@ -2000,6 +2036,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 .canvas-default-node.is-image .canvas-node-body {
   padding: 0;
+  border-radius: 10px;
 }
 
 .canvas-default-node.is-audio .canvas-node-body {

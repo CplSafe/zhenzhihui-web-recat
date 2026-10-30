@@ -509,7 +509,7 @@ for (const renamed of [false, true]) {
 }
 
 test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视角', async ({ page }, testInfo) => {
-  test.setTimeout(90_000)
+  test.setTimeout(120_000)
   test.setTimeout(90000)
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
@@ -670,7 +670,7 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   expect(uploads).toBe(0)
   await collection.screenshot({ path: testInfo.outputPath('panorama-capture-collection.png') })
   await modal.getByRole('button', { name: '将选中截图加入画布' }).click()
-  await expect.poll(() => uploads).toBe(1)
+  await expect.poll(() => uploads, { timeout: 30_000 }).toBe(1)
   await expect(page.locator('.react-flow__node')).toHaveCount(2)
   await expect(collection.getByRole('button', { name: '将选中截图加入画布' })).toBeDisabled()
   await expect(
@@ -698,7 +698,8 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   expect(pngFile.readUInt32BE(20)).toBe(1920)
   expect(uploads).toBe(1)
   await collection.getByRole('button', { name: '将选中截图加入画布' }).click()
-  await expect.poll(() => uploads).toBe(3)
+  // 两张 1080×1920 截图会串行上传至模拟 OSS；在 Windows Chromium 上各自可耗时约 10 秒。
+  await expect.poll(() => uploads, { timeout: 30_000 }).toBe(3)
   await expect(page.locator('.react-flow__node')).toHaveCount(4)
   await expect(page.locator('.canvas-group-frame')).toContainText('全景分镜组')
   await expect.poll(() => JSON.stringify(saved)).toContain('"groupName":"全景分镜组"')
@@ -719,7 +720,7 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
       return rects[0].right <= rects[1].left
     })
     .toBe(true)
-  await modal.getByRole('button', { name: 'Close', exact: true }).click()
+  await modal.getByRole('button', { name: '返回图片预览', exact: true }).click()
   await page.getByRole('button', { name: '复位视图', exact: true }).click()
   await expect
     .poll(async () =>
