@@ -97,7 +97,7 @@ describe('画布快捷键冲突处理', () => {
     expect(canUseCanvasShortcuts(root, node)).toBe(false)
   })
 
-  it.each(['input', 'textarea', 'select', 'button', 'a', 'video', 'audio'])('在 %s 上保留原生操作', (tag) => {
+  it.each(['input', 'textarea', 'select', 'button', 'a', 'video', 'audio', 'iframe'])('在 %s 上保留原生操作', (tag) => {
     const root = canvas()
     const control = document.createElement(tag)
     root.append(control)
@@ -111,6 +111,7 @@ describe('画布快捷键冲突处理', () => {
     root.focus()
     for (const attributes of [
       { contenteditable: '' },
+      { role: 'textbox' },
       { role: 'menu' },
       { role: 'button' },
       { 'data-canvas-keyboard': 'ignore' },

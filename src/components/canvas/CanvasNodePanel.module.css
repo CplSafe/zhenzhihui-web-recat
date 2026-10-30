@@ -887,10 +887,12 @@
 
 /* ── 模型列表行：厂商标记 + 名称 + NEW/✓/锁，下方一行标签 ── */
 .modelRow {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
   width: 100%;
+  min-height: 68px;
   padding: 12px;
   border: 0;
   border-radius: 8px;
@@ -902,6 +904,9 @@
 }
 
 .modelPopover {
+  --floating-max-height: 740px;
+  max-height: min(740px, calc(100dvh - 24px));
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -969,10 +974,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  padding-left: 26px;
 }
 
 /* 没有图标资源时用厂商首字母占位：比一个通用图标更能区分不同厂商 */
 .modelRowAvatar {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -989,6 +999,10 @@
 
 /* 后端 logo：尺寸与首字母标记一致，两种形态切换时行高不跳 */
 .modelRowLogo {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
   flex: none;
   width: 18px;
   height: 18px;

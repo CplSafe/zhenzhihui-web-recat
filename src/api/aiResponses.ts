@@ -18,6 +18,7 @@ import {
   extractTaskText,
   getAiTaskId,
   waitForAiTask,
+  resolveTaskModel,
 } from './business'
 import { ensureAssetId } from './smartShotImage'
 import { useWorkspaceSessionStore, deriveWorkspaceId, deriveModelPlanCandidates } from '@/stores/workspaceSession'
@@ -327,6 +328,48 @@ export async function runResponseText(args: ResponseTextArgs): Promise<string> {
   }
   // 非流式请求已经可能创建并计费；成功响应无法解析时禁止换成流式再发一单。
   throw new Error('AI 请求已完成但未返回可解析文本，已停止重试以避免重复生成')
+}
+
+/** 从画布图片理解并反推出可直接编辑/复用的中文图片生成提示词。 */
+export async function reverseImagePrompt(args: {
+  imageAssetId: number
+  workspaceId: number
+  detail?: 'balanced' | 'detailed'
+  signal?: AbortSignal
+}): Promise<string> {
+  const assetId = Math.floor(Number(args.imageAssetId) || 0)
+  const workspaceId = Math.floor(Number(args.workspaceId) || 0)
+  if (!Number.isSafeInteger(assetId) || assetId <= 0) throw new Error('图片素材无效，请重新选择图片')
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) throw new Error('未选择工作空间，无法反推提示词')
+  const model = await resolveTaskModel({ operationCode: OPERATION_CODE, workspaceId })
+  const modelVersionId = Number(model?.id || model?.model_version_id || model?.modelVersionId || 0)
+  if (!Number.isSafeInteger(modelVersionId) || modelVersionId <= 0)
+    throw new Error('当前空间暂未启用视觉理解模型，请联系管理员配置')
+  const detail = args.detail === 'detailed' ? '尽量具体' : '简洁而准确'
+  const prompt = await runResponseText({
+    system:
+      '你是专业的 AI 绘画提示词分析师。根据用户提供的图片，反向提炼一段可直接用于文生图或图生图的中文提示词。' +
+      '忠实描述可见内容：主体及外观、动作/姿态、空间关系、场景、构图与景别、光线、色彩、材质、视觉风格和氛围；' +
+      '不要臆测图片之外的信息，不要写分析过程、标题、编号、引号或 Markdown，只输出提示词正文。',
+    user: `请分析这张图片并反推提示词，${detail}，控制在 80 至 220 个汉字。`,
+    imageAssetIds: [assetId],
+    modelVersionId,
+    requestContext: {
+      workspaceId,
+      modelVersionId,
+      modelVersion: model,
+    },
+    temperature: 0.35,
+    maxTokens: args.detail === 'detailed' ? 420 : 280,
+    signal: args.signal,
+  })
+  const cleaned = prompt
+    .replace(/^```(?:\w+)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+    .replace(/^['"“”‘’「」《》]+|['"“”‘’「」《》]+$/g, '')
+  if (!cleaned) throw new Error('暂时没有识别出提示词，请调整图片后重试')
+  return cleaned
 }
 
 /** 流式文本请求参数，可通过 onDelta 接收增量和已聚合全文。 */

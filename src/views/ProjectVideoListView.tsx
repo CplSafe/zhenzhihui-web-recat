@@ -567,6 +567,7 @@ export default function ProjectVideoListView() {
       const base = video.flow === 'hot-copy' ? '/hot-copy' : '/smart'
       navigate(`${base}/${projectId}?${query.toString()}`, {
         state: {
+          ...(video.flow === 'hot-copy' ? { hotCopyEdit: true } : {}),
           projectVideoSelection: {
             projectId,
             workspaceId: targetWorkspaceId,

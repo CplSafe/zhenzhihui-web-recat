@@ -134,6 +134,51 @@ beforeEach(() => {
 })
 
 describe('TaskCenterDrawer isolation and reconciliation', () => {
+  it('shows up to four lines of a hot-copy task prompt on hover', async () => {
+    const user = userEvent.setup()
+    const prompt = '第一行\n第二行\n第三行\n第四行\n第五行不应显示'
+    seed(
+      task({
+        scope: 'hot-copy',
+        operationCode: 'video.replicate',
+        prompt,
+        title: '苹果广告',
+        status: 'succeeded',
+        locallyInitiated: true,
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    const cards = await screen.findAllByRole('button', { name: /苹果广告/ })
+    const card = cards[0]
+    const tooltip = card.closest('article')?.querySelector('[role="tooltip"]')
+    await user.hover(card)
+    expect(tooltip).toBeVisible()
+    expect(tooltip).toHaveTextContent(/第一行\s+第二行\s+第三行\s+第四行\s+第五行不应显示/)
+    expect(tooltip?.querySelector('.' + styles.promptPreviewText)).toBeInTheDocument()
+  })
+
+  it('shows the prompt on image task cards too', async () => {
+    const user = userEvent.setup()
+    seed(
+      task({
+        id: 'image:7:11:generation-image',
+        generationId: 'generation-image',
+        scope: 'image',
+        operationCode: 'image.text_to_image',
+        prompt: '一张清新的产品图片',
+        title: '产品图',
+        status: 'succeeded',
+        locallyInitiated: true,
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="image" />)
+    const card = (await screen.findAllByRole('button', { name: /产品图/ }))[0]
+    await user.hover(card)
+    expect(card.closest('article')?.querySelector('[role="tooltip"]')).toHaveTextContent('一张清新的产品图片')
+  })
+
   it('uses a zero-width task tab with an active-task badge when collapsed', async () => {
     const user = userEvent.setup()
     seed(

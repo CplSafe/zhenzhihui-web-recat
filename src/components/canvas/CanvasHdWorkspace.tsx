@@ -210,7 +210,9 @@ export default function CanvasHdWorkspace({
         }
       } catch (error) {
         unavailable = [404, 501].includes(Number((error as { status?: number })?.status))
-        // 服务未部署时保持画布可用；打开面板后显示具体错误，不把缺失接口当作空列表。
+        if (unavailable && !controller.signal.aborted) {
+          setTaskError('高清服务暂不可用（接口未部署或当前环境不支持），画布其他功能不受影响。可稍后重试。')
+        }
       } finally {
         if (!controller.signal.aborted && !unavailable) timer = window.setTimeout(sync, 8000)
       }

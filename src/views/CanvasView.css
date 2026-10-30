@@ -22,6 +22,19 @@
   background: #f8f9fa;
 }
 
+/* 顶部操作区增加一层柔和的压暗过渡，帮助导航与画布内容拉开层次。 */
+.canvas-view::before {
+  position: absolute;
+  z-index: 1050;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 112px;
+  background: linear-gradient(180deg, rgb(18 24 38 / 13%), rgb(18 24 38 / 5%) 48%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
 .canvas-interaction-hint {
   position: absolute;
   z-index: 1600;
@@ -149,6 +162,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   /* 同批量工具条：选中节点会被 React Flow 抬到 1000 以上，面板正是跟着选中节点走的，
      停在 50 就会被自己所锚定的那个节点压住 */
   z-index: 1200;
+  user-select: none;
+}
+
+.canvas-panel-area :is(input, textarea, [contenteditable='true']) {
+  user-select: text;
 }
 
 .canvas-panel-area.is-anchored {
@@ -773,7 +791,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   position: relative;
   overflow: visible;
   border-radius: 14px;
-  background: #fff;
+  background: transparent;
   border: none;
   box-shadow:
     0px 2px 5px rgba(0, 0, 0, 0.1),
@@ -818,13 +836,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
  * 位移只给 1px：画布上常有几十个节点，动静大了会显得整片都在抖。
  */
 .canvas-default-node {
-  transition:
-    box-shadow var(--canvas-dur) var(--canvas-ease),
-    transform var(--canvas-dur) var(--canvas-ease);
+  transition: box-shadow var(--canvas-dur) var(--canvas-ease);
 }
 
 .canvas-default-node:hover {
-  transform: translateY(-1px);
   box-shadow:
     0px 4px 10px rgba(0, 0, 0, 0.12),
     0px 14px 18px rgba(0, 0, 0, 0.1),
@@ -833,7 +848,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 /* 正在拖动的节点抬得更高，和底下那层拉开距离，一眼看出哪个跟着手走 */
 .react-flow__node.dragging .canvas-default-node {
-  transform: translateY(-2px) scale(1.008);
   box-shadow:
     0px 8px 16px rgba(0, 0, 0, 0.14),
     0px 20px 28px rgba(0, 0, 0, 0.12),
@@ -1458,6 +1472,15 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   pointer-events: none;
 }
 
+.canvas-node-video-retry {
+  padding: 0;
+  color: #ffe0a3;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 /* 轨道：命中区域比视觉轨道更高，方便在缩小的画布上点中 */
 .canvas-node-video-track {
   position: relative;
@@ -1967,6 +1990,16 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 .canvas-default-node.is-image-results {
   background: transparent;
+}
+
+/* 图片与剪辑节点的媒体直接贴合节点尺寸，不再露出白色卡片边框。 */
+.canvas-default-node.is-image,
+.canvas-default-node.is-timeline {
+  background: transparent;
+  border: none;
+}
+.canvas-default-node.is-image .canvas-node-body {
+  padding: 0;
 }
 
 .canvas-default-node.is-audio .canvas-node-body {
@@ -2603,6 +2636,8 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: max-content;
+  max-width: min(560px, 90vw);
   height: 32px;
   padding: 0 10px;
   margin-bottom: 8px;
@@ -2614,6 +2649,8 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   pointer-events: auto;
   touch-action: none;
   user-select: none;
+  z-index: 2;
+  box-shadow: none;
 }
 .canvas-group-frame__header .canvas-group-frame__label,
 .canvas-group-frame__header .canvas-group-frame__input {
@@ -2724,6 +2761,33 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: #35463f;
 }
 .canvas-video-details-icon:focus-visible {
+  outline: 2px solid #77dfbb;
+  outline-offset: 2px;
+}
+
+.canvas-video-sound-enable {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 7px;
+  background: rgb(20 24 28 / 82%);
+  color: #fff;
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+  cursor: pointer;
+}
+
+.canvas-video-sound-enable:hover {
+  background: #35463f;
+}
+
+.canvas-video-sound-enable:focus-visible {
   outline: 2px solid #77dfbb;
   outline-offset: 2px;
 }

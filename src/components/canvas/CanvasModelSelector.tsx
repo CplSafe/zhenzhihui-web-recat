@@ -122,18 +122,13 @@ export default function CanvasModelSelector({
 }) {
   const [open, setOpen] = useState(false)
   const [inspected, setInspected] = useState<number | null>(null)
-  const hoverTimer = useRef<number>()
-  const cancelHover = () => window.clearTimeout(hoverTimer.current)
-  useEffect(() => () => window.clearTimeout(hoverTimer.current), [])
   const close = () => {
-    cancelHover()
     setInspected(null)
     setOpen(false)
   }
   const inspect = (id: number, keyboard = false) => {
-    cancelHover()
-    if (keyboard) setInspected(id)
-    else hoverTimer.current = window.setTimeout(() => setInspected(id), 120)
+    // 悬停时立即展开模型说明；延迟会让菜单显得迟钝。
+    setInspected(id)
   }
   const availableModels = models.filter((m) => !m.unavailableReason)
   /**
@@ -185,10 +180,10 @@ export default function CanvasModelSelector({
       {open && canOpen && (
         <SelectorPopover
           open={open}
-          expansionSpace={models.some((model) => readModelDescription(model)) ? 60 : 0}
+          // 留出模型简介展开空间，并确保长目录仍可显示约十行后内部滚动。
+          expansionSpace={models.length > 10 ? 360 : models.some((model) => readModelDescription(model)) ? 60 : 0}
           onClose={close}
           onLeave={() => {
-            cancelHover()
             setInspected(null)
           }}
         >
@@ -200,7 +195,6 @@ export default function CanvasModelSelector({
               expanded={inspected === m.modelVersionId}
               onInspect={(keyboard) => inspect(m.modelVersionId, keyboard)}
               onBlur={() => {
-                cancelHover()
                 setInspected(null)
               }}
               durationSupport={durationLabel(m)}
@@ -218,7 +212,6 @@ export default function CanvasModelSelector({
               expanded={inspected === m.modelVersionId}
               onInspect={(keyboard) => inspect(m.modelVersionId, keyboard)}
               onBlur={() => {
-                cancelHover()
                 setInspected(null)
               }}
               durationSupport={durationLabel(m)}

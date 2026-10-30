@@ -224,7 +224,7 @@ export function formatCanvasShortcut(binding: string): string {
 
 /** 表单、按钮、媒体和弹层保留自己的键盘行为。 */
 const CANVAS_KEYBOARD_EXCLUSIONS =
-  'input, textarea, select, button, a, video, audio, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="dialog"], [role="menu"], [data-canvas-keyboard="ignore"]'
+  'input, textarea, select, button, a, video, audio, iframe, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="button"], [role="dialog"], [role="menu"], [data-canvas-keyboard="ignore"]'
 
 export function isCanvasShortcutTarget(root: HTMLElement | null, target: EventTarget | null): boolean {
   return Boolean(

@@ -7,15 +7,18 @@ for (const scenario of [
   { provider: 'openai', version: 'gpt-image-2', edit: true },
   { provider: 'volcengine', version: 'doubao-seedream-5-0-260128', edit: true },
   { provider: 'google', version: 'gemini-2.5-flash-image', edit: true, immediateFailure: true },
+  { provider: 'google', version: 'gemini-2.5-flash-image', edit: true, submitError: true },
 ]) {
-  test(`canvas ${scenario.version} edit=${scenario.edit} immediateFailure=${Boolean(scenario.immediateFailure)} sends correct inputs and isolates the previous failure`, async ({
+  test(`canvas ${scenario.version} edit=${scenario.edit} immediateFailure=${Boolean(scenario.immediateFailure)} submitError=${Boolean(scenario.submitError)} sends correct inputs and isolates the previous failure`, async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     const api = await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: [] }))
     const oldError = 'read google image response: context canceled'
-    const currentError = 'Current generation failed'
+    const currentError = scenario.submitError
+      ? '上传的素材数量超过该操作的上限，请减少后重试。'
+      : 'Current generation failed'
     let revision = 1
     let oldTaskQueries = 0
     let submissions = 0
@@ -133,6 +136,10 @@ for (const scenario of [
         expect(body.input_assets || []).toEqual(scenario.edit ? [{ asset_id: 12391, role: 'reference_image' }] : [])
       }
       submissions += 1
+      if (scenario.submitError) {
+        await route.fulfill({ status: 400, json: { message: currentError } })
+        return
+      }
       await pendingSubmission
       await route.fulfill({
         json: scenario.immediateFailure
@@ -165,6 +172,15 @@ for (const scenario of [
     await expect(send).toBeEnabled()
     await send.click()
     await expect.poll(() => submissions).toBe(1)
+    if (scenario.submitError) {
+      await expect(page.locator('.toast-text')).toHaveText('图生图最多支持 3 张参考图片，请减少图片数量后重试')
+      await expect(
+        page.getByRole('alert', { name: '上次生成失败：图生图最多支持 3 张参考图片，请减少图片数量后重试' }),
+      ).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath('image-reference-limit-toast.png') })
+      expectNoUnexpectedApi(api)
+      return
+    }
     const submitted = page.waitForResponse(
       (response) => response.url().endsWith('/api/v1/ai/tasks') && response.request().method() === 'POST',
     )

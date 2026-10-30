@@ -457,6 +457,7 @@ function deriveHistoricalImageTasks(project: any, workspaceId: number, ownerUser
         taskId: Number(message?.taskId || message?.task_id || 0) || 0,
         status: 'succeeded',
         title: latestPrompt || `${projectTitle} · 图片 ${resultIndex}`,
+        prompt: String(message?.request?.text || latestPrompt || ''),
         ratio: String(message?.ratio || message?.request?.ratio || entryRatio),
         durationSec: 0,
         thumbnailUrl: image.url,
@@ -539,6 +540,7 @@ async function loadHistoricalTasks(
           startedAt: historyTimestamp(video.createdAt || video.updatedAt),
           updatedAt,
           progress: 100,
+          ...(video.prompt ? { prompt: String(video.prompt) } : {}),
           resultUrl: String(video.videoUrl || ''),
           ...(video.videoAssetId ? { resultAssetId: video.videoAssetId } : {}),
           ownerUserId,
@@ -656,6 +658,7 @@ function TaskCard({
   const title =
     readText(record, 'title', 'name', 'projectName', 'project_name') ||
     (taskScope === 'image' ? '图片生成任务' : `${getScopeLabel(taskScope)}视频任务`)
+  const prompt = readText(record, 'prompt', 'replicatePrompt', 'replicate_prompt')
   const ratio =
     readText(record, 'ratio', 'aspectRatio', 'aspect_ratio') ||
     ratioFromDimensions(videoMetadata.width, videoMetadata.height) ||
@@ -704,6 +707,7 @@ function TaskCard({
         className={cx(styles.taskMain, !hasDestination && styles.taskMainDisabled)}
         onClick={onOpen}
         disabled={!hasDestination}
+        aria-describedby={prompt ? `task-prompt-${task.id}` : undefined}
         aria-label={
           hasDestination
             ? `${title}，${creatorLabel ? `${creatorLabel} 生成，` : ''}${getStatusLabel(record, tone)}，${canPreview ? '播放视频' : '打开项目'}`
@@ -765,6 +769,12 @@ function TaskCard({
           )}
         </span>
       </button>
+      {prompt && (
+        <span id={`task-prompt-${task.id}`} className={styles.promptPreview} role="tooltip">
+          <span className={styles.promptPreviewLabel}>提示词</span>
+          <span className={styles.promptPreviewText}>{prompt}</span>
+        </span>
+      )}
       <Tooltip
         title={
           !canDelete
@@ -1327,7 +1337,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                       // 已完成的则与爆款成片一致，就地打开播放器——两个入口点同一种卡片
                       // 却得到两种结果，用户没有办法预期自己这一下会跳走还是会看到视频。
                       if (taskScope === 'hot-copy' && !(tone === 'completed' && (resultUrl || resultAssetId))) {
-                        navigate(`/hot-copy/${projectId}`)
+                        navigate(`/hot-copy/${projectId}`, { state: { hotCopyEdit: true } })
                         return
                       }
                       if (tone === 'completed' && (resultUrl || resultAssetId)) {
@@ -1353,7 +1363,10 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                         }
                         return
                       }
-                      navigate(taskScope === 'hot-copy' ? `/hot-copy/${projectId}` : `/smart/${projectId}`)
+                      navigate(
+                        taskScope === 'hot-copy' ? `/hot-copy/${projectId}` : `/smart/${projectId}`,
+                        taskScope === 'hot-copy' ? { state: { hotCopyEdit: true } } : undefined,
+                      )
                     }}
                     canDelete={canDeleteTask(task)}
                     onDelete={() => void deleteTask(task)}

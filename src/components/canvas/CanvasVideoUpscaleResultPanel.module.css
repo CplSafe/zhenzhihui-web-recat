@@ -1,6 +1,10 @@
 .panel {
+  width: min(420px, calc(100vw - 32px));
+  min-height: 0;
+  padding: 16px 20px;
+  gap: 10px;
   box-sizing: border-box;
-  max-height: min(440px, calc(100dvh - 100px));
+  max-height: min(360px, calc(100dvh - 48px));
   overflow-y: auto;
   overscroll-behavior: contain;
 }

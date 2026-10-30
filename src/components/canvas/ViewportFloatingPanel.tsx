@@ -5,24 +5,43 @@ import { createPortal } from 'react-dom'
 export default function ViewportFloatingPanel({
   panelRef,
   expansionSpace = 0,
+  anchorPoint,
   ...props
 }: HTMLAttributes<HTMLDivElement> & {
   panelRef?: RefObject<HTMLDivElement>
+  /** 显式屏幕坐标锚点；用于节点工具条等不在 DOM 常规流里的触发点。 */
+  anchorPoint?: { x: number; y: number } | null
   /** 为可展开选项预留空间，避免行展开后改变浮层位置。其他菜单保持原有行为。 */
   expansionSpace?: number
 }) {
   const anchor = useRef<HTMLSpanElement>(null)
   const localRef = useRef<HTMLDivElement>(null)
   const ref = panelRef || localRef
+  const anchorX = anchorPoint?.x
+  const anchorY = anchorPoint?.y
   useLayoutEffect(() => {
     const element = ref.current
     const target = anchor.current?.parentElement
-    if (!element || !target) return
+    if (!element || (!target && (anchorX === undefined || anchorY === undefined))) return
     const reservedHeight = expansionSpace ? element.getBoundingClientRect().height + expansionSpace : 0
     const preferAbove = target.getBoundingClientRect().top >= Math.min(reservedHeight, 320) + 18
     let frame = 0
     const update = () => {
-      if (reservedHeight) element.style.height = `${Math.min(reservedHeight, 320, window.innerHeight - 24)}px`
+      if (reservedHeight) element.style.height = `${Math.min(reservedHeight, 740, window.innerHeight - 24)}px`
+      if (anchorX !== undefined && anchorY !== undefined) {
+        const { width, height } = element.getBoundingClientRect()
+        const left = Math.max(12, Math.min(anchorX - width / 2, window.innerWidth - width - 12))
+        const below = anchorY + 8
+        const top =
+          below + height <= window.innerHeight - 12
+            ? below
+            : Math.max(12, Math.min(anchorY - height - 8, window.innerHeight - height - 12))
+        element.style.left = `${left}px`
+        element.style.top = `${top}px`
+        element.style.visibility = 'visible'
+        return
+      }
+      if (!target) return
       const bounds = target.getBoundingClientRect()
       // 文案换行后高度可能含小数，offsetHeight 取整会使菜单越过视口留白。
       const { width, height } = element.getBoundingClientRect()
@@ -42,7 +61,7 @@ export default function ViewportFloatingPanel({
     }
     update()
     return () => cancelAnimationFrame(frame)
-  }, [ref, expansionSpace])
+  }, [ref, expansionSpace, anchorX, anchorY])
   return (
     <>
       <span ref={anchor} hidden />

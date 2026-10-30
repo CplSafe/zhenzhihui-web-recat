@@ -127,11 +127,7 @@ import {
   type DraftSaveStatus,
   type DraftWriteResult,
 } from '@/utils/creativeDraftPersistence'
-import {
-  persistHotCopyCompletedEntryCleanupToBackend,
-  persistHotCopyResultToBackend,
-  persistHotCopyTerminalStateToBackend,
-} from '@/utils/persistHotCopyResult'
+import { persistHotCopyResultToBackend, persistHotCopyTerminalStateToBackend } from '@/utils/persistHotCopyResult'
 import { buildTaskCenterId, isTaskCenterTerminalStatus, useTaskCenterStore } from '@/stores/taskCenter'
 import { sanitizeHotCopyPersistentDraft } from '@/utils/hotCopyPersistentDraft'
 import { sanitizePersistentMediaUrl, sanitizePersistentProjectVideoStore } from '@/utils/persistentMediaUrl'
@@ -621,6 +617,7 @@ function upsertHotCopyTaskCenter(
     title: context.title,
     ratio: context.ratio,
     durationSec: context.durationSec,
+    prompt: context.prompt,
     thumbnailUrl: String(context.entryInitial?.videoPreview || context.entryInitial?.libraryVideo?.src || ''),
     thumbnailAssetId: Number(context.entryInitial?.libraryVideo?.assetId || 0) || 0,
     operationCode: context.operationCode,
@@ -838,6 +835,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const location = useLocation()
   const params = useParams()
   const routeId = Number(params.id || 0)
+  const hasHotCopyEditIntent =
+    Boolean((location.state as any)?.hotCopyEdit) || new URLSearchParams(location.search).get('edit') === '1'
   const initialNavigationRef = useRef({ state: location.state as any, routeId })
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
@@ -1702,56 +1701,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     return Number(draft.projectId || 0) === pid ? draft : null
   })
 
-  const cleanupCompletedEntryDraftOnLeave = useLatestCallback(() => {
-    const ws = Number(workspaceId || 0)
-    const pid = Number(projectIdRef.current || projectId || 0) || 0
-    if (!ws || !pid || !hydratedRef.current) return
-
-    const localDraft = loadCurrentHotCopyDraft(ws)
-    const terminalResult = terminalJobResultsRef.current.get(pid)
-    const effectiveFullVideo = terminalResult
-      ? { url: terminalResult.url, assetId: terminalResult.assetId }
-      : localDraft?.fullVideo || fullVideo
-    const effectiveVersions = mergeVideoVersions(localDraft?.videoVersions, videoVersions, effectiveFullVideo)
-    const mergedGenerations = mergeGenRecords(videoGenerations, localDraft?.videoGenerations)
-    const hasProcessing = mergedGenerations.some(isActiveProcessingGen)
-    const hasInflight = Boolean(runningVideoPromiseRef.current) || Boolean(getRunningVideoGen('hot-copy', ws, pid))
-    const hasActiveGeneration =
-      vidGenRunning || genTriggerBusy || Number(vidGenTaskId || localDraft?.vidGenTaskId || 0) > 0
-    const hasCompletedVideo = hasVideoResult(effectiveFullVideo, effectiveVersions)
-    if (!hasCompletedVideo || hasProcessing || hasInflight || hasActiveGeneration) return
-
-    saveHotCopyDraft(
-      ws,
-      {
-        entryInitial: undefined,
-        projectId: pid,
-        started: false,
-        step,
-        maxReached,
-        basePrompt: '',
-        projectName,
-        nameTouched,
-        sourceVideo: { assetId: 0, url: '' },
-        sourceVideoDurationSec: 0,
-        sourceVideoDurationAssetId: 0,
-        originalProductAssetIds: [],
-        productAssetIds: [],
-        fullVideo: effectiveFullVideo,
-        videoVersions: effectiveVersions,
-        videoModificationDraft,
-        videoGenerating: false,
-        vidGenTaskId: 0,
-        videoGenerations: dropProcessingGenerations(mergedGenerations),
-        genRatio,
-        genDurationSec,
-        genResolution,
-      },
-      { allowTaskClear: true },
-    )
-    void persistHotCopyCompletedEntryCleanupToBackend({ projectId: pid, workspaceId: ws })
-  })
-
   const bindRunningVideoPromise = (
     p: Promise<VideoGenResult>,
     metadata: {
@@ -2136,9 +2085,13 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const hydratedRef = useRef(false)
   const hydrationTargetRef = useRef('')
   const hydrationRequestRef = useRef(0)
+  const consumedEditEntryRef = useRef(false)
   useEffect(() => {
     const ws = Number(workspaceId || 0)
-    const hydrationTarget = `${ws}:${routeId}:${projectLoadRetry}`
+    // 将“查看空白入口”和“明确进入编辑”视为不同恢复目标。
+    // 编辑意图被消费后清理 history state，浏览器返回该路由时不会再次自动注入旧草稿。
+    if (consumedEditEntryRef.current && !hasHotCopyEditIntent) return
+    const hydrationTarget = `${ws}:${routeId}:${projectLoadRetry}:${hasHotCopyEditIntent ? 'edit' : 'entry'}`
     const isInPlaceRouteBinding =
       routeId > 0 &&
       routeBindingProjectIdRef.current === routeId &&
@@ -2231,6 +2184,10 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     const hasCarry =
       (navSt.carryVideo && (navSt.carryVideo.url || navSt.carryVideo.assetId)) ||
       (Array.isArray(navSt.carryImages) && navSt.carryImages.length > 0)
+    const explicitEditEntry = hasHotCopyEditIntent
+    const automaticProjectResume = Boolean(
+      navSt.autoResumed || navSt.registryResumed || navSt.hotCopyCreationBindProjectId,
+    )
     const restartProjectId = Number(navSt.restartProjectId || 0) || 0
     if (routeId === 0 && restartProjectId > 0) {
       clearHotCopyDraft(ws)
@@ -2284,6 +2241,33 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       setVideoModificationDraft(createEmptyVideoModificationDraft())
       hydratedRef.current = true
       setProjectLoading(false)
+      return
+    }
+
+    // 普通路由返回只展示空白入口；只有明确的「进入编辑」操作才读取项目输入。
+    // 自动恢复在途任务和新项目首次绑定仍需读取草稿，避免丢失生成现场。
+    if (routeId > 0 && !explicitEditEntry && !automaticProjectResume) {
+      projectIdRef.current = 0
+      draftRevisionRef.current = 0
+      setProjectId(0)
+      setStarted(false)
+      setStep(0)
+      setMaxReached(0)
+      setEntryInitial(undefined)
+      setBasePrompt('')
+      setSourceVideo({ assetId: 0, url: '' })
+      setSourceVideoDurSec(0)
+      setSourceVideoDurAssetId(0)
+      setProductAssetIds([])
+      setFullVideo({ url: '', assetId: 0 })
+      setVideoVersions([])
+      setVideoModificationDraft(createEmptyVideoModificationDraft())
+      setVidGenRunning(false)
+      setVidGenTaskId(0)
+      setVideoGenerations([])
+      setProjectName('未命名项目')
+      setProjectLoading(false)
+      hydratedRef.current = true
       return
     }
 
@@ -2430,14 +2414,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             restoredHasResult,
             restoredIsGenerating,
           )
-          // 已出片项目只保留结果与历史版本；入口文案、源视频和素材属于下一次创作，
-          // 不能在刷新或从项目管理打开时把服务端旧草稿重新注入入口。
-          const shouldResetCompletedEntry = restoredHasResult && !restoredIsGenerating
-          const entryInitialForEditor = shouldResetCompletedEntry ? undefined : restoredEntryInitial
-          const basePromptForEditor = shouldResetCompletedEntry ? '' : restoredBasePrompt
-          const sourceVideoForEditor = shouldResetCompletedEntry ? { assetId: 0, url: '' } : restoredSourceVideo
-          const sourceDurationForEditor = shouldResetCompletedEntry ? 0 : restoredSourceDuration
-          const productAssetIdsForEditor = shouldResetCompletedEntry ? [] : restoredProductAssetIds
+          // 进入现有项目编辑时恢复原始输入，即使该项目已经生成过成片。
+          const entryInitialForEditor = restoredEntryInitial
+          const basePromptForEditor = restoredBasePrompt
+          const sourceVideoForEditor = restoredSourceVideo
+          const sourceDurationForEditor = restoredSourceDuration
+          const productAssetIdsForEditor = restoredProductAssetIds
           // 在任务管理/项目管理中打开正在生成的项目时，直接回到它的生成现场；
           // 已结束的历史项目仍先进入素材入口，并通过 maxReached 提供“返回下一步”。
           setStarted(restoredIsGenerating)
@@ -2472,6 +2454,18 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           setEntryInitial(entryInitialForEditor)
           const pendingTask = restoredIsGenerating ? restoredTaskId : 0
           hydratedRef.current = true
+          if (explicitEditEntry) {
+            consumedEditEntryRef.current = true
+            const cleanState = { ...navSt }
+            delete cleanState.hotCopyEdit
+            const remainingQuery = new URLSearchParams(location.search)
+            remainingQuery.delete('edit')
+            const cleanSearch = remainingQuery.toString()
+            navigate(`${location.pathname}${cleanSearch ? `?${cleanSearch}` : ''}`, {
+              replace: true,
+              state: cleanState,
+            })
+          }
           // 直接用本次 GET 的恢复值重建本地草稿，不能调用捕获上一项目 render state 的 persistNow。
           saveHotCopyDraft(ws, {
             entryInitial: entryInitialForEditor,
@@ -2591,7 +2585,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     const recordTaskId =
       Number(restoredLocalGenerations.find((g) => g.status === 'processing' && Number(g.taskId || 0) > 0)?.taskId) || 0
     const pendingTaskId = Number(d?.vidGenTaskId || recordTaskId || 0) || 0
-    if (d?.started || hasReachedGeneration || hasProcessing || pendingTaskId > 0 || hasGeneratingFlag) {
+    const hasActiveLocalGeneration = Boolean(
+      hasProcessing ||
+      pendingTaskId > 0 ||
+      (hasGeneratingFlag && hasRecentPreparingGeneration(restoredLocalGenerations)),
+    )
+    if (hasActiveLocalGeneration) {
       const pid = Number(d.projectId || 0) || 0
       if (pid) {
         setProjectLoading(true)
@@ -2625,12 +2624,11 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         (pid > 0 && getRunningVideoGen('hot-copy', ws, pid)) ||
         (hasGeneratingFlag && hasRecentPreparingGeneration(restoredLocalGenerations)),
       )
-      const shouldResetCompletedEntry = restoredHasResult && !restoredIsGenerating
-      const entryInitialForEditor = shouldResetCompletedEntry ? undefined : restoredEntryInitial
-      const basePromptForEditor = shouldResetCompletedEntry ? '' : d.basePrompt || ''
-      const sourceVideoForEditor = shouldResetCompletedEntry ? { assetId: 0, url: '' } : restoredSourceVideo
-      const sourceDurationForEditor = shouldResetCompletedEntry ? 0 : restoredSourceDuration
-      const productAssetIdsForEditor = shouldResetCompletedEntry ? [] : restoredProductAssetIds
+      const entryInitialForEditor = restoredEntryInitial
+      const basePromptForEditor = d.basePrompt || ''
+      const sourceVideoForEditor = restoredSourceVideo
+      const sourceDurationForEditor = restoredSourceDuration
+      const productAssetIdsForEditor = restoredProductAssetIds
       setEntryInitial(entryInitialForEditor)
       setFullVideo(restoredFullVideo)
       setVideoVersions(restoredVersions)
@@ -2653,29 +2651,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       setGenDurationSec(restoredGenDurationSec)
       if (d.genResolution) setGenResolution(String(d.genResolution))
       if (typeof d.genGenerateAudio === 'boolean') setGenGenerateAudio(d.genGenerateAudio)
-      if (shouldResetCompletedEntry) {
-        saveHotCopyDraft(
-          ws,
-          {
-            ...d,
-            entryInitial: undefined,
-            started: false,
-            basePrompt: '',
-            sourceVideo: { assetId: 0, url: '' },
-            sourceVideoDurationSec: 0,
-            sourceVideoDurationAssetId: 0,
-            originalProductAssetIds: [],
-            productAssetIds: [],
-            fullVideo: restoredFullVideo,
-            videoVersions: restoredVersions,
-            videoGenerating: false,
-            vidGenTaskId: 0,
-            videoGenerations: restoreGenerationRecords((d as any)?.videoGenerations, restoredHasResult, false),
-          },
-          { allowTaskClear: true },
-        )
-        if (pid > 0) void persistHotCopyCompletedEntryCleanupToBackend({ projectId: pid, workspaceId: ws })
-      }
       // 同会话切回时优先订阅原 Promise；只有登记表不存在时才凭 taskId 恢复，避免同一任务重复轮询。
       const subscribed = pid > 0 && subscribeRunningVideo(pid, pendingTaskId)
       if (!subscribed && pendingTaskId > 0 && restoredIsGenerating) resumeVideoTask(ws, pendingTaskId)
@@ -2686,7 +2661,19 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     hydratedRef.current = true
     setProjectLoading(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId, isAuthenticated, isCheckingSession, projectLoadRetry, routeId, workspaceId])
+  }, [
+    currentUserId,
+    hasHotCopyEditIntent,
+    isAuthenticated,
+    isCheckingSession,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+    projectLoadRetry,
+    routeId,
+    workspaceId,
+  ])
 
   useEffect(() => {
     const ws = Number(workspaceId || 0)
@@ -3703,12 +3690,9 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
 
   const flushHotCopyDraftRef = useRef<() => void>(() => {})
   flushHotCopyDraftRef.current = () => flushHotCopyDraft(Number(workspaceId || 0))
-  const cleanupCompletedEntryDraftOnLeaveRef = useRef<() => void>(() => {})
-  cleanupCompletedEntryDraftOnLeaveRef.current = () => cleanupCompletedEntryDraftOnLeave()
   useEffect(
     () => () => {
       flushHotCopyDraftRef.current()
-      cleanupCompletedEntryDraftOnLeaveRef.current()
     },
     [],
   )
@@ -5154,7 +5138,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
 
   const resetToNewVideo = () => {
     const ws = Number(workspaceId || 0)
-    cleanupCompletedEntryDraftOnLeave()
     // 仅解绑当前页面。后端 task / 全局登记表继续运行，完成后按其 immutable context 回写旧项目。
     sessionEpochRef.current += 1
     runningVideoPromiseRef.current = null

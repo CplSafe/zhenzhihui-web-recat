@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
-for (const width of [1440, 760]) {
+for (const width of [1440, 390]) {
   for (const hasAlternative of [true, false]) {
     test(`普通图片节点排除 Qwen Edit 2.0 ${width} 替代模型=${hasAlternative}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 1000 })
@@ -145,6 +145,13 @@ for (const width of [1440, 760]) {
       const generate = panel.locator('[data-canvas-generate]')
       // 无参考图时仍走文生图，接图的新节点也不会采用记忆的 Qwen。
       await page.locator('.react-flow__node[data-id="source"] .canvas-node-header').click()
+      const nodeToolbar = page.getByRole('toolbar', { name: '节点操作', exact: true })
+      await expect(nodeToolbar).toBeVisible()
+      await expect.poll(() => nodeToolbar.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
+      for (const label of ['重命名节点', '下载素材', '多角度', '删除节点']) {
+        await expect(nodeToolbar.getByRole('button', { name: label })).toBeVisible()
+      }
+      if (width === 390) await page.screenshot({ path: testInfo.outputPath('image-node-toolbar-no-scroll-mobile.png') })
       await expect(
         panel.getByRole('button', {
           name: hasAlternative ? '可用图片模型' : '暂无可用的文生图模型',

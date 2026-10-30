@@ -51,6 +51,8 @@
     "@xyflow/react": "^12.11.2",
     "antd": "^5.23.0",
     "dayjs": "^1.11.21",
+    "framer-motion": "^14.7.1",
+    "lucide-react": "^1.64.0",
     "normalize.css": "^8.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

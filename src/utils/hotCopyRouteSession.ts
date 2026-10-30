@@ -5,6 +5,7 @@ export interface HotCopyRouteState {
   taskCenterNewSession?: boolean
   workspaceSwitchReset?: boolean
   restartProjectId?: number | string
+  hotCopyEdit?: boolean
 }
 
 export interface HotCopyRouteSession {

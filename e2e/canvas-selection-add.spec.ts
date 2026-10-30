@@ -314,3 +314,78 @@ test('多选菜单等待生成中的来源，完成后完整连接且不重提�
   expect(errors).toEqual([])
   expectNoUnexpectedApi(api)
 })
+
+test('多选加号按来源矩阵过滤，并在创建时连接完整来源', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  const kinds = ['video', 'video', 'image', 'text', 'text', 'audio', 'audio']
+  const elements = kinds.map((kind, index) => ({
+    element_id: `matrix-${index}`,
+    kind: 'node',
+    op: 'upsert' as const,
+    payload: {
+      id: `matrix-${index}`,
+      type: kind,
+      position: { x: (index % 4) * 420, y: Math.floor(index / 4) * 360 },
+      style: { width: 300, height: 240 },
+      data: {
+        kind,
+        title: `矩阵 ${kind} ${index}`,
+        ...(kind === 'video' ? { assetId: 700 + index, posterAssetId: 800 + index } : {}),
+        ...(kind === 'image' ? { assetId: 900 + index } : {}),
+        ...(kind === 'audio' ? { assetId: 1000 + index } : {}),
+      },
+    },
+  }))
+  let revision = 1
+  await page.route('**/api/v1/canvases/129**', async (route) => {
+    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: ++revision } })
+    const url = new URL(route.request().url())
+    return route.fulfill({
+      json: url.pathname.endsWith('/elements')
+        ? { elements, sync_revision: revision, history_floor_revision: 0, has_more: false }
+        : { id: 129, title: '多选来源矩阵验收', status: 'active', revision },
+    })
+  })
+  await page.goto('/canvas/129')
+  const selected = page.locator('.react-flow__node.selected')
+  const menu = page.locator('.canvas-add-menu')
+  const openSelectionMenu = async (ids: number[]) => {
+    await page.locator('.react-flow__pane').click({ position: { x: 1100, y: 700 } })
+    await expect(selected).toHaveCount(0)
+    for (const id of ids) {
+      await page
+        .locator(`.react-flow__node[data-id="matrix-${id}"]`)
+        .click({ position: { x: 24, y: 24 }, modifiers: ['Control'] })
+    }
+    await expect(selected).toHaveCount(ids.length)
+    await page.getByRole('button', { name: '从所选节点创建下游节点' }).click()
+    await expect(menu).toBeVisible()
+  }
+
+  await openSelectionMenu([0, 1])
+  await expect(menu.getByRole('button', { name: /^音频/ })).toBeEnabled()
+  await page.keyboard.press('Escape')
+
+  await openSelectionMenu([2, 0])
+  await expect(menu.getByRole('button', { name: /^智能剪辑/ })).toBeDisabled()
+  await expect(menu.getByRole('button', { name: /^智能剪辑/ })).toContainText('暂不支持引用图片节点')
+  await page.keyboard.press('Escape')
+
+  await openSelectionMenu([3, 4])
+  await expect(menu.getByRole('button', { name: /^音频/ })).toBeDisabled()
+  await page.keyboard.press('Escape')
+
+  await openSelectionMenu([5, 6])
+  await expect(menu.getByRole('button', { name: /^视频生成/ })).toBeDisabled()
+  await page.keyboard.press('Escape')
+
+  await openSelectionMenu([0, 1])
+  await menu.getByRole('button', { name: /^音频/ }).click()
+  await expect(page.locator('.react-flow__node')).toHaveCount(kinds.length + 1)
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+  for (const id of [0, 1]) await expect(page.locator(`.react-flow__edge[data-id*="matrix-${id}"]`)).toHaveCount(1)
+  expect(api.paidTaskSubmissions).toBe(0)
+  expectNoUnexpectedApi(api)
+})
