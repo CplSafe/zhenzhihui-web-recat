@@ -129,16 +129,69 @@ test('提示词中的 @图片和 @视频均显示引用缩略图并可预览原�
   await page.goto('/canvas/231')
   const imageNode = page.locator('.react-flow__node[data-id="prompt-image"]')
   await expect(imageNode).toBeVisible()
-  await imageNode.click()
+  await imageNode.click({ position: { x: 30, y: 50 } })
   const panel = page.locator('[data-canvas-node-panel]')
   await panel.getByTitle('放大输入框').click()
-  await panel.getByPlaceholder(/描述你想要生成/).fill('参考动作 @视频1，主视觉参考 @图片1，柔和自然光。')
-  const videoMention = panel.locator('button[aria-label="查看引用视频：视频1"]')
+  const input = panel.getByPlaceholder(/描述你想要生成/)
+  const placeholderContent = () => input.evaluate((element) => getComputedStyle(element, '::before').content)
+  await input.fill('')
+  await expect(input).toHaveAttribute('data-empty', 'true')
+  await expect.poll(placeholderContent).toContain('描述你想要生成')
+  const expectEmptyCaretAtStart = async () => {
+    await expect(input).toBeFocused()
+    await expect
+      .poll(() =>
+        input.evaluate((element) => {
+          const selection = window.getSelection()!
+          const range = selection.getRangeAt(0)
+          const prefix = range.cloneRange()
+          prefix.selectNodeContents(element)
+          prefix.setEnd(range.startContainer, range.startOffset)
+          const marker = element.querySelector('[data-caret-end]')!.getBoundingClientRect()
+          const bounds = element.getBoundingClientRect()
+          const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight)
+          return {
+            collapsed: range.collapsed,
+            prefix: prefix.toString(),
+            atStart:
+              Math.abs(marker.left - bounds.left) < 2 &&
+              marker.top >= bounds.top &&
+              marker.top < bounds.top + lineHeight,
+          }
+        }),
+      )
+      .toEqual({ collapsed: true, prefix: '', atStart: true })
+  }
+  await input.blur()
+  await input.focus()
+  await expectEmptyCaretAtStart()
+  await input.click({ position: { x: 240, y: 8 } })
+  await expectEmptyCaretAtStart()
+  await page.screenshot({ path: testInfo.outputPath('canvas-empty-caret-start.png'), caret: 'initial' })
+  await input.pressSequentially('普通文字')
+  await expect(input).toHaveAttribute('data-empty', 'false')
+  await expect.poll(placeholderContent).toBe('none')
+  await input.blur()
+  await expect.poll(placeholderContent).toBe('none')
+  await page.screenshot({ path: testInfo.outputPath('canvas-placeholder-text.png') })
+  await input.fill('@图片1')
+  await expect(input.getByRole('button', { name: '查看引用图片：图片1' })).toBeVisible()
+  await expect.poll(placeholderContent).toBe('none')
+  await input.fill('参考动作 @视频1，主视觉参考 @图片1，柔和自然光。')
+  await expect.poll(placeholderContent).toBe('none')
+  // 编辑和失焦均显示原子引用标签，光标与标签处在同一排版层。
+  await expect(panel.locator('[data-prompt-editing]')).toHaveAttribute('data-prompt-editing', 'true')
+  await expect(input).toHaveCSS('caret-color', 'rgb(48, 52, 59)')
+  await expect(input.getByRole('button', { name: '查看引用视频：视频1' })).toBeVisible()
+  await expect(input.getByRole('button', { name: '查看引用视频：视频1' })).toContainText('@视频1')
+  await page.screenshot({ path: testInfo.outputPath('canvas-mention-editing.png'), caret: 'initial' })
+  await input.blur()
+  const videoMention = panel.getByRole('button', { name: '查看引用视频：视频1' })
   await expect(videoMention).toBeVisible()
   await expect(videoMention.locator('img')).toBeVisible()
   await expect(videoMention).toContainText('视频1')
   await expect(videoMention.locator('img')).toHaveCSS('width', '30px')
-  const mention = panel.locator('button[aria-label="查看引用图片：图片1"]')
+  const mention = panel.getByRole('button', { name: '查看引用图片：图片1' })
   await expect(mention).toBeVisible()
   await expect(mention.locator('img')).toBeVisible()
   await expect(mention).toContainText('图片1')
@@ -162,7 +215,66 @@ test('提示词中的 @图片和 @视频均显示引用缩略图并可预览原�
   await page.screenshot({ path: testInfo.outputPath('canvas-mention-image-preview.png') })
   await page.keyboard.press('Escape')
   await expect(preview).toHaveCount(0)
-  await expect(panel.getByPlaceholder(/描述你想要生成/)).toHaveValue('参考动作 @视频1，主视觉参考 @图片1，柔和自然光。')
+  await expect(input).toHaveAttribute('data-value', '参考动作 @视频1，主视觉参考 @图片1，柔和自然光。')
+  await input.fill('')
+  await input.pressSequentially('@')
+  const candidate = page
+    .getByRole('listbox', { name: '选择要 @ 的参考素材' })
+    .getByRole('option', { name: /@动作参考视频$/ })
+  await candidate.click()
+  await expect(input).toBeFocused()
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频 ')
+  await expect.poll(placeholderContent).toBe('none')
+  const caretOffset = () =>
+    input.evaluate((element) => {
+      const selection = window.getSelection()!
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.setEnd(selection.focusNode!, selection.focusOffset)
+      const read = (node: Node): string => {
+        if (node.nodeType === Node.TEXT_NODE) return node.textContent || ''
+        if (node instanceof HTMLElement && node.hasAttribute('data-mention')) return node.dataset.mention || ''
+        if (node instanceof HTMLElement && node.hasAttribute('data-caret-end')) return ''
+        return Array.from(node.childNodes).map(read).join('')
+      }
+      return read(range.cloneContents()).length
+    })
+  expect(await caretOffset()).toBe(8)
+  await expect(input.getByRole('button', { name: '查看引用视频：动作参考视频' })).toContainText('@动作参考视频')
+  await input.pressSequentially('继续描述')
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频 继续描述')
+  expect(await caretOffset()).toBe(12)
+  await input.press('ArrowLeft')
+  await input.pressSequentially('新')
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频 继续描新述')
+  expect(await caretOffset()).toBe(12)
+  await page.screenshot({ path: testInfo.outputPath('canvas-mention-caret.png'), caret: 'initial' })
+  await page.setViewportSize({ width: 900, height: 700 })
+  await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('50')
+  await input.focus()
+  await expect(input).toHaveCSS('caret-color', 'rgb(48, 52, 59)')
+  await input.press('End')
+  await input.pressSequentially('。')
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频 继续描新述。')
+  expect(await caretOffset()).toBe(14)
+  await page.screenshot({ path: testInfo.outputPath('canvas-mention-caret-narrow.png'), caret: 'initial' })
+  await input.fill('')
+  await input.pressSequentially('@')
+  await candidate.click()
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频 ')
+  await input.press('Backspace')
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频')
+  await expect(input.getByRole('button', { name: '查看引用视频：动作参考视频' })).toBeVisible()
+  await input.press('Backspace')
+  await expect(input).toHaveAttribute('data-value', '')
+  await expect(input).toHaveAttribute('data-empty', 'true')
+  await expect.poll(placeholderContent).toContain('描述你想要生成')
+  await input.click({ position: { x: 240, y: 8 } })
+  await expectEmptyCaretAtStart()
+  await page.screenshot({ path: testInfo.outputPath('canvas-placeholder-empty-narrow.png'), caret: 'initial' })
+  await input.press('Control+z')
+  await expect(input).toHaveAttribute('data-value', '@动作参考视频')
+  await expect.poll(placeholderContent).toBe('none')
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })

@@ -17,14 +17,8 @@ export function normalizeSeedanceModerationResult(payload: unknown): SeedanceMod
     .trim()
     .toLowerCase()
     .replace(/[\s.-]+/g, '_')
-  const approved =
-    data.approved === true ||
-    data.passed === true ||
-    ['approved', 'approve', 'passed', 'pass', '审核通过', 'active'].includes(normalized)
-  const rejected =
-    data.approved === false ||
-    data.passed === false ||
-    ['rejected', 'reject', 'denied', 'blocked', '审核未通过', '审核拒绝'].includes(normalized)
+  // Only the asset's active state certifies success; legacy aliases/flags do not.
+  const approved = normalized === 'active'
   const pending = [
     'pending',
     'processing',
@@ -38,7 +32,7 @@ export function normalizeSeedanceModerationResult(payload: unknown): SeedanceMod
   const unreviewed = ['', 'unreviewed', 'not_reviewed', 'none'].includes(normalized)
   const reasonValue = data.reason ?? data.message ?? data.error_message ?? data.reject_reason ?? data.failure_reason
   return {
-    state: approved ? 'approved' : rejected ? 'rejected' : pending ? 'pending' : unreviewed ? 'unreviewed' : 'unknown',
+    state: approved ? 'approved' : pending ? 'pending' : unreviewed ? 'unreviewed' : 'rejected',
     rawStatus,
     reason: typeof reasonValue === 'string' ? reasonValue.trim() : '',
   }

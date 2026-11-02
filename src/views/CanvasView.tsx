@@ -56,7 +56,6 @@ import {
   type CSSProperties,
 } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import brandLogo from '@/img/image copy 7.png'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
 import {
@@ -182,6 +181,8 @@ import {
   getAiTask,
   getAiTaskId,
   getSeedanceModeration,
+  submitSeedanceModeration,
+  BusinessApiError,
   normalizeAiTaskStatus,
   uploadAssetFile,
 } from '@/api/business'
@@ -234,12 +235,12 @@ import CanvasFailureDetails from '@/components/canvas/CanvasFailureDetails'
 import { planMultiResultPositions } from '@/utils/canvasMultiResult'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
 import { normalizeSeedanceModerationResult, type SeedanceModerationState } from '@/utils/seedanceModeration'
+import { ensureCanvasSeedanceModeration } from '@/utils/canvasSeedanceModeration'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText, toCanvasPromptContext } from '@/utils/canvasStructuredText'
 import InlineEdit from '@/components/common/InlineEdit'
 import CanvasNodeToolbar from '@/components/canvas/CanvasNodeToolbar'
-import CanvasSeedanceModerationModal from '@/components/canvas/CanvasSeedanceModerationModal'
 import CanvasReversePromptPanel, { type CanvasReversePromptTarget } from '@/components/canvas/CanvasReversePromptPanel'
 import { useLatestCallback } from '@/composables/useLatestCallback'
 import { useElapsedSince } from '@/composables/useElapsedSince'
@@ -2348,6 +2349,16 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         </CanvasNodeStatus>
       )}
 
+      {(kind === 'image' || kind === 'video') &&
+        data.seedanceModerationStatus === 'pending' &&
+        !uploadingLocalFile &&
+        !taskRunning && (
+          <CanvasNodeStatus zoom={canvasZoom} label="审核中">
+            <span className="canvas-node-generation-spinner" aria-hidden="true" />
+            <strong>审核中</strong>
+          </CanvasNodeStatus>
+        )}
+
       {taskRunning && !uploadingLocalFile && (
         <CanvasNodeStatus zoom={canvasZoom} label={taskPresentation.title}>
           {imagePreviews?.[id] && (
@@ -2731,11 +2742,14 @@ function CanvasInner() {
   /** Ctrl+Shift+V 明确请求系统剪贴板媒体；原生 ClipboardEvent 不暴露 Shift 状态。 */
   const preferSystemClipboardPasteRef = useRef(false)
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
-  const [seedanceModerationTarget, setSeedanceModerationTarget] = useState<{
-    assetId: number
-    workspaceId: number
-    mediaType: 'image' | 'video'
-  } | null>(null)
+  const seedanceModerationInFlightRef = useRef(new Map<string, AbortController>())
+  useEffect(
+    () => () => {
+      for (const controller of seedanceModerationInFlightRef.current.values()) controller.abort()
+      seedanceModerationInFlightRef.current.clear()
+    },
+    [workspaceId],
+  )
   /**
    * 编辑面板的字段以 nodes 中的持久化 data 为真相源。
    * selectedNode 主要保存选择态和 sourceRefs；两份状态同一批更新时，边变化的同步 effect
@@ -2851,6 +2865,70 @@ function CanvasInner() {
       }
     },
     [workspaceId, setNodes],
+  )
+  const handleSeedanceModeration = useCallback(
+    async (assetId: number, moderationWorkspaceId: number, mediaType: 'image' | 'video') => {
+      const key = `${moderationWorkspaceId}:${assetId}`
+      if (seedanceModerationInFlightRef.current.has(key)) return
+      const controller = new AbortController()
+      seedanceModerationInFlightRef.current.set(key, controller)
+      const options = { workspaceId: moderationWorkspaceId, signal: controller.signal }
+      // 先在对应素材节点上显示审核中，提交和查询都不需要离开画布。
+      handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, 'pending')
+
+      try {
+        let current: ReturnType<typeof normalizeSeedanceModerationResult> | null
+        try {
+          current = normalizeSeedanceModerationResult(await getSeedanceModeration(assetId, options))
+        } catch (cause) {
+          // 404 表示从未送审，和审核弹窗原有逻辑一致：继续提交审核。
+          if (cause instanceof BusinessApiError && (cause as BusinessApiError & { status?: number }).status === 404) {
+            current = null
+          } else {
+            throw cause
+          }
+        }
+
+        if (current?.state === 'approved') {
+          handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, 'approved')
+          showToast(`${mediaType === 'video' ? '视频' : '图片'}认证通过`, 'success')
+          return
+        }
+
+        // 已在审核中时不重复创建任务；其他状态沿用原弹窗的自动送审行为。
+        if (current?.state !== 'pending') {
+          await submitSeedanceModeration(assetId, options)
+        }
+
+        const startedAt = Date.now()
+        do {
+          await new Promise((resolve) => window.setTimeout(resolve, 2000))
+          if (controller.signal.aborted) return
+          current = normalizeSeedanceModerationResult(await getSeedanceModeration(assetId, options))
+          handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, current.state)
+          if (current.state === 'approved') {
+            showToast(`${mediaType === 'video' ? '视频' : '图片'}认证通过`, 'success')
+          } else if (current.state !== 'pending') {
+            showToast(
+              `${mediaType === 'video' ? '视频' : '图片'}认证失败${current.reason ? `：${current.reason}` : '，请更换素材后重试'}`,
+              'error',
+            )
+          }
+          if (current.state !== 'pending') return
+        } while (Date.now() - startedAt < 60_000)
+
+        showToast(`${mediaType === 'video' ? '视频' : '图片'}审核仍在进行中`, 'info')
+      } catch (cause) {
+        if (controller.signal.aborted) return
+        handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, 'unknown')
+        showToast(cause instanceof Error ? cause.message : '审核失败，请稍后重试', 'error')
+      } finally {
+        if (seedanceModerationInFlightRef.current.get(key) === controller) {
+          seedanceModerationInFlightRef.current.delete(key)
+        }
+      }
+    },
+    [handleSeedanceModerationStatusChange],
   )
   useEffect(() => {
     ;(window as any).__canvasOpenNextStep = (sourceId: string, clientX: number, clientY: number) => {
@@ -10791,17 +10869,13 @@ function CanvasInner() {
               <path d="M19 12H5m7 7-7-7 7-7" />
             </svg>
           </button>
-          <div className="canvas-brand">
-            <img src={brandLogo} alt="豆豆同学" className="canvas-brand-logo" />
-            <div className="canvas-brand-text">
-              <span className="canvas-brand-name">豆豆同学</span>
-              <DraftSaveIndicator status={saveStatus} />
-              {cloudStatus !== 'online' && (
-                <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
-                  {cloudMessage}
-                </span>
-              )}
-            </div>
+          <div className="canvas-save-status">
+            <DraftSaveIndicator status={saveStatus} />
+            {cloudStatus !== 'online' && (
+              <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
+                {cloudMessage}
+              </span>
+            )}
           </div>
         </div>
 
@@ -11560,18 +11634,6 @@ function CanvasInner() {
             />
           )}
 
-        {seedanceModerationTarget && (
-          <CanvasSeedanceModerationModal
-            key={`${seedanceModerationTarget.workspaceId}:${seedanceModerationTarget.assetId}:${seedanceModerationTarget.mediaType}`}
-            open
-            assetId={seedanceModerationTarget.assetId}
-            workspaceId={seedanceModerationTarget.workspaceId}
-            mediaType={seedanceModerationTarget.mediaType}
-            onStatusChange={handleSeedanceModerationStatusChange}
-            onClose={() => setSeedanceModerationTarget(null)}
-          />
-        )}
-
         {reversePromptTarget && (
           <CanvasReversePromptPanel
             key={`${reversePromptTarget.outputNodeId}:${reversePromptTarget.assetId}`}
@@ -12294,7 +12356,7 @@ function CanvasInner() {
                             showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
                             return
                           }
-                          setSeedanceModerationTarget({ assetId, workspaceId: moderationWorkspaceId, mediaType })
+                          void handleSeedanceModeration(assetId, moderationWorkspaceId, mediaType)
                         }
                       : undefined
                   }
@@ -12340,26 +12402,12 @@ function CanvasInner() {
                         ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
                       ]
                       for (const { assetId, mediaType } of moderationAssets) {
-                        let moderation
-                        try {
-                          moderation = normalizeSeedanceModerationResult(
-                            await getSeedanceModeration(assetId, { workspaceId: Number(workspaceId || 0) }),
-                          )
-                        } catch {
-                          return `无法确认${mediaType}素材 ID ${assetId} 的 Seedance 审核状态，请稍后重试`
-                        }
-                        if (moderation.state !== 'approved') {
-                          const details = moderation.reason ? `：${moderation.reason}` : ''
-                          const stateLabel =
-                            moderation.state === 'pending'
-                              ? '正在审核'
-                              : moderation.state === 'rejected'
-                                ? '审核未通过'
-                                : moderation.state === 'unknown'
-                                  ? `审核状态未识别${moderation.rawStatus ? `（${moderation.rawStatus}）` : ''}`
-                                  : '尚未审核'
-                          return `${mediaType}素材 ID ${assetId}${stateLabel}，请先在该素材节点面板点击“审核”${details}`
-                        }
+                        const moderationError = await ensureCanvasSeedanceModeration(
+                          assetId,
+                          Number(workspaceId || 0),
+                          mediaType,
+                        )
+                        if (moderationError) return moderationError
                       }
                     }
                     const unsavedAudio = sourceRefs.find((ref) => {
