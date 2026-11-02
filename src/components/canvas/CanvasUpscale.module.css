@@ -10,12 +10,12 @@
 }
 .panel :global(.ant-modal-content) {
   padding: 18px;
-  border: 1px solid #e2e9e5;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   box-shadow: 0 12px 40px #243d3226;
 }
 .panel :global(.ant-modal-title) {
-  color: #253732;
+  color: #30343b;
   font-size: 15px;
 }
 .panel :global(.ant-modal-close) {
@@ -36,7 +36,7 @@
   grid-template-columns: 88px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  color: #586860;
+  color: #7a8496;
   font-size: 13px;
 }
 .fields > label {
@@ -51,7 +51,7 @@
 }
 .fields > label > span {
   font-size: 13px;
-  color: #586860;
+  color: #7a8496;
 }
 .choices {
   display: flex;
@@ -63,22 +63,22 @@
   flex: 1;
   min-width: 0;
   height: 32px;
-  border: 1px solid #e1e7e3;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #607168;
+  color: #7a8496;
   cursor: pointer;
 }
 .choices button[aria-pressed='true'] {
   border-color: #11a98a;
-  background: #e7f8f1;
+  background: #fff;
   color: #09896d;
 }
 .choices input {
   width: 64px;
   min-width: 0;
   height: 32px;
-  border: 1px solid #e1e7e3;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 0 6px;
 }
@@ -92,12 +92,12 @@
 }
 .sizes {
   padding-top: 2px;
-  color: #74827d;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.7;
 }
 .details {
-  color: #74827d;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -113,10 +113,10 @@
   align-items: center;
   gap: 12px;
   padding-top: 12px;
-  border-top: 1px solid #edf1ee;
+  border-top: 1px solid #e5e7eb;
 }
 .cost {
-  color: #74827d;
+  color: #7a8496;
   font-size: 12px;
 }
 .footer :global(.ant-btn-primary) {

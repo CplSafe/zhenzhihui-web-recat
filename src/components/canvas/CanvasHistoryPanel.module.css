@@ -21,7 +21,7 @@
   width: min(460px, calc((100vw - 48px) / var(--canvas-ui-scale, 1)));
   max-height: none;
   border-radius: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 250, 255, 0.95)), #fff;
+  background: #fff;
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow:
     0 24px 80px rgba(15, 23, 42, 0.18),
@@ -74,7 +74,7 @@
   border: 1px solid rgba(87, 103, 229, 0.12);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.76);
-  color: #495057;
+  color: #7a8496;
   cursor: pointer;
   transition:
     color 0.18s ease,
@@ -93,7 +93,7 @@
 .title {
   font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: #30343b;
   white-space: nowrap;
 }
 
@@ -107,7 +107,7 @@
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #999;
+  color: #7a8496;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -118,14 +118,14 @@
 }
 
 .closeBtn:hover {
-  background: #f0f0f0;
-  color: #333;
+  background: #fff;
+  color: #30343b;
 }
 
 .tabs {
   display: flex;
   padding: 0 16px 8px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .panelDrawer .tabs {
@@ -138,7 +138,7 @@
   border: none;
   background: transparent;
   font-size: 13px;
-  color: #999;
+  color: #7a8496;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   border-bottom: 2px solid transparent;
@@ -170,7 +170,7 @@
 }
 
 .grid::-webkit-scrollbar-thumb {
-  background: #ddd;
+  background: #f2f4f7;
   border-radius: 2px;
 }
 
@@ -230,7 +230,7 @@
   aspect-ratio: 1;
   border-radius: 8px;
   overflow: hidden;
-  background: #f5f5f5;
+  background: #fff;
   cursor: pointer;
   position: relative;
   transition:

@@ -1,11 +1,11 @@
 .panel {
   width: 390px !important;
   padding: 16px;
-  border: 1px solid #e0e8e4;
+  border: 1px solid #e5e7eb;
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 10px 32px rgb(28 57 45 / 14%);
-  color: #20312a;
+  color: #30343b;
   font-family: 'PingFang SC', sans-serif;
 }
 
@@ -32,7 +32,7 @@
 }
 .header span,
 .source span {
-  color: #718078;
+  color: #7a8496;
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -41,7 +41,7 @@
 .close {
   border: 0;
   background: transparent;
-  color: #718078;
+  color: #7a8496;
   font-size: 22px;
   cursor: pointer;
 }
@@ -49,7 +49,7 @@
   gap: 10px;
   padding: 8px;
   border-radius: 10px;
-  background: #f5f8f6;
+  background: #fff;
 }
 .source img {
   width: 48px;
@@ -63,21 +63,21 @@
 .detail {
   justify-content: space-between;
   margin: 12px 0;
-  color: #53665c;
+  color: #7a8496;
   font-size: 12px;
 }
 .detail select {
-  border: 1px solid #dfe7e2;
+  border: 1px solid #e5e7eb;
   border-radius: 7px;
   padding: 6px 8px;
   background: #fff;
-  color: #263a31;
+  color: #30343b;
 }
 .result {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  color: #53665c;
+  color: #7a8496;
   font-size: 12px;
 }
 .result textarea {
@@ -85,10 +85,10 @@
   width: 100%;
   min-height: 112px;
   resize: vertical;
-  border: 1px solid #dfe7e2;
+  border: 1px solid #e5e7eb;
   border-radius: 9px;
   padding: 10px;
-  color: #24372e;
+  color: #30343b;
   font: inherit;
   font-size: 13px;
   line-height: 1.65;
@@ -103,8 +103,8 @@
   min-height: 112px;
   place-items: center;
   border-radius: 9px;
-  background: #f7faf8;
-  color: #718078;
+  background: #fff;
+  color: #7a8496;
   font-size: 13px;
 }
 .error {
@@ -114,16 +114,16 @@
   justify-content: space-between;
   gap: 8px;
   border-radius: 9px;
-  background: #fff4f1;
+  background: #fff;
   padding: 10px;
-  color: #ad4938;
+  color: #d14343;
   font-size: 12px;
 }
 .error button {
-  border: 1px solid #edc2b8;
+  border: 1px solid #e5e7eb;
   border-radius: 7px;
   background: #fff;
-  color: #ad4938;
+  color: #d14343;
   padding: 5px 9px;
   cursor: pointer;
 }
@@ -146,9 +146,9 @@
   cursor: not-allowed;
 }
 .secondary {
-  border: 1px solid #dfe7e2;
+  border: 1px solid #e5e7eb;
   background: #fff;
-  color: #53665c;
+  color: #7a8496;
 }
 .primary {
   border: 1px solid #0e9377;

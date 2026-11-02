@@ -6,6 +6,15 @@
  * 而访客要的只有「看清楚这块画布画了什么」。
  */
 .share-view {
+  --canvas-ground: #f8f9fa;
+  --canvas-surface: #fff;
+  --canvas-well: #f1f3f6;
+  --canvas-border: #e6e8ee;
+  --canvas-text: #1f2937;
+  --canvas-muted: #6b7280;
+  --canvas-subtle: #98a1b0;
+  --canvas-status-success-bg: #ebfffb;
+  --canvas-status-success: #0e8f75;
   position: relative;
   width: 100vw;
   height: 100vh;

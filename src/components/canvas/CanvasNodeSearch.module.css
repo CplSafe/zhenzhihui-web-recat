@@ -6,7 +6,7 @@
   /* chrome 档（见 CanvasView.css 顶部的层级口径） */
   z-index: 1100;
   width: 320px;
-  border: 1px solid #e2e6ef;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 12px 34px rgba(23, 33, 61, 0.16);
@@ -23,7 +23,7 @@
 
 .searchIcon {
   flex: 0 0 auto;
-  color: #8a91a2;
+  color: #7a8496;
 }
 
 .input {
@@ -33,7 +33,7 @@
   border: none;
   outline: none;
   background: transparent;
-  color: #2f3646;
+  color: #344054;
   font: inherit;
   font-size: 13px;
 }
@@ -52,15 +52,15 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #8a91a2;
+  color: #7a8496;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
 
 .close:hover {
-  background: #f1f3fb;
-  color: #2f3646;
+  background: #fff;
+  color: #344054;
 }
 
 /* 类型筛选：一行 chip，点选即筛、再点取消 */
@@ -77,10 +77,10 @@
   gap: 4px;
   height: 24px;
   padding: 0 9px;
-  border: 1px solid #e2e6ef;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #fff;
-  color: #4b5262;
+  color: #7a8496;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -97,12 +97,12 @@
 }
 
 .chip:hover {
-  border-color: #c9cfe0;
+  border-color: #e5e7eb;
 }
 
 .chipActive {
-  border-color: #dfe3ff;
-  background: #eef0ff;
+  border-color: #e5e7eb;
+  background: #fff;
   color: #5767e5;
 }
 
@@ -112,7 +112,7 @@
 
 .results {
   max-height: 320px;
-  border-top: 1px solid #eef1f7;
+  border-top: 1px solid #e5e7eb;
   overflow-y: auto;
 }
 
@@ -135,14 +135,14 @@
 
 /* 键盘与鼠标共用同一套高亮，避免出现两个「当前项」 */
 .itemActive {
-  background: #f4f6ff;
+  background: #fff;
 }
 
 .itemKind {
   flex: 0 0 auto;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #eef0ff;
+  background: #fff;
   color: #5767e5;
   font-size: 11px;
   font-weight: 600;
@@ -151,7 +151,7 @@
 /* 单行截断：节点文本可能很长，换行会让结果行高度参差、扫读困难 */
 .itemText {
   overflow: hidden;
-  color: #3b4252;
+  color: #344054;
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -161,13 +161,13 @@
 .more {
   margin: 0;
   padding: 12px;
-  color: #8a91a2;
+  color: #7a8496;
   font-size: 12px;
   text-align: center;
 }
 
 .more {
-  border-top: 1px solid #eef1f7;
+  border-top: 1px solid #e5e7eb;
 }
 
 .close:focus-visible,
@@ -178,6 +178,6 @@
 
 .itemCount {
   margin-left: 8px;
-  color: #667085;
+  color: #7a8496;
   font-size: 12px;
 }

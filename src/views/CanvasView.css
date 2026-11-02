@@ -20,6 +20,28 @@
   /* 触控板滑到画布边缘时不要把惯性继续传给外层页面或浏览器回弹。 */
   overscroll-behavior: none;
   background: #f8f9fa;
+  color: #30343b;
+}
+
+/* Portaled canvas dialogs and dropdowns render under body, so share the editor palette there. */
+body[data-canvas-ui='true'] {
+}
+
+body[data-canvas-ui='true']
+  :is(.ant-modal-content, .ant-popover-inner, .ant-dropdown-menu, .ant-select-dropdown, .ant-tooltip-inner) {
+  border-color: #e5e7eb;
+  background: #fff;
+  color: #30343b;
+}
+
+body[data-canvas-ui='true'] :is(.ant-modal-title, .ant-dropdown-menu-item, .ant-select-item, .ant-popover-title) {
+  color: #30343b;
+}
+
+body[data-canvas-ui='true'] :is(.ant-input, .ant-input-affix-wrapper, .ant-select-selector, textarea.ant-input) {
+  border-color: #e5e7eb;
+  background: #f2f4f7;
+  color: #30343b;
 }
 
 /* 顶部操作区增加一层柔和的压暗过渡，帮助导航与画布内容拉开层次。 */
@@ -233,7 +255,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-drop-overlay__card span {
-  color: #8a90a8;
+  color: #7a8496;
   font-size: 12px;
 }
 
@@ -344,10 +366,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   gap: 6px;
   height: 36px;
   padding: 0 16px;
-  border: 1px solid #e3e7ee;
+  border: 1px solid #e5e7eb;
   border-radius: 999px;
   background: #fff;
-  color: #33403a;
+  color: #30343b;
   font-family: 'PingFang SC', sans-serif;
   font-size: 13px;
   font-weight: 600;
@@ -380,7 +402,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   max-width: calc((100vw - 40px) / var(--canvas-ui-scale, 1));
   box-sizing: border-box;
   padding: 12px 16px 12px 12px;
-  border: 1px solid #e8edf1;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 4px 18px rgb(23 33 61 / 7%);
@@ -391,7 +413,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   gap: 10px;
   min-width: 0;
   padding-left: 12px;
-  border-left: 1px solid #edf0f3;
+  border-left: 1px solid #e5e7eb;
 }
 
 .canvas-brand-logo {
@@ -412,7 +434,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   font-family: 'PingFang SC', sans-serif;
   font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: #30343b;
   line-height: 1;
 }
 
@@ -420,7 +442,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   font-family: 'PingFang SC', sans-serif;
   font-size: 12px;
   font-weight: 400;
-  color: #333;
+  color: #30343b;
 }
 
 /* DraftSaveIndicator 在画布品牌区的字体 */
@@ -447,8 +469,27 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 /* 默认连线：React Flow 自带的 #b1b1b7 / 1px 在浅色画布上隔远了几乎看不见 */
 .canvas-view .react-flow__edge-path {
-  stroke: #8f97a6;
-  stroke-width: 1.6;
+  stroke: #566174;
+  stroke-width: 2.2;
+}
+
+/* Keep the connection intact and send a soft mint dash along it to show direction. */
+.react-flow__edge.is-focused .canvas-edge-flow-light,
+.react-flow__edge.selected .canvas-edge-flow-light {
+  stroke: #b9ead6;
+  stroke-width: 3.8;
+  stroke-dasharray: 18 28;
+  stroke-dashoffset: 0;
+  stroke-linecap: round;
+  opacity: 0.82;
+  pointer-events: none;
+  animation: canvas-edge-flow 1.6s linear infinite;
+}
+
+@keyframes canvas-edge-flow {
+  to {
+    stroke-dashoffset: -42;
+  }
 }
 
 /* 重复连线被拦下时，闪烁已存在的那条线，告诉用户它在哪 */
@@ -473,31 +514,33 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .react-flow__edge.is-duplicate-flash .react-flow__edge-path {
+  .react-flow__edge.is-duplicate-flash .react-flow__edge-path,
+  .react-flow__edge.is-focused .canvas-edge-flow-light,
+  .react-flow__edge.selected .canvas-edge-flow-light {
     animation: none;
   }
 }
 
 /* 与选中节点相连的线：加粗并换成主题色，一眼看出「这个节点在喂谁、被谁喂」 */
 .react-flow__edge.is-focused .react-flow__edge-path {
-  stroke: #5767e5 !important;
-  stroke-width: 2.5 !important;
+  stroke: #078d70 !important;
+  stroke-width: 3.2 !important;
 }
 
 .react-flow__edge.is-focused .canvas-edge-arrow {
-  fill: #5767e5;
-  stroke: #5767e5;
+  fill: #078d70;
+  stroke: #078d70;
 }
 
 /* 悬停高亮（偏好可关）：不动数据，纯 CSS */
 .react-flow__edge.is-hover-highlight:hover .react-flow__edge-path {
-  stroke: #5767e5 !important;
-  stroke-width: 2.5 !important;
+  stroke: #078d70 !important;
+  stroke-width: 3.2 !important;
 }
 
 .react-flow__edge.is-hover-highlight:hover .canvas-edge-arrow {
-  fill: #5767e5;
-  stroke: #5767e5;
+  fill: #078d70;
+  stroke: #078d70;
 }
 
 /* 「仅突出焦点连线」：与选中节点无关的线淡出，但仍可悬停/点选 */
@@ -531,7 +574,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #d94c4c;
+  color: #d14343;
   padding: 0;
   transition: transform 0.15s;
 
@@ -549,7 +592,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   stroke: rgb(102 113 127 / 12%);
 }
 .canvas-edge-role-label text {
-  fill: #66717f;
+  fill: #7a8496;
   stroke: none;
 }
 
@@ -584,9 +627,9 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   height: calc(130px * var(--canvas-ui-scale, 1));
   margin: 16px;
   margin-bottom: calc(64px * var(--canvas-ui-scale, 1));
-  border: 1px solid #e2e6ef;
+  border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.92);
+  background: #fff;
   box-shadow: 0 6px 20px rgba(23, 33, 61, 0.12);
   overflow: hidden;
 }
@@ -703,7 +746,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 .canvas-group-frame__label:hover {
   border-color: #5767e5;
-  background: #f4f6ff;
+  background: #fff;
 }
 
 .canvas-group-frame__label:focus-visible,
@@ -726,8 +769,8 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   flex-shrink: 0;
   border: none;
   border-radius: 10px;
-  background: #f5f7f9;
-  color: #526174;
+  background: #fff;
+  color: #344054;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -739,7 +782,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
   &:hover {
     background: rgba(87, 103, 229, 0.12);
-    color: #4352cc;
+    color: #344054;
   }
 
   &:active {
@@ -799,17 +842,22 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: transparent;
   border: none;
   box-shadow:
-    0px 3px 8px rgba(24, 38, 34, 0.12),
-    0px 12px 18px rgba(24, 38, 34, 0.1),
-    0px 26px 28px rgba(24, 38, 34, 0.07);
+    0 0 0 1px rgb(226 232 240 / 18%),
+    0 4px 14px rgb(0 0 0 / 34%),
+    0 16px 28px rgb(0 0 0 / 22%);
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
   font-family: 'PingFang SC', sans-serif;
   font-size: calc(14px * var(--canvas-readable-text-scale));
-  color: #333;
+  color: #30343b;
   box-sizing: border-box;
+}
+
+/* 文本节点需要可辨认的卡片底色；透明背景会与深色画布融成一块黑区。 */
+.canvas-default-node.is-text {
+  background: #fff;
 }
 
 /* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
@@ -839,17 +887,20 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 /*
- * 悬停：抬起 1px + 阴影加深。
+ * 悬停：轻微抬起 0.5px + 阴影加深。
  *
  * 这条规则原来把和默认态一模一样的阴影又写了一遍，等于什么都没做——
  * 节点是画布上最主要的操作对象，鼠标移上去却毫无反应，界面看着就是「死」的。
- * 位移只给 1px：画布上常有几十个节点，动静大了会显得整片都在抖。
+ * 位移控制在 0.5px：画布上常有几十个节点，动静大了会显得整片都在抖。
  */
 .canvas-default-node {
-  transition: box-shadow var(--canvas-dur) var(--canvas-ease);
+  transition:
+    transform var(--canvas-dur) var(--canvas-ease),
+    box-shadow var(--canvas-dur) var(--canvas-ease);
 }
 
 .canvas-default-node:hover {
+  transform: translateY(-0.5px);
   box-shadow:
     0px 4px 10px rgba(0, 0, 0, 0.12),
     0px 14px 18px rgba(0, 0, 0, 0.1),
@@ -882,14 +933,15 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   right: 4px;
   transform: translateY(-100%);
   padding-bottom: 6px;
-  color: rgba(51, 51, 51, 0.45);
-  font-size: calc(12px * var(--canvas-readable-text-scale));
-  line-height: calc(16px * var(--canvas-readable-text-scale));
+  color: #30343b;
+  font-size: calc(12px * var(--canvas-header-text-scale, 1));
+  line-height: calc(16px * var(--canvas-header-text-scale, 1));
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
   pointer-events: auto;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 70%);
 }
 
 /* 图标跟着字号一起缩放：写死 px 时缩小画布会让字变大而图标不动，
@@ -899,14 +951,46 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: calc(12px * var(--canvas-readable-text-scale));
-  height: calc(12px * var(--canvas-readable-text-scale));
+  width: calc(12px * var(--canvas-header-text-scale, 1));
+  height: calc(12px * var(--canvas-header-text-scale, 1));
   opacity: 0.85;
 }
 
 .canvas-node-header__icon svg {
   width: 100%;
   height: 100%;
+}
+
+.canvas-media-compliance {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 30%));
+}
+
+.canvas-media-compliance svg {
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-media-compliance.is-approved {
+  color: #12a66a;
+}
+
+.canvas-media-compliance.is-rejected {
+  color: #e5484d;
+}
+
+.canvas-media-compliance.is-pending {
+  color: #e59a16;
+}
+
+.canvas-media-compliance.is-unknown {
+  color: #79808c;
 }
 
 /* 隔离双击的包装层：min-width:0 必须一路传下去，否则 flex 子项不肯收缩，
@@ -939,7 +1023,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-node-header .ie-display:hover,
 .canvas-default-node:hover .canvas-node-header__label:hover {
   background: rgba(87, 103, 229, 0.1);
-  color: rgba(51, 51, 51, 0.85);
+  color: #fff;
 }
 
 /* 编辑态：输入框继承头部字号，避免进入编辑时标题跳一下 */
@@ -949,7 +1033,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   font-size: inherit;
   line-height: inherit;
   font-family: inherit;
-  color: #333;
+  color: #30343b;
   padding: 0 2px;
   border: 1px solid #5767e5;
   border-radius: 4px;
@@ -984,7 +1068,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   padding: 24px;
   border-radius: 14px;
   background: rgba(248, 255, 252, 0.94);
-  color: #177e68;
+  color: #347866;
   text-align: center;
   backdrop-filter: blur(4px);
   pointer-events: none;
@@ -1002,7 +1086,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-node-generation-estimate {
-  color: #177e68;
+  color: #347866;
   font-size: calc(12px * var(--canvas-readable-text-scale));
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -1031,7 +1115,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 /* 已用时：等宽数字，每秒跳动时整行不左右晃 */
 .canvas-node-generation-elapsed {
-  color: #177e68;
+  color: #347866;
   font-size: calc(11px * var(--canvas-readable-text-scale));
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -1125,7 +1209,9 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   }
 
   .canvas-node-generation-progress__fill::after,
-  .react-flow__edge.is-feeding .react-flow__edge-path {
+  .react-flow__edge.is-feeding .react-flow__edge-path,
+  .react-flow__edge.is-focused .canvas-edge-flow-light,
+  .react-flow__edge.selected .canvas-edge-flow-light {
     animation: none;
   }
 
@@ -1166,7 +1252,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border: 1px solid rgb(34 197 160 / 22%);
   border-radius: 9px;
   background: rgb(240 253 249 / 94%);
-  color: #177e68;
+  color: #347866;
   font-size: calc(12px * var(--canvas-readable-text-scale));
   line-height: 1.25;
   box-shadow: 0 4px 16px rgb(15 118 110 / 8%);
@@ -1186,7 +1272,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-node-task.is-failed {
   border-color: rgb(220 38 38 / 18%);
   background: rgb(254 242 242 / 96%);
-  color: #c53d3d;
+  color: #d14343;
   /* 失败原因要能被读完（版权审核、时长范围这类提示有五六十字），允许悬停看 title */
   pointer-events: auto;
 }
@@ -1209,7 +1295,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   font-family: 'PingFang SC', sans-serif;
   font-size: calc(14px * var(--canvas-readable-text-scale));
   line-height: calc(22.4px * var(--canvas-readable-text-scale));
-  color: #333;
+  color: #30343b;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
@@ -1220,7 +1306,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-node-prompt.is-placeholder {
-  color: #999;
+  color: #7a8496;
 }
 
 .canvas-storyboard {
@@ -1232,7 +1318,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
-  color: #26332f;
+  color: #30343b;
   text-align: left;
 }
 
@@ -1243,7 +1329,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 11px 12px;
-  border-bottom: 1px solid #e6efeb;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .canvas-storyboard__summary > div {
@@ -1261,13 +1347,13 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-storyboard__summary strong {
-  color: #1e2f2a;
+  color: #30343b;
   font-size: calc(15px * var(--canvas-readable-text-scale));
 }
 
 .canvas-storyboard__edit-hint {
   flex: none;
-  color: #8a9b96;
+  color: #7a8496;
   font-size: calc(11px * var(--canvas-readable-text-scale));
 }
 
@@ -1293,11 +1379,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-storyboard__item + .canvas-storyboard__item {
-  border-top: 1px solid #edf2f0;
+  border-top: 1px solid #e5e7eb;
 }
 
 .canvas-storyboard__item:hover {
-  background: #f3faf7;
+  background: #fff;
 }
 
 .canvas-storyboard__index {
@@ -1307,7 +1393,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   width: 30px;
   height: 24px;
   border-radius: 7px;
-  background: #e7f7f1;
+  background: #fff;
   color: #168a70;
   font-size: calc(11px * var(--canvas-readable-text-scale));
   font-weight: 700;
@@ -1329,7 +1415,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-storyboard__title-row strong {
   min-width: 0;
   overflow: hidden;
-  color: #24332f;
+  color: #30343b;
   font-size: calc(13px * var(--canvas-readable-text-scale));
   line-height: calc(18.85px * var(--canvas-readable-text-scale));
   text-overflow: ellipsis;
@@ -1340,7 +1426,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   min-width: 0;
   max-width: 45%;
   flex: none;
-  color: #789088;
+  color: #7a8496;
   font-size: calc(10px * var(--canvas-readable-text-scale));
   overflow-wrap: anywhere;
 }
@@ -1349,7 +1435,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   display: -webkit-box;
   margin: 5px 0 0;
   overflow: hidden;
-  color: #65746f;
+  color: #7a8496;
   font-size: calc(12px * var(--canvas-readable-text-scale));
   line-height: calc(18.6px * var(--canvas-readable-text-scale));
   -webkit-box-orient: vertical;
@@ -1389,7 +1475,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 .canvas-node-timeline em {
   margin-top: 4px;
-  color: #7d8492;
+  color: #7a8496;
   font-size: 12px;
   font-style: normal;
 }
@@ -1407,16 +1493,14 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   pointer-events: auto;
 }
 
-/* 播放/暂停按钮：均居中显示，大小一致（44px 圆形） */
+/* 播放/暂停按钮：缩小后放在视频进度条左侧，不遮挡画面中心 */
 .canvas-node-play-btn,
 .canvas-node-pause-btn {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 2;
-  width: 44px;
-  height: 44px;
+  position: relative;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  z-index: 1;
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.45);
@@ -1426,22 +1510,19 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   justify-content: center;
   padding: 0;
   cursor: pointer;
-  backdrop-filter: blur(2px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  transition:
-    background 0.15s,
-    transform 0.15s;
+  backdrop-filter: none;
+  box-shadow: none;
+  transition: background 0.15s;
 }
 
 /* 播放按钮图标微右移，视觉居中 */
 .canvas-node-play-btn {
-  padding: 0 0 0 2px;
+  padding: 0 0 0 1px;
 }
 
 .canvas-node-play-btn:hover,
 .canvas-node-pause-btn:hover {
   background: rgba(0, 0, 0, 0.68);
-  transform: translate(-50%, -50%) scale(1.06);
 }
 
 /* 视频底部控制条：当前时间/总时长 + 可点击拖动的进度条（跳转到指定秒） */
@@ -1521,7 +1602,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   left: 0;
   height: 4px;
   border-radius: 999px;
-  background: #ffffff;
+  background: #fff;
   transform: translateY(-50%);
 }
 
@@ -1533,7 +1614,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ffffff;
+  background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
   transform: translateY(-50%);
   opacity: 0;
@@ -1590,7 +1671,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   font-family: 'PingFang SC', sans-serif;
   font-size: calc(14px * var(--canvas-readable-text-scale));
   line-height: calc(22.4px * var(--canvas-readable-text-scale));
-  color: #333;
+  color: #30343b;
   background: #fff;
   border-radius: 0 0 14px 14px;
   overflow-y: auto;
@@ -1745,7 +1826,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   padding: 6px;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.96);
+  background: #fff;
   backdrop-filter: blur(16px);
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 14px;
@@ -1786,7 +1867,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: transparent;
   border-radius: 9px;
   font-size: 13px;
-  color: #333;
+  color: #30343b;
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
@@ -1812,7 +1893,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 .canvas-context-menu__item--danger:hover:not(:disabled) {
   background: rgba(209, 67, 67, 0.08);
-  color: #c02f2f;
+  color: #d14343;
 }
 
 .canvas-context-menu__item--danger .canvas-context-menu__icon,
@@ -1899,7 +1980,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-paste-choice__title {
   padding: 6px 10px 4px;
   font-size: 12px;
-  color: #8a93a3;
+  color: #7a8496;
 }
 
 .canvas-context-menu__divider {
@@ -1940,19 +2021,19 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   flex-direction: column;
   gap: 4px;
   padding: 8px 10px 10px;
-  border-bottom: 1px solid #edf1ef;
+  border-bottom: 1px solid #e5e7eb;
   margin-bottom: 4px;
 }
 
 .canvas-add-menu__heading strong {
-  color: #263b36;
+  color: #347866;
   font-size: 13px;
   font-weight: 650;
   line-height: 1.4;
 }
 
 .canvas-add-menu__heading span {
-  color: #83908c;
+  color: #7a8496;
   font-size: 11px;
   line-height: 1.4;
 }
@@ -1978,12 +2059,12 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-add-menu__label {
   font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: #30343b;
 }
 
 .canvas-add-menu__desc {
   font-size: 11px;
-  color: #999;
+  color: #7a8496;
 }
 
 .canvas-add-menu__icon {
@@ -1991,7 +2072,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   align-items: center;
   width: 12px;
   height: 12px;
-  color: #999;
+  color: #7a8496;
   flex-shrink: 0;
 }
 
@@ -2034,10 +2115,16 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 /* 图片与剪辑节点的媒体直接贴合节点尺寸，不再露出白色卡片边框。 */
-.canvas-default-node.is-image,
-.canvas-default-node.is-timeline {
+.canvas-default-node.is-image {
   background: transparent;
   border: none;
+}
+.canvas-default-node.is-empty-media {
+  background: #fff;
+}
+.canvas-default-node.is-timeline {
+  background: #fff;
+  border: 1px solid #e5e7eb;
 }
 .canvas-default-node.is-image .canvas-node-body {
   padding: 0;
@@ -2067,7 +2154,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   padding: 0;
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background: #fff;
   color: #30343b;
   box-shadow: 0 0 30px rgb(0 0 0 / 10%);
   overflow: visible;
@@ -2081,7 +2168,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   max-width: min(92vw, 560px);
   max-height: min(78vh, 720px);
   padding: 0;
-  border-color: #e5ebf0;
+  border-color: #e5e7eb;
   background: #fff;
   color: #344054;
   overflow-y: auto;
@@ -2089,19 +2176,19 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > div:first-child {
   display: flex;
   padding: 16px 18px;
-  border-color: #e9eef2;
-  background: #fbfcfe;
+  border-color: #e5e7eb;
+  background: #fff;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] strong {
-  color: #25303b;
+  color: #344054;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] p,
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] small {
-  color: #738191;
+  color: #7a8496;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > p {
   margin: 16px 18px 0;
-  background: #eff7f5;
+  background: #fff;
   color: #347866;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > div:last-child {
@@ -2110,23 +2197,23 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border-top: 0;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] label {
-  color: #596778;
+  color: #344054;
   font-size: 12px;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] input[type='number'],
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] select {
   background: #fff;
   color: #344054;
-  border-color: #dfe6ed;
+  border-color: #e5e7eb;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] button {
-  background: #f5f8fa;
-  border-color: #dfe6ed;
-  color: #536272;
+  background: #fff;
+  border-color: #e5e7eb;
+  color: #344054;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] button:hover:not(:disabled) {
-  background: #eaf8f4;
-  border-color: #a9d9cb;
+  background: #fff;
+  border-color: #e5e7eb;
   color: #138d74;
 }
 .canvas-default-node.is-audio
@@ -2175,8 +2262,8 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   padding: 5px 10px;
   border: 0;
   border-radius: 999px;
-  background: #f3f6f5;
-  color: #53645f;
+  background: #fff;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -2194,12 +2281,12 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #687383;
+  color: #7a8496;
   font-size: 0;
   cursor: pointer;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] button:hover {
-  background: #eef4f2;
+  background: #fff;
   color: #138d74;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] button:first-child::after {
@@ -2221,18 +2308,18 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   min-height: 118px;
   max-height: 300px;
   padding: 10px 12px 32px;
-  border: 1px solid #e7e9f2;
+  border: 1px solid #e5e7eb;
   border-radius: 10px;
   outline-offset: 2px;
   background: #fff;
-  color: #333;
+  color: #30343b;
   font-size: 14px;
   font-weight: 500;
   line-height: 1.8;
   resize: vertical;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt']::placeholder {
-  color: #9a9a9a;
+  color: #7a8496;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='model'] {
   grid-area: 3 / 1 / 4 / 2;
@@ -2244,9 +2331,9 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='model'] > button {
   height: 40px;
   padding: 0 12px;
-  border-color: #e4e9ef;
+  border-color: #e5e7eb;
   border-radius: 10px;
-  background: #f8faf9;
+  background: #fff;
   font-size: 12px;
   font-weight: 500;
 }
@@ -2285,17 +2372,17 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #687383;
+  color: #7a8496;
   font-size: 11px;
   white-space: nowrap;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] summary:hover {
-  background: #eef4f2;
+  background: #fff;
   color: #138d74;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] > div {
   background: #fff;
-  border-color: #e4e9ef;
+  border-color: #e5e7eb;
   color: #344054;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'] {
@@ -2307,7 +2394,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   margin: 0;
   padding: 0;
   border: 0;
-  color: #687383;
+  color: #7a8496;
   font-size: 11px;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -2320,7 +2407,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #687383;
+  color: #7a8496;
   font-size: 11px;
 }
 .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='hint'] {
@@ -2329,7 +2416,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   margin: 0;
   padding: 0;
   border: 0;
-  color: #7d8794;
+  color: #7a8496;
   font-size: 11px;
   white-space: nowrap;
 }
@@ -2420,7 +2507,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   min-height: 72px;
   padding: 8px;
   box-sizing: border-box;
-  border: 1px solid #e8e8ed;
+  border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: white;
   color: inherit;
@@ -2477,10 +2564,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   .canvas-actions-toggle {
     display: block;
     padding: 9px 12px;
-    border: 1px solid #dfe5e3;
+    border: 1px solid #e5e7eb;
     border-radius: 10px;
     background: #fff;
-    color: #33403a;
+    color: #30343b;
     cursor: pointer;
     font-size: 13px;
   }
@@ -2502,7 +2589,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
     gap: 8px;
     width: 210px;
     padding: 12px;
-    border: 1px solid #dfe5e3;
+    border: 1px solid #e5e7eb;
     border-radius: 12px;
     background: #fff;
   }
@@ -2555,7 +2642,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: rgba(255, 255, 255, 0.18);
 }
 .canvas-video-expand:focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid #e5e7eb;
   outline-offset: 1px;
 }
 .canvas-video-buffering {
@@ -2563,7 +2650,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   width: 10px;
   height: 10px;
   border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
+  border-top-color: #e5e7eb;
   border-radius: 50%;
 }
 
@@ -2615,7 +2702,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  color: #123d33;
+  color: #347866;
   background: #1fcfa9;
   box-shadow: 0 1px 4px rgb(15 23 42 / 12%);
   pointer-events: none;
@@ -2632,7 +2719,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 .canvas-selection-frame__add:hover .canvas-selection-frame__add-face,
 .canvas-selection-frame__add[aria-expanded='true'] .canvas-selection-frame__add-face {
-  color: #123d33;
+  color: #347866;
   background: #1fcfa9;
   box-shadow: 0 2px 6px rgb(15 23 42 / 16%);
   transform: translate(var(--magnet-x, 0px), var(--magnet-y, 0px)) scale(1.04);
@@ -2686,7 +2773,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border-radius: 8px;
   background: transparent;
   border: 0;
-  color: #39564f;
+  color: #347866;
   box-shadow: none;
   pointer-events: auto;
   touch-action: none;
@@ -2700,17 +2787,17 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   margin: 0;
   min-width: 0;
   border-color: transparent;
-  color: #245e50;
+  color: #347866;
   flex-shrink: 1;
 }
 .canvas-group-frame__grip {
   flex-shrink: 0;
-  color: #698079;
+  color: #7a8496;
 }
 .canvas-group-frame__hint {
   margin-left: auto;
   font-size: 11px;
-  color: #536c65;
+  color: #7a8496;
   white-space: nowrap;
   overflow: hidden;
 }
@@ -2718,8 +2805,8 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border: 0;
   border-radius: 5px;
   padding: 3px 7px;
-  background: #e4f7f1;
-  color: #245e50;
+  background: #fff;
+  color: #347866;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -2738,15 +2825,15 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-group-frame__header .canvas-group-frame__input {
   font-size: 14px;
   font-weight: 600;
-  color: #263e37;
-  background: #f5faf8;
+  color: #347866;
+  background: #fff;
 }
 .canvas-group-frame__header .canvas-group-frame__input {
   border-color: #087f68;
 }
 .canvas-group-frame__count {
   flex-shrink: 0;
-  color: #536c65;
+  color: #7a8496;
   font-size: 12px;
 }
 .canvas-group-frame__more {
@@ -2759,8 +2846,8 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   flex-shrink: 0;
   border: 0;
   border-radius: 6px;
-  background: #f5faf8;
-  color: #39564f;
+  background: #fff;
+  color: #347866;
   cursor: pointer;
   opacity: 0;
 }
@@ -2770,7 +2857,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   opacity: 1;
 }
 .canvas-group-frame__more:hover {
-  background: #e4f2ec;
+  background: #fff;
 }
 .canvas-group-frame__more:focus-visible {
   outline: 2px solid #087f68;

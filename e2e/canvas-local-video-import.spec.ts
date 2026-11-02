@@ -51,7 +51,7 @@ test('Windows 拖入 MIME 为空的 MP4 时按扩展名识别并添加视频节�
 
   const node = page.locator('.react-flow__node-video')
   await expect(node).toHaveCount(1)
-  await expect(node).toContainText('视频')
+  await expect(node).toContainText('source')
   await expect.poll(uploadCompleted).toBe(true)
   await expect.poll(() => node.locator('video').getAttribute('src')).toContain('/api/v1/assets/7961/download')
   await expect(page.getByText('上传素材失败，请稍后重试')).toHaveCount(0)

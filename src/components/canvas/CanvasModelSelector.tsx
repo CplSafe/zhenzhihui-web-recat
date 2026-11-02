@@ -365,14 +365,15 @@ function ModelOptionRow({
         )}
         <span className={styles.modelRowName}>{model.displayName}</span>
         {info.isNew && !blocked && <span className={styles.modelRowNew}>NEW</span>}
-        {blocked ? (
-          <LockIcon />
-        ) : selected ? (
-          <span className={styles.modelRowCheck} aria-hidden="true">
-            ✓
-          </span>
-        ) : null}
+        {blocked ? <LockIcon /> : null}
       </span>
+      {description && (
+        <span className={styles.modelRowReveal} aria-hidden={!expanded}>
+          <span>
+            <span className={styles.modelRowDescription}>{description}</span>
+          </span>
+        </span>
+      )}
       {durationSupport && (
         <span className={styles.modelRowMeta}>
           {/* 支持的秒数排在最前：选视频模型时这是最先要判断的一项 */}
@@ -382,13 +383,6 @@ function ModelOptionRow({
         </span>
       )}
       {blocked && <em className={styles.modelRowReason}>{blockedReason}</em>}
-      {description && (
-        <span className={styles.modelRowReveal} aria-hidden={!expanded}>
-          <span>
-            <span className={styles.modelRowDescription}>{description}</span>
-          </span>
-        </span>
-      )}
     </>
   )
 

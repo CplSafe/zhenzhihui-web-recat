@@ -181,6 +181,7 @@ import {
   extractTaskText,
   getAiTask,
   getAiTaskId,
+  getSeedanceModeration,
   normalizeAiTaskStatus,
   uploadAssetFile,
 } from '@/api/business'
@@ -232,11 +233,13 @@ import {
 import CanvasFailureDetails from '@/components/canvas/CanvasFailureDetails'
 import { planMultiResultPositions } from '@/utils/canvasMultiResult'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
+import { normalizeSeedanceModerationResult, type SeedanceModerationState } from '@/utils/seedanceModeration'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText, toCanvasPromptContext } from '@/utils/canvasStructuredText'
 import InlineEdit from '@/components/common/InlineEdit'
 import CanvasNodeToolbar from '@/components/canvas/CanvasNodeToolbar'
+import CanvasSeedanceModerationModal from '@/components/canvas/CanvasSeedanceModerationModal'
 import CanvasReversePromptPanel, { type CanvasReversePromptTarget } from '@/components/canvas/CanvasReversePromptPanel'
 import { useLatestCallback } from '@/composables/useLatestCallback'
 import { useElapsedSince } from '@/composables/useElapsedSince'
@@ -708,7 +711,7 @@ function getTypePlaceholder(kind: string) {
   const size = 48
   if (kind === 'image') {
     return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" opacity="0.15">
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" opacity="0.42">
         <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" />
         <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
         <path
@@ -723,7 +726,7 @@ function getTypePlaceholder(kind: string) {
   }
   if (kind === 'video') {
     return (
-      <svg width={size} height={size} viewBox="0 0 48 48" fill="none" opacity="0.15">
+      <svg width={size} height={size} viewBox="0 0 48 48" fill="none" opacity="0.42">
         <path
           fillRule="evenodd"
           clipRule="evenodd"
@@ -758,6 +761,12 @@ const CANVAS_SNAP_GRID: [number, number] = [16, 16]
 
 /** 本地图片预览地址的释放延迟（毫秒）：等正式地址加载完再释放，避免画面闪断 */
 const LOCAL_PREVIEW_REVOKE_MS = 5000
+
+/** 画布节点名称只展示本地文件名，不带扩展名。 */
+function localMediaDisplayName(fileName: string): string {
+  const extensionIndex = fileName.lastIndexOf('.')
+  return extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName
+}
 
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
 const NODE_PANEL_GAP = 24
@@ -804,12 +813,12 @@ const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string 
 
 // 多选入口独立配置，不改变单节点的音频编辑等既有入口。
 const SELECTION_ADD_MENU_ITEMS = [
-  { type: 'text', label: '文本生成', desc: '' },
-  { type: 'image', label: '图片生成', desc: '' },
-  { type: 'video', label: '视频生成', desc: '' },
+  { type: 'text', label: '文本制作', desc: '' },
+  { type: 'image', label: '图片制作', desc: '' },
+  { type: 'video', label: '制作', desc: '' },
   { type: 'timeline', label: '智能剪辑', desc: '' },
   { type: 'audio', label: '音频', desc: '' },
-  { type: 'script', label: '脚本生成', desc: '' },
+  { type: 'script', label: '脚本制作', desc: '' },
 ]
 
 /** 节点类型中文名（菜单禁用提示、搜索结果副标题用） */
@@ -1062,6 +1071,8 @@ const MAX_WHEEL_ZOOM_RATIO = 1.12
 /** 自定义画布节点 */
 function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const canvasZoom = useStore((state) => state.transform[2])
+  // 节点标题保持接近固定的屏幕字号，避免缩小时失去辨识度。
+  const canvasHeaderScale = Math.min(4, Math.max(1, 0.72 / canvasZoom))
   const selectedNodeCount = useStore((state) => state.nodes.reduce((count, node) => count + Number(node.selected), 0))
   const isBoxSelecting = useStore((state) => state.userSelectionActive)
   const [nodeHovered, setNodeHovered] = useState(false)
@@ -1795,9 +1806,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
   return (
     <div
-      className={`canvas-default-node${kind === 'video' ? ' is-video' : ''}${kind === 'image' ? ' is-image' : ''}${kind === 'timeline' ? ' is-timeline' : ''}${data.hd ? ' is-hd-result' : ''}${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
+      className={`canvas-default-node${kind === 'text' ? ' is-text' : ''}${kind === 'video' ? ' is-video' : ''}${kind === 'image' ? ' is-image' : ''}${kind === 'timeline' ? ' is-timeline' : ''}${(kind === 'image' || kind === 'video') && !mediaUrl ? ' is-empty-media' : ''}${data.hd ? ' is-hd-result' : ''}${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
       // 节点内文字和控件随画布等比例缩放；长文本通过展开窗口阅读和编辑。
-      style={{ '--canvas-readable-text-scale': 1 } as CSSProperties}
+      style={{ '--canvas-readable-text-scale': 1, '--canvas-header-text-scale': canvasHeaderScale } as CSSProperties}
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
       onWheel={onNodeWheel}
@@ -1862,6 +1873,66 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
       {/* 主体：文本节点可编辑；图片/视频显示素材内容或占位图标 */}
       <div className="canvas-node-body" onDoubleClick={handleDoubleClick}>
+        {(kind === 'image' || kind === 'video') &&
+          ['approved', 'rejected', 'pending', 'unknown'].includes(String(data.seedanceModerationStatus || '')) && (
+            <span
+              className={`canvas-media-compliance is-${data.seedanceModerationStatus}`}
+              title={
+                data.seedanceModerationStatus === 'approved'
+                  ? '合规校验成功'
+                  : data.seedanceModerationStatus === 'rejected'
+                    ? '审核未通过'
+                    : data.seedanceModerationStatus === 'pending'
+                      ? '审核中'
+                      : '审核状态待确认'
+              }
+              aria-label={
+                data.seedanceModerationStatus === 'approved'
+                  ? '合规校验成功'
+                  : data.seedanceModerationStatus === 'rejected'
+                    ? '审核未通过'
+                    : data.seedanceModerationStatus === 'pending'
+                      ? '审核中'
+                      : '审核状态待确认'
+              }
+            >
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                {data.seedanceModerationStatus === 'approved' ? (
+                  <>
+                    <circle cx="10" cy="10" r="9" fill="currentColor" />
+                    <path
+                      d="m5.5 10.2 3 2.8 6-6"
+                      stroke="white"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </>
+                ) : data.seedanceModerationStatus === 'rejected' ? (
+                  <>
+                    <circle cx="10" cy="10" r="9" fill="currentColor" />
+                    <path d="m7 7 6 6m0-6-6 6" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+                  </>
+                ) : data.seedanceModerationStatus === 'pending' ? (
+                  <>
+                    <circle cx="10" cy="10" r="9" fill="currentColor" />
+                    <path
+                      d="M10 5.5v4.8l3.2 1.8"
+                      stroke="white"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <circle cx="10" cy="10" r="9" fill="currentColor" />
+                    <path d="M10 9v4m0-6h.01" stroke="white" strokeWidth="2" strokeLinecap="round" />
+                  </>
+                )}
+              </svg>
+            </span>
+          )}
         {kind === 'text' ? (
           editing ? (
             <textarea
@@ -2074,6 +2145,30 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               onMouseDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
             >
+              {!playing ? (
+                <button
+                  type="button"
+                  className="canvas-node-play-btn nodrag nopan"
+                  onClick={toggleVideoPlay}
+                  aria-label="播放视频"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                    <path d="M8 5.14v13.72a1 1 0 0 0 1.52.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="canvas-node-pause-btn nodrag nopan"
+                  onClick={toggleVideoPlay}
+                  aria-label="暂停视频"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="5" width="4" height="14" rx="1.2" />
+                    <rect x="14" y="5" width="4" height="14" rx="1.2" />
+                  </svg>
+                </button>
+              )}
               <span className="canvas-node-video-time">
                 {formatVideoTimeLabel(videoCurrentSec)} / {videoDurationLabel || '--:--'}
               </span>
@@ -2142,20 +2237,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 </svg>
               </button>
             </div>
-            {!playing ? (
-              <button className="canvas-node-play-btn" onClick={toggleVideoPlay} aria-label="播放视频">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-                  <path d="M8 5.14v13.72a1 1 0 0 0 1.52.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
-                </svg>
-              </button>
-            ) : (
-              <button className="canvas-node-pause-btn" onClick={toggleVideoPlay} aria-label="暂停视频">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-                  <rect x="6" y="5" width="4" height="14" rx="1.2" />
-                  <rect x="14" y="5" width="4" height="14" rx="1.2" />
-                </svg>
-              </button>
-            )}
           </div>
         ) : kind === 'image' && imageResultIds.length > 1 ? (
           <CanvasImageResults
@@ -2568,6 +2649,15 @@ function CanvasInner() {
   const [preferences, setPreferences] = useState<CanvasPreferences>(loadCanvasPreferences)
   useEffect(() => {
     const body = document.body
+    const previous = body.getAttribute('data-canvas-ui')
+    body.setAttribute('data-canvas-ui', 'true')
+    return () => {
+      if (previous === null) body.removeAttribute('data-canvas-ui')
+      else body.setAttribute('data-canvas-ui', previous)
+    }
+  }, [])
+  useEffect(() => {
+    const body = document.body
     const previous = body.style.getPropertyValue('--canvas-ui-scale')
     body.style.setProperty(
       '--canvas-ui-scale',
@@ -2641,6 +2731,11 @@ function CanvasInner() {
   /** Ctrl+Shift+V 明确请求系统剪贴板媒体；原生 ClipboardEvent 不暴露 Shift 状态。 */
   const preferSystemClipboardPasteRef = useRef(false)
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
+  const [seedanceModerationTarget, setSeedanceModerationTarget] = useState<{
+    assetId: number
+    workspaceId: number
+    mediaType: 'image' | 'video'
+  } | null>(null)
   /**
    * 编辑面板的字段以 nodes 中的持久化 data 为真相源。
    * selectedNode 主要保存选择态和 sourceRefs；两份状态同一批更新时，边变化的同步 effect
@@ -2651,8 +2746,14 @@ function CanvasInner() {
     if (!selectedNode) return null
     const graphNode = nodes.find((node) => node.id === selectedNode.id)
     const data = graphNode?.data as Record<string, unknown> | undefined
-    return data ? ({ ...selectedNode, ...data, sourceRefs: selectedNode.sourceRefs } as CanvasNodeInfo) : selectedNode
-  }, [selectedNode, nodes])
+    return data
+      ? ({
+          ...selectedNode,
+          ...data,
+          sourceRefs: collectCanvasSourceRefs(selectedNode.id, nodes, edges),
+        } as CanvasNodeInfo)
+      : selectedNode
+  }, [selectedNode, nodes, edges])
   /**
    * 多选中的节点 id。
    *
@@ -2729,6 +2830,28 @@ function CanvasInner() {
   // 最新 nodes/edges 引用：供历史快照在任何回调里读取当前状态
   const latestRef = useRef<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] })
   latestRef.current = { nodes, edges }
+  const handleSeedanceModerationStatusChange = useCallback(
+    (assetId: number, moderationWorkspaceId: number, state: SeedanceModerationState | null) => {
+      const nextNodes = latestRef.current.nodes.map((node) => {
+        if (
+          Number(node.data.assetId || 0) !== assetId ||
+          Number(node.data.assetWorkspaceId || workspaceId) !== moderationWorkspaceId
+        )
+          return node
+        const nextData = { ...node.data }
+        if (state) nextData.seedanceModerationStatus = state
+        else delete nextData.seedanceModerationStatus
+        if (node.data.seedanceModerationStatus === nextData.seedanceModerationStatus) return node
+        return { ...node, data: nextData }
+      })
+      if (nextNodes.some((node, index) => node !== latestRef.current.nodes[index])) {
+        latestRef.current = { ...latestRef.current, nodes: nextNodes }
+        setNodes(nextNodes)
+        setSaveStatus('dirty')
+      }
+    },
+    [workspaceId, setNodes],
+  )
   useEffect(() => {
     ;(window as any).__canvasOpenNextStep = (sourceId: string, clientX: number, clientY: number) => {
       if (!latestRef.current.nodes.some((node) => node.id === sourceId)) return
@@ -5691,6 +5814,7 @@ function CanvasInner() {
         commitHistory()
         const nextData: Record<string, unknown> = {
           assetId,
+          title: localMediaDisplayName(file.name),
           resultUrl,
           realPerson,
           assetSource: realPerson ? 'real_person' : 'upload',
@@ -5775,13 +5899,22 @@ function CanvasInner() {
       const imageChecks = await Promise.all(
         allImages.map(async (file) => {
           try {
-            return { file: await normalizeImageFileForAiInput(file), error: '' }
+            return {
+              file: await normalizeImageFileForAiInput(file),
+              title: localMediaDisplayName(file.name),
+              error: '',
+            }
           } catch (error: any) {
-            return { file, error: `${file.name}：${String(error?.message || '图片不符合要求')}` }
+            return {
+              file,
+              title: localMediaDisplayName(file.name),
+              error: `${file.name}：${String(error?.message || '图片不符合要求')}`,
+            }
           }
         }),
       )
       const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
+      const imageNames = new Map(imageChecks.filter((item) => !item.error).map((item) => [item.file, item.title]))
       const rejectedImages = imageChecks.filter((item) => item.error).map((item) => item.error)
       if (images.length === 0 && videos.length === 0 && audios.length === 0) {
         const rejected = [
@@ -5794,17 +5927,17 @@ function CanvasInner() {
         return
       }
       // 图片在前、视频在后，保证超限被裁掉的总是排在后面的那些，顺序稳定可预期
-      const media: Array<{ file: File; kind: 'image' | 'video' | 'audio' }> = [
-        ...images.map((file) => ({ file, kind: 'image' as const })),
-        ...videos.map((file) => ({ file, kind: 'video' as const })),
-        ...audios.map((file) => ({ file, kind: 'audio' as const })),
+      const media: Array<{ file: File; title: string; kind: 'image' | 'video' | 'audio' }> = [
+        ...images.map((file) => ({ file, title: imageNames.get(file) || file.name, kind: 'image' as const })),
+        ...videos.map((file) => ({ file, title: localMediaDisplayName(file.name), kind: 'video' as const })),
+        ...audios.map((file) => ({ file, title: localMediaDisplayName(file.name), kind: 'audio' as const })),
       ]
       const accepted = media.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
       const skipped = media.length - accepted.length
       const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
       // 整批只记一次历史：一次撤销即可撤掉本次导入的全部节点
       commitHistory()
-      const created = await mapWithConcurrency(accepted, 8, async ({ file, kind }, index) => {
+      const created = await mapWithConcurrency(accepted, 8, async ({ file, title, kind }, index) => {
         // 图片严格使用原图比例；视频统一用自适应，与生成/剪出的视频节点同一口径。
         const ratio =
           kind === 'video' || kind === 'audio'
@@ -5830,14 +5963,14 @@ function CanvasInner() {
               uploading: true,
               assetSource: 'upload',
               assetWorkspaceId: workspaceId,
-              ...(kind === 'audio' ? { title: file.name } : {}),
+              title,
             },
           },
         )
-        return { nodeId, file, previewUrl, kind }
+        return { nodeId, file, title, previewUrl, kind }
       })
       const failures: string[] = [...rejectedImages]
-      await mapWithConcurrency(created, 4, async ({ nodeId, file, previewUrl, kind }) => {
+      await mapWithConcurrency(created, 4, async ({ nodeId, file, title, previewUrl, kind }) => {
         try {
           const durationSec = kind === 'audio' ? await readAudioDuration(previewUrl) : 0
           // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
@@ -5847,6 +5980,7 @@ function CanvasInner() {
           const realPerson = await resolveUploadedRealPerson(assetId, file)
           const nextData: Record<string, unknown> = {
             assetId,
+            title,
             realPerson,
             assetSource: realPerson ? 'real_person' : 'upload',
             imageOrigin: { assetId, kind: 'upload' },
@@ -5856,7 +5990,7 @@ function CanvasInner() {
             previewUrl: '',
             ...(kind === 'audio'
               ? {
-                  title: file.name,
+                  title,
                   audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec, origin: 'upload' }),
                 }
               : {}),
@@ -6307,6 +6441,59 @@ function CanvasInner() {
           if (inputError) {
             showToast(inputError, 'error')
             return
+          }
+          const modelNames = [
+            submitModel?.displayName,
+            submitModel?.source?.model_code,
+            submitModel?.source?.modelCode,
+            submitModel?.source?.model_name,
+            submitModel?.source?.modelName,
+            submitModel?.source?.name,
+          ]
+          const usesSeedance = modelNames.some((value) =>
+            /s(?:ee|ea)dance/i.test(String(value || '').replace(/[\s._-]/g, '')),
+          )
+          if (usesSeedance) {
+            const imageIds = [
+              ...new Set(
+                (generate.sourceRefs || [])
+                  .filter(
+                    (ref) =>
+                      ref.kind === 'image' &&
+                      generate.inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
+                  )
+                  .map((ref) => Number(ref.assetId))
+                  .filter((id) => Number.isSafeInteger(id) && id > 0),
+              ),
+            ]
+            const videoIds = [
+              ...new Set(
+                generate.inputAssets
+                  .filter((asset) => asset.role === 'video')
+                  .map((asset) => Number(asset.asset_id))
+                  .filter((id) => Number.isSafeInteger(id) && id > 0),
+              ),
+            ]
+            const moderationAssets = [
+              ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
+              ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
+            ]
+            for (const { assetId, mediaType } of moderationAssets) {
+              let moderation
+              try {
+                moderation = normalizeSeedanceModerationResult(
+                  await getSeedanceModeration(assetId, { workspaceId: Number(workspaceId || 0) }),
+                )
+              } catch {
+                showToast(`无法确认${mediaType}素材 ID ${assetId} 的 Seedance 审核状态，请稍后重试`, 'error')
+                return
+              }
+              if (moderation.state !== 'approved') {
+                const reason = moderation.reason ? `：${moderation.reason}` : ''
+                showToast(`${mediaType}素材 ID ${assetId} 尚未通过 Seedance 审核，请先完成审核${reason}`, 'error')
+                return
+              }
+            }
           }
           const videoAssetIds = generate.inputAssets
             .filter((asset) => asset.role === 'video')
@@ -10605,9 +10792,9 @@ function CanvasInner() {
             </svg>
           </button>
           <div className="canvas-brand">
-            <img src={brandLogo} alt="帧智汇" className="canvas-brand-logo" />
+            <img src={brandLogo} alt="豆豆同学" className="canvas-brand-logo" />
             <div className="canvas-brand-text">
-              <span className="canvas-brand-name">帧智汇</span>
+              <span className="canvas-brand-name">豆豆同学</span>
               <DraftSaveIndicator status={saveStatus} />
               {cloudStatus !== 'online' && (
                 <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
@@ -11108,7 +11295,7 @@ function CanvasInner() {
             fitViewOptions={{ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 }}
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="rgba(255, 255, 255, 0.08)" gap={24} size={1} />
+            <Background color="rgba(0, 0, 0, 0.08)" gap={24} size={1} />
             {/*
               分组框跟随视口；仅四边和标签接收拖动，内部仍可操作节点。
             */}
@@ -11372,6 +11559,18 @@ function CanvasInner() {
               }}
             />
           )}
+
+        {seedanceModerationTarget && (
+          <CanvasSeedanceModerationModal
+            key={`${seedanceModerationTarget.workspaceId}:${seedanceModerationTarget.assetId}:${seedanceModerationTarget.mediaType}`}
+            open
+            assetId={seedanceModerationTarget.assetId}
+            workspaceId={seedanceModerationTarget.workspaceId}
+            mediaType={seedanceModerationTarget.mediaType}
+            onStatusChange={handleSeedanceModerationStatusChange}
+            onClose={() => setSeedanceModerationTarget(null)}
+          />
+        )}
 
         {reversePromptTarget && (
           <CanvasReversePromptPanel
@@ -12081,13 +12280,88 @@ function CanvasInner() {
                     openDrawerPanel('assets')
                   }}
                   onRemoveRef={handleRemoveRef}
+                  onModeration={
+                    selectedNodeForPanel?.kind === 'image' || selectedNodeForPanel?.kind === 'video'
+                      ? (mediaType) => {
+                          const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                          const assetId = Number(node?.data.assetId)
+                          const moderationWorkspaceId = Number(node?.data.assetWorkspaceId || workspaceId || 0)
+                          if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+                            showToast(`请先上传或生成${mediaType === 'video' ? '视频' : '图片'}`, 'error')
+                            return
+                          }
+                          if (!Number.isSafeInteger(moderationWorkspaceId) || moderationWorkspaceId <= 0) {
+                            showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
+                            return
+                          }
+                          setSeedanceModerationTarget({ assetId, workspaceId: moderationWorkspaceId, mediaType })
+                        }
+                      : undefined
+                  }
+                  onPreviewMentionRef={(ref) => {
+                    if (ref.kind === 'video') {
+                      nodePreviewRef.current.get(ref.sourceId)?.()
+                      return
+                    }
+                    if (latestRef.current.nodes.some((item) => item.id === ref.sourceId)) {
+                      openImagePreview(ref.sourceId)
+                    }
+                  }}
                   resultHistory={selectedNodeHistory}
                   onRevertToHistory={handleRevertToHistory}
                   onRatioChange={handleRatioChange}
                   onVideoModeChange={handleVideoModeChange}
                   onModelChange={handleModelChange}
                   onGenerate={handleNodeGenerate}
-                  onPreflightAssets={(sourceRefs, inputAssets) => {
+                  onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
+                    if (requiresSeedanceModeration) {
+                      const imageIds = [
+                        ...new Set(
+                          sourceRefs
+                            .filter(
+                              (ref) =>
+                                ref.kind === 'image' &&
+                                inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
+                            )
+                            .map((ref) => Number(ref.assetId))
+                            .filter((id) => Number.isSafeInteger(id) && id > 0),
+                        ),
+                      ]
+                      const videoIds = [
+                        ...new Set(
+                          inputAssets
+                            .filter((asset) => asset.role === 'video')
+                            .map((asset) => Number(asset.asset_id))
+                            .filter((id) => Number.isSafeInteger(id) && id > 0),
+                        ),
+                      ]
+                      const moderationAssets = [
+                        ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
+                        ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
+                      ]
+                      for (const { assetId, mediaType } of moderationAssets) {
+                        let moderation
+                        try {
+                          moderation = normalizeSeedanceModerationResult(
+                            await getSeedanceModeration(assetId, { workspaceId: Number(workspaceId || 0) }),
+                          )
+                        } catch {
+                          return `无法确认${mediaType}素材 ID ${assetId} 的 Seedance 审核状态，请稍后重试`
+                        }
+                        if (moderation.state !== 'approved') {
+                          const details = moderation.reason ? `：${moderation.reason}` : ''
+                          const stateLabel =
+                            moderation.state === 'pending'
+                              ? '正在审核'
+                              : moderation.state === 'rejected'
+                                ? '审核未通过'
+                                : moderation.state === 'unknown'
+                                  ? `审核状态未识别${moderation.rawStatus ? `（${moderation.rawStatus}）` : ''}`
+                                  : '尚未审核'
+                          return `${mediaType}素材 ID ${assetId}${stateLabel}，请先在该素材节点面板点击“审核”${details}`
+                        }
+                      }
+                    }
                     const unsavedAudio = sourceRefs.find((ref) => {
                       if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
                         return false

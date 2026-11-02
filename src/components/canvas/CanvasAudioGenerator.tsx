@@ -1474,7 +1474,7 @@ export default function CanvasAudioGenerator({
         title={loadingModels ? '正在加载音频模型' : !selected ? '请先选择配音 / 音乐模型' : undefined}
         onClick={() => void generate()}
       >
-        {running ? '生成中…' : Number(data.assetId) > 0 ? '重新生成' : '生成音频'}
+        {running ? '制作中…' : Number(data.assetId) > 0 ? '重新制作' : '制作音频'}
       </button>
       {running && (
         <p role="status">

@@ -203,9 +203,9 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
               <path d="m11.666 12.669.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33zm5-6.667.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33z" />
             </svg>
           </button>
-          <img className="apptop__logo" src={brandLogo} alt="帧智汇" width={32} height={32} />
+          <img className="apptop__logo" src={brandLogo} alt="豆豆同学" width={32} height={32} />
           <span className="apptop__brand-text">
-            <strong className="apptop__brand-name">帧智汇</strong>
+            <strong className="apptop__brand-name">豆豆同学</strong>
             <em className="apptop__brand-version">v{APP_VERSION}</em>
           </span>
         </div>

@@ -35,7 +35,7 @@
 }
 
 .title {
-  color: #1f2937;
+  color: #344054;
   font-size: 16px;
   font-weight: 600;
 }
@@ -49,13 +49,13 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #1f2937;
+  color: #344054;
   cursor: pointer;
 }
 
 .close:hover {
-  background: #f1f5f9;
-  color: #111827;
+  background: #fff;
+  color: #344054;
 }
 
 .close:focus-visible {
@@ -65,7 +65,7 @@
 
 .hint {
   margin: 0 0 14px;
-  color: #7b8494;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -82,10 +82,10 @@
   min-width: 0;
   height: 36px;
   padding: 0 10px;
-  border: 1px solid #e3e7ee;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #f8fafc;
-  color: #334155;
+  background: #fff;
+  color: #344054;
   font-size: 13px;
   font-family: inherit;
 }
@@ -108,13 +108,13 @@
 }
 
 .copy:disabled {
-  background: #c3c9d4;
+  background: #f2f4f7;
   cursor: not-allowed;
 }
 
 .meta {
   margin: 10px 0 0;
-  color: #7b8494;
+  color: #7a8496;
   font-size: 12px;
 }
 
@@ -124,23 +124,23 @@
   justify-content: space-between;
   gap: 12px;
   margin-top: 14px;
-  color: #475569;
+  color: #344054;
   font-size: 13px;
 }
 
 .expirySelect {
   min-height: 36px;
   padding: 0 10px;
-  border: 1px solid #e3e7ee;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #334155;
+  color: #344054;
   font: inherit;
 }
 
 .error {
   margin: 10px 0 0;
-  color: #d94c4c;
+  color: #d14343;
   font-size: 12px;
 }
 
@@ -164,7 +164,7 @@
 }
 
 .primary:disabled {
-  background: #c3c9d4;
+  background: #f2f4f7;
   cursor: not-allowed;
 }
 
@@ -176,7 +176,7 @@
   border: 1px solid rgba(217, 76, 76, 0.4);
   border-radius: 999px;
   background: #fff;
-  color: #d94c4c;
+  color: #d14343;
   font-size: 13px;
   cursor: pointer;
 }

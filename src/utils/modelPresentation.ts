@@ -158,7 +158,8 @@ function readTags(value: unknown): string[] {
   const seen = new Set<string>()
   const tags: string[] = []
   for (const item of raw) {
-    const text = readText(isRecord(item) ? (item.label ?? item.name ?? item.text ?? item.value) : item)
+    const rawText = readText(isRecord(item) ? (item.label ?? item.name ?? item.text ?? item.value) : item)
+    const text = rawText === '审核' ? '已通过审核' : rawText
     if (!text || seen.has(text)) continue
     seen.add(text)
     tags.push(text)
