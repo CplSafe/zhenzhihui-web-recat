@@ -1,7 +1,7 @@
 /**
  * 供需商单（/market）
  *
- * 页面职责：承载原首页的「IP」与「需求市场」两个标签，作为侧栏「市场 → 供需商单」的落地页。
+ * 页面职责：承载原首页的「IP」与「需求市场」两个标签，作为侧栏「集市 → 供需商单」的落地页。
  * 页面不再显示「供需商单」大标题，两个标签按用户视角命名、发单在前：
  * - 「我要发单」（key 'market'，原需求市场）：价格 / 时间排序 + 发布需求入口，只展示可报名（open）的需求。
  * - 「我要接单」（key 'ip'，原 IP）：领域 / 平台 / 粉丝三组筛选 + 创作者卡片，点击进入 IP 主页。
@@ -24,7 +24,7 @@ import './MarketView.css'
 
 /**
  * 供需商单页的两个标签，数组顺序即展示顺序，第一个是默认标签。
- * key 沿用旧值不改：路由 state.marketTab（需求详情「返回市场」、我的合作等入口）靠它直达。
+ * key 沿用旧值不改：路由 state.marketTab（需求详情「返回集市」、我的合作等入口）靠它直达。
  */
 const TABS = [
   { key: 'market', label: '我要发单' },
@@ -71,7 +71,7 @@ export default function MarketView() {
 
   const routeTab = (location.state as { marketTab?: unknown } | null)?.marketTab
   const [activeTab, setActiveTab] = useState<MarketTabKey>(() => (isMarketTab(routeTab) ? routeTab : TABS[0].key))
-  // 已挂载时再次收到 marketTab（如需求详情点「返回市场」）也切到对应标签。
+  // 已挂载时再次收到 marketTab（如需求详情点「返回集市」）也切到对应标签。
   useEffect(() => {
     if (isMarketTab(routeTab)) setActiveTab(routeTab)
   }, [routeTab, location.key])
@@ -113,7 +113,7 @@ export default function MarketView() {
     const controller = new AbortController()
     setMarketLoading(true)
     setMarketError('')
-    // 市场只展示可报名（open）的需求：后端公开列表会包含已完成的单，混排会误导接单者。
+    // 集市只展示可报名（open）的需求：后端公开列表会包含已完成的单，混排会误导接单者。
     listMarketDemands({ status: 'open', limit: 100, signal: controller.signal })
       .then(({ items }) => setMarketDemands(items))
       .catch((error: any) => {

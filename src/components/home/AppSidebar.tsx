@@ -1,6 +1,6 @@
 /**
  * 2.1 左侧导航栏（自包含静态实现）。
- * 浅色窄侧栏：品牌 + 分组（创作/管理/市场/团队）+ 底部设置。
+ * 浅色窄侧栏：品牌 + 分组（创作/管理/集市/团队）+ 底部设置。
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 菜单图标直接使用 Figma 导出的默认态/选中态 SVG，保持造型、尺寸和颜色一致。
  */
@@ -65,12 +65,12 @@ const GROUPS: SidebarGroup[] = [
       { key: 'creative', label: '爆款成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'studio', label: 'AI 创作台', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
-      { key: 'canvas', label: '无限画布', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
+      { key: 'canvas', label: '漫剧制作', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'video-edit', label: '视频编辑', icon: videoEditIcon, iconSize: 16 },
     ],
   },
   {
-    title: '市场',
+    title: '集市',
     items: [
       // 原首页的「IP / 需求市场」两个标签，收进独立页面 /market
       { key: 'market', label: '供需商单', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
@@ -220,7 +220,7 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
         </div>
 
         <nav className="app-sidebar__nav">
-          {/* 创作 / 管理 / 市场 */}
+          {/* 创作 / 管理 / 集市 */}
           {GROUPS.map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>

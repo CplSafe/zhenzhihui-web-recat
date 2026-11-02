@@ -1452,6 +1452,25 @@
   max-width: 100%;
 }
 
+.durationWheel :global(.wks-control) {
+  height: 24px;
+  border-radius: 5px;
+}
+
+.durationWheel :global(.wks-thumb) {
+  height: 16px;
+}
+
+@media (max-width: 480px) {
+  .durationWheel :global(.wks-control) {
+    height: 16px;
+  }
+
+  .durationWheel :global(.wks-thumb) {
+    height: 12px;
+  }
+}
+
 .videoMenuHint {
   margin-top: 8px;
   padding: 0 4px;

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 390]) {
-  test(`无限画布隐藏品牌并保留返回与云端保存状态 ${width}`, async ({ page }, testInfo) => {
+  test(`漫剧制作隐藏品牌并保留返回与云端保存状态 ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     const api = await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))

@@ -1,5 +1,5 @@
 /**
- * 无限画布分享 API 客户端。
+ * 漫剧制作分享 API 客户端。
  *
  * 对齐后端 swagger 的三组接口：
  *   GET/POST/DELETE /api/v1/canvases/{id}/share   —— 画布所有者查询 / 开启（重新生成）/ 关闭分享

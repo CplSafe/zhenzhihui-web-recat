@@ -6,7 +6,7 @@
 node.exe tools/tutorial/login.mjs                          # 一次性：弹出浏览器手动登录，关窗即保存登录态到 .auth/profile
 node.exe tools/tutorial/recorder.mjs tools/tutorial/tours/main-smart.mjs     # 爆款成片主流程
 node.exe tools/tutorial/recorder.mjs tools/tutorial/tours/main-hotcopy.mjs   # 爆款复刻主流程
-node.exe tools/tutorial/recorder.mjs tools/tutorial/tours/main-canvas.mjs    # 无限画布功能全览
+node.exe tools/tutorial/recorder.mjs tools/tutorial/tours/main-canvas.mjs    # 漫剧制作功能全览
 ```
 
 输出在 `tools/tutorial/out/<name>/<name>.mp4`，复制到 `public/tutorials/` 对应文件名（见 `src/utils/tutorialVideos.ts`）即被页面「操作手册」按钮引用。
