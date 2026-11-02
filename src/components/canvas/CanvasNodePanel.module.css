@@ -481,6 +481,33 @@
   position: relative;
   width: 100%;
 }
+.richPrompt {
+  position: relative;
+  padding: 0 0 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  caret-color: #30343b;
+}
+.richPrompt[data-empty='true']::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  content: attr(data-placeholder);
+  color: #7a8496;
+  pointer-events: none;
+}
+.richPrompt .promptRefImageTag {
+  max-width: 100%;
+  box-sizing: border-box;
+  user-select: all;
+}
+.richPrompt .promptRefImageTag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .promptHl {
   position: absolute;
   inset: 0;
@@ -555,6 +582,15 @@
   color: transparent;
   -webkit-text-fill-color: transparent;
   caret-color: #333;
+}
+.textareaOverlay:focus {
+  /* 编辑时使用原生文字排版，光标、选区和换行不受引用标签尺寸影响。 */
+  z-index: 3;
+  color: #30343b;
+  -webkit-text-fill-color: #30343b;
+}
+.promptWrap[data-prompt-editing='true'] .promptHl {
+  visibility: hidden;
 }
 .textareaOverlay::placeholder {
   color: #7a8496;
@@ -1310,6 +1346,14 @@
   gap: 4px;
 }
 
+.videoMenuTitleValue {
+  margin-left: auto;
+  color: #30343b;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 /* 字段说明（help）的 ? 图标 + hover 气泡 */
 .helpIconWrap {
   position: relative;
@@ -1399,6 +1443,11 @@
 
 /* 时长档位条：横排后可能比菜单还宽，居中放置并允许它自己横向滚动 */
 .durationWheel {
+  --wks-track-color: #ebfffb;
+  --wks-fill-color: #b9f3e6;
+  --wks-thumb-color: #11a98a;
+  --wks-wake-color: #11a98a;
+  --wks-focus-color: #11a98a;
   margin: 2px auto;
   max-width: 100%;
 }

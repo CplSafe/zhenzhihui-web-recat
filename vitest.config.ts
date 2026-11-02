@@ -23,6 +23,7 @@ export default defineConfig({
       // Expand this list as each additional business flow receives regression tests.
       include: [
         'src/utils/modelAvailability.ts',
+        'src/utils/seedanceModeration.ts',
         'src/utils/canvasImageInfo.ts',
         'src/api/canvasImageMetadata.ts',
         'src/utils/canvasModal.ts',

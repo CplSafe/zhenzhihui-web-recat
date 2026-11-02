@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
+import { readMentionInput, selectionOffsets, setSelection } from '@/components/canvas/CanvasMentionInput'
 import { estimateAiTaskCost } from '@/api/business'
 import * as uiStore from '@/stores/ui'
 import { createGenerationModelOperationStateMap } from '@/utils/generationModelCatalog'
@@ -1179,6 +1180,23 @@ describe('CanvasNodePanel @参考素材引用', () => {
     expect(onPromptChange).toHaveBeenCalledWith('@图片2 ')
   })
 
+  it('编辑提示词和失焦时均保留带 @ 的引用缩略图', async () => {
+    const user = userEvent.setup()
+    renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }], {
+      ...twoImageRefsNode,
+      prompt: '参考 @图片1 继续描述',
+    })
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
+    await user.click(textarea)
+    const chip = screen.getByRole('button', { name: '查看引用图片：图片1' })
+    expect(chip).toHaveTextContent('@图片1')
+    expect(chip.querySelector('img')).not.toBeNull()
+    expect(textarea.parentElement).toHaveAttribute('data-prompt-editing', 'true')
+    await user.tab()
+    expect(textarea.parentElement).toHaveAttribute('data-prompt-editing', 'false')
+    expect(screen.getByRole('button', { name: '查看引用图片：图片1' })).toBeInTheDocument()
+  })
+
   it('删除参考时把提示词里的 @图片N 重排，避免引用错位', async () => {
     const user = userEvent.setup()
     const onPromptChange = vi.fn()
@@ -1343,30 +1361,30 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     const user = userEvent.setup()
     const onPromptChange = vi.fn()
     renderPanel(MODEL, { ...renamedRefsNode, prompt: '把 @天安门 放进 @图片2 的场景' }, { onPromptChange })
-    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/) as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
 
     // 光标停在「@天安门 」之后（下标 7）按 Backspace → 只删掉空格
     await user.click(textarea)
-    textarea.setSelectionRange(7, 7)
+    setSelection(textarea, 7, 7)
     await user.keyboard('{Backspace}')
-    expect(textarea.value).toBe('把 @天安门放进 @图片2 的场景')
+    expect(readMentionInput(textarea)).toBe('把 @天安门放进 @图片2 的场景')
 
     // 再按一次：光标紧贴引用末尾 → 整条引用一次删掉
     await user.keyboard('{Backspace}')
-    expect(textarea.value).toBe('把 放进 @图片2 的场景')
+    expect(readMentionInput(textarea)).toBe('把 放进 @图片2 的场景')
     expect(onPromptChange).toHaveBeenLastCalledWith('把 放进 @图片2 的场景')
-    await waitFor(() => expect(textarea.selectionStart).toBe(2))
+    await waitFor(() => expect(selectionOffsets(textarea)[0]).toBe(2))
 
     // 光标在「@图片2」前（下标 5）按 Delete → 同样整条删掉
-    textarea.setSelectionRange(5, 5)
+    setSelection(textarea, 5, 5)
     await user.keyboard('{Delete}')
-    expect(textarea.value).toBe('把 放进 的场景')
-    await waitFor(() => expect(textarea.selectionStart).toBe(5))
+    expect(readMentionInput(textarea)).toBe('把 放进 的场景')
+    await waitFor(() => expect(selectionOffsets(textarea)[0]).toBe(5))
 
     // 普通文字：退格仍是一次一个字
-    textarea.setSelectionRange(2, 2)
+    setSelection(textarea, 2, 2)
     await user.keyboard('{Backspace}')
-    expect(textarea.value).toBe('把放进 的场景')
+    expect(readMentionInput(textarea)).toBe('把放进 的场景')
   })
 
   it('中文输入法敲出的全角 ＠ 同样弹出选择器，并按半角 @ 存储', async () => {

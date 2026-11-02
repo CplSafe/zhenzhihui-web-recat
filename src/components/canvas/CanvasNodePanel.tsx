@@ -9,12 +9,14 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
 import { createPortal } from 'react-dom'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
+import CanvasMentionInput, { type CanvasMentionInputHandle, type PromptMention } from './CanvasMentionInput'
 import RatioLabel from '@/components/common/RatioLabel'
 import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
 import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
 import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
 export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import WakeSlider from '@/components/common/WakeSlider'
 import styles from './CanvasNodePanel.module.css'
 import { buildCanvasStoryboardPrompt, toCanvasPromptContext } from '@/utils/canvasStructuredText'
 import type {
@@ -79,7 +81,7 @@ import {
   translateMentionsToPositional,
 } from '@/utils/canvasMentions'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
-import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
+import type { WheelPickerOption } from '@/components/common/WheelPicker'
 import { requestConfirm, showToast } from '@/stores/ui'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
@@ -952,42 +954,12 @@ export default function CanvasNodePanel({
   // ===== #6 @参考素材：提示词里直接 @ 某条连入的参考素材 =====
   // 标签口径见 utils/canvasMentions：重命名过用名字、否则位置号（图片N/视频N）；重名自动加后缀；
   // 提交给模型时统一翻成位置号。显示文本与存储文本逐字一致（透明 textarea 叠高亮层的前提）。
-  const taRef = useRef<HTMLTextAreaElement | null>(null)
-  const hlRef = useRef<HTMLDivElement | null>(null)
+  const taRef = useRef<CanvasMentionInputHandle | null>(null)
   const caretRef = useRef(0)
+  const [promptFocused, setPromptFocused] = useState(false)
   const promptRef = useRef(prompt)
   promptRef.current = prompt
 
-  /**
-   * 高亮层给 textarea 的滚动条让位。
-   *
-   * 「透明 textarea 叠高亮层」要逐字对齐，前提是两层排版宽度一致。文字超过 max-height 后
-   * textarea 出现纵向滚动条、可排版宽度少一条滚动条，高亮层却仍按全宽换行——每行多塞一个字，
-   * 往下累计错位，光标、选区、绿色 @ 标签全都和看到的字对不上。这里把
-   * (offsetWidth - clientWidth) 即滚动条实际宽度设成高亮层的 right，两层就重新对齐；
-   * 顺带同步 scrollTop。文字变化、放大/拖拽改高、容器尺寸变化时都重算。
-   */
-  const syncHighlightLayout = useCallback(() => {
-    const ta = taRef.current
-    const hl = hlRef.current
-    if (!ta || !hl) return
-    const gutter = Math.max(0, ta.offsetWidth - ta.clientWidth)
-    const right = `${gutter}px`
-    if (hl.style.right !== right) hl.style.right = right
-    if (hl.scrollTop !== ta.scrollTop) hl.scrollTop = ta.scrollTop
-  }, [])
-  useEffect(() => {
-    syncHighlightLayout()
-    const ta = taRef.current
-    if (!ta || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => syncHighlightLayout())
-    observer.observe(ta)
-    return () => observer.disconnect()
-  }, [syncHighlightLayout, node?.id])
-  // 每次文字变化后（滚动条可能刚出现/消失）重算一次
-  useEffect(() => {
-    syncHighlightLayout()
-  }, [prompt, promptExpanded, syncHighlightLayout])
   /** 每条参考的 @ 标签（不含 @），与缩略图展示顺序一致。 */
   const refLabelByEdge = useMemo(() => buildMentionLabels(sourceRefs), [sourceRefs])
   const positionalRefLabelByEdge = useMemo(() => buildPositionalMentionLabels(sourceRefs), [sourceRefs])
@@ -1120,93 +1092,21 @@ export default function CanvasNodePanel({
 
   // 高亮层：把 @标签（名字型与位置号都算）标绿，其余为普通文本（透明 textarea 叠在此层之上）。
   const mentionRegex = useMemo(() => buildMentionRegex(refLabelByEdge.values()), [refLabelByEdge])
-  const renderPromptHighlight = useCallback(
-    (text: string): React.ReactNode => {
-      if (!text) return null
-      const out: React.ReactNode[] = []
-      let last = 0
-      let m: RegExpExecArray | null
-      mentionRegex.lastIndex = 0
-      while ((m = mentionRegex.exec(text))) {
-        if (m.index > last) out.push(text.slice(last, m.index))
-        const label = m[0].slice(1)
-        const mentionRef =
-          mentionableRefs.find(
-            (ref) => refLabelByEdge.get(ref.edgeId) === label || positionalRefLabelByEdge.get(ref.edgeId) === label,
-          ) ||
-          (() => {
-            const match = label.match(/^(图片|视频)(\d+)$/)
-            if (!match) return undefined
-            const kind = match[1] === '图片' ? 'image' : 'video'
-            return mentionableRefs.filter((ref) => ref.kind === kind)[Number(match[2]) - 1]
-          })()
-        out.push(
-          mentionRef ? (
-            <button
-              className={`${styles.promptRefTag} ${styles.promptRefImageTag}`}
-              key={`${m.index}-${m[0]}`}
-              type="button"
-              tabIndex={-1}
-              title={`点击查看${mentionRef.kind === 'video' ? '视频' : '图片'}：${label}`}
-              aria-label={`查看引用${mentionRef.kind === 'video' ? '视频' : '图片'}：${label}`}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => onPreviewMentionRef?.(mentionRef)}
-            >
-              {(() => {
-                const thumbnailUrl =
-                  mentionRef.thumbnailUrl ||
-                  (mentionRef.assetId ? assetStreamUrl(mentionRef.assetId, mentionRef.workspaceId || workspaceId) : '')
-                if (mentionRef.kind === 'video' && mentionRef.posterUrl) {
-                  return (
-                    <img className={styles.promptRefImageThumb} src={mentionRef.posterUrl} alt="" aria-hidden="true" />
-                  )
-                }
-                if (mentionRef.kind === 'video' && thumbnailUrl) {
-                  return (
-                    <video
-                      className={styles.promptRefImageThumb}
-                      src={`${thumbnailUrl}#t=0.1`}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      aria-hidden="true"
-                    />
-                  )
-                }
-                return thumbnailUrl ? (
-                  <img className={styles.promptRefImageThumb} src={thumbnailUrl} alt="" aria-hidden="true" />
-                ) : (
-                  <svg className={styles.promptRefImageIcon} viewBox="0 0 16 16" aria-hidden="true">
-                    <rect x="1" y="1.5" width="14" height="13" rx="3" fill="#555" />
-                    <rect x="2.5" y="3" width="11" height="10" rx="1.5" fill="none" stroke="#fff" strokeWidth="1.1" />
-                    <circle cx="5.4" cy="6" r="1.1" fill="#fff" />
-                    <path
-                      d="m3.5 11.5 2.8-2.8 2 1.8 1.6-1.4 2.6 2.4"
-                      fill="none"
-                      stroke="#fff"
-                      strokeWidth="1.1"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )
-              })()}
-              <span className={styles.promptRefImageAtSign} aria-hidden="true">
-                @
-              </span>
-              {label}
-            </button>
-          ) : (
-            <span className={styles.promptRefTag} key={`${m.index}-${m[0]}`}>
-              {m[0]}
-            </span>
-          ),
-        )
-        last = m.index + m[0].length
-      }
-      out.push(text.slice(last))
-      return out
-    },
-    [mentionRegex, mentionableRefs, refLabelByEdge, positionalRefLabelByEdge, onPreviewMentionRef],
+  const promptMentions = useMemo<PromptMention[]>(
+    () =>
+      mentionableRefs.flatMap((ref) => {
+        const thumbnail =
+          ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : '')
+        return [...new Set([refLabelByEdge.get(ref.edgeId), positionalRefLabelByEdge.get(ref.edgeId)])]
+          .filter(Boolean)
+          .map((label) => ({
+            label: label!,
+            kind: ref.kind,
+            thumbnailUrl: ref.posterUrl || (ref.kind === 'video' && thumbnail ? `${thumbnail}#t=0.1` : thumbnail),
+            video: ref.kind === 'video' && !ref.posterUrl,
+          }))
+      }),
+    [mentionableRefs, refLabelByEdge, positionalRefLabelByEdge, workspaceId],
   )
 
   // ===== 输入 @ 弹出参考选择器：敲 @ 即列出可 @ 的参考，继续输入按名字筛，↑↓ 选、Enter/Tab 确认、Esc 关 =====
@@ -2374,21 +2274,28 @@ export default function CanvasNodePanel({
         </div>
       )}
 
-      {/* 提示词输入：透明 textarea 叠在高亮层上，@引用标绿（反馈 #6）。
-          点下方参考缩略图、或直接输入 @ 弹出选择器，都能在光标处插入引用。 */}
-      <div className={styles.promptWrap}>
-        <div className={styles.promptHl} ref={hlRef} aria-hidden="true">
-          {renderPromptHighlight(prompt)}
-        </div>
-        <textarea
+      {/* 引用标签和光标共用原生富文本排版；持久化仍使用 @名称 纯文本。 */}
+      <div className={styles.promptWrap} data-prompt-editing={promptFocused ? 'true' : 'false'}>
+        <CanvasMentionInput
+          key={node?.id}
           ref={taRef}
-          className={`${styles.textarea} ${styles.textareaOverlay}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
+          className={`${styles.textarea}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
+          mentions={promptMentions}
+          disabled={taskRunning}
+          onPreview={(label) => {
+            const ref = mentionableRefs.find(
+              (item) =>
+                refLabelByEdge.get(item.edgeId) === label || positionalRefLabelByEdge.get(item.edgeId) === label,
+            )
+            if (ref) onPreviewMentionRef?.(ref)
+          }}
           placeholder={
             kind === 'text'
               ? '输入视频主题、场景、风格和时长，生成分镜提示词...'
               : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...${mentionableRefs.length || atPickerHasActions ? '（输入 @ 可引用参考素材）' : ''}`
           }
           value={prompt}
+          onFocus={() => setPromptFocused(true)}
           onChange={(e) => {
             if (taskRunning) return
             let value = e.target.value
@@ -2417,15 +2324,15 @@ export default function CanvasNodePanel({
               else setAtActive(0)
             }
           }}
-          onSelect={(e) => {
-            const pos = e.currentTarget.selectionStart ?? 0
+          onSelect={() => {
+            const pos = taRef.current?.selectionStart ?? 0
             caretRef.current = pos
             if (atAnchor !== null && pos <= atAnchor) closeAtPicker()
           }}
           onKeyDown={(e) => {
             // @引用当成一个整体删：Backspace 在引用末尾/内部、Delete 在引用前，一次删掉整条 @标签 及其后空格
             if ((e.key === 'Backspace' || e.key === 'Delete') && !taskRunning && atAnchor === null) {
-              const ta = e.currentTarget
+              const ta = taRef.current!
               const start = ta.selectionStart ?? 0
               if (start === (ta.selectionEnd ?? 0)) {
                 const range = findMentionDeletionRange(
@@ -2480,8 +2387,10 @@ export default function CanvasNodePanel({
               closeAtPicker()
             }
           }}
-          onBlur={closeAtPicker}
-          onScroll={syncHighlightLayout}
+          onBlur={() => {
+            setPromptFocused(false)
+            closeAtPicker()
+          }}
         />
         {/* @ 选择器：列出可 @ 的参考（缩略图 + 标签）+ 取图入口；mousedown 阻止默认避免 textarea 失焦丢光标 */}
         {atAnchor !== null && (atCandidates.length > 0 || atPickerHasActions) && (
@@ -2857,6 +2766,9 @@ function SchemaFieldMenu({
                           </span>
                         </Tooltip>
                       )}
+                      {isDurationField(f) && (
+                        <span className={styles.videoMenuTitleValue}>{formatFieldValue(f, current, kind)}</span>
+                      )}
                     </div>
                     {followsSource(f) ? (
                       <div className={styles.videoMenuHint}>编辑 / 延长时跟随原视频，无需选择。</div>
@@ -2892,17 +2804,20 @@ function SchemaFieldMenu({
                         ))}
                       </div>
                     ) : isDurationField(f) && durationWheelOptions(f, minimumVideoDurationSec).length ? (
-                      /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
+                      /* 时长：速度唤醒滑条映射到 schema 声明的合法档位 */
                       <>
-                        <WheelPicker
-                          options={durationWheelOptions(f, minimumVideoDurationSec)}
-                          value={String(current ?? '')}
-                          onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
-                          ariaLabel={f.displayName}
-                          // 画布参数菜单比入口浮层窄，档位相应收窄一档宽度
-                          visibleCount={5}
-                          itemWidth={56}
+                        <WakeSlider
                           className={styles.durationWheel}
+                          options={durationWheelOptions(f, minimumVideoDurationSec).map((option) => ({
+                            value: resolveDurationWheelValue(f, String(option.value)),
+                            label: option.label,
+                            disabled: option.disabled,
+                          }))}
+                          value={resolveDurationWheelValue(f, String(current ?? ''))}
+                          onChange={(picked) => onFieldChange?.(f.name, picked)}
+                          ariaLabel={f.displayName}
+                          bars={36}
+                          wake={60}
                         />
                         {minimumVideoDurationSec > 0 && (
                           <div className={styles.videoMenuHint} role="status">
