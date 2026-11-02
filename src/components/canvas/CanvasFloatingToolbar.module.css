@@ -18,7 +18,7 @@
   align-items: center;
   gap: 4px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.94);
+  background: #fff;
   backdrop-filter: blur(12px);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;
@@ -70,7 +70,7 @@
   height: 44px;
   border: none;
   background: transparent;
-  color: #333;
+  color: #30343b;
   cursor: pointer;
   border-radius: 10px;
   transition:
@@ -214,7 +214,7 @@
 
 .addMenuGroup:not(:first-child) {
   margin-top: 4px;
-  border-top: 1px solid #eef1f7;
+  border-top: 1px solid #e5e7eb;
   padding-top: 10px;
 }
 
@@ -263,19 +263,19 @@
 .addMenuLabel {
   font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: #30343b;
   transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }
 
 .addMenuDesc {
   font-size: 11px;
-  color: #999;
+  color: #7a8496;
 }
 
 .addMenuIcon {
   display: flex;
   align-items: center;
-  color: #777;
+  color: #7a8496;
   flex-shrink: 0;
   transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }

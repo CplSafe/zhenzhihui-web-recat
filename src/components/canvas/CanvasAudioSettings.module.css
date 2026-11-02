@@ -8,7 +8,7 @@
   overflow: hidden;
   color: #344054;
   background: #fff;
-  border: 1px solid #e5eaf0;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   box-shadow: 0 18px 55px #183d3926;
   font:
@@ -24,10 +24,10 @@
   flex: none;
   gap: 12px;
   padding: 14px 18px;
-  background: #f9fbfc;
+  background: #fff;
 }
 .panel header {
-  border-bottom: 1px solid #edf1f4;
+  border-bottom: 1px solid #e5e7eb;
 }
 .panel header div {
   display: grid;
@@ -35,12 +35,12 @@
 }
 .panel header strong {
   font-size: 16px;
-  color: #243b37;
+  color: #347866;
 }
 .panel header span,
 .panel footer span,
 .field small {
-  color: #84918f;
+  color: #7a8496;
   font-size: 11px;
 }
 .panel button {
@@ -53,7 +53,7 @@
 }
 .panel header > button {
   font-size: 24px;
-  color: #778783;
+  color: #7a8496;
   line-height: 1;
 }
 .panel button:disabled {
@@ -61,7 +61,7 @@
   cursor: default;
 }
 .panel footer {
-  border-top: 1px solid #edf1f4;
+  border-top: 1px solid #e5e7eb;
   font-size: 11px;
 }
 .body {
@@ -71,12 +71,12 @@
   padding: 4px 18px 16px;
 }
 .body section + section {
-  border-top: 1px solid #edf1f4;
+  border-top: 1px solid #e5e7eb;
   margin-top: 12px;
 }
 .body h4 {
   margin: 14px 0 0;
-  color: #7a8986;
+  color: #7a8496;
   font-size: 11px;
   font-weight: 500;
 }
@@ -105,10 +105,10 @@
   min-width: 0;
   min-height: 38px;
   padding: 8px 10px;
-  border: 1px solid #dfe7e5;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   color: #344054;
-  background: #fbfdfc;
+  background: #fff;
   font: inherit;
 }
 .field textarea {
@@ -138,7 +138,7 @@
   width: 34px;
   height: 20px;
   border-radius: 20px;
-  background: #d8e2df;
+  background: #f2f4f7;
   position: relative;
   margin: 0;
   cursor: pointer;
@@ -163,17 +163,17 @@
 .advanced {
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid #edf1f4;
+  border-top: 1px solid #e5e7eb;
 }
 .advanced summary {
   cursor: pointer;
-  color: #455a55;
+  color: #7a8496;
   font-weight: 600;
 }
 .advanced summary span {
   font-size: 11px;
   font-weight: 400;
-  color: #8a9794;
+  color: #7a8496;
   margin-left: 6px;
 }
 .panel :is(button, input, select, textarea, summary):focus-visible {

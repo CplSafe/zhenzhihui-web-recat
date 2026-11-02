@@ -24,7 +24,7 @@
 .failureReason {
   margin: 0;
   max-width: 100%;
-  color: #7b6262;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -38,7 +38,7 @@
   padding: 2px 0;
   border: 0;
   background: transparent;
-  color: #7a8190;
+  color: #7a8496;
   font: inherit;
   font-size: 10px;
   line-height: 1.5;
@@ -53,7 +53,7 @@
 .running {
   z-index: 4;
   background: rgb(248 255 252 / 94%);
-  color: #177e68;
+  color: #347866;
   pointer-events: none;
 }
 

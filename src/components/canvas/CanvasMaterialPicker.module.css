@@ -36,7 +36,7 @@
   max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
   height: 776px;
   max-height: calc((100dvh - 80px) / var(--canvas-ui-scale, 1));
-  background: #ffffff;
+  background: #fff;
   border-radius: 14px;
   overflow: hidden;
   display: flex;
@@ -56,7 +56,7 @@
   font-size: 22px;
   font-weight: 500;
   line-height: 24px;
-  color: #333333;
+  color: #30343b;
 }
 
 /* Tab：22px 大 tab，选中 #333 / 未选中 #909090，间距 50px */
@@ -73,7 +73,7 @@
   padding: 0;
   font-size: 22px;
   line-height: 24px;
-  color: #909090;
+  color: #7a8496;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   transition: color 0.15s;
@@ -84,7 +84,7 @@
 }
 
 .modalTabActive {
-  color: #333333;
+  color: #30343b;
   font-weight: 500;
 }
 
@@ -97,10 +97,10 @@
   width: 300px;
   height: 32px;
   padding: 0 12px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #f8f9fa;
-  color: #909090;
+  background: #fff;
+  color: #7a8496;
   transition:
     border-color 0.15s,
     background 0.15s;
@@ -108,8 +108,8 @@
 
 .modalSearch:focus-within {
   border-color: #5767e5;
-  background: #ffffff;
-  color: #333333;
+  background: #fff;
+  color: #30343b;
 }
 
 .modalSearchIcon {
@@ -124,7 +124,7 @@
   background: transparent;
   font-size: 14px;
   line-height: 20px;
-  color: #333333;
+  color: #30343b;
   font-family: 'PingFang SC', sans-serif;
 }
 
@@ -145,13 +145,13 @@
   gap: 20px;
 }
 
-/* 素材卡片：250×320，圆角 14px，描边 rgba(91,107,232,0.1) */
+/* 素材卡片：中性描边在深色弹窗底上保持清楚，选中态仍用品牌蓝强调。 */
 .modalCard {
   position: relative;
   width: 250px;
   height: 320px;
-  background: #ffffff;
-  border: 1px solid rgba(91, 107, 232, 0.1);
+  background: #fff;
+  border: 2px solid rgba(229, 231, 235, 0.34);
   border-radius: 14px;
   overflow: hidden;
   cursor: pointer;
@@ -199,12 +199,12 @@
 
 .modalPickText {
   flex: 1;
-  color: #666;
+  color: #7a8496;
   font-size: 13px;
 }
 
 .modalPickHint {
-  color: #d4380d;
+  color: #d14343;
 }
 
 .modalPickCancel,
@@ -219,7 +219,7 @@
 .modalPickCancel {
   border: 1px solid rgba(51, 51, 51, 0.15);
   background: #fff;
-  color: #333;
+  color: #30343b;
 }
 
 .modalPickConfirm {
@@ -259,7 +259,7 @@
   width: 250px;
   height: 250px;
   overflow: hidden;
-  background: #d9d9d9;
+  background: #f2f4f7;
   border-radius: 14px 14px 0 0;
 }
 
@@ -296,14 +296,14 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #333333;
+  color: #30343b;
   font-size: 18px;
   line-height: 20px;
   min-width: 0;
 }
 
 .modalSize {
-  color: #909090;
+  color: #7a8496;
   font-size: 18px;
   line-height: 20px;
   white-space: nowrap;
@@ -325,7 +325,7 @@
   width: min(460px, calc((100vw - 48px) / var(--canvas-ui-scale, 1)));
   max-height: none;
   border-radius: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 250, 255, 0.95)), #fff;
+  background: #fff;
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow:
     0 24px 80px rgba(15, 23, 42, 0.18),
@@ -378,7 +378,7 @@
   border: 1px solid rgba(87, 103, 229, 0.12);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.76);
-  color: #495057;
+  color: #7a8496;
   cursor: pointer;
   transition:
     color 0.18s ease,
@@ -397,7 +397,7 @@
 .title {
   font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: #30343b;
   white-space: nowrap;
 }
 
@@ -411,7 +411,7 @@
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #999;
+  color: #7a8496;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -422,8 +422,8 @@
 }
 
 .closeBtn:hover {
-  background: #f0f0f0;
-  color: #333;
+  background: #fff;
+  color: #30343b;
 }
 
 .tabs {
@@ -431,7 +431,7 @@
   align-items: center;
   gap: 4px;
   padding: 0 16px 8px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #e5e7eb;
   /*
    * 窄屏下标签会溢出被裁掉：实测 658px 宽时「我收藏的」整个露不出来，也没有任何办法滚到它。
    * 改成横向可滚：标签保持自身宽度不被压缩，装不下就滚过去，而不是凭空消失。
@@ -462,8 +462,8 @@
   padding: 0 8px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #f8f9fa;
-  color: #909090;
+  background: #fff;
+  color: #7a8496;
   transition:
     border-color 0.15s,
     background 0.15s;
@@ -471,8 +471,8 @@
 
 .search:focus-within {
   border-color: #5767e5;
-  background: #ffffff;
-  color: #333333;
+  background: #fff;
+  color: #30343b;
 }
 
 .search input {
@@ -483,7 +483,7 @@
   background: transparent;
   font-size: 12px;
   line-height: 18px;
-  color: #333333;
+  color: #30343b;
   font-family: 'PingFang SC', sans-serif;
 }
 
@@ -499,7 +499,7 @@
   border: none;
   background: transparent;
   font-size: 13px;
-  color: #999;
+  color: #7a8496;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   border-bottom: 2px solid transparent;
@@ -531,7 +531,7 @@
 }
 
 .grid::-webkit-scrollbar-thumb {
-  background: #ddd;
+  background: #f2f4f7;
   border-radius: 2px;
 }
 
@@ -594,7 +594,7 @@
   overflow: hidden;
   border: 1px solid rgba(51, 51, 51, 0.08);
   border-radius: 12px;
-  background: #ffffff;
+  background: #fff;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
   cursor: pointer;
   transition: opacity 0.15s;
@@ -629,7 +629,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #e5e7eb;
+  background: #f2f4f7;
 }
 
 /* 封面媒体容器：占满卡片（img/video 尺寸对齐 resource-asset-cover img/video） */
@@ -653,7 +653,7 @@
 .itemPlaceholder {
   width: 100%;
   height: 100%;
-  background: #f5f5f5;
+  background: #fff;
 }
 
 /* 悬浮操作栏 — 参考 resource-favorite-actions（卡片底部渐变浮现） */
@@ -704,7 +704,7 @@
 
 .materialActionBtn:hover,
 .materialActionBtn:focus-visible {
-  border-color: #ffffff;
+  border-color: #e5e7eb;
   background: rgba(0, 0, 0, 0.55);
   color: #ffffff;
 }
@@ -716,8 +716,8 @@
   display: grid;
   place-content: center;
   gap: 6px;
-  background: linear-gradient(135deg, rgba(87, 103, 229, 0.12), rgba(109, 109, 227, 0.04)), #f3f4f6;
-  color: #8b8b95;
+  background: linear-gradient(135deg, rgba(87, 103, 229, 0.12), rgba(109, 109, 227, 0.04)), #fff;
+  color: #7a8496;
   text-align: center;
 }
 
@@ -749,7 +749,7 @@
   align-items: center;
   justify-content: center;
   min-height: 180px;
-  color: #999;
+  color: #7a8496;
   font-size: 12px;
 }
 

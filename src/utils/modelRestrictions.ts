@@ -147,7 +147,9 @@ function collectExplicitText(value: unknown): string[] {
 }
 
 function formatSeconds(values: number[]): string {
-  return values.map((value) => `${value} 秒`).join('、')
+  const sorted = Array.from(new Set(values)).sort((left, right) => left - right)
+  if (sorted.length > 2) return `${sorted[0]} 秒~${sorted[sorted.length - 1]} 秒`
+  return sorted.map((value) => `${value} 秒`).join('、')
 }
 
 function formatNumericRange(label: string, minimum?: number, maximum?: number, unit = ''): string {

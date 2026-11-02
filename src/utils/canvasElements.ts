@@ -56,6 +56,8 @@ interface SerializableNodeData {
   upscaleModelName?: string
   upscaleParamLabels?: Record<string, string>
   assetId?: number
+  /** 最近一次 Seedance 图片/视频审核状态，用于画布上的合规状态标识。 */
+  seedanceModerationStatus?: 'approved' | 'pending' | 'rejected' | 'unknown' | 'unreviewed'
   assetSource?: CanvasAssetSource
   assetWorkspaceId?: number
   resultUrl?: string
@@ -156,6 +158,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'upscaleModelName',
   'upscaleParamLabels',
   'assetId',
+  'seedanceModerationStatus',
   'assetSource',
   'assetWorkspaceId',
   'resultUrl',
@@ -324,6 +327,8 @@ export function collectCanvasSourceRefs(
       const roleTargetData = (roleTarget?.data || {}) as Record<string, unknown>
       const slotIndex = Number(edge.data?.slotIndex || 0)
       const assetId = Number(data.assetId || 0)
+      const posterAssetId = Number(data.posterAssetId || 0)
+      const posterWorkspaceId = Number(data.assetWorkspaceId || data.workspaceId || 0)
       const ref: CanvasGraphSourceRef = {
         kind,
         sourceId: source.id,
@@ -339,7 +344,14 @@ export function collectCanvasSourceRefs(
             }),
         ) as CanvasConnectionRole,
         ...(data.resultUrl ? { thumbnailUrl: String(data.resultUrl) } : {}),
-        ...(data.poster ? { posterUrl: String(data.poster) } : {}),
+        ...(data.poster
+          ? { posterUrl: String(data.poster) }
+          : Number.isSafeInteger(posterAssetId) &&
+              posterAssetId > 0 &&
+              Number.isSafeInteger(posterWorkspaceId) &&
+              posterWorkspaceId > 0
+            ? { posterUrl: assetStreamUrl(posterAssetId, posterWorkspaceId) }
+            : {}),
         ...(assetId > 0 ? { assetId } : {}),
         ...(kind === 'audio' && data.audio && typeof data.audio === 'object'
           ? { audio: data.audio as AudioSettings }
@@ -359,6 +371,7 @@ export function collectCanvasSourceRefs(
         ...(data.realPerson ? { realPerson: data.realPerson as SmartRealPersonReference } : {}),
         // 用户重命名过的节点名：提示词 @ 引用时用名字替代位置号（未改名不带，仍用「图片N」）
         ...(String(data.title || '').trim() ? { title: String(data.title).trim() } : {}),
+        ...(kind === 'image' ? { title: String(data.title || '').trim() } : {}),
       }
 
       if (kind === 'text') {

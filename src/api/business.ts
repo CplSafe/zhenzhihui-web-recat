@@ -2148,6 +2148,27 @@ export function listAssets({ workspaceId, type = '', status = 'active', source =
   return requestJson(`/api/v1/assets?${query}`)
 }
 
+/** 为图片或视频素材发起 Seedance 审核。审核素材由后端关联，生成仍引用原素材 ID。 */
+export function submitSeedanceModeration(assetId, { workspaceId, signal } = {}) {
+  const id = requirePositiveInteger(assetId, '素材 ID 无效')
+  const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
+  return requestJson(`/api/v1/assets/${id}/seedance-moderation`, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: wsId }),
+  })
+}
+
+/** 查询图片或视频素材在指定工作空间中的 Seedance 审核状态。 */
+export function getSeedanceModeration(assetId, { workspaceId, signal } = {}) {
+  const id = requirePositiveInteger(assetId, '素材 ID 无效')
+  const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
+  return requestJson(`/api/v1/assets/${id}/seedance-moderation?workspace_id=${encodeURIComponent(String(wsId))}`, {
+    signal,
+  })
+}
+
 /** 按工作空间和素材语义生成续传缓存键。 */
 function assetUploadResumeKey(workspaceId, prompt, source) {
   return `${Math.floor(Number(workspaceId) || 0)}:${String(source || '')}:${String(prompt || '')}`

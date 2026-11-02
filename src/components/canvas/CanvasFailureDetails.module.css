@@ -20,8 +20,8 @@
 .reason {
   padding: 12px;
   border-radius: 8px;
-  background: #fff4f3;
-  color: #a63838;
+  background: #fff;
+  color: #d14343;
   overflow-wrap: anywhere;
 }
 .details dl {
@@ -30,7 +30,7 @@
   gap: 12px;
 }
 .details dt {
-  color: #838a98;
+  color: #7a8496;
 }
 .details dd {
   margin: 0;
@@ -39,11 +39,11 @@
 .details small {
   display: block;
   margin-top: 4px;
-  color: #838a98;
+  color: #7a8496;
 }
 .details button {
-  border: 1px solid #d9def3;
-  background: #f7f8ff;
+  border: 1px solid #e5e7eb;
+  background: #fff;
   color: #5767e5;
   border-radius: 6px;
   padding: 5px 10px;
@@ -54,14 +54,14 @@
 }
 .history {
   margin-top: 20px;
-  border-top: 1px solid #eef0f3;
+  border-top: 1px solid #e5e7eb;
   padding-top: 12px;
 }
 .history summary {
   cursor: pointer;
-  color: #737c8c;
+  color: #7a8496;
 }
 .history section {
-  border-bottom: 1px solid #eef0f3;
+  border-bottom: 1px solid #e5e7eb;
   padding: 8px 0 16px;
 }

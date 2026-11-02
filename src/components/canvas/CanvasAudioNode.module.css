@@ -7,7 +7,7 @@
   flex-direction: column;
   gap: 10px;
   overflow: visible;
-  background: #181b1c;
+  background: #fff;
   color: #eef4f1;
   border-radius: 10px;
   font-size: 12px;
@@ -30,7 +30,7 @@
   font-size: 15px;
 }
 .header span:last-child {
-  color: #858e8a;
+  color: #7a8496;
   font-weight: 400;
 }
 .playerCard {
@@ -79,7 +79,7 @@
 }
 .waveHint {
   font-size: 11px;
-  color: #89928e;
+  color: #7a8496;
 }
 .waveArea:focus-within {
   outline: 2px solid #42d4b0;
@@ -162,7 +162,7 @@
   font-size: 11px;
 }
 .timeRow span:last-child {
-  color: #69716e;
+  color: #7a8496;
 }
 .timeRow .trimReadout {
   margin-left: auto;
@@ -179,7 +179,7 @@
   max-width: 90vw;
   transform: translateX(-50%);
   padding: 16px 18px;
-  background: rgba(255, 255, 255, 0.98);
+  background: #fff;
   color: #30343b;
   border-color: rgba(15, 23, 42, 0.06);
   border-radius: 14px;
@@ -236,7 +236,7 @@
   gap: 10px;
 }
 .node small {
-  color: #89928e;
+  color: #7a8496;
 }
 .node a {
   color: #55d9b7;
@@ -246,8 +246,8 @@
 .settings input[type='text'],
 .settings select {
   background: #fff;
-  color: #626a76;
-  border-color: #e3e5e9;
+  color: #7a8496;
+  border-color: #e5e7eb;
   border-radius: 8px;
 }
 .settings input[type='checkbox'] {
@@ -257,7 +257,7 @@
   filter: brightness(0.96);
 }
 .settings small {
-  color: #929baa;
+  color: #7a8496;
 }
 .settings a {
   color: #0eaa8c;
@@ -266,17 +266,17 @@
   margin: 12px 0 0;
   padding: 9px 11px;
   border-radius: 8px;
-  background: #f2f4ff;
-  color: #5362a4;
+  background: #fff;
+  color: #344054;
   line-height: 1.5;
 }
 .editSettings {
   margin-top: 14px;
-  border-top: 1px solid #eef0f3;
+  border-top: 1px solid #e5e7eb;
   padding-top: 10px;
 }
 .editSettings summary {
-  color: #929baa;
+  color: #7a8496;
   cursor: pointer;
 }
 .editSettings .settingsBody {
@@ -284,8 +284,8 @@
   overflow: visible;
 }
 .settings .upload {
-  border-color: #cbd5dc;
-  color: #626a76;
+  border-color: #e5e7eb;
+  color: #7a8496;
 }
 
 /* The node stays in the canvas's light visual system; the waveform is the focal point. */
@@ -293,7 +293,7 @@
   padding: 9px;
   gap: 0;
   background: #fff;
-  color: #25303b;
+  color: #344054;
   border-radius: 13px;
 }
 .emptyCard {
@@ -304,9 +304,9 @@
   align-items: center;
   gap: 12px;
   padding: 18px;
-  border: 1px dashed #d8dff0;
+  border: 1px dashed #e5e7eb;
   border-radius: 10px;
-  background: linear-gradient(135deg, #f8faff, #f0fbf8);
+  background: linear-gradient(135deg, #fff, #fff);
 }
 .emptyIcon,
 .panelIcon {
@@ -316,7 +316,7 @@
   width: 38px;
   height: 38px;
   border-radius: 11px;
-  background: #e7f7f2;
+  background: #fff;
   color: #159b7e;
   font-size: 22px;
 }
@@ -327,11 +327,11 @@
 }
 .emptyCopy strong {
   font-size: 14px;
-  color: #25303b;
+  color: #344054;
 }
 .emptyCopy span {
   font-size: 11px;
-  color: #8993a4;
+  color: #7a8496;
 }
 .emptyArrow {
   margin-left: auto;
@@ -345,9 +345,9 @@
   box-sizing: border-box;
   gap: 10px;
   padding: 10px;
-  border: 1px solid #e8edf3;
+  border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: linear-gradient(155deg, #f8fbfd, #f3f8f6);
+  background: linear-gradient(155deg, #fff, #fff);
 }
 .playButton {
   flex-basis: 36px;
@@ -364,32 +364,34 @@
   border: 0;
 }
 .waveform {
-  height: 43px;
+  height: 48px;
   gap: 2px;
+  filter: drop-shadow(0 0 3px rgb(48 226 190 / 16%));
 }
 .waveform i {
-  background: #cbd9d7;
+  background: #77828d;
   min-width: 2px;
   max-width: 4px;
 }
 .waveform i.waveActive {
-  background: #13b99a;
+  background: #39dfbb;
+  box-shadow: 0 0 5px rgb(57 223 187 / 44%);
 }
 .waveHint {
-  color: #8a96a5;
+  color: #7a8496;
 }
 .timeRow {
   margin-top: 2px;
-  color: #596778;
+  color: #344054;
 }
 .timeRow span:last-child {
-  color: #8b98a6;
+  color: #7a8496;
 }
 .settings {
   width: 690px;
   max-width: min(90vw, 690px);
   padding: 0;
-  border: 1px solid #e8edf3;
+  border: 1px solid #e5e7eb;
   border-radius: 18px;
   background: #fff;
   box-shadow:
@@ -402,8 +404,8 @@
   align-items: center;
   gap: 11px;
   padding: 16px 20px;
-  border-bottom: 1px solid #edf0f4;
-  background: #fbfcfe;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
 }
 .panelIcon {
   width: 34px;
@@ -412,12 +414,12 @@
 }
 .panelHeader strong {
   display: block;
-  color: #293442;
+  color: #344054;
   font-size: 15px;
 }
 .panelHeader p {
   margin: 3px 0 0;
-  color: #939dab;
+  color: #7a8496;
   font-size: 11px;
 }
 .settings > label,
@@ -436,20 +438,20 @@
 .settings .settingsBody select,
 .settings .settingsBody input[type='number'] {
   color: #344054;
-  background: #f8fafc;
-  border-color: #e2e8f0;
+  background: #fff;
+  border-color: #e5e7eb;
 }
 .settingsBody button {
-  background: #f5f8fa;
-  color: #536272;
-  border-color: #e2e8ec;
+  background: #fff;
+  color: #344054;
+  border-color: #e5e7eb;
 }
 .node .settingsBody button:hover:not(:disabled) {
-  border-color: #b7dcd4;
-  background: #eaf8f4;
+  border-color: #e5e7eb;
+  background: #fff;
 }
 .node .settings .upload {
-  background: #f8fbfa;
+  background: #fff;
 }
 .editorToolbar {
   display: flex;
@@ -466,17 +468,17 @@
   font-size: 14px;
 }
 .editorToolbar span {
-  color: #8390a0;
+  color: #7a8496;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .editorToolbar button {
   flex: none;
   padding: 7px 10px;
-  border: 1px solid #dfe6ed;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #536272;
+  color: #344054;
   cursor: pointer;
 }
 .editorField select {
@@ -485,7 +487,7 @@
 .editorSectionTitle {
   margin-top: 4px;
   padding-top: 14px;
-  border-top: 1px solid #edf0f3;
+  border-top: 1px solid #e5e7eb;
   color: #344054;
   font-size: 12px;
   font-weight: 700;
@@ -516,12 +518,12 @@
 .volumeControl input::-webkit-slider-runnable-track {
   height: 8px;
   border-radius: 999px;
-  background: linear-gradient(to right, #22ad8f var(--volume-fill), #e4ece9 var(--volume-fill));
+  background: linear-gradient(to right, #22ad8f var(--volume-fill), #f2f4f7 var(--volume-fill));
 }
 .volumeControl input::-moz-range-track {
   height: 8px;
   border-radius: 999px;
-  background: linear-gradient(to right, #22ad8f var(--volume-fill), #e4ece9 var(--volume-fill));
+  background: linear-gradient(to right, #22ad8f var(--volume-fill), #f2f4f7 var(--volume-fill));
 }
 .volumeControl input::-webkit-slider-thumb {
   width: 20px;
@@ -529,7 +531,7 @@
   margin-top: -6px;
   appearance: none;
   -webkit-appearance: none;
-  border: 3px solid #fff;
+  border: 3px solid #e5e7eb;
   border-radius: 50%;
   background: #18a989;
   box-shadow: 0 1px 6px rgb(26 93 78 / 22%);
@@ -537,7 +539,7 @@
 .volumeControl input::-moz-range-thumb {
   width: 14px;
   height: 14px;
-  border: 3px solid #fff;
+  border: 3px solid #e5e7eb;
   border-radius: 50%;
   background: #18a989;
   box-shadow: 0 1px 6px rgb(26 93 78 / 22%);
@@ -549,7 +551,7 @@
 .editorSource {
   padding: 7px 10px;
   border-radius: 7px;
-  background: #f5f8fa;
+  background: #fff;
 }
 .editorActions {
   display: flex;
@@ -557,7 +559,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding-top: 14px;
-  border-top: 1px solid #edf0f3;
+  border-top: 1px solid #e5e7eb;
 }
 .editorActions a,
 .editorActions button {
@@ -572,11 +574,11 @@
   text-decoration: none;
 }
 .editorActions a {
-  border: 1px solid #dfe6ed;
+  border: 1px solid #e5e7eb;
   background: #fff;
 }
 .editorActions button {
-  border: 1px solid #dfe6ed;
+  border: 1px solid #e5e7eb;
 }
 .editorActions button:last-of-type {
   margin-left: auto;
@@ -595,7 +597,7 @@
 
 .generatingCard {
   border: 1px solid rgba(17, 169, 138, 0.3);
-  background: linear-gradient(135deg, #f2fcf9, #e8f8f3);
+  background: linear-gradient(135deg, #fff, #fff);
 }
 .generatingWave {
   display: flex;
@@ -606,7 +608,7 @@
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #ddf4ec;
+  background: #fff;
 }
 .generatingWave i {
   width: 3px;

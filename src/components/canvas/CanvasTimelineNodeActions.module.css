@@ -108,7 +108,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #333;
+  color: #30343b;
   font-family: 'PingFang SC', sans-serif;
   font-size: 12px;
   text-align: left;
@@ -170,7 +170,7 @@
   height: 15px;
   flex: 0 0 auto;
   border: 2px solid rgb(255 255 255 / 35%);
-  border-top-color: #fff;
+  border-top-color: #e5e7eb;
   border-radius: 50%;
   animation: spin 700ms linear infinite;
 }

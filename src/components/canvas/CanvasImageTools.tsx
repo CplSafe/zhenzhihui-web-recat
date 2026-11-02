@@ -580,7 +580,7 @@ function ToolEditor({
               }
             }}
           >
-            生成新图片
+            制作新图片
           </Button>
         </footer>
       </div>
@@ -600,7 +600,7 @@ function ToolEditor({
           </div>
           {onSwitchToGeneration ? (
             <Button type="text" className={styles.panoramaSwitch} onClick={onSwitchToGeneration}>
-              返回全景生成
+              返回全景制作
             </Button>
           ) : (
             <span className={styles.panoramaHint}>拖动预览调整视角 · 方向键可微调</span>
@@ -807,7 +807,7 @@ function ToolEditor({
                   }
                 }}
               >
-                生成新图片
+                制作新图片
               </Button>
             </>
           )}

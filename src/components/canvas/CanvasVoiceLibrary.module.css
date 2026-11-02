@@ -3,11 +3,11 @@
   flex-direction: column;
   min-height: 0;
   width: 100%;
-  color: #263a35;
+  color: #30343b;
 }
 .intro {
   margin: 4px 0 16px;
-  color: #697d76;
+  color: #7a8496;
   font-size: 13px;
 }
 .tabs {
@@ -16,7 +16,7 @@
   gap: 6px;
   padding: 5px;
   border-radius: 12px;
-  background: #f1f5f3;
+  background: #fff;
 }
 .tabs button {
   flex: 1;
@@ -24,12 +24,12 @@
   border-radius: 8px;
   padding: 10px;
   background: transparent;
-  color: #62746d;
+  color: #7a8496;
   font: inherit;
   cursor: pointer;
 }
 .tabs button[aria-pressed='true'] {
-  color: #087f65;
+  color: #347866;
   background: white;
   box-shadow: 0 2px 7px #143d2510;
   font-weight: 600;
@@ -62,7 +62,7 @@
 }
 .toolbar p {
   margin: 0;
-  color: #52685f;
+  color: #7a8496;
   line-height: 1.7;
 }
 .toolbar > button {
@@ -95,7 +95,7 @@
   padding: 4px 0;
   border: 0;
   background: transparent;
-  color: #15715a;
+  color: #347866;
   font: inherit;
   cursor: pointer;
 }
@@ -115,7 +115,7 @@
 }
 .heading p,
 .note {
-  color: #52685f;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.7;
 }
@@ -124,9 +124,9 @@
 }
 .tag {
   padding: 3px 9px;
-  border: 1px solid #d9eae3;
+  border: 1px solid #e5e7eb;
   border-radius: 20px;
-  background: #f4faf7;
+  background: #fff;
   color: #43806b;
   white-space: nowrap;
   font-size: 12px;
@@ -135,7 +135,7 @@
   box-sizing: border-box;
   width: 100%;
   padding: 11px 14px;
-  border: 1px solid #dce6e1;
+  border: 1px solid #e5e7eb;
   border-radius: 9px;
   font: inherit;
 }
@@ -148,7 +148,7 @@
 .group legend {
   margin-bottom: 10px;
   font-size: 12px;
-  color: #718079;
+  color: #7a8496;
 }
 .grid {
   display: grid;
@@ -161,7 +161,7 @@
   align-items: center;
   gap: 12px;
   padding: 16px;
-  border: 1px solid #e2e9e5;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   cursor: pointer;
 }
@@ -170,7 +170,7 @@
 }
 .card[data-selected='true'] {
   border-color: #159e7e;
-  background: #f1faf6;
+  background: #fff;
   box-shadow: inset 0 0 0 1px #159e7e;
 }
 .card input {
@@ -190,7 +190,7 @@
   height: 42px;
   flex-shrink: 0;
   border-radius: 12px;
-  background: #e7f1ec;
+  background: #fff;
   color: #398368;
   font-size: 20px;
 }
@@ -204,7 +204,7 @@
   overflow-wrap: anywhere;
 }
 .details small {
-  color: #728279;
+  color: #7a8496;
   font-size: 11px;
 }
 .check {
@@ -225,7 +225,7 @@
   max-width: 450px;
   font-size: 13px;
   line-height: 1.8;
-  color: #73827a;
+  color: #7a8496;
 }
 .emptyIcon {
   display: grid;
@@ -234,7 +234,7 @@
   height: 64px;
   margin-bottom: 8px;
   border-radius: 20px;
-  background: #eff6f2;
+  background: #fff;
   color: #5f9b83;
   font-size: 30px;
 }
@@ -244,16 +244,16 @@
   align-items: center;
   gap: 10px;
   padding-top: 16px;
-  border-top: 1px solid #edf0ee;
+  border-top: 1px solid #e5e7eb;
 }
 .footer span {
   margin-right: auto;
   font-size: 12px;
-  color: #73827a;
+  color: #7a8496;
 }
 .primary,
 .secondary {
-  border: 1px solid #dce6e1;
+  border: 1px solid #e5e7eb;
   padding: 9px 16px;
   border-radius: 8px;
   background: white;
@@ -296,7 +296,7 @@
 .detail textarea {
   min-width: 0;
   padding: 9px;
-  border: 1px solid #dce6e1;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: white;
   color: inherit;
@@ -317,10 +317,10 @@
   min-height: 40px;
 }
 .search::placeholder {
-  color: #65786f;
+  color: #7a8496;
 }
 .languageFilter :global(.ant-select-selection-placeholder) {
-  color: #65786f;
+  color: #7a8496;
 }
 .serverCard {
   min-width: 0;
@@ -328,7 +328,7 @@
   flex-direction: column;
   gap: 9px;
   padding: 16px;
-  border: 1px solid #e2e9e5;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
 }
 .serverCard:only-child {
@@ -339,7 +339,7 @@
   overflow-wrap: anywhere;
 }
 .serverCard small {
-  color: #52685f;
+  color: #7a8496;
   overflow-wrap: anywhere;
 }
 .serverCard p,
@@ -373,10 +373,10 @@
 .detail button,
 .filters button {
   padding: 6px 10px;
-  border: 1px solid #dce6e1;
+  border: 1px solid #e5e7eb;
   border-radius: 7px;
   background: white;
-  color: #15715a;
+  color: #347866;
   cursor: pointer;
   font: inherit;
   min-height: 36px;
@@ -401,9 +401,9 @@
   gap: 12px;
   padding: 16px;
   margin: 12px 0;
-  border: 1px solid #d9eae3;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
-  background: #f8fbfa;
+  background: #fff;
 }
 .detail label {
   display: grid;
@@ -422,10 +422,10 @@
   height: 36px;
 }
 .footer > button:not(.primary):not(.secondary) {
-  border: 1px solid #dce6e1;
+  border: 1px solid #e5e7eb;
   border-radius: 7px;
   padding: 6px 10px;
-  color: #346553;
+  color: #347866;
   background: white;
   cursor: pointer;
 }
@@ -438,42 +438,42 @@
   align-items: center;
 }
 .error {
-  color: #b13f37;
+  color: #d14343;
   overflow-wrap: anywhere;
 }
 .recorder {
   display: grid;
   gap: 10px;
   padding-block: 12px;
-  border-block: 1px solid #d9eae3;
+  border-block: 1px solid #e5e7eb;
   min-width: 0;
 }
 .recorder p {
   margin: 0;
-  color: #405e53;
+  color: #347866;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 .recorder p.error {
-  color: #b13f37;
+  color: #d14343;
 }
 .recordingReference {
   display: grid;
   gap: 10px;
   padding: 20px;
-  border: 1px solid #b7cbc2;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
   min-width: 0;
 }
 .referenceTitle {
-  color: #182e25;
+  color: #347866;
   font-size: 16px;
   font-weight: 600;
 }
 .recorder p.referenceText {
   margin-top: 4px;
-  color: #182e25;
+  color: #347866;
   font-size: 20px;
   font-weight: 500;
   line-height: 1.9;
@@ -532,8 +532,8 @@
   gap: 20px;
   padding: 20px;
   background: #fff;
-  border-color: #e1e7e4;
-  color: #263a35;
+  border-color: #e5e7eb;
+  color: #30343b;
 }
 .cloneForm h3 {
   margin: 0;
@@ -572,7 +572,7 @@
 .consentSection > p,
 .uploadSection > p:not(.error),
 .recorder > p:not(.error):not(.recordingStatus) {
-  color: #617069;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.65;
 }
@@ -588,10 +588,10 @@
 }
 .cloneForm .recorder,
 .uploadSection {
-  border: 1px solid #e1e7e4;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 16px;
-  background: #fafcfb;
+  background: #fff;
 }
 .cloneForm .recorder {
   gap: 12px;
@@ -600,7 +600,7 @@
   padding: 12px;
   gap: 8px;
   border: 0;
-  background: #f0f4f2;
+  background: #fff;
   border-radius: 6px;
 }
 .recordingReference > label {
@@ -615,7 +615,7 @@
 }
 .cloneForm .referenceTitle {
   font-size: 12px;
-  color: #617069;
+  color: #7a8496;
   font-weight: 400;
 }
 .cloneForm .recorder p.referenceText {
@@ -623,7 +623,7 @@
   font-size: 14px;
   font-weight: 400;
   line-height: 1.85;
-  color: #263a35;
+  color: #30343b;
 }
 /* The native picker remains labelled for assistive technology and file selection. */
 .cloneForm .uploadInput {
@@ -652,10 +652,10 @@
   justify-content: center;
   gap: 10px;
   padding: 24px 16px;
-  border: 1px dashed #a8bfb3;
+  border: 1px dashed #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #34594a;
+  color: #347866;
 }
 .uploadDropzone > * {
   pointer-events: none;
@@ -665,12 +665,12 @@
   font-weight: 500;
 }
 .uploadDropzone span {
-  color: #617069;
+  color: #7a8496;
   font-size: 12px;
 }
 .cloneForm .uploadDropzone:hover:not(:disabled),
 .cloneForm .uploadDragging {
-  background: #eef7f2;
+  background: #fff;
   border-color: #098669;
 }
 .cloneForm .uploadDropzone:disabled {
@@ -683,14 +683,14 @@
   padding: 0;
   min-height: 28px;
   background: transparent;
-  color: #52685c;
+  color: #7a8496;
   font-size: 12px;
 }
 .cloneForm p.selectedAudio {
   padding: 10px 12px;
   border-radius: 5px;
-  background: #eaf5f0;
-  color: #22654f;
+  background: #fff;
+  color: #347866;
   overflow-wrap: anywhere;
 }
 .consentSection {
@@ -706,7 +706,7 @@
 }
 .cloneForm .formActions {
   justify-content: flex-end;
-  border-top: 1px solid #e7ece9;
+  border-top: 1px solid #e5e7eb;
   padding-top: 16px;
   margin-top: 0;
 }
@@ -726,7 +726,7 @@
 }
 .recordingStatus {
   font-variant-numeric: tabular-nums;
-  color: #22654f;
+  color: #347866;
 }
 @media (max-width: 800px) {
   .audioSources {
@@ -764,7 +764,7 @@
   padding-block: 6px;
   font-size: 13px;
   line-height: 1.5;
-  color: #4b6258;
+  color: #7a8496;
   border-radius: 4px;
 }
 .optionalDetails > summary:focus-visible {
@@ -780,7 +780,7 @@
   gap: 12px 16px;
   padding: 16px;
   border-radius: 8px;
-  background: #f5f8f6;
+  background: #fff;
 }
 .cloneForm .optionalFields label {
   margin: 0;
@@ -792,7 +792,7 @@
   grid-column: 1 / -1;
 }
 .cloneForm .optionalHint {
-  color: #617069;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -810,7 +810,7 @@
 }
 .optionalFields input::placeholder,
 .optionalFields textarea::placeholder {
-  color: #65746c;
+  color: #7a8496;
 }
 @media (max-width: 480px) {
   .optionalFields {

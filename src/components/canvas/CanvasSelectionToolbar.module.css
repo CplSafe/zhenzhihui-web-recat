@@ -16,7 +16,7 @@
   gap: 4px;
   padding: 6px 10px;
   transform: translateX(-50%);
-  border: 1px solid #e2e6ef;
+  border: 1px solid #e5e7eb;
   border-radius: 999px;
   background: #fff;
   box-shadow: 0 10px 30px rgba(23, 33, 61, 0.16);
@@ -44,7 +44,7 @@
 
 .count {
   padding: 0 6px;
-  color: #6b7385;
+  color: #7a8496;
   font-size: 12px;
   font-weight: 600;
 }
@@ -52,7 +52,7 @@
 .divider {
   width: 1px;
   height: 18px;
-  background: #e6e9f2;
+  background: #f2f4f7;
 }
 
 .action,
@@ -65,7 +65,7 @@
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: #2f3646;
+  color: #344054;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -76,23 +76,23 @@
 }
 
 .action:hover {
-  background: #f1f3fb;
+  background: #fff;
   color: #5767e5;
 }
 
 .plain {
-  color: #8a91a2;
+  color: #7a8496;
   font-weight: 500;
 }
 
 .plain:hover {
-  background: #f4f5f8;
-  color: #2f3646;
+  background: #fff;
+  color: #344054;
 }
 
 .danger:hover {
-  background: #fdf1ef;
-  color: #c2452a;
+  background: #fff;
+  color: #d14343;
 }
 
 .action:focus-visible,
@@ -103,7 +103,7 @@
 
 /* 「N 个视频」这类补充说明：弱化到不与主文案抢，但保证能读清 */
 .hint {
-  color: #8a91a2;
+  color: #7a8496;
   font-size: 11px;
   font-style: normal;
   font-weight: 500;

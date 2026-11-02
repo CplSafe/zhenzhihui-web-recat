@@ -173,7 +173,18 @@ test('单选视频节点仍自动播放，取消选择后暂停', async ({ page 
   await videoWrap.click({ position: { x: 40, y: 50 } })
   await expect(node).toHaveClass(/selected/)
   await expect(video).toHaveJSProperty('muted', true)
-  await expect(node.getByRole('button', { name: '暂停视频' })).toBeVisible()
+  const pauseButton = node.getByRole('button', { name: '暂停视频' })
+  await expect(pauseButton).toBeVisible()
+  expect(await pauseButton.evaluate((button) => button.closest('.canvas-node-video-bar') !== null)).toBe(true)
+  const pauseBounds = await pauseButton.boundingBox()
+  const videoBounds = await video.boundingBox()
+  const timeBounds = await videoWrap.locator('.canvas-node-video-time').boundingBox()
+  expect(pauseBounds?.width).toBeLessThanOrEqual(20)
+  expect(pauseBounds?.height).toBeLessThanOrEqual(20)
+  expect(pauseBounds!.x + pauseBounds!.width).toBeLessThan(timeBounds!.x)
+  expect(
+    Math.abs(pauseBounds!.y + pauseBounds!.height / 2 - (videoBounds!.y + videoBounds!.height / 2)),
+  ).toBeGreaterThan(80)
   await expect
     .poll(() => page.evaluate(() => (window as any).__canvasSelectionPlayMutedStates))
     .toEqual([false, false, true])

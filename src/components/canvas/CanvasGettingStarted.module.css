@@ -6,10 +6,10 @@
   transform: translate(-50%, -50%);
   width: min(500px, calc(100% - 180px));
   padding: 28px;
-  border: 1px solid #dfe5e3;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   background: #fff;
-  color: #253833;
+  color: #30343b;
 }
 .starter h2 {
   margin: 0 0 12px;
@@ -18,7 +18,7 @@
 }
 .starter p,
 .importBody p {
-  color: #52645e;
+  color: #7a8496;
   line-height: 1.65;
   margin: 0 0 16px;
 }
@@ -30,14 +30,14 @@
 }
 .actions button {
   padding: 10px 14px;
-  background: #f0f7f4;
-  border: 1px solid #cadfd7;
+  background: #fff;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  color: #245d4b;
+  color: #347866;
   cursor: pointer;
 }
 .actions button:hover {
-  background: #e2f2eb;
+  background: #fff;
 }
 .actions .primaryAction {
   background: #087c63;
@@ -59,7 +59,7 @@
   justify-content: space-between;
 }
 .starter .footer button {
-  color: #52645e;
+  color: #7a8496;
   border: 0;
   padding: 4px 0;
   background: transparent;
@@ -83,11 +83,11 @@
   gap: 8px;
 }
 .fileLabel {
-  color: #52645e;
+  color: #7a8496;
   font-size: 13px;
 }
 .preview {
-  background: #f5f8f7;
+  background: #fff;
   border-radius: 8px;
   padding: 16px;
 }
@@ -121,10 +121,10 @@
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #bdccc6;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #253833;
+  color: #30343b;
   font: inherit;
   line-height: 1.6;
 }
@@ -140,10 +140,10 @@
 }
 .importBody .footer button {
   padding: 8px 16px;
-  border: 1px solid #bdccc6;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #253833;
+  color: #30343b;
   cursor: pointer;
 }
 .importBody .footer .primary {
@@ -156,5 +156,5 @@
   cursor: not-allowed;
 }
 .importBody .error {
-  color: #a72b2b;
+  color: #d14343;
 }

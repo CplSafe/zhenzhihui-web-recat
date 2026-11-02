@@ -70,17 +70,17 @@ const GROUPS: SidebarGroup[] = [
     ],
   },
   {
-    title: '管理',
-    items: [
-      { key: 'projects', label: '项目管理', icon: projectsIcon, activeIcon: projectsActiveIcon, iconSize: 14 },
-      { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
-    ],
-  },
-  {
     title: '市场',
     items: [
       // 原首页的「IP / 需求市场」两个标签，收进独立页面 /market
       { key: 'market', label: '供需商单', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
+    ],
+  },
+  {
+    title: '管理',
+    items: [
+      { key: 'projects', label: '项目管理', icon: projectsIcon, activeIcon: projectsActiveIcon, iconSize: 14 },
+      { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
     ],
   },
 ]
@@ -177,7 +177,7 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
           }
         >
           <span className="app-sidebar__logo-wrap">
-            <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
+            <img src={brandLogo} alt="豆豆同学" className="app-sidebar__logo" />
             {/* 收起态:hover LOGO 浮出展开图标(sprite #836f7a 内联版本) */}
             <span className="app-sidebar__toggle-icon" aria-hidden="true">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
@@ -190,7 +190,7 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
             展开边栏
           </span>
           <span className="app-sidebar__brand-text">
-            <span className="app-sidebar__brand-name">帧智汇</span>
+            <span className="app-sidebar__brand-name">豆豆同学</span>
             <span className="app-sidebar__brand-en">Framora</span>
             <span className="app-sidebar__version">v{APP_VERSION}</span>
           </span>

@@ -18,7 +18,7 @@
   align-items: center;
   padding: 20px;
   margin-top: 20px;
-  background: #f5f6ff;
+  background: #fff;
   border-radius: 12px;
 }
 .total > strong {
@@ -29,10 +29,10 @@
 .total small {
   display: block;
   margin-top: 6px;
-  color: #6b7280;
+  color: #7a8496;
 }
 .note {
-  color: #6b7280;
+  color: #7a8496;
   font-size: 12px;
   line-height: 1.8;
 }
@@ -54,14 +54,14 @@
   color: #5767e5;
 }
 .stats span {
-  color: #6b7280;
+  color: #7a8496;
 }
 .filters {
   margin-bottom: 20px;
 }
 .tableScroll {
   overflow: auto;
-  border: 1px solid #edf0f4;
+  border: 1px solid #e5e7eb;
   border-radius: 10px;
 }
 .table {
@@ -71,14 +71,14 @@
   text-align: left;
 }
 .table th {
-  background: #f7f8fb;
-  color: #555f71;
+  background: #fff;
+  color: #344054;
   font-weight: 500;
 }
 .table th,
 .table td {
   padding: 12px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid #e5e7eb;
 }
 .table td {
   overflow-wrap: anywhere;
@@ -89,7 +89,7 @@
   color: #7a8496;
 }
 .table tbody tr:hover {
-  background: #fafbff;
+  background: #fff;
 }
 .fixedCell {
   position: sticky;

@@ -74,6 +74,7 @@ import {
   buildMentionRegex,
   diffMentionLabels,
   findMentionDeletionRange,
+  buildPositionalMentionLabels,
   rewriteMentions,
   translateMentionsToPositional,
 } from '@/utils/canvasMentions'
@@ -561,6 +562,10 @@ interface CanvasNodePanelProps {
   currentUserId?: string | number
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
+  /** 打开当前图片或视频素材的 Seedance 审核状态。 */
+  onModeration?: (mediaType: 'image' | 'video') => void
+  /** 点击提示词中的 @图片标题时，在画布级预览器中打开原图。 */
+  onPreviewMentionRef?: (ref: CanvasSourceRef) => void
   /** 当前节点的历次生成结果（最新在后），用于节点级生成历史回看（反馈 #8）。 */
   resultHistory?: CanvasResultHistoryEntry[]
   /** 点击某条历史结果：把它设为当前结果（回退/切换版本）。 */
@@ -594,7 +599,11 @@ interface CanvasNodePanelProps {
     selfVideoAssetId?: number
   }) => void
   /** 扣费确认前检查引用素材的团队归属和入库状态。 */
-  onPreflightAssets?: (sourceRefs: CanvasSourceRef[], inputAssets: CanvasInputAsset[]) => Promise<string | null>
+  onPreflightAssets?: (
+    sourceRefs: CanvasSourceRef[],
+    inputAssets: CanvasInputAsset[],
+    requiresSeedanceModeration?: boolean,
+  ) => Promise<string | null>
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
@@ -834,6 +843,8 @@ export default function CanvasNodePanel({
   onPickRefFromLibrary,
   onPickRealPerson,
   onRemoveRef,
+  onModeration,
+  onPreviewMentionRef,
   resultHistory,
   onRevertToHistory,
   onRatioChange,
@@ -872,7 +883,7 @@ export default function CanvasNodePanel({
     kind !== 'text' &&
     Boolean(node?.resultUrl || Number(node?.assetId || 0) > 0) &&
     (Number(node?.taskId || 0) > 0 || (resultHistory?.length ?? 0) > 0)
-  const generateActionLabel = hasExistingResult ? '重新生成' : '生成'
+  const generateActionLabel = hasExistingResult ? '重新制作' : '制作'
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
@@ -979,6 +990,7 @@ export default function CanvasNodePanel({
   }, [prompt, promptExpanded, syncHighlightLayout])
   /** 每条参考的 @ 标签（不含 @），与缩略图展示顺序一致。 */
   const refLabelByEdge = useMemo(() => buildMentionLabels(sourceRefs), [sourceRefs])
+  const positionalRefLabelByEdge = useMemo(() => buildPositionalMentionLabels(sourceRefs), [sourceRefs])
   /** 可被 @ 的参考（仅图片/视频），供选择器列出。 */
   const mentionableRefs = useMemo(
     () => sourceRefs.filter((ref) => ref.kind === 'image' || ref.kind === 'video'),
@@ -1117,17 +1129,84 @@ export default function CanvasNodePanel({
       mentionRegex.lastIndex = 0
       while ((m = mentionRegex.exec(text))) {
         if (m.index > last) out.push(text.slice(last, m.index))
+        const label = m[0].slice(1)
+        const mentionRef =
+          mentionableRefs.find(
+            (ref) => refLabelByEdge.get(ref.edgeId) === label || positionalRefLabelByEdge.get(ref.edgeId) === label,
+          ) ||
+          (() => {
+            const match = label.match(/^(图片|视频)(\d+)$/)
+            if (!match) return undefined
+            const kind = match[1] === '图片' ? 'image' : 'video'
+            return mentionableRefs.filter((ref) => ref.kind === kind)[Number(match[2]) - 1]
+          })()
         out.push(
-          <span className={styles.promptRefTag} key={`${m.index}-${m[0]}`}>
-            {m[0]}
-          </span>,
+          mentionRef ? (
+            <button
+              className={`${styles.promptRefTag} ${styles.promptRefImageTag}`}
+              key={`${m.index}-${m[0]}`}
+              type="button"
+              tabIndex={-1}
+              title={`点击查看${mentionRef.kind === 'video' ? '视频' : '图片'}：${label}`}
+              aria-label={`查看引用${mentionRef.kind === 'video' ? '视频' : '图片'}：${label}`}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => onPreviewMentionRef?.(mentionRef)}
+            >
+              {(() => {
+                const thumbnailUrl =
+                  mentionRef.thumbnailUrl ||
+                  (mentionRef.assetId ? assetStreamUrl(mentionRef.assetId, mentionRef.workspaceId || workspaceId) : '')
+                if (mentionRef.kind === 'video' && mentionRef.posterUrl) {
+                  return (
+                    <img className={styles.promptRefImageThumb} src={mentionRef.posterUrl} alt="" aria-hidden="true" />
+                  )
+                }
+                if (mentionRef.kind === 'video' && thumbnailUrl) {
+                  return (
+                    <video
+                      className={styles.promptRefImageThumb}
+                      src={`${thumbnailUrl}#t=0.1`}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      aria-hidden="true"
+                    />
+                  )
+                }
+                return thumbnailUrl ? (
+                  <img className={styles.promptRefImageThumb} src={thumbnailUrl} alt="" aria-hidden="true" />
+                ) : (
+                  <svg className={styles.promptRefImageIcon} viewBox="0 0 16 16" aria-hidden="true">
+                    <rect x="1" y="1.5" width="14" height="13" rx="3" fill="#555" />
+                    <rect x="2.5" y="3" width="11" height="10" rx="1.5" fill="none" stroke="#fff" strokeWidth="1.1" />
+                    <circle cx="5.4" cy="6" r="1.1" fill="#fff" />
+                    <path
+                      d="m3.5 11.5 2.8-2.8 2 1.8 1.6-1.4 2.6 2.4"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.1"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )
+              })()}
+              <span className={styles.promptRefImageAtSign} aria-hidden="true">
+                @
+              </span>
+              {label}
+            </button>
+          ) : (
+            <span className={styles.promptRefTag} key={`${m.index}-${m[0]}`}>
+              {m[0]}
+            </span>
+          ),
         )
         last = m.index + m[0].length
       }
       out.push(text.slice(last))
       return out
     },
-    [mentionRegex],
+    [mentionRegex, mentionableRefs, refLabelByEdge, positionalRefLabelByEdge, onPreviewMentionRef],
   )
 
   // ===== 输入 @ 弹出参考选择器：敲 @ 即列出可 @ 的参考，继续输入按名字筛，↑↓ 选、Enter/Tab 确认、Esc 关 =====
@@ -1847,7 +1926,7 @@ export default function CanvasNodePanel({
     if (onPreflightAssets && inputAssets.length) {
       setCheckingAssets(true)
       try {
-        const assetError = await onPreflightAssets(sourceRefs, inputAssets)
+        const assetError = await onPreflightAssets(sourceRefs, inputAssets, Boolean(isSeedanceModel))
         if (assetError) {
           showToast(assetError, 'error')
           return
@@ -1867,8 +1946,8 @@ export default function CanvasNodePanel({
       const confirmed = await requestConfirm(
         `${operationLabel}${ratioNote}，预计消耗 ${creditsLabel(cost)}，是否继续？`,
         {
-          title: '确认生成费用',
-          confirmLabel: '继续生成',
+          title: '确认制作费用',
+          confirmLabel: '继续制作',
           cancelLabel: '再想想',
         },
       )
@@ -2616,6 +2695,17 @@ export default function CanvasNodePanel({
                       : '—'}
             </span>
           }
+          {(kind === 'image' || kind === 'video') && Number(node?.assetId) > 0 && onModeration && (
+            <button
+              type="button"
+              className={styles.moderationBtn}
+              onClick={() => onModeration(kind)}
+              aria-label={`Seedance ${kind === 'video' ? '视频' : '图片'}审核`}
+              title={`提交或查看 Seedance ${kind === 'video' ? '视频' : '图片'}审核状态`}
+            >
+              审核
+            </button>
+          )}
           <button
             type="button"
             className={styles.generateBtn}
@@ -2634,10 +2724,10 @@ export default function CanvasNodePanel({
                     ? requiresImageModelSelection
                       ? '原模型已不支持普通图片节点，请重新选择模型'
                       : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                    : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
+                    : inputValidationError || (hasExistingResult ? '重新制作' : '开始制作')
             }
           >
-            {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}
+            {checkingAssets ? '检查素材中…' : kind === 'text' ? '制作分镜' : generateActionLabel}
           </button>
         </div>
       </div>
@@ -2685,6 +2775,7 @@ function SchemaFieldMenu({
   }
   if (followSourceVideo) displayParts.push('比例时长跟随原视频')
   const display = displayParts.join(' · ')
+  const compactDisplay = [...displayParts.slice(0, 3), ...(displayParts.length > 3 ? ['…'] : [])].join(' · ')
 
   /** number 滑块步进：default 带小数点则按小数位数（0.5→0.1，0.05→0.01），否则按 1 */
   const sliderStep = (f: ParamsSchemaField): number => {
@@ -2873,7 +2964,7 @@ function SchemaFieldMenu({
       >
         <button
           ref={triggerRef}
-          className={styles.selector}
+          className={`${styles.selector} ${styles.parameterSelector}`}
           title={display}
           aria-expanded={open}
           onClick={() => setOpen(true)}
@@ -2881,7 +2972,7 @@ function SchemaFieldMenu({
             if (event.key === 'Escape') setOpen(false)
           }}
         >
-          {display || '生成参数'}
+          {compactDisplay || '生成参数'}
         </button>
       </Popover>
     </div>

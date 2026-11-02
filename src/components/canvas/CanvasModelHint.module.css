@@ -16,14 +16,14 @@
 .tag {
   padding: 2px 7px;
   border-radius: 4px;
-  background: #edf0f3;
-  color: #485464;
+  background: #fff;
+  color: #344054;
   font-size: 11px;
   line-height: 1.6;
 }
 
 .scenario {
-  color: #657080;
+  color: #7a8496;
   font-size: 12px;
   font-weight: 400;
   line-height: 1.6;
