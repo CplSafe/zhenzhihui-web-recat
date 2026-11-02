@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
   "projectId": "REPLACE_WITH_PROJECT_ID",
   "type": "frontend",
-  "name": "无限画布：节点右键「创建副本」有两个子选项",
+  "name": "漫剧制作：节点右键「创建副本」有两个子选项",
   "description": "需求 recvw1s5he1Vzy：右键创建副本应有子选项列表——只含当前节点 / 包含之前所有节点，两项始终都给。",
   "priority": "p0",
   "planSteps": [
@@ -12,7 +12,7 @@
     },
     {
       "type": "action",
-      "description": "点击左侧边栏的「无限画布」，在画布列表里点击「新建画布」，名称填写 testsprite-复制测试，确认创建并进入画布"
+      "description": "点击左侧边栏的「漫剧制作」，在画布列表里点击「新建画布」，名称填写 testsprite-复制测试，确认创建并进入画布"
     },
     {
       "type": "action",

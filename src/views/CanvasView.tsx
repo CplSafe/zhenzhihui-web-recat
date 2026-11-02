@@ -38,9 +38,9 @@ import {
   formatCanvasShortcut,
 } from '@/utils/canvasKeyboard'
 /**
- * 无限画布（/canvas/:id）
+ * 漫剧制作（/canvas/:id）
  *
- * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
+ * 页面职责：提供漫剧制作，通过节点+连线方式组织 AI 生成管线。
  */
 import {
   createContext,
@@ -2469,7 +2469,7 @@ const nodeTypes: NodeTypes = {
   audio: CanvasNode,
 }
 
-/** 无限画布入口页（提供 ReactFlowProvider 上下文） */
+/** 漫剧制作入口页（提供 ReactFlowProvider 上下文） */
 export default function CanvasView() {
   return (
     <ReactFlowProvider>

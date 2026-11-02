@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
   "projectId": "REPLACE_WITH_PROJECT_ID",
   "type": "frontend",
-  "name": "无限画布：新建视频节点默认画面比例为 9:16",
+  "name": "漫剧制作：新建视频节点默认画面比例为 9:16",
   "description": "投放以竖屏为主：新建视频节点、模型支持 9:16 时，参数里的画面比例默认就是 9:16，不再默认 16:9 或自适应。只看参数，不点生成。",
   "priority": "p0",
   "planSteps": [
@@ -12,7 +12,7 @@
     },
     {
       "type": "action",
-      "description": "点击左侧边栏的「无限画布」，新建一个名为 testsprite-比例测试 的画布并进入"
+      "description": "点击左侧边栏的「漫剧制作」，新建一个名为 testsprite-比例测试 的画布并进入"
     },
     {
       "type": "action",

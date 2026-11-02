@@ -22,7 +22,7 @@ describe('tutorialVideos', () => {
   it('视频地址由基址 + key 组成', () => {
     const t = getTutorialByKey('canvas')
     expect(t.src).toBe(`${TUTORIAL_BASE_URL}canvas.mp4`)
-    expect(t.title).toContain('无限画布')
+    expect(t.title).toContain('漫剧制作')
   })
 
   it('每个教程都带上统一的图文手册地址', () => {

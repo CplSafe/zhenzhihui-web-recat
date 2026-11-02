@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const path of ['/smart', '/hot-copy']) {
-  for (const width of [1440, 760]) {
+  for (const width of [1440, 760, 390]) {
     test(`${path} mint duration picker at ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 1000 })
       const api = await installStrictAuthenticatedApp(page)
@@ -39,23 +39,37 @@ for (const path of ['/smart', '/hot-copy']) {
         }),
       )
       await page.goto(path)
+      if (path === '/smart' && width === 390) {
+        await page.getByRole('button', { name: '生成设置', exact: true }).click()
+      }
       const modelsTrigger = page.getByRole('button', { name: /^生成模型，/ })
       await expect(modelsTrigger).toBeEnabled()
       await modelsTrigger.click()
       await page.getByRole('option', { name: /测试视频模型/ }).click()
       const dialog = page.getByRole('dialog', { name: '创作参数', exact: true })
       await expect(dialog).toBeVisible()
+      const paramsTrigger = page.getByRole('button', { name: /^创作参数，当前/ })
+      await page.mouse.move(width - 1, 1)
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+      if (path === '/smart' && width === 390) {
+        await page.getByRole('button', { name: '生成设置', exact: true }).click()
+      }
+      await paramsTrigger.focus()
+      await paramsTrigger.press('Enter')
+      await expect(dialog).toBeVisible()
       const slider = dialog.getByRole('slider', { name: '视频时长' })
       const control = dialog.locator('.wks-control')
+      await expect(control).toHaveCSS('height', width <= 480 ? '16px' : '24px')
+      await expect(control).toHaveCSS('border-radius', '5px')
+      await expect(control.locator('.wks-thumb')).toHaveCSS('height', width <= 480 ? '12px' : '16px')
       await expect(control).toHaveCSS('background-color', 'rgb(235, 255, 251)')
       await expect(control.locator('.wks-fill')).toHaveCSS('background-color', 'rgb(185, 243, 230)')
       await expect(control.locator('.wks-thumb')).toHaveCSS('background-color', 'rgb(17, 169, 138)')
-      await slider.hover()
       await slider.focus()
       await expect(control).toHaveCSS('outline-color', 'rgb(17, 169, 138)')
       await slider.press('End')
       await expect(slider).toHaveAttribute('aria-valuetext', '15s')
-      const paramsTrigger = page.getByRole('button', { name: /^创作参数，当前/ })
       await expect(paramsTrigger).toContainText('15s')
       await slider.press('ArrowLeft')
       await expect(slider).toHaveAttribute('aria-valuetext', '10s')
@@ -63,6 +77,9 @@ for (const path of ['/smart', '/hot-copy']) {
       await page.mouse.move(width - 1, 1)
       await page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
+      if (path === '/smart' && width === 390) {
+        await page.getByRole('button', { name: '生成设置', exact: true }).click()
+      }
       await paramsTrigger.click()
       await expect(dialog).toBeVisible()
       await expect(slider).toHaveAttribute('aria-valuetext', '10s')

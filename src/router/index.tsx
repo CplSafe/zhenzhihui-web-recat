@@ -103,7 +103,7 @@ const DistributionView = lazy(() => import('../views/DistributionView'))
 const StudioCreateView = lazy(routeImporters.studio)
 /** 创意画布路由组件。 */
 const CanvasView = lazy(routeImporters.canvas)
-/** 无限画布列表路由组件。 */
+/** 漫剧制作列表路由组件。 */
 const CanvasListView = lazy(routeImporters.canvasList)
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
 /** IP 创作者详情路由组件。 */

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.4.0/schemas/plan.schema.json",
   "projectId": "REPLACE_WITH_PROJECT_ID",
   "type": "frontend",
-  "name": "无限画布：图片节点参数摘要带单位（张 / P / K / 有无水印）",
+  "name": "漫剧制作：图片节点参数摘要带单位（张 / P / K / 有无水印）",
   "description": "参数按钮摘要里：生成数量显示「1张」，纯数字分辨率补「P」，水印显示「有水印 / 无水印」而不是「开 / 关」。只看文案，不点生成。",
   "priority": "p2",
   "planSteps": [
@@ -12,7 +12,7 @@
     },
     {
       "type": "action",
-      "description": "点击左侧边栏的「无限画布」，新建一个名为 testsprite-参数文案 的画布并进入"
+      "description": "点击左侧边栏的「漫剧制作」，新建一个名为 testsprite-参数文案 的画布并进入"
     },
     {
       "type": "action",

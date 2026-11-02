@@ -2,7 +2,7 @@
  * 需求详情页（/demand/:id，设计稿「需求市场-需求详情」）。
  *
  * 页面职责：展示需求头部信息（缩略图、时长/比例/数量、报名截止与交付时间、单价）、
- * 内容概述与视频素材，底部「返回市场 / 申请接单」。发布者本人看到的是管理入口。
+ * 内容概述与视频素材，底部「返回集市 / 申请接单」。发布者本人看到的是管理入口。
  * 游客可浏览，申请接单需登录。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -227,7 +227,7 @@ export default function DemandDetailView() {
 
               <footer className="dmd__footer">
                 <button type="button" className="dmd__btn dmd__btn--ghost" onClick={backToMarket}>
-                  返回市场
+                  返回集市
                 </button>
                 {isPublisher ? (
                   <button

@@ -726,7 +726,7 @@ async function libraryShots(page) {
   await creditsShots(page)
 }
 
-/** 无限画布：列表 / 编辑器 / 添加菜单 / 节点面板 / 分享。 */
+/** 漫剧制作：列表 / 编辑器 / 添加菜单 / 节点面板 / 分享。 */
 async function canvasShots(page) {
   await go(page, '/canvas')
   await shot(page, 'canvas-list', [

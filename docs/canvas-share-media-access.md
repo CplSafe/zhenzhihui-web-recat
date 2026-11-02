@@ -1,4 +1,4 @@
-# 无限画布免登录分享：素材访问契约
+# 漫剧制作免登录分享：素材访问契约
 
 当前公开接口 `GET /api/v1/canvas-shares/{token}` 和 `GET /api/v1/canvas-shares/{token}/elements` 已能匿名读取画布结构；但节点持久化的 `resultUrl` 通常是需要工作空间登录态的 `/api/v1/assets/{id}/download?workspace_id=...`。只公开元素、不公开其引用的素材，会使分享页出现破图和无法播放的视频。
 

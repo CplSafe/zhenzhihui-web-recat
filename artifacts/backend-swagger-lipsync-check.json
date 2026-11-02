@@ -6263,7 +6263,7 @@
         "description": "prompt_workflow 通过现有任务接口 params.tool/tool_version/tool_params 执行；browser 工具仅保存画布状态和上传截图。模型 ID 已按空间套餐过滤。\n各工具返回独立且可由后台自由重命名的 operation_code；提交和模型查询应使用返回值。后端按配置解析到 execution_operation_code 与已有工具模板，客户端无需填写 tool/tool_version；原有 image.image_to_image + params.tool 路径继续兼容。\n情绪调节 image.portrait_emotion 使用同一图像编辑流程，引导保留人物身份、构图和背景。tool_params.emotion 可为 neutral/happy/sad/angry/surprised/fearful/disgusted/calm（默认 happy），strength 可为 subtle/natural/strong（默认 natural）；这是目标表情编辑，不是情绪识别。\n从返回的 model_version_ids 选择模型，从 params_schema 读取工具参数；空模型列表表示当前空间没有可用模型。机位 scene.director、全景浏览 panorama.view 为浏览器工具，不提交 AI 任务。\n当前多角度与人像质感模板为 v2，公开操作会自动绑定该版本；走旧技术操作时应显式发送 tool_version=2；旧版省略版本或 version=1 的参数保持兼容。上述图片编辑工具均由模型生成，execution=prompt_workflow 表示应用参数转换成提示词，不代表供应商提供原生相机、光源或肤质 API。模型尺寸、数量等参数仍按 GET /api/v1/ai/models 返回的模型 schema 发送和计费。\n多角度 v2：tool=image.multi_angle，tool_params={horizontal_angle:90,vertical_angle:30,zoom:5}；水平角 0..360（0/360 原视角，90 右侧，180 背面，270 左侧），俯仰 -30..60（正值俯视），zoom 0..10（远景至特写）。只接受一张 reference_image，不保证精确几何。\n多角度 v2 仅支持阿里云北京 qwen-image-2.0-2026-03-03，无额外 LoRA、无需自部署 GPU。旧 Plus 快照已在实际调用中返回 Model not exist，本次采用当前官方模型列表中的 2.0 固定版。部署会补入默认禁用的 Qwen 模型，管理员配置百炼北京 API Key 并启用及分配套餐后才出现在可用模型列表。打光同样支持 Qwen，并通过 relight 业务能力配置默认模型；人像质感仍按其 model_version_ids 选择。\nQwen 原生 params：count 整数 1..6（默认 1，后端转为 n）；size 可选，格式 1024*1536，宽高正整数且总像素 262144..4194304，上游会调整到接近的 16 的倍数；negative_prompt 最多 500 字符；prompt_extend 默认 false；watermark 默认 false；seed 可选整数 0..2147483647。不支持 quality/ratio/resolution/n 等其他接口字段。任务 prompt 与工具指令合计最多 800 字符，超限拒绝。普通 Qwen 图生图支持 1..3 张输入，多角度仅一张；每张最大 10 MiB，JPEG/PNG/BMP/TIFF/WEBP/GIF（GIF 首帧）。\nQwen 北京按成功输出图片计费，每张 0.20 元/10 积分，尺寸不影响单价；默认一次一张，多个不同角度需分别提交，count 多张表示同一视角的候选图。估价不调用生成 API；部分成功按实际输出结算，重复提交复用 idempotency_key。\n多角度示例（替换空间、模型、素材 ID）：{\"workspace_id\":1,\"model_version_id\":42,\"operation_code\":\"image.multi_angle\",\"idempotency_key\":\"angle-501-v2\",\"params\":{\"count\":1,\"tool\":\"image.multi_angle\",\"tool_version\":2,\"tool_params\":{\"horizontal_angle\":90,\"vertical_angle\":30,\"zoom\":5}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。估价去掉 idempotency_key，POST /api/v1/ai/tasks/estimate-cost；提交 POST /api/v1/ai/tasks，沿用任务状态和 outputs。\n人像质感 v2：五个枚举字段 subject_scene_fusion=轻度对齐/自然融合/深度融合，lighting_fusion=柔和补光/自然匹配/氛围强化，skin_texture=清透修饰/自然肤质/真实肌理，surface_texture=柔和纹理/自然纹理/颗粒质感，sharpness=柔焦/标准清晰/高清锐化。默认均为中间档，只接受一张 reference_image。\n打光 image.relight v1：mode=manual/smart/reference。manual 使用 key_light=left/top/right/front/bottom/back、brightness=0..100、color=空字符串或 #RRGGBB、rim_light=布尔；smart 使用 preset 或任务 prompt，preset 从 schema 读取；reference 必须传两张不同的 reference_image，顺序为原图、打光参考图。manual/smart 仅一张原图。不要提交其他模式的隐藏字段；参数 visible_when 控制展示。工具输入不得混用 image_urls、mask 或 previous_task_id。\n打光可传 ability_code=relight 并省略 model_version_id、operation_code、tool 和 tool_version，由后端使用配置的默认模型（初始为 Qwen）；默认模型禁用或套餐不允许时拒绝，不自动换模型。\n打光显式模型示例（替换模型和素材 ID）：{\"workspace_id\":1,\"model_version_id\":42,\"operation_code\":\"image.relight\",\"idempotency_key\":\"relight-501-v1\",\"params\":{\"tool\":\"image.relight\",\"tool_version\":1,\"tool_params\":{\"mode\":\"manual\",\"key_light\":\"left\",\"brightness\":65,\"color\":\"#FFDDAA\",\"rim_light\":true}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。提交与估价共用相同工具参数和素材校验，结果仍在任务 outputs 中返回。\n人像示例（模型和素材 ID 必须替换为当前空间可用值）：{\"workspace_id\":1,\"model_version_id\":43,\"operation_code\":\"image.portrait_texture\",\"idempotency_key\":\"portrait-501-v2\",\"params\":{\"tool\":\"image.portrait_texture\",\"tool_version\":2,\"tool_params\":{\"subject_scene_fusion\":\"自然融合\",\"lighting_fusion\":\"自然匹配\",\"skin_texture\":\"自然肤质\",\"surface_texture\":\"自然纹理\",\"sharpness\":\"标准清晰\"}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。提交至 POST /api/v1/ai/tasks；估价使用同一正文去掉 idempotency_key，提交至 POST /api/v1/ai/tasks/estimate-cost。\n情绪示例（替换模型、素材 ID）：{\"workspace_id\":1,\"model_version_id\":42,\"operation_code\":\"image.portrait_emotion\",\"idempotency_key\":\"emotion-501-v1\",\"params\":{\"tool\":\"image.portrait_emotion\",\"tool_version\":1,\"tool_params\":{\"emotion\":\"happy\",\"strength\":\"subtle\"}},\"input_assets\":[{\"asset_id\":501,\"role\":\"reference_image\"}]}。\n图片超分、视频画质增强通过 GET /api/v1/ai/models 的 operation_code=image.upscale 或 video.upscale 发现模型，不在本工具目录中；执行仍使用上述统一估价与任务接口。",
         "produces": ["application/json"],
         "tags": ["AI"],
-        "summary": "无限画布工具：多角度、打光、人像质感、情绪、全景与机位",
+        "summary": "漫剧制作工具：多角度、打光、人像质感、情绪、全景与机位",
         "parameters": [
           {
             "type": "integer",
@@ -7842,7 +7842,7 @@
     "/api/v1/canvas-shares/{token}": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布分享"],
+        "tags": ["漫剧制作分享"],
         "summary": "匿名读取公开画布",
         "parameters": [
           {
@@ -7879,7 +7879,7 @@
       "get": {
         "description": "仅放行被画布中未删除节点引用（assetId / posterAssetId）的素材；分享关闭或节点删除后立即失效。",
         "produces": ["application/octet-stream"],
-        "tags": ["无限画布分享"],
+        "tags": ["漫剧制作分享"],
         "summary": "匿名读取公开画布引用的素材",
         "parameters": [
           {
@@ -7922,7 +7922,7 @@
     "/api/v1/canvas-shares/{token}/elements": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布分享"],
+        "tags": ["漫剧制作分享"],
         "summary": "匿名分页读取公开画布元素",
         "parameters": [
           {
@@ -7976,7 +7976,7 @@
     "/api/v1/canvases": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "画布列表",
         "parameters": [
           {
@@ -8019,8 +8019,8 @@
         "description": "创建一个 revision=0 的空画布，后续通过元素 mutation 增量保存。",
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
-        "summary": "新建无限画布",
+        "tags": ["漫剧制作"],
+        "summary": "新建漫剧制作",
         "parameters": [
           {
             "type": "integer",
@@ -8052,7 +8052,7 @@
     "/api/v1/canvases/{id}": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "画布详情",
         "parameters": [
           {
@@ -8089,7 +8089,7 @@
       },
       "delete": {
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "删除画布",
         "parameters": [
           {
@@ -8122,7 +8122,7 @@
         "description": "修改标题、active/archived 状态或图片/视频封面。自动更新同时传 cover_asset_id 与 cover_task_id，后端按成功任务完成时间防止并发请求把封面回滚；cover_asset_id=0 清除。preview_asset_id 是兼容旧客户端的废弃别名。归档画布除恢复 active 外保持只读。",
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "更新画布元信息",
         "parameters": [
           {
@@ -8165,7 +8165,7 @@
       "get": {
         "description": "after_revision=0 时按元素 ID 初次分页且不返回 tombstone；after_revision\u003e0 时按 (updated_revision,id) 返回变化并包含删除 tombstone。每页除 limit 外还有约 4 MiB payload 预算。每轮第一页同时返回 state/schema_version、sync_revision 和 history_floor_revision；低于 history floor 的 delta 返回 CANVAS_FULL_SYNC_REQUIRED。next_cursor 是服务端不透明游标，只能用于相同 after_revision 的下一页。",
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "分页加载或增量同步画布元素",
         "parameters": [
           {
@@ -8217,7 +8217,7 @@
         "description": "检查 base_revision 后原子 upsert/delete 最多 500 个元素并把 revision 加一；总元素数不设业务上限。",
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "增量保存画布元素",
         "parameters": [
           {
@@ -8266,7 +8266,7 @@
       "get": {
         "description": "仅 team/enterprise workspace、当前有效套餐为团队版且至少有两名启用成员时开放。事件只包含最新 revision；元素内容继续通过 GET /elements?after_revision= 增量获取。after_revision 只表示客户端已经应用到本地的版本；Last-Event-ID 仅代表浏览器收到了事件，服务端不会把它当成已应用版本。",
         "produces": ["text/event-stream"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "订阅画布协同事件",
         "parameters": [
           {
@@ -8341,7 +8341,7 @@
           }
         ],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "查询画布分享状态",
         "parameters": [
           {
@@ -8378,7 +8378,7 @@
         ],
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "开启或重新生成画布分享",
         "parameters": [
           {
@@ -8422,7 +8422,7 @@
           }
         ],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "关闭画布分享",
         "parameters": [
           {

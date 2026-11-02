@@ -1,7 +1,7 @@
 /**
- * 无限画布列表页
+ * 漫剧制作列表页
  *
- * 页面效果：展示当前工作空间的无限画布列表，支持新建、重命名（仅限自己的画布）、创建副本、删除画布，
+ * 页面效果：展示当前工作空间的漫剧制作列表，支持新建、重命名（仅限自己的画布）、创建副本、删除画布，
  * 点击画布卡片进入 /canvas/:id 编辑器。
  * 数据源：/api/v1/canvases 的 list / create / delete 接口（canvasApi）。
  */
@@ -42,13 +42,13 @@ function formatTime(value?: string): string {
 /** 团队成员对他人画布点「重命名」时的提示。 */
 const OTHERS_CANVAS_RENAME_TIP = '这是其他人的画布，无法重命名'
 
-/** 无限画布列表页主组件。 */
+/** 漫剧制作列表页主组件。 */
 export default function CanvasListView() {
   const navigate = useNavigate()
   const location = useLocation()
   const handleNavigate = useSidebarNavigate()
   /**
-   * 从「我的素材 → 去创作 → 无限画布」带过来的素材。
+   * 从「我的素材 → 去创作 → 漫剧制作」带过来的素材。
    *
    * /canvas 是列表页而不是编辑器，素材不能就地落下：这里正是「选一个已有画布
    * 或新建一个」的地方，因此把素材原样透传给下一跳，由编辑器落成节点。
@@ -506,11 +506,11 @@ export default function CanvasListView() {
       >
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        <section className="pm2-main" aria-label="无限画布">
+        <section className="pm2-main" aria-label="漫剧制作">
           {/* 头部：标题 + 新建 */}
           <div className="pm2-head">
             <div className="pm2-head-titles">
-              <h1 className="pm2-head-title">无限画布</h1>
+              <h1 className="pm2-head-title">漫剧制作</h1>
               <p className="pm2-head-sub">连接灵感、素材与 AI，继续你的创作。</p>
             </div>
             <div className="pm2-head-actions">

@@ -7406,7 +7406,7 @@
     "/api/v1/canvas-shares/{token}": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布分享"],
+        "tags": ["漫剧制作分享"],
         "summary": "匿名读取公开画布",
         "parameters": [
           {
@@ -7443,7 +7443,7 @@
       "get": {
         "description": "仅放行被画布中未删除节点引用（assetId / posterAssetId）的素材；分享关闭或节点删除后立即失效。",
         "produces": ["application/octet-stream"],
-        "tags": ["无限画布分享"],
+        "tags": ["漫剧制作分享"],
         "summary": "匿名读取公开画布引用的素材",
         "parameters": [
           {
@@ -7486,7 +7486,7 @@
     "/api/v1/canvas-shares/{token}/elements": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布分享"],
+        "tags": ["漫剧制作分享"],
         "summary": "匿名分页读取公开画布元素",
         "parameters": [
           {
@@ -7540,7 +7540,7 @@
     "/api/v1/canvases": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "画布列表",
         "parameters": [
           {
@@ -7583,8 +7583,8 @@
         "description": "创建一个 revision=0 的空画布，后续通过元素 mutation 增量保存。",
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
-        "summary": "新建无限画布",
+        "tags": ["漫剧制作"],
+        "summary": "新建漫剧制作",
         "parameters": [
           {
             "type": "integer",
@@ -7616,7 +7616,7 @@
     "/api/v1/canvases/{id}": {
       "get": {
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "画布详情",
         "parameters": [
           {
@@ -7653,7 +7653,7 @@
       },
       "delete": {
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "删除画布",
         "parameters": [
           {
@@ -7686,7 +7686,7 @@
         "description": "修改标题、active/archived 状态或图片/视频封面。自动更新同时传 cover_asset_id 与 cover_task_id，后端按成功任务完成时间防止并发请求把封面回滚；cover_asset_id=0 清除。preview_asset_id 是兼容旧客户端的废弃别名。归档画布除恢复 active 外保持只读。",
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "更新画布元信息",
         "parameters": [
           {
@@ -7729,7 +7729,7 @@
       "get": {
         "description": "after_revision=0 时按元素 ID 初次分页且不返回 tombstone；after_revision\u003e0 时按 (updated_revision,id) 返回变化并包含删除 tombstone。每页除 limit 外还有约 4 MiB payload 预算。每轮第一页同时返回 state/schema_version、sync_revision 和 history_floor_revision；低于 history floor 的 delta 返回 CANVAS_FULL_SYNC_REQUIRED。next_cursor 是服务端不透明游标，只能用于相同 after_revision 的下一页。",
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "分页加载或增量同步画布元素",
         "parameters": [
           {
@@ -7781,7 +7781,7 @@
         "description": "检查 base_revision 后原子 upsert/delete 最多 500 个元素并把 revision 加一；总元素数不设业务上限。",
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "增量保存画布元素",
         "parameters": [
           {
@@ -7830,7 +7830,7 @@
       "get": {
         "description": "仅 team/enterprise workspace、当前有效套餐为团队版且至少有两名启用成员时开放。事件只包含最新 revision；元素内容继续通过 GET /elements?after_revision= 增量获取。after_revision 只表示客户端已经应用到本地的版本；Last-Event-ID 仅代表浏览器收到了事件，服务端不会把它当成已应用版本。",
         "produces": ["text/event-stream"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "订阅画布协同事件",
         "parameters": [
           {
@@ -7905,7 +7905,7 @@
           }
         ],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "查询画布分享状态",
         "parameters": [
           {
@@ -7942,7 +7942,7 @@
         ],
         "consumes": ["application/json"],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "开启或重新生成画布分享",
         "parameters": [
           {
@@ -7986,7 +7986,7 @@
           }
         ],
         "produces": ["application/json"],
-        "tags": ["无限画布"],
+        "tags": ["漫剧制作"],
         "summary": "关闭画布分享",
         "parameters": [
           {
