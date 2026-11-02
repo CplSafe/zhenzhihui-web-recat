@@ -37,6 +37,10 @@ test('旧首页地址在无真实后端和登录态时落到爆款复刻', async
   await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '模板库' })).toBeVisible()
   await expect(page.getByRole('button', { name: '供需商单' })).toBeVisible()
+  await expect(page.locator('.app-sidebar__brand-name')).toHaveText('豆豆同学')
+  await expect(page.locator('.app-sidebar__logo')).toHaveAttribute('src', /doudou/)
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/favicon-doudou.png')
+  await expect(page).toHaveTitle('帧智汇')
 })
 
 test('供需商单展示「我要发单」与「我要接单」两个标签，发单在前且默认选中', async ({ page }) => {

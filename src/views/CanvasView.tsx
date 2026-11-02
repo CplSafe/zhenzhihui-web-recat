@@ -56,7 +56,6 @@ import {
   type CSSProperties,
 } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import brandLogo from '@/img/image copy 7.png'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
 import {
@@ -10791,17 +10790,13 @@ function CanvasInner() {
               <path d="M19 12H5m7 7-7-7 7-7" />
             </svg>
           </button>
-          <div className="canvas-brand">
-            <img src={brandLogo} alt="豆豆同学" className="canvas-brand-logo" />
-            <div className="canvas-brand-text">
-              <span className="canvas-brand-name">豆豆同学</span>
-              <DraftSaveIndicator status={saveStatus} />
-              {cloudStatus !== 'online' && (
-                <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
-                  {cloudMessage}
-                </span>
-              )}
-            </div>
+          <div className="canvas-save-status">
+            <DraftSaveIndicator status={saveStatus} />
+            {cloudStatus !== 'online' && (
+              <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
+                {cloudMessage}
+              </span>
+            )}
           </div>
         </div>
 

@@ -407,35 +407,13 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: #fff;
   box-shadow: 0 4px 18px rgb(23 33 61 / 7%);
 }
-.canvas-brand {
+.canvas-save-status {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   min-width: 0;
   padding-left: 12px;
   border-left: 1px solid #e5e7eb;
-}
-
-.canvas-brand-logo {
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-  flex-shrink: 0;
-}
-
-.canvas-brand-text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.canvas-brand-name {
-  font-family: 'PingFang SC', sans-serif;
-  font-size: 15px;
-  font-weight: 600;
-  color: #30343b;
-  line-height: 1;
 }
 
 .canvas-brand-saved {
@@ -446,7 +424,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 /* DraftSaveIndicator 在画布品牌区的字体 */
-.canvas-brand .creative-draft-save {
+.canvas-save-status .creative-draft-save {
   font-size: 12px;
 }
 

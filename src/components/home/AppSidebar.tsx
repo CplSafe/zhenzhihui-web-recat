@@ -4,7 +4,7 @@
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 菜单图标直接使用 Figma 导出的默认态/选中态 SVG，保持造型、尺寸和颜色一致。
  */
-import brandLogo from '@/img/image copy 7.png'
+import brandLogo from '@/assets/logo/doudou.png'
 import marketIcon from '@/assets/sidebar/cooperation.svg'
 import marketActiveIcon from '@/assets/sidebar/cooperation-active.svg'
 import smartIcon from '@/assets/sidebar/smart.svg'
