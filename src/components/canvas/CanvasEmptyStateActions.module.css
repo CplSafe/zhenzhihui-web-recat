@@ -1,0 +1,496 @@
+.studio {
+  position: relative;
+  z-index: 6;
+  width: min(1320px, calc(100% - 64px));
+  max-height: none;
+  overflow: visible;
+  flex: none;
+  margin: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--canvas-text, #e5e7eb);
+  text-align: center;
+}
+
+.intro {
+  margin-bottom: 24px;
+}
+
+.intro h1 {
+  margin: 0;
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.intro p {
+  margin: 8px 0 0;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.recent {
+  margin: 100px auto 0;
+  width: 100%;
+  text-align: left;
+}
+.recentHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.recentHeader h2 {
+  margin: 0;
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 14px;
+  font-weight: 600;
+}
+.recentHeader button {
+  border: 0;
+  background: transparent;
+  color: var(--canvas-brand, #00e5be);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.recentGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+}
+.projectCard {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid #e1e8e5;
+  border-radius: 14px;
+  background: var(--canvas-surface-raised, #202433);
+  box-shadow: 0 1px 3px rgb(16 24 40 / 5%);
+  color: var(--canvas-text, #e5e7eb);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+.projectCard:hover {
+  transform: translateY(-2px);
+  border-color: rgb(203 213 217 / 48%);
+}
+.projectCard:focus-visible {
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
+  outline-offset: 3px;
+}
+.projectCover {
+  display: flex;
+  aspect-ratio: 1;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  background: #f1f4f3;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+}
+.projectCover svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.projectCoverMedia {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #f1f4f3;
+}
+.projectActions {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+}
+.projectActions > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #e5ebe8;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 94%);
+  color: #4b5563;
+  font-size: 21px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgb(16 24 40 / 10%);
+}
+.projectMenu {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  display: grid;
+  min-width: 120px;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid #e5ebe8;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+.projectMenu button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #344054;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.projectMenu button:hover {
+  background: #f2f5f4;
+}
+.projectMenu button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.renameBackdrop {
+  position: fixed;
+  z-index: 3000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 55%);
+}
+.renameDialog {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid #e5ebe8;
+  border-radius: 14px;
+  background: #fff;
+  color: #202b27;
+  text-align: left;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 35%);
+}
+.renameDialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.renameDialog input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+.renameDialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.renameDialog > div button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.renameDialog > div button:last-child {
+  border-color: #d0d5dd;
+  background: #fff;
+  color: inherit;
+}
+.renameDialog > div button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.projectBody {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+}
+.projectBody strong,
+.projectBody small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projectBody strong {
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 13px;
+  font-weight: 600;
+}
+.projectBody small {
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 11px;
+}
+.recentHint {
+  margin: 0;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+}
+
+.action {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 14px;
+  min-width: 0;
+  min-height: 76px;
+  align-content: center;
+  justify-items: start;
+  row-gap: 3px;
+  padding: 12px 16px;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 14px;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--canvas-dur, 180ms) var(--canvas-ease, ease),
+    border-color var(--canvas-dur, 180ms) var(--canvas-ease, ease),
+    transform var(--canvas-dur, 180ms) var(--canvas-ease, ease);
+}
+
+.action:hover {
+  transform: translateY(-2px);
+  border-color: rgb(203 213 217 / 42%);
+  background: var(--canvas-surface-highest, #2b3145);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
+  outline-offset: 3px;
+}
+
+.icon {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: transparent;
+  color: #087d60;
+}
+
+.icon svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.action strong {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: left;
+}
+
+.action small {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+  line-height: 17px;
+  text-align: left;
+}
+
+@media (max-width: 760px) {
+  .studio {
+    width: min(520px, calc(100% - 36px));
+  }
+  .recentGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .intro {
+    margin-bottom: 18px;
+  }
+
+  .intro h1 {
+    font-size: 20px;
+  }
+
+  .actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .action {
+    min-height: 72px;
+    padding: 10px 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  .studio {
+    width: min(340px, calc(100% - 28px));
+  }
+
+  .projectCover {
+    aspect-ratio: 16 / 9;
+  }
+
+  .recentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .action {
+    grid-template-columns: 34px minmax(0, 1fr);
+    column-gap: 8px;
+    min-height: 72px;
+    padding: 8px 9px;
+  }
+
+  .icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .icon svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .action strong {
+    font-size: 13px;
+  }
+
+  .action small {
+    font-size: 11px;
+    line-height: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action {
+    transition: none;
+  }
+}
+
+/* Recent canvases and their menus use the same surface ladder as the editor. */
+.projectCard {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.projectCard:hover,
+.action:hover {
+  border-color: rgb(203 213 217 / 60%);
+}
+.projectCover,
+.projectCoverMedia {
+  background: #12141c;
+}
+.projectActions > button,
+.projectMenu,
+.renameDialog {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  background: #202433;
+  color: #e5e7eb;
+}
+.projectMenu button {
+  color: #e5e7eb;
+}
+.projectMenu button:hover {
+  background: #2b3145;
+}
+.renameDialog input {
+  background: #0d0e14;
+  border-color: rgb(255 255 255 / 12%);
+}
+.renameDialog > div button,
+.renameDialog > div button:last-child {
+  border-color: rgb(255 255 255 / 12%);
+  background: #202433;
+  color: #e5e7eb;
+}
+
+/* Inside the editor, keep the creation entry below the navigation and above the dock. */
+:global(.canvas-view) .studio {
+  position: absolute;
+  top: 108px;
+  left: 50%;
+  max-height: calc(100dvh - 200px);
+  margin: 0;
+  overflow-y: auto;
+  transform: translateX(-50%);
+}
+:global(.canvas-view) .recent {
+  margin-top: 64px;
+}
+@media (max-width: 760px) {
+  :global(.canvas-view) .studio {
+    top: 108px;
+    max-height: calc(100dvh - 210px);
+  }
+  :global(.canvas-view) .recent {
+    margin-top: 40px;
+  }
+}
+
+/* Entry-page overrides are scoped away from the editor's empty canvas. */
+:global(.canvas-entry-main) .projectCover,
+:global(.canvas-entry-main) .projectCoverMedia {
+  background: #f1f4f3;
+}
+:global(.canvas-entry-main) .projectActions > button,
+:global(.canvas-entry-main) .projectMenu {
+  background: #fff;
+  border-color: #e5ebe8;
+  color: #344054;
+}
+:global(.canvas-entry-main) .projectMenu button {
+  color: #344054;
+}
+:global(.canvas-entry-main) .projectMenu button:hover {
+  background: #f2f5f4;
+}
+:global(body:has(.canvas-entry-main)) .renameDialog {
+  background: #fff;
+  border-color: #e5ebe8;
+  color: #202b27;
+}
+:global(body:has(.canvas-entry-main)) .renameDialog input,
+:global(body:has(.canvas-entry-main)) .renameDialog > div button,
+:global(body:has(.canvas-entry-main)) .renameDialog > div button:last-child {
+  background: #fff;
+  border-color: #d0d5dd;
+  color: #202b27;
+}

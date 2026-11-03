@@ -161,7 +161,7 @@ export default function CanvasToolScene({
     }
     let disposed = false
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(mode === 'panorama' ? '#f7f8fa' : '#edf2f2')
+    scene.background = new THREE.Color(mode === 'panorama' ? '#0d0e14' : '#edf2f2')
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100)
     const light = new THREE.DirectionalLight('#ffffff', 2.5)
     const rim = new THREE.DirectionalLight('#b9d9ff', 0)

@@ -8,6 +8,7 @@
  */
 
 import { isAudioFile } from './canvasAudio'
+import { mimeTypeFromSignature } from './fileSignature'
 
 /** 图片节点可选比例（与 CanvasNodePanel 的 aspectRatios 保持一致） */
 export const IMAGE_NODE_RATIOS = ['2:3', '1:1', '4:3', '16:9', '9:16'] as const
@@ -16,11 +17,53 @@ export const IMAGE_NODE_RATIOS = ['2:3', '1:1', '4:3', '16:9', '9:16'] as const
 /** 单次本地素材导入上限；上传阶段会限流，避免大量文件同时占满网络和内存。 */
 export const LOCAL_IMAGE_IMPORT_LIMIT = 100
 
+/** 部分 Windows 文件来源会把 HEIC/HEIF 的 File.type 留空，按扩展名兜底。 */
+export function isCanvasImageFile(file: File | null | undefined): file is File {
+  if (!file) return false
+  if (
+    String(file.type || '')
+      .toLowerCase()
+      .startsWith('image/')
+  )
+    return true
+  return /\.(?:heic|heif)$/i.test(String(file.name || ''))
+}
+
+/** HEIC/HEIF 无法在多数浏览器中直接预览；不解码时返回原文件供上传端报错处理。 */
+export async function normalizeCanvasImageFile(file: File): Promise<File> {
+  const signatureMime = mimeTypeFromSignature(new Uint8Array(await file.slice(0, 64).arrayBuffer()))
+  const mime = signatureMime || String(file.type || '').toLowerCase()
+  if (mime !== 'image/heic' && mime !== 'image/heif') return file
+
+  const url = URL.createObjectURL(file)
+  try {
+    const image = new Image()
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error('当前浏览器无法解码 HEIC 图片，请先转成 JPG 或 PNG 后再上传'))
+      image.src = url
+    })
+    const width = image.naturalWidth || image.width
+    const height = image.naturalHeight || image.height
+    if (!(width > 0) || !(height > 0)) throw new Error('HEIC 图片无效，请检查文件后重试')
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('当前浏览器无法转换 HEIC 图片，请先转成 JPG 或 PNG 后再上传')
+    context.drawImage(image, 0, 0)
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+    if (!blob) throw new Error('HEIC 图片转换失败，请先转成 JPG 或 PNG 后再上传')
+    const name = String(file.name || 'image.heic').replace(/\.(?:heic|heif)$/i, '') || 'image'
+    return new File([blob], `${name}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified })
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 /** 从文件列表中挑出图片文件（忽略视频/文档等非图片文件） */
 export function pickImageFiles(files: ArrayLike<File | null> | null | undefined): File[] {
-  return Array.from(files || []).filter(
-    (file): file is File => Boolean(file) && String(file!.type || '').startsWith('image/'),
-  )
+  return Array.from(files || []).filter((file): file is File => isCanvasImageFile(file))
 }
 
 /**

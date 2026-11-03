@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
+import CanvasFailureDetails from './CanvasFailureDetails'
 import CanvasNodeStatus from './CanvasNodeStatus'
 import { useToast } from '@/composables/useToast'
-import styles from './CanvasNodeStatus.module.css'
+import styles from './CanvasNodeFailure.module.css'
 
 /** 节点失败态直接展示原因，并支持复制本次请求编号。 */
 export default function CanvasNodeFailure({
@@ -11,6 +12,7 @@ export default function CanvasNodeFailure({
   requestId,
   title = '生成失败',
   failedAt,
+  detailsData,
 }: {
   reason?: string
   children?: ReactNode
@@ -18,6 +20,7 @@ export default function CanvasNodeFailure({
   requestId?: string
   title?: string
   failedAt?: string
+  detailsData?: Record<string, any>
 }) {
   const { showToast } = useToast()
   const copyRequestId = async () => {
@@ -42,19 +45,42 @@ export default function CanvasNodeFailure({
       </svg>
       <strong>{title}</strong>
       {reason && (
-        <p className={styles.failureReason} data-failure-info>
-          {reason}
-        </p>
+        <div className={styles.failureDetails} data-failure-info>
+          {detailsData ? (
+            <CanvasFailureDetails
+              data={{
+                ...detailsData,
+                taskFailure: {
+                  ...detailsData.taskFailure,
+                  message: reason,
+                  requestId: requestId || detailsData.taskFailure?.requestId,
+                  failedAt: failedAt || detailsData.taskFailure?.failedAt,
+                },
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className={styles.detailsButton}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                void copyRequestId()
+              }}
+              title={`${title}：${reason}${failedAt ? `；失败时间：${failedAt}` : ''}`}
+            >
+              {reason}
+            </button>
+          )}
+          {/CONCURRENCY|并发|任务正在生成/i.test(reason) && (
+            <span className={styles.failureHint}>这是上次请求的返回记录，不代表当前仍有任务运行。</span>
+          )}
+          {failedAt && Number.isFinite(Date.parse(failedAt)) && (
+            <small className={styles.failureHint}>失败时间：{new Date(failedAt).toLocaleString()}</small>
+          )}
+        </div>
       )}
-      {failedAt && Number.isFinite(Date.parse(failedAt)) && (
-        <small data-failure-info>失败时间：{new Date(failedAt).toLocaleString()}</small>
-      )}
-      {/CONCURRENCY|并发|任务正在生成/i.test(reason || '') && (
-        <p className={styles.failureReason} data-failure-info>
-          这是上次请求返回的并发限制，不代表当前仍有任务运行。请查看详情核对。
-        </p>
-      )}
-      {requestId && (
+      {requestId && !detailsData && (
         <button
           type="button"
           className={`${styles.requestId} nodrag nopan`}

@@ -1,183 +1,199 @@
-/* 搜索面板：浮在画布左上，避开顶部标题栏与左侧工具列 */
-.panel {
+.searchControl {
   position: absolute;
-  top: 16px;
-  left: 96px;
-  /* chrome 档（见 CanvasView.css 顶部的层级口径） */
-  z-index: 1100;
-  width: 320px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 12px 34px rgba(23, 33, 61, 0.16);
+  z-index: 1450;
+  left: 50%;
+  bottom: max(76px, calc(env(safe-area-inset-bottom) + 64px));
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(520px, calc(100dvh - 112px));
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 16px;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  box-shadow: 0 12px 34px rgb(0 0 0 / 35%);
   font-family: 'PingFang SC', sans-serif;
   overflow: hidden;
+  transform: translateX(-50%);
+  transform-origin: 50% 100%;
+  display: flex;
+  flex-direction: column;
+  animation: seek-open 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes seek-open {
+  from {
+    width: 44px;
+    border-radius: 999px;
+  }
+  to {
+    width: min(360px, calc(100vw - 32px));
+    border-radius: 16px;
+  }
 }
 
 .inputRow {
   display: flex;
+  height: 44px;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 0 10px 0 13px;
 }
 
 .searchIcon {
   flex: 0 0 auto;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
 }
-
 .input {
   min-width: 0;
   flex: 1;
-  height: 28px;
-  border: none;
-  outline: none;
+  height: 30px;
+  border: 0;
+  outline: 0;
   background: transparent;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   font-size: 13px;
+  opacity: 0;
+  animation: reveal 140ms ease-out 100ms forwards;
 }
-
 .input::placeholder {
-  color: #a8aebd;
+  color: var(--canvas-text-muted, #9ca3af);
 }
-
+.clear,
 .close {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: #7a8496;
-  font-size: 14px;
-  line-height: 1;
+  border: 0;
+  border-radius: 50%;
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text, #e5e7eb);
+  font: inherit;
+  font-size: 18px;
   cursor: pointer;
+  opacity: 0;
+  animation: reveal 140ms ease-out 100ms forwards;
 }
-
-.close:hover {
-  background: #fff;
-  color: #344054;
+.clear {
+  font-size: 16px;
 }
-
-/* 类型筛选：一行 chip，点选即筛、再点取消 */
+.close:hover,
+.clear:hover {
+  background: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.searchContent {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: reveal 150ms ease-out 120ms both;
+}
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 0 10px 8px;
 }
-
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 24px;
   padding: 0 9px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 12px;
-  background: #fff;
-  color: #7a8496;
+  background: var(--canvas-surface, #262626);
+  color: var(--canvas-text-muted, #9ca3af);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    border-color 140ms ease;
 }
-
 .chip em {
-  color: #a8aebd;
+  color: var(--canvas-text-muted, #9ca3af);
   font-style: normal;
   font-variant-numeric: tabular-nums;
 }
-
-.chip:hover {
-  border-color: #e5e7eb;
-}
-
 .chipActive {
-  border-color: #e5e7eb;
-  background: #fff;
-  color: #5767e5;
+  color: #1fcfa9;
+  border-color: rgb(203 213 217 / 40%);
 }
-
-.chipActive em {
-  color: #8b96ee;
-}
-
 .results {
-  max-height: 320px;
-  border-top: 1px solid #e5e7eb;
+  max-height: min(360px, 48vh);
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
-
-.itemTextEmpty {
-  color: #a8aebd;
-}
-
 .item {
   display: flex;
   width: 100%;
   align-items: baseline;
   gap: 8px;
   padding: 8px 12px;
-  border: none;
+  border: 0;
   background: transparent;
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-
-/* 键盘与鼠标共用同一套高亮，避免出现两个「当前项」 */
+.item:hover,
 .itemActive {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
 }
-
 .itemKind {
   flex: 0 0 auto;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #5767e5;
   font-size: 11px;
   font-weight: 600;
 }
-
-/* 单行截断：节点文本可能很长，换行会让结果行高度参差、扫读困难 */
 .itemText {
   overflow: hidden;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
+.itemTextEmpty {
+  color: var(--canvas-text-muted, #9ca3af);
+}
+.itemCount {
+  margin-left: 8px;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+}
 .empty,
 .more {
   margin: 0;
   padding: 12px;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   text-align: center;
 }
-
 .more {
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
 }
-
 .close:focus-visible,
+.clear:focus-visible,
 .item:focus-visible {
-  outline: 3px solid rgb(87 103 229 / 26%);
+  outline: 3px solid rgb(203 213 217 / 35%);
   outline-offset: -3px;
 }
-
-.itemCount {
-  margin-left: 8px;
-  color: #7a8496;
-  font-size: 12px;
+@keyframes reveal {
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .searchControl,
+  .input,
+  .close,
+  .clear,
+  .searchContent {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
 }

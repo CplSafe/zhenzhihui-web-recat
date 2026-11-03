@@ -22,10 +22,10 @@
   align-items: center;
   gap: 2px;
   padding: 4px 6px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(23, 33, 61, 0.1);
+  background: var(--canvas-surface, #262626);
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
   font-family: 'PingFang SC', sans-serif;
 }
 
@@ -40,7 +40,7 @@
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   cursor: pointer;
   transition:
     background-color 140ms ease,
@@ -49,10 +49,10 @@
 .uiSize {
   flex-shrink: 0;
   min-height: 32px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 6px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   font-size: 13px;
 }
@@ -63,18 +63,18 @@
 }
 
 .btn:hover {
-  background: #fff;
-  color: #5767e5;
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-brand, #00e5be);
 }
 
 /* 开启态用实底而不是只换文字色：这是个「当前生效中」的状态，需要一眼可辨 */
 .btnActive {
-  background: #fff;
-  color: #5767e5;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-brand, #00e5be);
 }
 
 .btnActive:hover {
-  background: #f2f4f7;
+  background: var(--canvas-surface-highest, #2b3145);
 }
 
 .zoomValue {
@@ -84,7 +84,7 @@
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -94,14 +94,14 @@
 }
 
 .zoomValue:hover {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
 }
 
 .divider {
   width: 1px;
   height: 16px;
   margin: 0 3px;
-  background: #f2f4f7;
+  background: var(--canvas-border, rgb(255 255 255 / 12%));
 }
 
 /* 规模读数：纯展示，字号与倍率读数一致但不加粗，别抢了可点按钮的视觉 */
@@ -110,7 +110,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 4px;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

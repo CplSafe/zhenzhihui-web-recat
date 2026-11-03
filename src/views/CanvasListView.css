@@ -256,6 +256,9 @@
   color: var(--cl-ink);
   font: inherit;
 }
+.cl-brief-name input:focus-visible {
+  outline: none;
+}
 .cl-brief-name small {
   position: absolute;
   right: 12px;
@@ -295,7 +298,7 @@
   cursor: not-allowed;
 }
 .cl-page :is(button, input, [role='button']):focus-visible {
-  outline: 2px solid var(--cl-accent);
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 3px;
 }
 .cl-carry-banner {
@@ -365,4 +368,132 @@
   .cl-brief-foot {
     padding: 0 20px 24px;
   }
+}
+.canvas-entry-main {
+  --canvas-text: #202b27;
+  --canvas-text-muted: #66736d;
+  --canvas-border: #e5ebe8;
+  --canvas-surface-raised: #fff;
+  --canvas-surface-highest: #f3f6f5;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px 24px;
+  box-sizing: border-box;
+  background: var(--cl-ground);
+}
+/* Keep the rename form inside its dialog padding at every viewport width. */
+.cl-rename-mask {
+  box-sizing: border-box;
+  z-index: 3000;
+}
+.cl-rename-modal {
+  width: min(420px, 100%);
+}
+.cl-rename-modal .pm2-modal-body {
+  min-width: 0;
+}
+.cl-rename-modal .pm2-modal-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* Canvas library surfaces are scoped to this module; the shared app navigation keeps its own theme. */
+.cl-page {
+  --cl-ground: #0d0e14;
+  --cl-surface: #262626;
+  --cl-well: #12141c;
+  --cl-ink: #e5e7eb;
+  --cl-muted: #94a3b8;
+  --cl-line: rgb(255 255 255 / 12%);
+  --cl-accent: #00e5be;
+}
+.cl-page .apptop,
+.cl-page .app-sidebar {
+  background: #fff;
+}
+.cl-page .pm2-pcard,
+.cl-page .pm2-modal {
+  background: var(--cl-surface);
+  color: var(--cl-ink);
+}
+.cl-page .pm2-pcard:hover {
+  border-color: rgb(203 213 217 / 60%);
+}
+.cl-page .pm2-new-btn,
+.cl-brief-foot > button:not(.cl-brief-cancel),
+.cl-page .pm2-modal-btn--primary {
+  background: #00e5be;
+  color: #08090d;
+}
+.cl-page .pm2-new-btn:hover,
+.cl-page .pm2-modal-btn--primary:hover {
+  background: #1ae9c5;
+}
+.cl-brief-name input,
+.cl-page .pm2-modal-input {
+  border-color: var(--cl-line);
+  background: #0d0e14;
+  color: var(--cl-ink);
+}
+.cl-page .pm2-modal-head,
+.cl-page .pm2-modal-label {
+  color: var(--cl-ink);
+}
+.cl-page .pm2-modal-btn:not(.pm2-modal-btn--primary) {
+  background: #202433;
+  color: var(--cl-ink);
+  border-color: var(--cl-line);
+}
+.cl-brief-mask,
+.cl-rename-mask {
+  background: rgb(0 0 0 / 65%);
+}
+.cl-carry-banner {
+  background: rgb(0 229 190 / 12%);
+  color: #a8f5e5;
+}
+.canvas-entry-main {
+  --canvas-text: #e5e7eb;
+  --canvas-text-muted: #94a3b8;
+  --canvas-border: rgb(255 255 255 / 12%);
+  --canvas-surface-raised: #262626;
+  --canvas-surface-highest: #202433;
+  --canvas-brand: #00e5be;
+}
+
+/* The creation landing page uses the light app shell; the canvas editor keeps its own theme. */
+.canvas-entry-main {
+  --canvas-text: #202b27;
+  --canvas-text-muted: #66736d;
+  --canvas-border: #e5ebe8;
+  --canvas-surface-raised: #f7f9f8;
+  --canvas-surface-highest: #edf3f0;
+  --canvas-brand: #087d60;
+  --canvas-border-active: #087d60;
+  background: #fff;
+}
+.cl-page:has(.canvas-entry-main) {
+  --cl-surface: #fff;
+  --cl-well: #f1f4f3;
+  --cl-ink: #202b27;
+  --cl-muted: #66736d;
+  --cl-line: #e5ebe8;
+  --cl-accent: #087d60;
+}
+.cl-page:has(.canvas-entry-main) .cl-brief-name input {
+  background: #fff;
+  color: #202b27;
+}
+.cl-page:has(.canvas-entry-main) .cl-brief-foot > button:not(.cl-brief-cancel) {
+  background: #087d60;
+  color: #fff;
+}
+.cl-page:has(.canvas-entry-main) .cl-brief-mask {
+  background: rgb(20 31 28 / 34%);
 }

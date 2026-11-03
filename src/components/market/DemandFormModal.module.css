@@ -175,6 +175,50 @@
   cursor: pointer;
 }
 
+.durationChip {
+  width: min(270px, 52vw);
+  height: auto;
+  min-height: 0;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.durationChip > svg {
+  display: none;
+}
+
+.durationHeader {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.durationHeader strong {
+  color: #1f2937;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.durationChip > .durationHeader {
+  color: #4b5563;
+}
+
+.durationChip :global(.wks) {
+  min-width: 0;
+  padding: 0;
+}
+
+.durationChip :global(.wks-control) {
+  height: 64px;
+}
+
 .ratioSelect {
   min-width: 104px;
 }

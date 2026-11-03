@@ -43,6 +43,6 @@
   opacity: 0.5;
 }
 .retry:focus-visible {
-  outline: 2px solid #5767e5;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 3px;
 }

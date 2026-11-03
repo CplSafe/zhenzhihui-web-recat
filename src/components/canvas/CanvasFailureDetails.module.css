@@ -12,7 +12,7 @@
   font: inherit;
 }
 .trigger:focus-visible {
-  outline: 2px solid #5767e5;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
 }
 .details {
   user-select: text;
@@ -20,7 +20,7 @@
 .reason {
   padding: 12px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-input, #0d0e14);
   color: #d14343;
   overflow-wrap: anywhere;
 }
@@ -30,7 +30,7 @@
   gap: 12px;
 }
 .details dt {
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
 }
 .details dd {
   margin: 0;
@@ -39,12 +39,12 @@
 .details small {
   display: block;
   margin-top: 4px;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
 }
 .details button {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #5767e5;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-brand, #00e5be);
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
@@ -54,7 +54,7 @@
 }
 .history {
   margin-top: 20px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   padding-top: 12px;
 }
 .history summary {
@@ -62,6 +62,6 @@
   color: #7a8496;
 }
 .history section {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   padding: 8px 0 16px;
 }

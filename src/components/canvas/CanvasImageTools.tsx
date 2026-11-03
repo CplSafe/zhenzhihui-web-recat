@@ -262,7 +262,8 @@ function ToolEditor({
     },
     [tool.code],
   )
-  const [nativeValues, setNativeValues] = useState(() => nativeDefaults(nativeFields))
+  const initialNativeValues = useMemo(() => nativeDefaults(nativeFields), [nativeDefaults, nativeFields])
+  const [nativeValues, setNativeValues] = useState(initialNativeValues)
   useEffect(() => {
     if (allowed.some((model) => Number(model.id) === modelId)) return
     const next = allowed[0]
@@ -390,8 +391,8 @@ function ToolEditor({
     const angle = tool.code === 'image.multi_angle'
     const panorama = tool.code === 'image.panorama'
     const reset = () => {
-      updateValues(defaults())
-      setNativeValues(nativeDefaults(nativeFields))
+      setValues(defaults())
+      setNativeValues(initialNativeValues)
       setPrompt('')
       setReferenceId('')
     }
@@ -550,7 +551,7 @@ function ToolEditor({
           </div>
         )}
         <footer className={styles.studioFooter}>
-          <Button type="text" disabled={busy} onClick={reset}>
+          <Button type="text" aria-label="重置参数" disabled={busy} onClick={reset}>
             重置参数
           </Button>
           <span role="status">
@@ -816,8 +817,8 @@ function ToolEditor({
             size="small"
             disabled={busy}
             onClick={() => {
-              updateValues(browser ? { yaw: 0, pitch: 0, fov: 65 } : defaults())
-              setNativeValues(nativeDefaults(nativeFields))
+              setValues(browser ? { yaw: 0, pitch: 0, fov: 65 } : defaults())
+              setNativeValues(initialNativeValues)
               setPrompt('')
               setReferenceId('')
             }}

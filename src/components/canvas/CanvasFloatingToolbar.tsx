@@ -153,6 +153,7 @@ function CanvasFloatingToolbar({
       className={[styles.toolbar, menuOpen ? styles.toolbarMenuOpen : '', leaving ? styles.toolbarLeaving : '']
         .filter(Boolean)
         .join(' ')}
+      data-canvas-floating-toolbar="true"
       aria-hidden={leaving || undefined}
       onPointerDownCapture={(event) => {
         pointerDownRef.current = true

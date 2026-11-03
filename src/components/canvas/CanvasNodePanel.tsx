@@ -2636,7 +2636,7 @@ export default function CanvasNodePanel({
                     : inputValidationError || (hasExistingResult ? '重新制作' : '开始制作')
             }
           >
-            {checkingAssets ? '检查素材中…' : kind === 'text' ? '制作分镜' : generateActionLabel}
+            {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}
           </button>
         </div>
       </div>

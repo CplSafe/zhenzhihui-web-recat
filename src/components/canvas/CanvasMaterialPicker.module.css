@@ -4,7 +4,7 @@
   z-index: 1400;
   width: 480px;
   max-height: 440px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
@@ -36,7 +36,7 @@
   max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
   height: 776px;
   max-height: calc((100dvh - 80px) / var(--canvas-ui-scale, 1));
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border-radius: 14px;
   overflow: hidden;
   display: flex;
@@ -56,7 +56,7 @@
   font-size: 22px;
   font-weight: 500;
   line-height: 24px;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
 }
 
 /* Tab：22px 大 tab，选中 #333 / 未选中 #909090，间距 50px */
@@ -80,11 +80,11 @@
 }
 
 .modalTab:hover {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
 }
 
 .modalTabActive {
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font-weight: 500;
 }
 
@@ -99,7 +99,7 @@
   padding: 0 12px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   transition:
     border-color 0.15s,
@@ -107,9 +107,9 @@
 }
 
 .modalSearch:focus-within {
-  border-color: #5767e5;
-  background: #fff;
-  color: #30343b;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .modalSearchIcon {
@@ -124,7 +124,7 @@
   background: transparent;
   font-size: 14px;
   line-height: 20px;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font-family: 'PingFang SC', sans-serif;
 }
 
@@ -150,7 +150,7 @@
   position: relative;
   width: 250px;
   height: 320px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 2px solid rgba(229, 231, 235, 0.34);
   border-radius: 14px;
   overflow: hidden;
@@ -218,8 +218,8 @@
 
 .modalPickCancel {
   border: 1px solid rgba(51, 51, 51, 0.15);
-  background: #fff;
-  color: #30343b;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .modalPickConfirm {
@@ -259,7 +259,7 @@
   width: 250px;
   height: 250px;
   overflow: hidden;
-  background: #f2f4f7;
+  background: var(--canvas-surface-raised);
   border-radius: 14px 14px 0 0;
 }
 
@@ -296,7 +296,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font-size: 18px;
   line-height: 20px;
   min-width: 0;
@@ -325,7 +325,7 @@
   width: min(460px, calc((100vw - 48px) / var(--canvas-ui-scale, 1)));
   max-height: none;
   border-radius: 24px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow:
     0 24px 80px rgba(15, 23, 42, 0.18),
@@ -377,7 +377,7 @@
   padding: 0;
   border: 1px solid rgba(87, 103, 229, 0.12);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.76);
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   cursor: pointer;
   transition:
@@ -388,16 +388,16 @@
 }
 
 .backBtn:hover {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
   border-color: rgba(87, 103, 229, 0.26);
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
   transform: translateX(-1px);
 }
 
 .title {
   font-size: 15px;
   font-weight: 600;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   white-space: nowrap;
 }
 
@@ -422,8 +422,8 @@
 }
 
 .closeBtn:hover {
-  background: #fff;
-  color: #30343b;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .tabs {
@@ -462,7 +462,7 @@
   padding: 0 8px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   transition:
     border-color 0.15s,
@@ -470,9 +470,9 @@
 }
 
 .search:focus-within {
-  border-color: #5767e5;
-  background: #fff;
-  color: #30343b;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .search input {
@@ -483,7 +483,7 @@
   background: transparent;
   font-size: 12px;
   line-height: 18px;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font-family: 'PingFang SC', sans-serif;
 }
 
@@ -510,12 +510,12 @@
 }
 
 .tab:hover {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
 }
 
 .tabActive {
-  color: #5767e5;
-  border-bottom-color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
+  border-bottom-color: var(--canvas-border-active, #cbd5d9);
   font-weight: 500;
 }
 
@@ -531,7 +531,7 @@
 }
 
 .grid::-webkit-scrollbar-thumb {
-  background: #f2f4f7;
+  background: var(--canvas-surface-raised);
   border-radius: 2px;
 }
 
@@ -594,7 +594,7 @@
   overflow: hidden;
   border: 1px solid rgba(51, 51, 51, 0.08);
   border-radius: 12px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
   cursor: pointer;
   transition: opacity 0.15s;
@@ -629,7 +629,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #f2f4f7;
+  background: var(--canvas-surface-raised);
 }
 
 /* 封面媒体容器：占满卡片（img/video 尺寸对齐 resource-asset-cover img/video） */
@@ -653,7 +653,7 @@
 .itemPlaceholder {
   width: 100%;
   height: 100%;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 
 /* 悬浮操作栏 — 参考 resource-favorite-actions（卡片底部渐变浮现） */
@@ -757,4 +757,68 @@
 .loadMoreSentinel {
   height: 40px;
   width: 100%;
+}
+.panel,
+.panelDrawer,
+.modalPanel {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.modalSearchInput,
+.search input,
+.input,
+.modalSearch input {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.header,
+.headerDrawer,
+.modalToolbar,
+.modalPickBar {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  color: var(--canvas-text, #e5e7eb);
+}
+.title,
+.modalTitle,
+.empty,
+.emptyText {
+  color: var(--canvas-text, #e5e7eb);
+}
+.tab,
+.modalTab,
+.backBtn,
+.closeBtn {
+  color: var(--canvas-text-muted, #9ca3af);
+}
+.tabActive,
+.modalTabActive {
+  color: #e5e7eb;
+  background: var(--canvas-surface-highest, #2b3145);
+}
+.modalPickCancel,
+.backBtn,
+.closeBtn {
+  background: var(--canvas-surface-highest, #2b3145);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.modalSearch,
+.modalSearch:focus-within {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text-muted, #9ca3af);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.modalSearchInput,
+.modalRatio {
+  color: var(--canvas-text, #e5e7eb);
+}
+.modalSize {
+  color: var(--canvas-text-muted, #9ca3af);
+}
+.modalInfo {
+  background: var(--canvas-surface-highest, #2b3145);
+}
+.modalCard {
+  background: var(--canvas-surface-highest, #2b3145);
 }

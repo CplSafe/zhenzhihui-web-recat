@@ -8,11 +8,11 @@
   border: 2px solid transparent;
   border-radius: 8px;
   padding: 4px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   cursor: pointer;
 }
 .list button[aria-pressed='true'] {
-  border-color: #5767e5;
+  border-color: var(--canvas-border-active, #cbd5d9);
 }
 .list img {
   width: 72px;
@@ -45,4 +45,11 @@
   border: 2px solid white;
   box-shadow: 0 0 0 999px #0008;
   pointer-events: none;
+}
+.list button {
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text, #e5e7eb);
+}
+.preview {
+  background: #0d0e14;
 }

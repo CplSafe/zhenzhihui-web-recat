@@ -18,11 +18,11 @@
   align-items: center;
   gap: 4px;
   padding: 8px;
-  background: #fff;
+  background: var(--canvas-surface, #262626);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
   animation: toolbar-enter 0.2s ease-out;
   transform: translateX(-50%);
   will-change: opacity, transform;
@@ -70,7 +70,7 @@
   height: 44px;
   border: none;
   background: transparent;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   cursor: pointer;
   border-radius: 10px;
   transition:
@@ -82,7 +82,7 @@
  * 不用 antd 主色 #5767e5——设计稿里画布工具栏就是绿色语言。 */
 .toolBtn:hover {
   background: transparent;
-  color: #1fcfa9;
+  color: var(--canvas-brand, #00e5be);
 }
 
 /* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
@@ -103,6 +103,7 @@
 .keyboardGlyph {
   width: 24px;
   height: 24px;
+  font-size: 20px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -112,7 +113,7 @@
 }
 
 .toolBtn:focus-visible {
-  outline: 2px solid #1fcfa9;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 
@@ -124,7 +125,7 @@
 .toolBtnActive:hover {
   background: #1fcfa9;
   color: #fff;
-  box-shadow: 0 2px 8px rgb(31 207 169 / 32%);
+  box-shadow: 0 2px 8px rgb(203 213 217 / 32%);
 }
 
 /* 闭合时主按钮保持黑底白字；菜单展开时加号使用与其他激活工具一致的薄荷绿。 */
@@ -138,7 +139,7 @@
 .addBtnWrap:first-child .toolBtnActive:hover {
   background: #1fcfa9;
   color: #fff;
-  box-shadow: 0 2px 8px rgb(31 207 169 / 32%);
+  box-shadow: 0 2px 8px rgb(203 213 217 / 32%);
 }
 
 .toolLabel {
@@ -183,9 +184,9 @@
   /* 菜单底边贴住底部导航栏上沿，列表完整向上展开。 */
   bottom: calc(100% + 8px);
   box-sizing: border-box;
-  background: #fff;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  box-shadow: 0 16px 40px rgba(20, 31, 44, 0.18);
+  background: var(--canvas-surface-raised, #202433);
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -195,7 +196,7 @@
   overflow-y: auto;
   z-index: 20;
   scrollbar-width: thin;
-  scrollbar-color: #cfd6d3 transparent;
+  scrollbar-color: #9ca3af transparent;
 }
 
 /*
@@ -205,7 +206,7 @@
  */
 .addMenuGroup {
   padding: 8px 14px 4px;
-  color: #9aa1b1;
+  color: var(--canvas-text-muted, #9ca3af);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -214,7 +215,7 @@
 
 .addMenuGroup:not(:first-child) {
   margin-top: 4px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   padding-top: 10px;
 }
 
@@ -242,11 +243,11 @@
 
 .addMenuItem:hover .addMenuLabel,
 .addMenuItem:hover .addMenuIcon {
-  color: #1fcfa9;
+  color: var(--canvas-brand, #00e5be);
 }
 
 .addMenuItem:focus-visible {
-  outline: 2px solid #1fcfa9;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: -2px;
 }
 
@@ -263,19 +264,19 @@
 .addMenuLabel {
   font-size: 13px;
   font-weight: 500;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }
 
 .addMenuDesc {
   font-size: 11px;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
 }
 
 .addMenuIcon {
   display: flex;
   align-items: center;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   flex-shrink: 0;
   transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }
@@ -318,5 +319,12 @@
   /* 触屏没有可靠 hover，悬浮标签会粘住并挡住相邻按钮；title/aria-label 仍保留名称。 */
   .toolLabel {
     display: none;
+  }
+}
+
+/* Leave the view controls unobstructed when the two bottom bars cannot sit side by side. */
+@media (max-width: 1400px) {
+  .toolbar {
+    bottom: calc(68px + env(safe-area-inset-bottom));
   }
 }

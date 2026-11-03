@@ -6,8 +6,8 @@
   width: min(calc(380px * var(--canvas-ui-scale, 1)), calc(100vw - 24px));
   box-sizing: border-box;
   overflow: hidden;
-  color: #344054;
-  background: #fff;
+  color: var(--canvas-text, #e5e7eb);
+  background: var(--canvas-surface-raised);
   border: 1px solid #e5e7eb;
   border-radius: 16px;
   box-shadow: 0 18px 55px #183d3926;
@@ -24,7 +24,7 @@
   flex: none;
   gap: 12px;
   padding: 14px 18px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .panel header {
   border-bottom: 1px solid #e5e7eb;
@@ -107,8 +107,8 @@
   padding: 8px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  color: #344054;
-  background: #fff;
+  color: var(--canvas-text, #e5e7eb);
+  background: var(--canvas-surface-input);
   font: inherit;
 }
 .field textarea {
@@ -138,7 +138,7 @@
   width: 34px;
   height: 20px;
   border-radius: 20px;
-  background: #f2f4f7;
+  background: var(--canvas-surface-input);
   position: relative;
   margin: 0;
   cursor: pointer;
@@ -151,7 +151,7 @@
   left: 3px;
   top: 3px;
   border-radius: 50%;
-  background: white;
+  background: var(--canvas-surface-input);
   transition: transform 0.15s;
 }
 .toggle input:checked {
@@ -177,11 +177,22 @@
   margin-left: 6px;
 }
 .panel :is(button, input, select, textarea, summary):focus-visible {
-  outline: 2px solid #13aa8a;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 @media (prefers-reduced-motion: reduce) {
   .toggle input::after {
     transition: none;
   }
+}
+.panel,
+.panel :is(header, footer) {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.panel :is(input, textarea, select) {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
 }

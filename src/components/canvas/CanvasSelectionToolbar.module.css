@@ -18,7 +18,7 @@
   transform: translateX(-50%);
   border: 1px solid #e5e7eb;
   border-radius: 999px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 10px 30px rgba(23, 33, 61, 0.16);
   font-family: 'PingFang SC', sans-serif;
   white-space: nowrap;
@@ -52,7 +52,7 @@
 .divider {
   width: 1px;
   height: 18px;
-  background: #f2f4f7;
+  background: var(--canvas-surface-raised);
 }
 
 .action,
@@ -65,7 +65,7 @@
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -76,8 +76,8 @@
 }
 
 .action:hover {
-  background: #fff;
-  color: #5767e5;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-brand, #00e5be);
 }
 
 .plain {
@@ -86,12 +86,12 @@
 }
 
 .plain:hover {
-  background: #fff;
-  color: #344054;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .danger:hover {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
   color: #d14343;
 }
 

@@ -6,7 +6,7 @@
   box-sizing: border-box;
   padding: 8px;
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .expanded {
   display: grid;
@@ -19,7 +19,7 @@
   min-width: 0;
   min-height: 0;
   border-radius: 10px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   overflow: hidden;
 }
 .collapsed .item {
@@ -40,7 +40,7 @@
   width: calc(100% - 16px);
   height: calc(100% - 16px);
   object-fit: cover;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   transform: translate(calc(var(--layer) * 3px), calc(var(--layer) * 4px));
   pointer-events: none;
   box-shadow:
@@ -80,7 +80,7 @@
 }
 .actions button:focus-visible,
 .split:focus-visible {
-  outline: 2px solid #11a98a;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 .badge {
@@ -96,4 +96,8 @@
   position: absolute;
   bottom: 8px;
   right: 8px;
+}
+.results,
+.item {
+  background: #0d0e14;
 }

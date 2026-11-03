@@ -265,7 +265,7 @@ for (const renamed of [false, true]) {
     await page.getByRole('button', { name: '多角度', exact: true }).click()
     await expect(modal.getByRole('spinbutton', { name: '水平角', exact: true })).toBeVisible()
     await modal.getByRole('spinbutton', { name: '水平角', exact: true }).fill('90')
-    await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
+    await expect(modal.getByRole('button', { name: '制作新图片' })).toBeEnabled()
     await modal.getByRole('button', { name: '背面视角', exact: true }).click()
     const angleControl = modal.getByRole('application', { name: '相机角度示意，拖动调整视角' })
     await angleControl.focus()
@@ -344,8 +344,8 @@ for (const renamed of [false, true]) {
     await expect(sceneInput).toBeInViewport()
     await page.screenshot({ path: testInfo.outputPath('multi-angle-scene-760.png') })
     await page.setViewportSize({ width: 1440, height: 1000 })
-    await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
-    await modal.getByRole('button', { name: '生成新图片' }).click()
+    await expect(modal.getByRole('button', { name: '制作新图片' })).toBeEnabled()
+    await modal.getByRole('button', { name: '制作新图片' }).click()
     await expect(modal).not.toBeVisible()
     expect(submissions[0]).toMatchObject({ operation_code: operations[0], model_version_id: 42 })
     expect(submissions[0].params.tool_version).toBe(2)
@@ -426,9 +426,9 @@ for (const renamed of [false, true]) {
     await light.press('ArrowRight')
     await expect(modal.getByText('高级设置', { exact: true })).toHaveCount(0)
     expect(submissions).toHaveLength(1)
-    await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
+    await expect(modal.getByRole('button', { name: '制作新图片' })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('relight.png') })
-    await modal.getByRole('button', { name: '生成新图片' }).click()
+    await modal.getByRole('button', { name: '制作新图片' }).click()
     await expect(modal).not.toBeVisible()
     expect(submissions[1].prompt).toContain('275°')
     expect(submissions[1].prompt).toContain('保留已有光源的方向、颜色和光照效果')
@@ -451,7 +451,7 @@ for (const renamed of [false, true]) {
     await source.locator('.canvas-node-header').click()
     await page.getByRole('button', { name: '全景', exact: true }).click()
     await expect(page.getByRole('toolbar', { name: '节点操作', exact: true })).toHaveCount(0)
-    await expect(modal.getByRole('button', { name: '生成新图片' })).toBeEnabled()
+    await expect(modal.getByRole('button', { name: '制作新图片' })).toBeEnabled()
     const panoramaSource = modal.getByRole('img', { name: '全景生成参考图' })
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 })
@@ -466,11 +466,11 @@ for (const renamed of [false, true]) {
         )
         .toBe(true)
       expect(await modal.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
-      await modal.getByRole('button', { name: '生成新图片' }).scrollIntoViewIfNeeded()
+      await modal.getByRole('button', { name: '制作新图片' }).scrollIntoViewIfNeeded()
       await page.screenshot({ path: testInfo.outputPath(`panorama-generation-${width}.png`) })
     }
     await page.setViewportSize({ width: 1440, height: 1000 })
-    await modal.getByRole('button', { name: '生成新图片' }).click()
+    await modal.getByRole('button', { name: '制作新图片' }).click()
     await expect(modal).not.toBeVisible()
     await expect.poll(() => submissions.length).toBe(3)
     expect(submissions[2]).toMatchObject({
@@ -636,7 +636,26 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   await expect(page.getByRole('button', { name: '多角度', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '打光', exact: true })).toHaveCount(0)
 
-  await expect(modal.getByRole('button', { name: '生成新图片' })).toHaveCount(0)
+  const panoramaWorkbench = modal.locator('[class*="panoramaWorkbench"]')
+  const panoramaSurfaceColors = await panoramaWorkbench.evaluate((element) => {
+    const header = element.querySelector('header')!
+    const body = element.querySelector('[class*="panoramaBody"]')!
+    const scene = element.querySelector('[role="application"][aria-label^="全景取景预览"]')!
+    return {
+      header: getComputedStyle(header).backgroundColor,
+      body: getComputedStyle(body).backgroundColor,
+      scene: getComputedStyle(scene).backgroundColor,
+      title: getComputedStyle(header.querySelector('h1')!).color,
+    }
+  })
+  expect(panoramaSurfaceColors).toEqual({
+    header: 'rgb(32, 36, 51)',
+    body: 'rgb(24, 27, 38)',
+    scene: 'rgb(13, 14, 20)',
+    title: 'rgb(229, 231, 235)',
+  })
+
+  await expect(modal.getByRole('button', { name: '制作新图片' })).toHaveCount(0)
   await modal.getByRole('spinbutton', { name: '水平视角', exact: true }).fill('90')
   await expect(modal.getByRole('button', { name: '当前视角截图' })).toBeEnabled()
   await modal.getByRole('button', { name: '大屏预览' }).click()

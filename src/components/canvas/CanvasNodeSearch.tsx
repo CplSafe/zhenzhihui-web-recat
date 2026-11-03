@@ -47,10 +47,12 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
   const [kindFilter, setKindFilter] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const visibleNodes = useMemo(() => nodes.filter((node) => isCanvasAudioEntryVisible(node.kind)), [nodes])
 
   useEffect(() => {
     inputRef.current?.focus()
+    setAnchor(document.querySelector<HTMLElement>('[data-canvas-floating-toolbar="true"]'))
   }, [])
 
   /** 有哪些类型可筛、各有几个；只列画布上实际存在的类型 */
@@ -86,7 +88,16 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
   }
 
   return (
-    <div className={`${styles.panel} nodrag nopan`} role="dialog" aria-label="搜索画布节点">
+    <div
+      className={`${styles.searchControl} nodrag nopan`}
+      style={
+        anchor
+          ? { left: `${anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2}px` }
+          : undefined
+      }
+      role="dialog"
+      aria-label="搜索画布节点"
+    >
       <div className={styles.inputRow}>
         <SearchIcon />
         <input
@@ -116,63 +127,70 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
             }
           }}
         />
+        {keyword && (
+          <button type="button" className={styles.clear} onClick={() => setKeyword('')} aria-label="清空搜索">
+            ×
+          </button>
+        )}
         <button type="button" className={styles.close} onClick={onClose} aria-label="关闭搜索">
-          ✕
+          ×
         </button>
       </div>
 
-      {kindChips.length > 1 && (
-        <div className={styles.chips} role="radiogroup" aria-label="按类型筛选">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={kindFilter === ''}
-            className={`${styles.chip} ${kindFilter === '' ? styles.chipActive : ''}`}
-            onClick={() => setKindFilter('')}
-          >
-            全部 <em>{visibleNodes.length}</em>
-          </button>
-          {kindChips.map((chip) => (
+      <div className={styles.searchContent}>
+        {kindChips.length > 1 && (
+          <div className={styles.chips} role="radiogroup" aria-label="按类型筛选">
             <button
-              key={chip.kind}
               type="button"
               role="radio"
-              aria-checked={kindFilter === chip.kind}
-              className={`${styles.chip} ${kindFilter === chip.kind ? styles.chipActive : ''}`}
-              onClick={() => setKindFilter((current) => (current === chip.kind ? '' : chip.kind))}
+              aria-checked={kindFilter === ''}
+              className={`${styles.chip} ${kindFilter === '' ? styles.chipActive : ''}`}
+              onClick={() => setKindFilter('')}
             >
-              {chip.label} <em>{chip.count}</em>
+              全部 <em>{visibleNodes.length}</em>
             </button>
-          ))}
-        </div>
-      )}
+            {kindChips.map((chip) => (
+              <button
+                key={chip.kind}
+                type="button"
+                role="radio"
+                aria-checked={kindFilter === chip.kind}
+                className={`${styles.chip} ${kindFilter === chip.kind ? styles.chipActive : ''}`}
+                onClick={() => setKindFilter((current) => (current === chip.kind ? '' : chip.kind))}
+              >
+                {chip.label} <em>{chip.count}</em>
+              </button>
+            ))}
+          </div>
+        )}
 
-      <div className={styles.results} role="listbox" aria-label="搜索结果">
-        {results.length === 0 ? (
-          <p className={styles.empty}>{visibleNodes.length === 0 ? '画布上还没有节点' : '没有匹配的节点'}</p>
-        ) : (
-          results.map((node, index) => (
-            <button
-              type="button"
-              key={node.id}
-              role="option"
-              aria-selected={index === activeIndex}
-              className={`${styles.item} ${index === activeIndex ? styles.itemActive : ''}`}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => pick(index)}
-            >
-              <span className={styles.itemKind}>{node.kindLabel}</span>
-              <span className={`${styles.itemText} ${node.text ? '' : styles.itemTextEmpty}`}>
-                {node.text || '（空节点）'}
-                {node.kind === 'group' && <span className={styles.itemCount}>{node.memberCount} 个节点</span>}
-              </span>
-            </button>
-          ))
-        )}
-        {results.length === MAX_RESULTS && (
-          // 截断必须说出来，否则「找不到」会被误判成「不存在」
-          <p className={styles.more}>只显示前 {MAX_RESULTS} 条，请补充关键词或按类型筛选</p>
-        )}
+        <div className={styles.results} role="listbox" aria-label="搜索结果">
+          {results.length === 0 ? (
+            <p className={styles.empty}>{visibleNodes.length === 0 ? '画布上还没有节点' : '没有匹配的节点'}</p>
+          ) : (
+            results.map((node, index) => (
+              <button
+                type="button"
+                key={node.id}
+                role="option"
+                aria-selected={index === activeIndex}
+                className={`${styles.item} ${index === activeIndex ? styles.itemActive : ''}`}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => pick(index)}
+              >
+                <span className={styles.itemKind}>{node.kindLabel}</span>
+                <span className={`${styles.itemText} ${node.text ? '' : styles.itemTextEmpty}`}>
+                  {node.text || '（空节点）'}
+                  {node.kind === 'group' && <span className={styles.itemCount}>{node.memberCount} 个节点</span>}
+                </span>
+              </button>
+            ))
+          )}
+          {results.length === MAX_RESULTS && (
+            // 截断必须说出来，否则「找不到」会被误判成「不存在」
+            <p className={styles.more}>只显示前 {MAX_RESULTS} 条，请补充关键词或按类型筛选</p>
+          )}
+        </div>
       </div>
     </div>
   )

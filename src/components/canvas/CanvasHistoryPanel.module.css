@@ -4,7 +4,7 @@
   z-index: 1400;
   width: 480px;
   max-height: 440px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
@@ -21,7 +21,7 @@
   width: min(460px, calc((100vw - 48px) / var(--canvas-ui-scale, 1)));
   max-height: none;
   border-radius: 24px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow:
     0 24px 80px rgba(15, 23, 42, 0.18),
@@ -73,7 +73,7 @@
   padding: 0;
   border: 1px solid rgba(87, 103, 229, 0.12);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.76);
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   cursor: pointer;
   transition:
@@ -84,16 +84,16 @@
 }
 
 .backBtn:hover {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
   border-color: rgba(87, 103, 229, 0.26);
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
   transform: translateX(-1px);
 }
 
 .title {
   font-size: 15px;
   font-weight: 600;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   white-space: nowrap;
 }
 
@@ -118,8 +118,8 @@
 }
 
 .closeBtn:hover {
-  background: #fff;
-  color: #30343b;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .tabs {
@@ -149,12 +149,12 @@
 }
 
 .tab:hover {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
 }
 
 .tabActive {
-  color: #5767e5;
-  border-bottom-color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
+  border-bottom-color: var(--canvas-border-active, #cbd5d9);
   font-weight: 500;
 }
 
@@ -170,7 +170,7 @@
 }
 
 .grid::-webkit-scrollbar-thumb {
-  background: #f2f4f7;
+  background: var(--canvas-surface-raised);
   border-radius: 2px;
 }
 
@@ -230,7 +230,7 @@
   aspect-ratio: 1;
   border-radius: 8px;
   overflow: hidden;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   cursor: pointer;
   position: relative;
   transition:
@@ -256,7 +256,7 @@
 }
 
 .item:focus-visible {
-  outline: 2px solid #5767e5;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 
@@ -311,4 +311,26 @@
 
 .emptyText {
   color: #bbb;
+}
+.panel,
+.panelDrawer {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.header,
+.headerDrawer {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.title,
+.emptyText {
+  color: var(--canvas-text, #e5e7eb);
+}
+.closeBtn,
+.backBtn,
+.tab {
+  color: var(--canvas-text-muted, #9ca3af);
+}
+.item {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
 }

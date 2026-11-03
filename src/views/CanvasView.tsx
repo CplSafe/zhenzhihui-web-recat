@@ -1,8 +1,8 @@
 import { Dropdown, Tooltip } from 'antd'
 import { useCanvasKeyboardPriority } from '@/composables/useCanvasKeyboardPriority'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
-import { formatCredits } from '@/utils/creditsFormat'
 import CanvasGettingStarted from '@/components/canvas/CanvasGettingStarted'
+import CanvasGlobalActions from '@/components/canvas/CanvasGlobalActions'
 import type { CanvasScriptImport as CanvasScriptImportResult } from '@/utils/canvasScriptImport'
 import { createCanvasImageMetadataResolver } from '@/api/canvasImageMetadata'
 import { imageGenerationInfo, canvasImageDetails } from '@/utils/canvasImageInfo'
@@ -56,7 +56,7 @@ import {
   type CSSProperties,
 } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
+import CanvasNavigationStatus from '@/components/canvas/CanvasNavigationStatus'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
 import {
   ReactFlow,
@@ -146,7 +146,6 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
-import TutorialButton from '@/components/common/TutorialButton'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import CanvasImagePreviewModal, { type CanvasImagePreviewItem } from '@/components/canvas/CanvasImagePreviewModal'
@@ -190,15 +189,11 @@ import { polishText } from '@/api/aiPolish'
 import { generationPolishContext } from '@/api/entryPromptPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { normalizeImageFileForAiInput } from '@/utils/imageFile'
+import { useCanvasLocalMediaImport } from '@/composables/useCanvasLocalMediaImport'
+import { useCanvasTimelineUiState } from '@/composables/useCanvasTimelineUiState'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import CanvasAudioNode from '@/components/canvas/CanvasAudioNode'
-import {
-  isAudioFile,
-  normalizeAudioSettings,
-  parseTimelineAudio,
-  readAudioDuration,
-  syncTimelineAudio,
-} from '@/utils/canvasAudio'
+import { normalizeAudioSettings, parseTimelineAudio, syncTimelineAudio } from '@/utils/canvasAudio'
 import {
   CANVAS_AUDIO_NODES_ENABLED,
   CANVAS_PHASE_ONE_EXTRAS_ENABLED,
@@ -217,7 +212,8 @@ import {
   resolveVerifiedResultAssetId,
   resolveVerifiedImageResultAssetIds,
 } from '@/utils/taskMedia'
-import CanvasImageResults from '@/components/canvas/CanvasImageResults'
+import CanvasGeneratedImageGroup from '@/components/canvas/CanvasGeneratedImageGroup'
+import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import {
   canvasImageResultIds,
   canvasImageResultSize,
@@ -231,7 +227,6 @@ import {
   generationSubmissionFingerprint,
   unknownSubmissionKey,
 } from '@/utils/generationFailure'
-import CanvasFailureDetails from '@/components/canvas/CanvasFailureDetails'
 import { planMultiResultPositions } from '@/utils/canvasMultiResult'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
 import { normalizeSeedanceModerationResult, type SeedanceModerationState } from '@/utils/seedanceModeration'
@@ -307,17 +302,7 @@ import {
 import { withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
 import { isRealPersonReferenceStillAuthorized, type SmartRealPersonReference } from '@/utils/smartRealPerson'
 import { listRealPeople } from '@/api/realPeople'
-import {
-  LOCAL_IMAGE_IMPORT_LIMIT,
-  LOCAL_VIDEO_MAX_BYTES,
-  extractMediaFiles,
-  hasFileDrag,
-  isCanvasVideoFile,
-  naturalImageRatio,
-  pickImageFiles,
-  pickVideoFiles,
-  readImageNaturalSize,
-} from '@/utils/canvasLocalImage'
+import { extractMediaFiles, hasFileDrag, naturalImageRatio, readImageNaturalSize } from '@/utils/canvasLocalImage'
 import { openMemberCenterTab, requestConfirm, showToast } from '@/stores/ui'
 import {
   buildEdgeId,
@@ -760,9 +745,6 @@ const NODE_ENTER_MS = 350
  */
 const CANVAS_SNAP_GRID: [number, number] = [16, 16]
 
-/** 本地图片预览地址的释放延迟（毫秒）：等正式地址加载完再释放，避免画面闪断 */
-const LOCAL_PREVIEW_REVOKE_MS = 5000
-
 /** 画布节点名称只展示本地文件名，不带扩展名。 */
 function localMediaDisplayName(fileName: string): string {
   const extensionIndex = fileName.lastIndexOf('.')
@@ -1068,13 +1050,45 @@ function HandleIcon({ nodeId, side, visible }: { nodeId: string; side: 'left' | 
 const MIN_CANVAS_ZOOM = 0.01
 const MAX_CANVAS_ZOOM = Number.POSITIVE_INFINITY
 const MAX_WHEEL_ZOOM_RATIO = 1.12
+const selectedNodeCountCache = new WeakMap<Node[], number>()
+
+function areCanvasTaskPatchValuesEqual(current: unknown, next: unknown): boolean {
+  if (Object.is(current, next)) return true
+  if (Array.isArray(current) && Array.isArray(next)) {
+    return (
+      current.length === next.length &&
+      current.every((value, index) => areCanvasTaskPatchValuesEqual(value, next[index]))
+    )
+  }
+  if (!current || !next || typeof current !== 'object' || typeof next !== 'object') return false
+  const currentRecord = current as Record<string, unknown>
+  const nextRecord = next as Record<string, unknown>
+  const currentKeys = Object.keys(currentRecord)
+  const nextKeys = Object.keys(nextRecord)
+  return (
+    currentKeys.length === nextKeys.length &&
+    currentKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(nextRecord, key) &&
+        areCanvasTaskPatchValuesEqual(currentRecord[key], nextRecord[key]),
+    )
+  )
+}
+
+function countSelectedNodes(nodes: Node[]) {
+  const cached = selectedNodeCountCache.get(nodes)
+  if (cached !== undefined) return cached
+  const count = nodes.reduce((total, node) => total + Number(node.selected), 0)
+  selectedNodeCountCache.set(nodes, count)
+  return count
+}
 
 /** 自定义画布节点 */
 function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const canvasZoom = useStore((state) => state.transform[2])
   // 节点标题保持接近固定的屏幕字号，避免缩小时失去辨识度。
-  const canvasHeaderScale = Math.min(4, Math.max(1, 0.72 / canvasZoom))
-  const selectedNodeCount = useStore((state) => state.nodes.reduce((count, node) => count + Number(node.selected), 0))
+  const canvasHeaderScale = Math.min(6, Math.max(1, 1 / canvasZoom))
+  const selectedNodeCount = useStore((state) => countSelectedNodes(state.nodes))
   const isBoxSelecting = useStore((state) => state.userSelectionActive)
   const [nodeHovered, setNodeHovered] = useState(false)
   const [leftHovered, setLeftHovered] = useState(false)
@@ -2240,11 +2254,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             </div>
           </div>
         ) : kind === 'image' && imageResultIds.length > 1 ? (
-          <CanvasImageResults
+          <CanvasGeneratedImageGroup
             assetIds={imageResultIds}
             primaryAssetId={Number(data.assetId)}
             expanded={Boolean(data.imageResultsExpanded)}
-            resolveUrl={(assetId) => assetStreamUrl(assetId, nodeWorkspaceId)}
+            workspaceId={nodeWorkspaceId}
             disabled={taskRunning}
             onToggle={() => onToggleImageResults?.(id)}
             onSelectPrimary={(assetId) => onSelectImageResult?.(id, assetId)}
@@ -2323,6 +2337,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           }
           reason={connectionError || (data as any)?.taskFailure?.message || taskError}
           requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
+          detailsData={data}
         >
           {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
             <button
@@ -2337,7 +2352,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               重试配音合成
             </button>
           )}
-          {taskFailed && <CanvasFailureDetails data={data} />}
         </CanvasNodeFailure>
       )}
 
@@ -2507,15 +2521,20 @@ function CanvasInner() {
   )
   /** 小地图显示与否；偏好记在本机，开关在左下角的视图控制条上 */
   const [minimapVisible, setMinimapVisible] = useState(loadMinimapVisible)
-  // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
-  const [timelineEditorNodeId, setTimelineEditorNodeId] = useState('')
-  // 合成进行中（下载素材 → 无损拼接 → 上传成片），期间禁止重复触发
-  const [timelineComposing, setTimelineComposing] = useState(false)
-  // 正在合成的时间线节点 id：卡片按钮据此显示进度，其余节点不受影响
-  const [composingNodeId, setComposingNodeId] = useState('')
-  // 拖拽视频节点时命中的时间线节点 id，用于高亮「松手就会放进这里」
-  const [timelineDropTargetId, setTimelineDropTargetId] = useState('')
-  const timelineDropTargetRef = useRef('')
+  const timelineUi = useCanvasTimelineUiState()
+  const {
+    editorNodeId: timelineEditorNodeId,
+    setEditorNodeId: setTimelineEditorNodeId,
+    composing: timelineComposing,
+    setComposing: setTimelineComposing,
+    composingNodeId,
+    setComposingNodeId,
+    progress: composeProgress,
+    setProgress: setComposeProgress,
+    dropTargetId: timelineDropTargetId,
+    setDropTargetId: setTimelineDropTargetId,
+    dropTargetRef: timelineDropTargetRef,
+  } = timelineUi
   // 拖拽起点：放进时间线后要把视频节点弹回原位
   const dragOriginRef = useRef<{ id: string; position: { x: number; y: number } } | null>(null)
   const altCloneDragRef = useRef<{
@@ -2534,7 +2553,6 @@ function CanvasInner() {
    * 只是视觉隐藏、不卸载：卸载会让输入框里的内容与积分预估重新初始化，松手后闪一下。
    */
   const [draggingNode, setDraggingNode] = useState(false)
-  const [composeProgress, setComposeProgress] = useState('')
   // 已量过时长的片段（node:clip），避免同一条素材被反复探测
   const measuredClipAssetsRef = useRef<Set<string>>(new Set())
   const clipDurationAttemptsRef = useRef<Map<string, number>>(new Map())
@@ -4465,6 +4483,9 @@ function CanvasInner() {
           modelVersionId: undefined,
         })
       setSaveStatus('dirty')
+      // 新节点是项目的首个持久化内容。立即写入草稿并排入云端同步队列，
+      // 避免用户马上返回或切换最近项目时，卸载清理掉 1 秒防抖定时器而丢失节点。
+      window.setTimeout(() => scheduleSyncRef.current(true), 0)
       // 动画结束后移除渐入类，避免节点被持久化后再恢复时重复播放动画
       window.setTimeout(() => {
         setNodes((nds) =>
@@ -5913,208 +5934,16 @@ function CanvasInner() {
 
   // ===== 本地素材导入：工具栏「本地素材」/ 粘贴（Ctrl+V）/ 拖拽文件到画布，三个入口共用 =====
 
-  /** 本次会话创建的预览地址集合：页面卸载时统一释放，避免 objectURL 泄漏 */
-  const localPreviewUrlsRef = useRef(new Set<string>())
-  useEffect(
-    () => () => {
-      for (const url of localPreviewUrlsRef.current) URL.revokeObjectURL(url)
-      localPreviewUrlsRef.current.clear()
-    },
-    [],
-  )
-
-  /** 释放预览地址：延迟到正式地址加载完成之后，避免图片出现短暂空白 */
-  const releasePreviewUrl = useCallback((url: string) => {
-    if (!url) return
-    window.setTimeout(() => {
-      if (!localPreviewUrlsRef.current.has(url)) return
-      URL.revokeObjectURL(url)
-      localPreviewUrlsRef.current.delete(url)
-    }, LOCAL_PREVIEW_REVOKE_MS)
-  }, [])
-
-  /**
-   * 导入本地素材：先落一个带本地预览的占位节点，再上传素材中心换成持久地址。
-   *
-   * 图片落图片节点、视频落视频节点；节点渲染层本身与类型无关（mediaUrl 会回退到 previewUrl，
-   * 上传遮罩也通用），因此这里只需要选对节点类型和比例。
-   *
-   * 预览地址只存在 previewUrl（不在持久化白名单内），因此不会有 blob: 地址被写进云端；
-   * 上传失败的占位节点直接移除，不留下永远空白的节点。
-   * anchor 为视口坐标（拖拽落点 / 鼠标位置 / 右键位置），缺省落在视口中心。
-   */
-  const importLocalMedia = useCallback(
-    async (files: File[], anchor?: { x: number; y: number }) => {
-      const allImages = pickImageFiles(files)
-      // 视频先按体积筛一遍：超限的不建节点，直接并入失败提示，
-      // 否则用户会看着一个占位节点转很久最后失败，还不知道原因是文件太大。
-      const allVideos = pickVideoFiles(files)
-      const allAudios = CANVAS_AUDIO_NODES_ENABLED ? files.filter(isAudioFile) : []
-      const unsupportedFiles = files.filter(
-        (file) =>
-          !String(file.type || '')
-            .toLowerCase()
-            .startsWith('image/') &&
-          !isCanvasVideoFile(file) &&
-          !isAudioFile(file),
-      )
-      const audios = allAudios.filter((file) => file.size <= 100 * 1024 * 1024)
-      const oversizedAudios = allAudios.length - audios.length
-      const videos = allVideos.filter((file) => file.size <= LOCAL_VIDEO_MAX_BYTES)
-      const oversized = allVideos.length - videos.length
-      if (allImages.length === 0 && allVideos.length === 0 && allAudios.length === 0) {
-        showToast(
-          unsupportedFiles.length
-            ? '文件格式不受支持；视频请使用 MP4、MOV、M4V、WEBM、AVI、MKV、MPEG、MPG 或 3GP 格式'
-            : CANVAS_AUDIO_NODES_ENABLED
-              ? '支持图片、视频和音频文件'
-              : '支持图片和视频文件',
-          'error',
-        )
-        return
-      }
-      // 图片同样先做生成输入合规：<256px 的不建节点并说明原因，>5760px 的自动缩到范围内再上传。
-      const imageChecks = await Promise.all(
-        allImages.map(async (file) => {
-          try {
-            return {
-              file: await normalizeImageFileForAiInput(file),
-              title: localMediaDisplayName(file.name),
-              error: '',
-            }
-          } catch (error: any) {
-            return {
-              file,
-              title: localMediaDisplayName(file.name),
-              error: `${file.name}：${String(error?.message || '图片不符合要求')}`,
-            }
-          }
-        }),
-      )
-      const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
-      const imageNames = new Map(imageChecks.filter((item) => !item.error).map((item) => [item.file, item.title]))
-      const rejectedImages = imageChecks.filter((item) => item.error).map((item) => item.error)
-      if (images.length === 0 && videos.length === 0 && audios.length === 0) {
-        const rejected = [
-          ...rejectedImages,
-          oversized ? `${oversized} 个视频超过 512MB，请压缩后再导入` : '',
-          oversizedAudios ? `${oversizedAudios} 个音频超过 100MB，请压缩后再导入` : '',
-          unsupportedFiles.length ? `${unsupportedFiles.length} 个文件格式不受支持` : '',
-        ].filter(Boolean)
-        showToast(rejected.join('；') || '没有可导入的素材，请检查文件格式', 'error')
-        return
-      }
-      // 图片在前、视频在后，保证超限被裁掉的总是排在后面的那些，顺序稳定可预期
-      const media: Array<{ file: File; title: string; kind: 'image' | 'video' | 'audio' }> = [
-        ...images.map((file) => ({ file, title: imageNames.get(file) || file.name, kind: 'image' as const })),
-        ...videos.map((file) => ({ file, title: localMediaDisplayName(file.name), kind: 'video' as const })),
-        ...audios.map((file) => ({ file, title: localMediaDisplayName(file.name), kind: 'audio' as const })),
-      ]
-      const accepted = media.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
-      const skipped = media.length - accepted.length
-      const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-      // 整批只记一次历史：一次撤销即可撤掉本次导入的全部节点
-      commitHistory()
-      const created = await mapWithConcurrency(accepted, 8, async ({ file, title, kind }, index) => {
-        // 图片严格使用原图比例；视频统一用自适应，与生成/剪出的视频节点同一口径。
-        const ratio =
-          kind === 'video' || kind === 'audio'
-            ? AUTO_RATIO
-            : ((natural) => (natural ? naturalImageRatio(natural.width, natural.height) : '1:1'))(
-                await readImageNaturalSize(file),
-              )
-        const size = kind === 'audio' ? newNodeFootprint('audio') : calcNodeSize(ratio, 250)
-        const previewUrl = URL.createObjectURL(file)
-        localPreviewUrlsRef.current.add(previewUrl)
-        // 多个素材沿对角线错开，避免完全重叠
-        const offset = index * 36
-        const point = screenToFlowPosition({ x: origin.x + offset, y: origin.y + offset })
-        const nodeId = appendNewNode(
-          kind,
-          { x: point.x - size.width / 2, y: point.y - size.height / 2 },
-          {
-            ratio,
-            size,
-            skipHistory: true,
-            extraData: {
-              previewUrl,
-              uploading: true,
-              assetSource: 'upload',
-              assetWorkspaceId: workspaceId,
-              title,
-            },
-          },
-        )
-        return { nodeId, file, title, previewUrl, kind }
-      })
-      const failures: string[] = [...rejectedImages]
-      await mapWithConcurrency(created, 4, async ({ nodeId, file, title, previewUrl, kind }) => {
-        try {
-          const durationSec = kind === 'audio' ? await readAudioDuration(previewUrl) : 0
-          // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
-          const out: any = await uploadAssetFile({ workspaceId, file })
-          const assetId = Number(out?.asset?.id || 0)
-          if (!assetId) throw new Error('上传素材失败，请稍后重试')
-          const realPerson = await resolveUploadedRealPerson(assetId, file)
-          const nextData: Record<string, unknown> = {
-            assetId,
-            title,
-            realPerson,
-            assetSource: realPerson ? 'real_person' : 'upload',
-            imageOrigin: { assetId, kind: 'upload' },
-            assetWorkspaceId: workspaceId,
-            resultUrl: assetStreamUrl(assetId, workspaceId),
-            uploading: false,
-            previewUrl: '',
-            ...(kind === 'audio'
-              ? {
-                  title,
-                  audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec, origin: 'upload' }),
-                }
-              : {}),
-          }
-          setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...nextData } } : n)))
-          setSelectedNode((prev) => (prev && prev.id === nodeId ? { ...prev, ...nextData } : prev))
-        } catch (error: any) {
-          failures.push(String(error?.message || '上传素材失败，请稍后重试'))
-          setNodes((nds) => nds.filter((n) => n.id !== nodeId))
-          setSelectedNode((prev) => (prev && prev.id === nodeId ? null : prev))
-        } finally {
-          releasePreviewUrl(previewUrl)
-        }
-      })
-      setSaveStatus('dirty')
-      if (failures.length > 0) {
-        showToast(failures.length > 1 ? `${failures.length} 个素材未能导入：${failures[0]}` : failures[0], 'error')
-      } else if (oversized > 0 || oversizedAudios > 0 || unsupportedFiles.length > 0) {
-        // 已成功导入的部分不受影响，这里只解释被跳过的那些为什么没进来
-        showToast(
-          [
-            oversized ? `${oversized} 个视频超过 512MB 已跳过` : '',
-            oversizedAudios ? `${oversizedAudios} 个音频超过 100MB 已跳过` : '',
-            unsupportedFiles.length ? `${unsupportedFiles.length} 个文件格式不受支持已跳过` : '',
-          ]
-            .filter(Boolean)
-            .join('；') + '，请检查文件格式并压缩超限素材',
-          'info',
-        )
-      } else if (skipped > 0) {
-        // 其余素材已成功导入，这里只是数量提醒，不按错误呈现
-        showToast(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 个素材，其余 ${skipped} 个已忽略`, 'info')
-      }
-    },
-    [
-      appendNewNode,
-      commitHistory,
-      releasePreviewUrl,
-      screenToFlowPosition,
-      setNodes,
-      setSaveStatus,
-      workspaceId,
-      resolveUploadedRealPerson,
-    ],
-  )
-
+  const importLocalMedia = useCanvasLocalMediaImport({
+    workspaceId,
+    screenToFlowPosition,
+    commitHistory,
+    appendNewNode,
+    setNodes,
+    setSelectedNode,
+    setSaveStatus,
+    resolveUploadedRealPerson,
+  })
   /** 打开本地图片选择框；anchor 为落点（视口坐标），缺省落在视口中心 */
   const openLocalImagePicker = useCallback((anchor?: { x: number; y: number }) => {
     const input = localImageInputRef.current
@@ -7753,6 +7582,14 @@ function CanvasInner() {
                 },
               )
             }
+            const latestTaskNode = latestRef.current.nodes.find((item) => item.id === node.id)
+            if (!latestTaskNode || !isSameCanvasTask(latestTaskNode.data, node.data)) return
+            const hasTaskDataChanged = Object.entries(nextData).some(([key, value]) => {
+              // Poll timestamps are diagnostic metadata. A new timestamp alone must not dirty and re-save a canvas.
+              if (key === 'taskUpdatedAt') return false
+              return !areCanvasTaskPatchValuesEqual((latestTaskNode.data as Record<string, unknown>)[key], value)
+            })
+            if (!hasTaskDataChanged) return
             setNodes((items) =>
               items.map((item) =>
                 item.id === node.id && isSameCanvasTask(item.data, node.data)
@@ -10091,7 +9928,17 @@ function CanvasInner() {
         setComposeProgress('')
       }
     },
-    [timelineComposing, workspaceId, appendNewNode, linkTimelineOutput, setNodes, setSaveStatus],
+    [
+      timelineComposing,
+      workspaceId,
+      appendNewNode,
+      linkTimelineOutput,
+      setNodes,
+      setSaveStatus,
+      setComposeProgress,
+      setComposingNodeId,
+      setTimelineComposing,
+    ],
   )
 
   /**
@@ -10178,7 +10025,17 @@ function CanvasInner() {
         setComposeProgress('')
       }
     },
-    [timelineComposing, workspaceId, appendNewNode, linkTimelineOutput, setNodes, setSaveStatus],
+    [
+      timelineComposing,
+      workspaceId,
+      appendNewNode,
+      linkTimelineOutput,
+      setNodes,
+      setSaveStatus,
+      setComposeProgress,
+      setComposingNodeId,
+      setTimelineComposing,
+    ],
   )
 
   /**
@@ -10259,6 +10116,7 @@ function CanvasInner() {
       handleVideoPosterCaptured,
       renamingNodeId,
       handleRenamingDone,
+      setTimelineEditorNodeId,
       getTimelineAddableSources,
       handleAddTimelineClip,
       handleRemoveTimelineClip,
@@ -10338,6 +10196,31 @@ function CanvasInner() {
       )
     }
   }, [appendNewNode, dismissGuide, fitView, markScriptCreationHandled, screenToFlowPosition])
+
+  const initialCanvasActionRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (cloudStatus === 'loading' || initialCanvasActionRef.current === canvasId) return
+    const action = (location.state as any)?.initialCanvasAction
+    if (!action || !['script', 'image', 'video', 'import'].includes(action)) return
+    initialCanvasActionRef.current = canvasId
+    navigate(location.pathname, { replace: true, state: null })
+    const run = () => {
+      if (action === 'script') handleCreateScriptNode()
+      else if (action === 'image') handleAddNode('image')
+      else if (action === 'video') handleAddNode('video')
+      else openLocalImagePicker()
+    }
+    requestAnimationFrame(() => requestAnimationFrame(run))
+  }, [
+    canvasId,
+    cloudStatus,
+    handleAddNode,
+    handleCreateScriptNode,
+    location.pathname,
+    location.state,
+    navigate,
+    openLocalImagePicker,
+  ])
 
   const handleScriptImport = (value: CanvasScriptImportResult) => {
     const size = value.shotCount ? { width: 680, height: 480 } : newNodeFootprint('text')
@@ -10571,7 +10454,33 @@ function CanvasInner() {
     () => new Set(generatingNodeKey ? generatingNodeKey.split('\n') : []),
     [generatingNodeKey],
   )
-  const displayNodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
+  // Task progress changes every poll but edge role/type metadata rarely does.
+  // Keep the edge lookup stable across progress-only updates so every edge is not rebuilt each time.
+  const edgeNodeMetadataKey = useMemo(
+    () =>
+      JSON.stringify(
+        nodes.map((node) => [
+          node.id,
+          String(node.data?.kind || node.type || 'text'),
+          String(node.data?.videoMode || ''),
+        ]),
+      ),
+    [nodes],
+  )
+  const displayNodeById = useMemo(
+    () =>
+      new Map(
+        nodes.map((node) => [
+          node.id,
+          {
+            kind: String(node.data?.kind || node.type || 'text'),
+            videoMode: node.data?.videoMode as CanvasVideoMode | undefined,
+          },
+        ]),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the serialized metadata key is the intended dependency.
+    [edgeNodeMetadataKey],
+  )
 
   // 为所有来源的连线换上带箭头的边型：包含历史恢复、协作增量同步和本次新建的连线。
   // 历史数据里可能残留 markerEnd（旧的 marker 引用方案），一并去掉，避免两套箭头叠加。
@@ -10583,8 +10492,8 @@ function CanvasInner() {
         // 又能让历史连线与新连线使用同一套语义标签。
         const sourceNode = displayNodeById.get(edge.source)
         const targetNode = displayNodeById.get(edge.target)
-        const sourceKind = String(sourceNode?.data?.kind || 'text')
-        const targetKind = String(targetNode?.data?.kind || 'text')
+        const sourceKind = sourceNode?.kind || 'text'
+        const targetKind = targetNode?.kind || 'text'
         const edgeData = (edge.data || {}) as Record<string, unknown>
         const data = edgeData.role
           ? edgeData
@@ -10593,7 +10502,7 @@ function CanvasInner() {
               role: inferCanvasConnectionRole({
                 sourceKind,
                 targetKind,
-                videoMode: targetNode?.data?.videoMode as CanvasVideoMode | undefined,
+                videoMode: targetNode?.videoMode,
                 slotIndex: Number(edgeData.slotIndex || 0),
               }),
             }
@@ -10847,115 +10756,33 @@ function CanvasInner() {
             {interactionHint.text}
           </div>
         )}
-        <div className="canvas-navigation nodrag nopan nowheel" aria-label="画布导航">
-          <button
-            type="button"
-            className="canvas-back-btn"
-            onClick={() => navigate('/canvas')}
-            title="返回画布列表"
-            aria-label="返回画布列表"
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M19 12H5m7 7-7-7 7-7" />
-            </svg>
-          </button>
-          <div className="canvas-save-status">
-            <DraftSaveIndicator status={saveStatus} />
-            {cloudStatus !== 'online' && (
-              <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
-                {cloudMessage}
-              </span>
-            )}
-          </div>
-        </div>
+        <CanvasNavigationStatus
+          saveStatus={saveStatus}
+          cloudStatus={cloudStatus}
+          cloudMessage={cloudMessage}
+          onBack={() => navigate('/canvas')}
+        />
+        <CanvasGlobalActions
+          open={actionsMenuOpen}
+          credits={walletCredits}
+          showExtras={CANVAS_PHASE_ONE_EXTRAS_ENABLED}
+          canImportScript={cloudLoadedRef.current}
+          canvasId={canvasId}
+          workspaceId={Number(workspaceId || 0)}
+          onToggle={() => setActionsMenuOpen((open) => !open)}
+          onClose={() => setActionsMenuOpen(false)}
+          onGuide={() => setGuideRequested((visible) => !visible)}
+          onImportScript={() => setScriptImportOpen(true)}
+          onShare={() => setShareOpen(true)}
+        />
 
-        {/* 画布级帮助与分享属于全局操作，组成一个自适应操作组，避免写死按钮间偏移。 */}
-        <div
-          className="canvas-actions-menu"
-          data-open={actionsMenuOpen}
-          onClick={(event) => {
-            if ((event.target as HTMLElement).closest('.canvas-global-actions button')) setActionsMenuOpen(false)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setActionsMenuOpen(false)
-              event.stopPropagation()
-            }
-          }}
-        >
-          <button
-            type="button"
-            className="canvas-actions-toggle"
-            aria-expanded={actionsMenuOpen}
-            aria-controls="canvas-global-actions"
-            onClick={() => setActionsMenuOpen((open) => !open)}
-          >
-            画布操作
-          </button>
-          <div id="canvas-global-actions" className="canvas-global-actions">
-            <button type="button" className="canvas-share-btn" onClick={() => openMemberCenterTab('recharge')}>
-              剩余积分：{formatCredits(walletCredits)}
-            </button>
-            {CANVAS_PHASE_ONE_EXTRAS_ENABLED && (
-              <button
-                type="button"
-                className="canvas-share-btn"
-                onClick={() => setGuideRequested((visible) => !visible)}
-              >
-                开始指南
-              </button>
-            )}
-            {CANVAS_PHASE_ONE_EXTRAS_ENABLED && (
-              <button
-                type="button"
-                className="canvas-share-btn"
-                disabled={!cloudLoadedRef.current}
-                onClick={() => setScriptImportOpen(true)}
-              >
-                导入文字或分镜
-              </button>
-            )}
-            <TutorialButton variant="pill" tutorialKey="canvas" />
-
-            {/* 分享入口：只对已落库的画布开放——没有 canvasId 就没有可分享的对象 */}
-            {canvasId > 0 && workspaceId > 0 && (
-              <button
-                className="canvas-share-btn"
-                onClick={() => setShareOpen(true)}
-                title="分享这块画布"
-                aria-label="分享这块画布"
-              >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="18" cy="5" r="3" />
-                  <circle cx="6" cy="12" r="3" />
-                  <circle cx="18" cy="19" r="3" />
-                  <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
-                </svg>
-                <span>分享</span>
-              </button>
-            )}
-          </div>
-        </div>
+        {cloudStatus !== 'loading' &&
+          nodes.length === 0 &&
+          edges.length === 0 &&
+          !drawerPanel &&
+          !scriptImportOpen &&
+          !guideRequested &&
+          !canvasModalOpen && <CanvasEmptyStateActions />}
 
         {shareOpen && canvasId > 0 && workspaceId > 0 && (
           <CanvasShareDialog
@@ -11336,6 +11163,7 @@ function CanvasInner() {
             /* 默认左键让给框选，平移走中键 [1] / 右键 [2]，空格+左键由 spacePanning 临时接管；
              * 工具栏「拖动」（抓手）点亮后左键 [0] 也平移 */
             panOnDrag={panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
+            /* 无限画布不限制平移范围，远离原点的节点和低倍率视口都必须可达。 */
             /*
              * 滚轮行为按偏好：
              * - 平移（默认，设计工具习惯）：双指滚动自由平移，Ctrl/⌘ + 滚动缩放，捏合缩放；
@@ -11369,7 +11197,7 @@ function CanvasInner() {
             fitViewOptions={{ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 }}
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="rgba(0, 0, 0, 0.08)" gap={24} size={1} />
+            <Background color="rgba(255, 255, 255, 0.18)" gap={24} size={2} />
             {/*
               分组框跟随视口；仅四边和标签接收拖动，内部仍可操作节点。
             */}

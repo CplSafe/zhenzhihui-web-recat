@@ -34,7 +34,7 @@
   white-space: nowrap;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #119c80;
   cursor: pointer;
   font: inherit;
@@ -44,11 +44,11 @@
   min-width: 0;
 }
 .colorField button:hover:not(:disabled) {
-  border-color: #11a98a;
-  background: #fff;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: rgba(255, 255, 255, 0.14);
 }
 .colorField button:focus-visible {
-  outline: 2px solid #11a98a;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 .colorField button:disabled {
@@ -58,7 +58,7 @@
 .qualityNote {
   padding: 10px 12px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 1px solid #e5e7eb;
   color: #866124;
   font-size: 12px;
@@ -86,20 +86,20 @@
   border-radius: 8px;
   padding: 6px 10px;
   color: #7a8496;
-  background: #fff;
+  background: var(--canvas-surface-input);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .presets button[aria-pressed='true'] {
-  color: #0e8f75;
-  border-color: #11a98a;
-  background: #fff;
+  color: var(--canvas-brand, #00e5be);
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: rgba(255, 255, 255, 0.14);
 }
 .presets button:focus-visible,
 .presets select:focus-visible,
 .scene:focus-visible {
-  outline: 2px solid #11a98a;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 3px;
 }
 .sceneExpanded {
@@ -108,7 +108,7 @@
   z-index: 2500;
   padding: 20px;
   border-radius: 16px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 0 0 100vmax #172e30aa;
   overflow: auto;
 }
@@ -123,7 +123,7 @@
   max-height: 360px;
   object-fit: contain;
   border-radius: 12px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 @media (max-width: 720px) {
   .sceneExpanded {
@@ -165,7 +165,7 @@
   margin-bottom: 24px;
   width: fit-content;
   max-width: 100%;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 1px solid #e5e7eb;
   border-radius: 12px;
 }
@@ -187,10 +187,10 @@
 }
 .tab:hover:not(:disabled) {
   color: #347866;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 .tab[aria-pressed='true'] {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
   border-color: #e5e7eb;
   color: #347866;
   box-shadow: 0 2px 5px #203d3010;
@@ -200,7 +200,7 @@
   cursor: not-allowed;
 }
 .tab:focus-visible {
-  outline: 2px solid var(--tool-accent);
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 .body {
@@ -230,7 +230,7 @@
   overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .sourcePreview > img {
   display: block;
@@ -238,7 +238,7 @@
   max-width: 100%;
   height: clamp(180px, 26vh, 260px);
   object-fit: contain;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .sourcePreview figcaption {
   display: flex;
@@ -246,14 +246,14 @@
   gap: 10px;
   min-width: 0;
   padding: 11px 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   font-size: 12px;
 }
 .sourcePreview figcaption span {
   flex-shrink: 0;
   padding: 2px 7px;
   border-radius: 5px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #608174;
   font-size: 11px;
 }
@@ -278,7 +278,7 @@
   padding: 20px;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .panelHeading {
   display: flex;
@@ -307,7 +307,7 @@
   color: #587568;
 }
 .description summary:focus-visible {
-  outline: 2px solid #159d81;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 .description p {
@@ -334,7 +334,7 @@
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 8px 10px;
-  background: white;
+  background: var(--canvas-surface-input);
   color: #347866;
   font: inherit;
   box-sizing: border-box;
@@ -355,13 +355,13 @@
 .field input:focus-visible,
 .field select:focus-visible,
 .field textarea:focus-visible {
-  outline: 2px solid #159d81;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }
 .field input:disabled,
 .field select:disabled,
 .field textarea:disabled {
-  background: #fff;
+  background: var(--canvas-surface-input);
   color: #7a8496;
   cursor: not-allowed;
 }
@@ -387,18 +387,18 @@
   padding: 8px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   font: inherit;
   cursor: pointer;
 }
 .countOptions button[aria-pressed='true'] {
-  border-color: #11a98a;
-  background: #fff;
-  color: #0e8f75;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-brand, #00e5be);
 }
 .countOptions button:focus-visible {
-  outline: 2px solid #11a98a;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 .countOptions button:disabled {
@@ -429,7 +429,7 @@
 }
 .quote {
   padding: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   color: #347866;
@@ -448,7 +448,7 @@
   height: clamp(180px, 24vh, 250px);
   border: 1px solid #e5e7eb;
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   overflow: hidden;
   position: relative;
   touch-action: none;
@@ -470,7 +470,7 @@
   place-content: center;
   padding: 24px;
   color: #d14343;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   font-size: 13px;
   line-height: 1.7;
 }
@@ -483,12 +483,12 @@
 }
 .controls > :global(.ant-btn-primary:not(:disabled)) {
   background: #119c80;
-  border-color: #119c80;
-  box-shadow: 0 4px 10px #119c801f;
+  border-color: #cbd5d9;
+  box-shadow: 0 4px 10px #cbd5d9;
 }
 .controls > :global(.ant-btn-primary:not(:disabled):hover) {
   background: #0c8b71;
-  border-color: #0c8b71;
+  border-color: #cbd5d9;
 }
 @media (max-width: 760px) {
   .dialog {
@@ -545,27 +545,27 @@
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   padding: 5px 9px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #347866;
   cursor: pointer;
   font: inherit;
 }
 .relightCompare:focus-visible {
-  outline: 2px solid #119c80;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }
 .angleEditor {
   padding: 16px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface, #262626);
 }
 .angleGlobe {
   position: relative;
   margin-top: 12px;
   border-radius: 12px;
-  background: #fff;
-  color: #7a8496;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text-muted, #9ca3af);
   touch-action: none;
   cursor: grab;
 }
@@ -573,7 +573,7 @@
   cursor: grabbing;
 }
 .angleGlobe:focus-visible {
-  outline: 2px solid #119c80;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 .angleGlobe svg {
@@ -587,7 +587,7 @@
   padding: 0 12px 14px;
   text-align: center;
   font-size: 12px;
-  color: #347866;
+  color: var(--canvas-accent, var(--canvas-brand, #00e5be));
 }
 .anglePromptToggle {
   display: flex;
@@ -602,12 +602,12 @@
 }
 .anglePrompt {
   padding: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 8px;
-  background: white;
+  background: var(--canvas-surface-input, #0d0e14);
   font-size: 12px;
   line-height: 1.7;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
 }
 
 .angleContext {
@@ -662,7 +662,7 @@
 }
 .compositionGuide i {
   position: absolute;
-  background: #ffffff99;
+  background: var(--canvas-surface-raised);
 }
 .compositionGuide[data-guide='thirds'] i:nth-child(1) {
   left: 33.333%;
@@ -737,7 +737,7 @@
   aspect-ratio: 16 / 9;
   object-fit: contain;
   border-radius: 6px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .captureResults > button {
   grid-column: 1 / -1;
@@ -767,9 +767,18 @@
   top: auto;
   bottom: 24px;
   left: max(24px, 10vw);
+  width: min(640px, calc(100vw - 32px));
+  max-width: min(640px, calc(100vw - 32px));
   margin: 0;
   padding-bottom: 0;
   pointer-events: auto;
+}
+.toolWindow .dialog :global(.ant-modal-content) {
+  padding: 14px;
+  border-radius: 14px;
+}
+.toolWindow .dialog :global(.ant-modal-header) {
+  margin-bottom: 10px;
 }
 .angleGlobe svg {
   height: 220px;
@@ -819,15 +828,15 @@
 .compactStudio {
   position: relative;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 14px 20px;
-  padding-top: 48px;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 10px 14px;
+  padding-top: 0;
 }
 .studioPresets {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px 20px;
+  gap: 8px;
   align-items: start;
 }
 .compactStudio:has(> .studioPresets) {
@@ -837,19 +846,14 @@
   white-space: nowrap;
 }
 .topPresets {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
   display: flex;
-  gap: 5px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 .topPresets button {
   white-space: nowrap;
-  padding: 5px 7px;
-  font-size: 11px;
+  padding: 4px 7px;
+  font-size: 10px;
 }
 .studioPresets .field {
   margin: 0;
@@ -869,11 +873,61 @@
   margin: 0;
 }
 .studioVisual .angleGlobe svg {
-  height: 200px;
+  height: 148px;
 }
 .studioVisual .angleReadout {
-  padding: 6px;
+  padding: 4px 6px 6px;
   font-size: 11px;
+}
+.studioVisual .presets {
+  gap: 4px;
+}
+.studioVisual .presets button {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+.studioVisual .angleGlobe svg {
+  height: 170px;
+}
+.compactStudio:not(:has(> .studioPresets)) {
+  grid-template-columns: minmax(210px, 0.9fr) minmax(260px, 1.1fr);
+  gap: 14px 18px;
+  padding-top: 0;
+}
+.compactStudio:not(:has(> .studioPresets)) .studioVisual .angleGlobe svg {
+  height: 210px;
+}
+.compactStudio:not(:has(> .studioPresets)) .studioParams {
+  gap: 10px;
+}
+.compactStudio:not(:has(> .studioPresets)) .studioParams .compactNumber {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.compactStudio:not(:has(> .studioPresets)) .studioParams .compactNumber .number {
+  grid-template-columns: minmax(0, 1fr) 56px;
+  gap: 10px;
+}
+.compactStudio:has(> .studioPresets) .studioVisual .scene {
+  height: 180px;
+}
+.compactStudio:has(> .studioPresets) .studioParams {
+  gap: 8px;
+}
+.compactStudio:has(> .studioPresets) .studioParams .field {
+  gap: 4px;
+}
+.compactStudio:has(> .studioPresets) .studioParams .compactNumber {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+.compactStudio:has(> .studioPresets) .studioParams .compactNumber .number {
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 8px;
+}
+.compactStudio:has(> .studioPresets) .studioParams .compactNumber:not(:has(.number input[type='range'])) {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+.compactStudio:has(> .studioPresets) .studioParams .compactNumber:not(:has(.number input[type='range'])) .number {
+  grid-template-columns: minmax(0, 1fr) 50px;
 }
 .studioVisual .scene {
   height: 220px;
@@ -885,15 +939,16 @@
 .studioParams {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 9px;
   min-width: 0;
 }
 .studioParams .field {
-  gap: 5px;
+  gap: 4px;
   margin: 0;
 }
 .studioParams small {
-  display: none;
+  color: #c4ccda;
+  font-size: 10px;
 }
 .studioParams .compactNumber {
   display: grid;
@@ -914,23 +969,31 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #7a8496;
+  color: #c4ccda;
 }
 .modelLine select {
   min-width: 0;
   flex: 1;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff;
-  color: #7a8496;
+  background: var(--canvas-surface-input, #0d0e14);
+  color: #e5e7eb;
   padding: 5px;
+}
+.modelLine .toolSelect:global(.ant-select) :global(.ant-select-selector) {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
 }
 .smartPrompt {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 6px;
-  padding: 8px;
+  padding: 7px;
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 12px;
   font: inherit;
   resize: vertical;
 }
@@ -938,14 +1001,14 @@
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid #e5e7eb;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
 }
 .studioFooter > span {
   margin-left: auto;
-  font-size: 12px;
-  color: #7a8496;
+  font-size: 11px;
+  color: #c4ccda;
 }
 .studioError {
   grid-column: 1 / -1;
@@ -957,8 +1020,14 @@
     grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1fr);
     gap: 10px;
   }
+  .compactStudio:not(:has(> .studioPresets)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .studioVisual .angleGlobe svg {
     height: 160px;
+  }
+  .compactStudio:has(> .studioPresets) {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -970,12 +1039,12 @@
 .toolSelect:global(.ant-select) :global(.ant-select-selector) {
   border-color: #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-input);
   box-shadow: none;
 }
 .toolSelect:global(.ant-select-focused) :global(.ant-select-selector),
 .toolSelect:hover :global(.ant-select-selector) {
-  border-color: #11a98a !important;
+  border-color: var(--canvas-border-active, #cbd5d9) !important;
 }
 .modelLine .toolSelect {
   flex: 1;
@@ -995,12 +1064,12 @@
   font-size: 12px;
 }
 .toolSelectPopup :global(.ant-select-item-option-selected:not(.ant-select-item-option-disabled)) {
-  background: #fff;
+  background: var(--canvas-surface-input);
   color: #347866;
   font-weight: 500;
 }
 .toolSelectPopup :global(.ant-select-item-option-active:not(.ant-select-item-option-disabled)) {
-  background: #fff;
+  background: var(--canvas-surface-input);
 }
 
 .panoramaStudio {
@@ -1014,7 +1083,7 @@
   height: 210px;
   object-fit: contain;
   border-radius: 10px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 
 .capturePanel {
@@ -1025,7 +1094,7 @@
 }
 .captureIntro {
   padding: 12px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border-radius: 6px;
 }
 .captureIntro strong {
@@ -1045,18 +1114,18 @@
   min-width: 0;
 }
 .captureFrame[data-selected='true'] {
-  border-color: #527a65;
-  background: #fff;
+  border-color: #cbd5d9;
+  background: rgba(255, 255, 255, 0.14);
 }
 .captureFrame[data-saved='true'] {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 .captureFrame label {
   display: block;
   cursor: pointer;
 }
 .captureFrame:focus-within {
-  outline: 2px solid #527a65;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }
 .captureAngle {
@@ -1077,34 +1146,57 @@
   overscroll-behavior: contain;
 }
 .panoramaStudio {
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 1fr);
-  gap: 20px;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr);
+  gap: 10px 14px;
+  align-items: start;
 }
 .panoramaStudio .studioVisual {
   display: grid;
   place-items: center;
-  height: 240px;
+  height: 190px;
   overflow: hidden;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-input, #0d0e14);
 }
 .panoramaStudio .studioSource {
   width: 100%;
   max-width: 100%;
   height: 100%;
-  max-height: 240px;
+  max-height: 190px;
   object-fit: contain;
   border-radius: 0;
 }
 .panoramaStudio .studioParams {
-  gap: 16px;
+  gap: 8px;
 }
 .panoramaStudio .studioFooter {
   position: sticky;
   bottom: 0;
-  background: #fff;
-  padding: 14px 0 2px;
+  background: var(--canvas-surface-raised, #202433);
+  padding: 8px 0 2px;
   flex-wrap: wrap;
+}
+.dialog .toolSelect:global(.ant-select) :global(.ant-select-selector) {
+  min-height: 30px;
+  padding: 0 8px;
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  box-shadow: none;
+}
+.dialog .toolSelect :global(.ant-select-selection-item),
+.dialog .toolSelect :global(.ant-select-selection-placeholder),
+.dialog .toolSelect :global(.ant-select-arrow) {
+  color: #d5dbea;
+}
+.dialog .panoramaStudio .studioParams .field > span {
+  color: #e0e6f1;
+  font-size: 11px;
+}
+.dialog .panoramaStudio .studioParams .presets button {
+  min-height: 26px;
+  padding: 4px 7px;
+  font-size: 10px;
 }
 @media (max-width: 600px) {
   .panoramaStudio {
@@ -1112,10 +1204,10 @@
     gap: 16px;
   }
   .panoramaStudio .studioVisual {
-    height: 180px;
+    height: 160px;
   }
   .panoramaStudio .studioSource {
-    max-height: 180px;
+    max-height: 160px;
   }
   .panoramaStudio .studioFooter {
     gap: 8px;
@@ -1134,7 +1226,7 @@
   display: block !important;
   overflow: hidden;
   padding: 0 !important;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   pointer-events: auto;
 }
 .panoramaWindow .dialog {
@@ -1154,7 +1246,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: none;
 }
 .panoramaWindow .dialog :global(.ant-modal-header),
@@ -1168,10 +1260,10 @@
   flex-direction: column;
   overflow: hidden;
   padding: 0;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .panoramaWindow :global(.ant-spin-text) {
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
 }
 .panoramaWindow :global(.ant-spin-dot-item) {
   background: #5767e5;
@@ -1179,17 +1271,17 @@
 .panoramaWindow :global(.ant-alert-error) {
   border-color: #e5e7eb;
   color: #d14343;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .panoramaWorkbench {
-  color-scheme: light;
-  --panorama-bg: #f7f8fa;
-  --panorama-panel: #ffffff;
-  --panorama-raised: #f3f5f9;
-  --panorama-line: #e5e7eb;
-  --panorama-text: #202b27;
-  --panorama-muted: #667085;
-  --panorama-accent: #5767e5;
+  color-scheme: dark;
+  --panorama-bg: #262626;
+  --panorama-panel: #202433;
+  --panorama-raised: #2b3145;
+  --panorama-line: rgb(255 255 255 / 12%);
+  --panorama-text: #e5e7eb;
+  --panorama-muted: #aeb7c7;
+  --panorama-accent: #1fcfa9;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -1207,7 +1299,7 @@
   gap: 16px;
   padding: 0 28px;
   border-bottom: 1px solid var(--panorama-line);
-  background: #fff;
+  background: var(--panorama-panel);
 }
 .panoramaBack {
   justify-self: start;
@@ -1271,7 +1363,7 @@
   min-height: 0;
   padding: 0 6px 0 0;
   overflow: hidden;
-  scrollbar-color: #c7ccd6 transparent;
+  scrollbar-color: #566078 transparent;
 }
 .panoramaBody .sceneShell {
   display: contents;
@@ -1286,7 +1378,7 @@
   flex-shrink: 1;
   border-color: var(--panorama-line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panorama-panel);
 }
 .captureFrameOverlay {
   position: absolute;
@@ -1297,7 +1389,7 @@
   margin: auto;
   box-sizing: border-box;
   border: 1px solid rgb(87 103 229 / 72%);
-  box-shadow: 0 0 0 100vmax rgb(32 43 39 / 32%);
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 68%);
   pointer-events: none;
 }
 .panoramaBody .sceneToolbar {
@@ -1321,7 +1413,7 @@
   max-height: min(32dvh, 300px);
   overflow: auto;
   gap: 10px;
-  scrollbar-color: #c7ccd6 transparent;
+  scrollbar-color: #566078 transparent;
 }
 .panoramaCaptureTarget {
   min-width: 0;
@@ -1373,7 +1465,7 @@
   border-color: var(--panorama-line);
   border-radius: 12px;
   background: var(--panorama-panel);
-  scrollbar-color: #c7ccd6 transparent;
+  scrollbar-color: #566078 transparent;
 }
 .panoramaBody .panelHeading strong,
 .panoramaBody .field,
@@ -1424,14 +1516,14 @@
   background: var(--panorama-panel);
 }
 .panoramaBody .captureFrame[data-selected='true'] {
-  border-color: var(--panorama-accent);
-  background: #fff;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: var(--panorama-raised);
 }
 .panoramaBody .captureFrame[data-saved='true'] {
-  background: #fff;
+  background: var(--panorama-panel);
 }
 .panoramaBody .captureResults img {
-  background: #fff;
+  background: var(--panorama-panel);
 }
 .panoramaBody .captureCollection > :global(.ant-btn-primary) {
   position: sticky;
@@ -1439,11 +1531,11 @@
   z-index: 3;
 }
 .panoramaBody .sceneError {
-  color: #d14343;
-  background: #fff;
+  color: #fca5a5;
+  background: var(--panorama-panel);
 }
 .panoramaBody .error {
-  color: #d14343;
+  color: #fca5a5;
 }
 .panoramaWorkbench :global(.ant-btn) {
   border-color: var(--panorama-line);
@@ -1453,27 +1545,27 @@
 }
 .panoramaWorkbench :global(.ant-btn:hover:not(:disabled)),
 .panoramaWorkbench :global(.ant-btn:focus-visible) {
-  border-color: var(--panorama-accent) !important;
+  border-color: var(--canvas-border-active, #cbd5d9) !important;
   color: var(--panorama-accent) !important;
-  background: #fff !important;
+  background: var(--panorama-raised) !important;
 }
 .panoramaWorkbench :global(.ant-btn-primary),
 .panoramaWorkbench :global(.ant-btn-primary:hover:not(:disabled)) {
-  border-color: var(--panorama-accent) !important;
+  border-color: var(--canvas-border-active, #cbd5d9) !important;
   color: #ffffff !important;
   background: var(--panorama-accent) !important;
 }
 .panoramaWorkbench :global(.ant-btn:disabled) {
-  border-color: #e5e7eb;
-  color: #98a2b3;
-  background: #fff;
+  border-color: var(--panorama-line);
+  color: #aeb7c7;
+  background: var(--panorama-raised);
 }
 .panoramaWorkbench :global(.ant-btn:focus-visible),
 .panoramaBody .field input:focus-visible,
 .panoramaBody .field select:focus-visible,
 .panoramaBody .field textarea:focus-visible,
 .panoramaBody .scene:focus-visible {
-  outline: 2px solid var(--panorama-accent);
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 .panoramaWorkbench .captureActions :global(.ant-btn) {
@@ -1489,7 +1581,7 @@
 }
 .panoramaWorkbench .captureActions :global(.ant-btn:hover:not(:disabled)) {
   transform: translateY(-2px);
-  box-shadow: 0 7px 18px rgb(16 24 40 / 12%);
+  box-shadow: 0 7px 18px rgb(0 0 0 / 32%);
 }
 .panoramaWorkbench .captureActions :global(.ant-btn:active:not(:disabled)) {
   transform: translateY(0) scale(0.98);
@@ -1517,7 +1609,7 @@
 .panoramaBody .captureResults::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background: #f2f4f7;
+  background: #566078;
   background-clip: padding-box;
 }
 @media (max-width: 760px) {
@@ -1554,4 +1646,146 @@
   .panoramaBody .capturePanel {
     max-height: 30dvh;
   }
+}
+.dialog {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  color-scheme: dark;
+}
+.dialog :is(.hint, .angleContext summary, .anglePromptToggle, .feeDetails, .studioFooter > span) {
+  color: #c4ccda;
+}
+.dialog .angleContext .hint {
+  color: #c4ccda;
+}
+.dialog .angleContext summary {
+  color: #e0e6f1;
+}
+.dialog .anglePromptToggle {
+  color: #c4ccda;
+}
+.dialog .anglePrompt {
+  color: #d5dbea;
+}
+.dialog :is(input:not([type='color']), textarea, select) {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+}
+.dialog
+  :is(
+    .sceneToolbar,
+    .controls,
+    .presets,
+    .studioParams,
+    .studioFooter,
+    .capturePanel,
+    .panoramaHeader,
+    .panoramaWorkbench
+  ) {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+}
+.dialog :is(.panelHeading, .description, .hint, .feeDetails, .panoramaHint) {
+  color: var(--canvas-text-muted, #9ca3af);
+}
+.dialog :is(.field input:not([type='checkbox'], [type='range']), .field select, .field textarea) {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.dialog .field :is(input, select, textarea):disabled {
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text-muted, #9ca3af);
+}
+.dialog .countOptions button {
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.dialog .countOptions button[aria-pressed='true'] {
+  background: rgb(17 169 138 / 14%);
+  color: #63cdb2;
+  border-color: var(--canvas-border-active, #cbd5d9);
+}
+.dialog .quote {
+  background: var(--canvas-surface-raised, #202433);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  color: #63cdb2;
+}
+.dialog .scene {
+  background: var(--canvas-surface-input, #0d0e14);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.dialog .sceneShell {
+  color: var(--canvas-text, #e5e7eb);
+}
+.dialog .sceneToolbar {
+  background: var(--canvas-surface-raised, #202433);
+}
+.dialog .colorField button {
+  background: var(--canvas-surface-highest, #2b3145);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.dialog .presets button {
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.dialog .studioPresets .field > span,
+.dialog .studioParams .field > span {
+  color: #e0e6f1;
+  font-size: 11px;
+}
+.dialog .heading > span {
+  color: #e5e7eb;
+}
+.dialog .studioPresets .presets button,
+.dialog .studioParams .presets button {
+  min-height: 26px;
+  padding: 4px 7px;
+  font-size: 10px;
+}
+.dialog .studioFooter :global(.ant-btn-text) {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 8px;
+  background: #2b3143;
+  color: #d5dbea;
+  font-size: 11px;
+}
+.dialog .studioFooter :global(.ant-btn-text:hover:not(:disabled)) {
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: #39445a;
+  color: #fff;
+}
+.dialog .studioFooter :global(.ant-btn-text:disabled) {
+  color: #c4ccda;
+  opacity: 0.9;
+}
+.dialog .studioFooter :global(.ant-btn-primary:disabled) {
+  border-color: #566078;
+  background: #566078;
+  color: #f2f5fb;
+  opacity: 1;
+}
+.dialog :global(.ant-modal-close) {
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 10px;
+  background: #2b3143;
+  color: #f2f5fb;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 22%);
+}
+.dialog :global(.ant-modal-close:hover) {
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: #39445a;
+  color: #fff;
 }

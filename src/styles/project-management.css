@@ -1276,6 +1276,10 @@
   font-size: 14px;
   color: #5b6072;
 }
+.pm2-filters.is-canvas-filter > .pm2-filter,
+.pm2-filters.is-canvas-filter > .pm2-mine-chip {
+  display: none;
+}
 /* 创作流程分段筛选：与项目视频列表页的流程 tab 同款视觉 */
 .pm2-flow-tabs {
   display: flex;
@@ -1594,6 +1598,40 @@
 }
 .pm2-folder:hover .pm2-folder-more {
   opacity: 1;
+}
+.pm2-pcard:hover .pm2-folder-more,
+.pm2-folder-more:focus-within {
+  opacity: 1;
+}
+.pm2-pcard-cover > .pm2-folder-more {
+  top: 8px;
+  right: 8px;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  opacity: 0;
+}
+.pm2-pcard-cover > .pm2-folder-more > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 8px;
+  background: rgb(20 24 34 / 70%);
+  color: #fff;
+  font-size: 21px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pm2-pcard-cover > .pm2-folder-more > button:hover {
+  background: rgb(20 24 34 / 90%);
+}
+.pm2-pcard-cover > .pm2-folder-more > .pm2-folder-menu {
+  top: 36px;
 }
 .pm2-folder-more:hover {
   background: #fff;
