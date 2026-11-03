@@ -93,7 +93,7 @@
   padding: 0;
   border: 1px solid rgb(255 255 255 / 24%);
   border-radius: 14px;
-  background: #252b3b;
+  background: #262626;
   color: #f5f7fb;
   cursor: pointer;
   backdrop-filter: blur(4px);
@@ -447,10 +447,10 @@
 }
 .dialog {
   --image-viewport-text: #e5e7eb;
-  --image-toolbar-bg: #202433;
+  --image-toolbar-bg: #262626;
   --image-toolbar-border: rgb(255 255 255 / 12%);
-  --image-toolbar-hover: #2b3145;
-  --image-toolbar-active: #343b52;
+  --image-toolbar-hover: #383838;
+  --image-toolbar-active: #454545;
   --image-toolbar-muted: #9ca3af;
   --image-toolbar-divider: rgb(255 255 255 / 12%);
   border-color: rgb(255 255 255 / 12%);
@@ -459,9 +459,9 @@
   color-scheme: dark;
 }
 .captionCount {
-  background: #202433;
+  background: #262626;
   color: #9ca3af;
 }
 .stage > div {
-  background: #0d0e14;
+  background: #262626;
 }

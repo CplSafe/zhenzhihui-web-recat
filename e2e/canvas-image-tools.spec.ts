@@ -649,9 +649,9 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     }
   })
   expect(panoramaSurfaceColors).toEqual({
-    header: 'rgb(32, 36, 51)',
-    body: 'rgb(24, 27, 38)',
-    scene: 'rgb(13, 14, 20)',
+    header: 'rgb(38, 38, 38)',
+    body: 'rgb(38, 38, 38)',
+    scene: 'rgb(38, 38, 38)',
     title: 'rgb(229, 231, 235)',
   })
 

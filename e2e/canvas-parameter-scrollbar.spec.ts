@@ -59,6 +59,14 @@ for (const width of [1440, 760]) {
     await editor.locator('button[aria-expanded]').last().click()
     const menu = page.getByRole('region', { name: '生成参数', exact: true })
     await expect(menu).toBeVisible()
+    const surface = menu.locator(
+      'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " ant-popover-inner ")]',
+    )
+    await expect(surface).toHaveCSS('background-color', 'rgb(38, 38, 38)')
+    await expect(menu.getByRole('button', { name: 'A', exact: true }).first()).toHaveCSS(
+      'background-color',
+      'rgb(38, 38, 38)',
+    )
     const grid = menu.locator('[class*="schemaMenuGrid"]')
     await expect(grid).toHaveCSS('scrollbar-width', 'thin')
     expect(await grid.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)

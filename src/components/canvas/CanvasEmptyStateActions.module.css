@@ -425,6 +425,17 @@
   background: #202433;
   color: #e5e7eb;
 }
+
+/* The editor uses neutral surfaces; the same component also appears on the library page. */
+:global(.canvas-view) :is(.projectCover, .projectCoverMedia, .projectActions > button, .projectMenu),
+:global(body[data-canvas-ui='true']) .renameDialog,
+:global(body[data-canvas-ui='true']) .renameDialog input,
+:global(body[data-canvas-ui='true']) .renameDialog > div button {
+  background: var(--canvas-surface, #262626);
+}
+:global(.canvas-view) .projectMenu button:hover {
+  background: #383838;
+}
 .projectMenu button {
   color: #e5e7eb;
 }

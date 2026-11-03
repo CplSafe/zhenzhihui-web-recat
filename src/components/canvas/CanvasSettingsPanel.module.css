@@ -53,7 +53,7 @@
   padding: 0 10px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 7px;
-  background: #2b3143;
+  background: #262626;
   color: #e5e7eb;
   font: inherit;
   font-size: 12px;
@@ -62,7 +62,7 @@
 
 .reset:hover {
   border-color: var(--canvas-border-active, #cbd5d9);
-  background: #39445a;
+  background: #383838;
   color: #fff;
 }
 
@@ -74,7 +74,7 @@
   justify-content: center;
   border: 1px solid rgb(255 255 255 / 20%);
   border-radius: 7px;
-  background: #2b3143;
+  background: #262626;
   color: #f2f5fb;
   font-size: 16px;
   cursor: pointer;
@@ -82,7 +82,7 @@
 
 .close:hover {
   border-color: var(--canvas-border-active, #cbd5d9);
-  background: #39445a;
+  background: #383838;
   color: #fff;
 }
 

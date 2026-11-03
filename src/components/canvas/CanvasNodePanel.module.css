@@ -1667,6 +1667,11 @@
   color: var(--canvas-text, #e5e7eb);
 }
 
+.videoBtnGroupItemActive {
+  border-color: var(--canvas-brand, #00e5be);
+  color: var(--canvas-brand, #00e5be);
+}
+
 .modelRow[data-expanded='true'],
 .modelRowTagDuration {
   background: rgb(17 169 138 / 14%);

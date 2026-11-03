@@ -7,9 +7,9 @@
  */
 .canvas-view {
   --canvas-surface: #262626;
-  --canvas-surface-raised: #202433;
-  --canvas-surface-highest: #2b3145;
-  --canvas-surface-input: #0d0e14;
+  --canvas-surface-raised: #262626;
+  --canvas-surface-highest: #262626;
+  --canvas-surface-input: #262626;
   --canvas-text: #e5e7eb;
   --canvas-text-muted: #9ca3af;
   --canvas-border: rgb(255 255 255 / 12%);
@@ -20,7 +20,7 @@
   --canvas-brand: #00e5be;
   --canvas-brand-hover: #1ae9c5;
   --canvas-brand-subtle: rgb(0 229 190 / 12%);
-  --canvas-surface-low: #12141c;
+  --canvas-surface-low: #262626;
   --canvas-text-secondary: #94a3b8;
   --canvas-focus-ring: 0 0 0 3px rgb(203 213 217 / 32%);
 
@@ -37,9 +37,10 @@
 /* Portaled canvas dialogs and dropdowns render under body, so share the editor palette there. */
 body[data-canvas-ui='true'] {
   --canvas-surface: #262626;
-  --canvas-surface-raised: #202433;
-  --canvas-surface-highest: #2b3145;
-  --canvas-surface-input: #0d0e14;
+  --canvas-surface-raised: #262626;
+  --canvas-surface-highest: #262626;
+  --canvas-surface-input: #262626;
+  --canvas-surface-low: #262626;
   --canvas-text: #e5e7eb;
   --canvas-text-muted: #9ca3af;
   --canvas-border: rgb(255 255 255 / 12%);
@@ -3040,7 +3041,7 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   justify-content: center;
   border: 1px solid rgb(255 255 255 / 20%);
   border-radius: 10px;
-  background: #2b3143;
+  background: #262626;
   box-shadow: 0 2px 8px rgb(0 0 0 / 22%);
 }
 .canvas-view button[class*='close']:hover,
@@ -3049,7 +3050,7 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 [data-canvas-nonmodal] button[class*='closeBtn']:hover,
 [data-canvas-nonmodal] .ant-modal-close:hover {
   border-color: var(--canvas-border-active, #cbd5d9);
-  background: #39445a;
+  background: #383838;
   color: #fff !important;
 }
 .canvas-view button[class*='close']:focus-visible,

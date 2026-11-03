@@ -1276,8 +1276,8 @@
 .panoramaWorkbench {
   color-scheme: dark;
   --panorama-bg: #262626;
-  --panorama-panel: #202433;
-  --panorama-raised: #2b3145;
+  --panorama-panel: #262626;
+  --panorama-raised: #262626;
   --panorama-line: rgb(255 255 255 / 12%);
   --panorama-text: #e5e7eb;
   --panorama-muted: #aeb7c7;
@@ -1752,13 +1752,13 @@
   padding: 0 10px;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 8px;
-  background: #2b3143;
+  background: #262626;
   color: #d5dbea;
   font-size: 11px;
 }
 .dialog .studioFooter :global(.ant-btn-text:hover:not(:disabled)) {
   border-color: var(--canvas-border-active, #cbd5d9);
-  background: #39445a;
+  background: #383838;
   color: #fff;
 }
 .dialog .studioFooter :global(.ant-btn-text:disabled) {
@@ -1780,12 +1780,12 @@
   place-items: center;
   border: 1px solid rgb(255 255 255 / 20%);
   border-radius: 10px;
-  background: #2b3143;
+  background: #262626;
   color: #f2f5fb;
   box-shadow: 0 2px 8px rgb(0 0 0 / 22%);
 }
 .dialog :global(.ant-modal-close:hover) {
   border-color: var(--canvas-border-active, #cbd5d9);
-  background: #39445a;
+  background: #383838;
   color: #fff;
 }
