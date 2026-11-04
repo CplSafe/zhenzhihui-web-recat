@@ -45,7 +45,9 @@ function file(name = 'reference.png', type = 'image/png') {
  */
 async function pickModel(user: ReturnType<typeof userEvent.setup>, modelName: string) {
   // 点击摘要胶囊后直接出现模型卡片，不再经过“请选择模型”的二次触发器。
-  await user.click(screen.getByRole('button', { name: /生成模型/ }))
+  if (!screen.queryByRole('dialog', { name: '生成模型' })) {
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+  }
   await user.click(screen.getByRole('option', { name: new RegExp(modelName) }))
   // 模型卡片有收拢动画；等自动串联的参数面板真正打开后再继续操作，
   // 避免测试在动画结束回调与手动点击参数按钮之间产生竞态。
@@ -157,7 +159,7 @@ describe('SmartEntry draft and session initialization', () => {
 })
 
 describe('SmartEntry mode, options, validation, and submission', () => {
-  it('opens model and creative parameter panels on hover and closes them when the pointer leaves', async () => {
+  it('opens model and creative parameter panels on click, not hover', async () => {
     const user = userEvent.setup()
     render(
       <TestSmartEntry
@@ -174,19 +176,24 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     const modelTrigger = screen.getByRole('button', { name: /生成模型/ })
     await user.hover(modelTrigger)
+    expect(screen.queryByRole('dialog', { name: '生成模型' })).not.toBeInTheDocument()
+    await user.click(modelTrigger)
     expect(screen.getByRole('dialog', { name: '生成模型' })).toBeInTheDocument()
     await user.unhover(modelTrigger)
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '生成模型' })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: '生成模型' })).toBeInTheDocument()
 
-    await user.hover(modelTrigger)
     await user.click(screen.getByRole('option', { name: /悬停测试模型/ }))
     await screen.findByRole('dialog', { name: '创作参数' })
     await user.keyboard('{Escape}')
     const paramsTrigger = openCreativeParams()
     await user.hover(paramsTrigger)
+    expect(screen.queryByRole('dialog', { name: '创作参数' })).not.toBeInTheDocument()
+    await user.click(paramsTrigger)
     expect(screen.getByRole('dialog', { name: '创作参数' })).toBeInTheDocument()
     await user.unhover(paramsTrigger)
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '创作参数' })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: '创作参数' })).toBeInTheDocument()
+    await user.click(paramsTrigger)
+    expect(screen.queryByRole('dialog', { name: '创作参数' })).not.toBeInTheDocument()
   })
 
   it('renders the real-person studio as a video-only entry with independent copy', () => {

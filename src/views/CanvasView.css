@@ -66,6 +66,67 @@ body[data-canvas-ui='true'] :is(.ant-input, .ant-input-affix-wrapper, .ant-selec
   color: var(--canvas-text);
 }
 
+/* Global confirmation is mounted outside the editor; scope its dark theme to the canvas route. */
+body[data-canvas-ui='true'] .confirm-backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+
+body[data-canvas-ui='true'] .confirm-dialog {
+  border: 1px solid rgb(255 255 255 / 12%);
+  background: #262626;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 55%);
+}
+
+body[data-canvas-ui='true'] .confirm-icon:not(.is-danger) {
+  background: #383838;
+  color: #d1d5db;
+}
+
+body[data-canvas-ui='true'] .confirm-title {
+  color: #f3f4f6;
+}
+
+body[data-canvas-ui='true'] .confirm-message {
+  color: #c2c6cc;
+}
+
+body[data-canvas-ui='true'] .confirm-input {
+  border-color: rgb(255 255 255 / 20%);
+  background: #1b1b1b;
+  color: #f3f4f6;
+}
+
+body[data-canvas-ui='true'] .confirm-input:focus,
+body[data-canvas-ui='true'] .confirm-btn:focus-visible {
+  outline-color: #cbd5d9;
+  border-color: #cbd5d9;
+  box-shadow: 0 0 0 3px rgb(203 213 217 / 16%);
+}
+
+body[data-canvas-ui='true'] .confirm-btn-cancel {
+  border-color: rgb(255 255 255 / 18%);
+  background: #333;
+  color: #e5e7eb;
+}
+
+body[data-canvas-ui='true'] .confirm-btn-cancel:hover {
+  border-color: rgb(255 255 255 / 36%);
+  background: #414141;
+  color: #fff;
+}
+
+body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger) {
+  border-color: #d1d5db;
+  background: #d1d5db;
+  color: #171717;
+  box-shadow: none;
+}
+
+body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
+  border-color: #f3f4f6;
+  background: #f3f4f6;
+}
+
 /* 顶部操作区增加一层柔和的压暗过渡，帮助导航与画布内容拉开层次。 */
 .canvas-interaction-hint {
   position: absolute;

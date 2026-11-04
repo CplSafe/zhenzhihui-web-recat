@@ -44,7 +44,13 @@ for (const path of ['/smart', '/hot-copy']) {
       }
       const modelsTrigger = page.getByRole('button', { name: /^生成模型，/ })
       await expect(modelsTrigger).toBeEnabled()
+      await modelsTrigger.hover()
+      await page.waitForTimeout(250)
+      await expect(page.getByRole('dialog', { name: '生成模型', exact: true })).toHaveCount(0)
       await modelsTrigger.click()
+      await page.mouse.move(width - 1, 1)
+      await page.waitForTimeout(250)
+      await expect(page.getByRole('dialog', { name: '生成模型', exact: true })).toBeVisible()
       await page.getByRole('option', { name: /测试视频模型/ }).click()
       const dialog = page.getByRole('dialog', { name: '创作参数', exact: true })
       await expect(dialog).toBeVisible()
@@ -55,6 +61,9 @@ for (const path of ['/smart', '/hot-copy']) {
       if (path === '/smart' && width === 390) {
         await page.getByRole('button', { name: '生成设置', exact: true }).click()
       }
+      await paramsTrigger.hover()
+      await page.waitForTimeout(250)
+      await expect(dialog).toBeHidden()
       await paramsTrigger.focus()
       await paramsTrigger.press('Enter')
       await expect(dialog).toBeVisible()

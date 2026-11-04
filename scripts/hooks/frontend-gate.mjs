@@ -181,8 +181,30 @@ function collect(suites) {
 }
 
 export function verificationBuildDirectory(runId) {
-  if (!/^[\da-f-]{36}$/.test(runId)) throw new Error('Invalid verification run ID')
+  if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/.test(runId))
+    throw new Error('Invalid verification run ID')
   return `.codex/frontend-verification/build-${runId}`
+}
+
+// Each run owns its own build. Screenshots, reports and receipts live elsewhere and
+// remain available for review; older builds and other concurrent runs are untouched.
+export function removeVerificationBuild(runId, base = root) {
+  const directory = verificationBuildDirectory(runId)
+  const project = path.resolve(base)
+  const parent = path.resolve(project, '.codex/frontend-verification')
+  const target = path.resolve(project, directory)
+  if (path.dirname(target) !== parent || !path.basename(target).startsWith('build-'))
+    throw new Error('Invalid verification build path')
+  for (const folder of [path.join(project, '.codex'), parent, target]) {
+    try {
+      if (fs.lstatSync(folder).isSymbolicLink())
+        throw new Error(`Refusing verification cleanup through symlink: ${folder}`)
+    } catch (error) {
+      if (error.code === 'ENOENT') return
+      throw error
+    }
+  }
+  fs.rmSync(target, { recursive: true, force: true })
 }
 
 function verify(tests) {
@@ -260,6 +282,7 @@ function verify(tests) {
     )
   } finally {
     fs.rmSync(config, { force: true })
+    removeVerificationBuild(runId)
   }
 }
 
