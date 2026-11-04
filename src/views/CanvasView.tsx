@@ -19,6 +19,7 @@ import {
 } from '@/utils/canvasVideoAudio'
 import CanvasVideoUpscaleResultPanel from '@/components/canvas/CanvasVideoUpscaleResultPanel'
 import CanvasNodeStatus from '@/components/canvas/CanvasNodeStatus'
+import CanvasDragStablePanel from '@/components/canvas/CanvasDragStablePanel'
 import CanvasStoryboard from '@/components/canvas/CanvasStoryboard'
 import { useCanvasModalOpen } from '@/composables/useCanvasModalOpen'
 import type { ToolImage, CanvasToolSubmission } from '@/components/canvas/CanvasImageTools'
@@ -1352,6 +1353,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       applyPendingSeek(v)
       v.play().catch(() => setPlaying(false))
       setPlaying(true)
+      // 流式地址连元数据都读不到时，跳转校验无法触发；主动尝试完整素材回退。
+      if (v.readyState < HTMLMediaElement.HAVE_METADATA && !videoLocalSrcRef.current) {
+        void ensureSeekableSource()
+      }
       // 起播后再验一次：被抹回 0 就切本地整片
       verifySeekLanded()
     } else {
@@ -2106,6 +2111,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 primeVideoPosterFrame(el)
               }}
               onLoadedData={(event) => captureVideoPosterFrame(event.currentTarget)}
+              onError={() => {
+                // 部分素材服务不支持浏览器的分段请求，完整下载仍可能正常播放。
+                if (selected && !videoLocalSrcRef.current) void ensureSeekableSource()
+              }}
               onSeeked={(event) => {
                 // 以元素实际落点为准回填，进度条不谎报位置
                 if (!videoScrubbing) setVideoCurrentSec(event.currentTarget.currentTime)
@@ -4418,6 +4427,8 @@ function CanvasInner() {
         size?: { width: number; height: number }
         /** 跳过历史快照：批量创建（一次导入多张图片）时由调用方先统一记录一次，撤销才是一步到位 */
         skipHistory?: boolean
+        /** 批量导入由调用方合并触发一次立即保存。 */
+        deferSync?: boolean
         /** 取景批量添加时保留原节点选区，避免关闭仍在使用的全景预览。 */
         select?: boolean
       },
@@ -4485,7 +4496,7 @@ function CanvasInner() {
       setSaveStatus('dirty')
       // 新节点是项目的首个持久化内容。立即写入草稿并排入云端同步队列，
       // 避免用户马上返回或切换最近项目时，卸载清理掉 1 秒防抖定时器而丢失节点。
-      window.setTimeout(() => scheduleSyncRef.current(true), 0)
+      if (!options?.deferSync) window.setTimeout(() => scheduleSyncRef.current(true), 0)
       // 动画结束后移除渐入类，避免节点被持久化后再恢复时重复播放动画
       window.setTimeout(() => {
         setNodes((nds) =>
@@ -5943,6 +5954,9 @@ function CanvasInner() {
     setSelectedNode,
     setSaveStatus,
     resolveUploadedRealPerson,
+    scheduleImportSync: useCallback(() => {
+      window.setTimeout(() => scheduleSyncRef.current(true), 0)
+    }, []),
   })
   /** 打开本地图片选择框；anchor 为落点（视口坐标），缺省落在视口中心 */
   const openLocalImagePicker = useCallback((anchor?: { x: number; y: number }) => {
@@ -12124,185 +12138,187 @@ function CanvasInner() {
               className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
               style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
             >
-              {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
-                <CanvasVideoUpscaleResultPanel
-                  data={nodes.find((node) => node.id === selectedNode.id)?.data || {}}
-                  onRetry={async () => {
-                    const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                    const request = (node?.data.generationRequest || node?.data.videoUpscaleRequest) as
-                      | CanvasGenerationRequest
-                      | undefined
-                    if (!request || request.kind !== 'video' || request.operationCode !== 'video.upscale') {
-                      showToast('缺少原始超分请求，请从原视频重新打开超分', 'error')
-                      return
-                    }
-                    await submitNodeGeneration(node.id, request)
-                  }}
-                />
-              ) : (
-                <CanvasNodePanel
-                  node={selectedNodeForPanel}
-                  mediaConnectionCounts={
-                    selectedNode
-                      ? {
-                          images: countIncomingMediaConnections(selectedNode.id, 'image'),
-                          videos: countIncomingMediaConnections(selectedNode.id, 'video'),
-                        }
-                      : undefined
-                  }
-                  currentUserId={currentUserId}
-                  workspaceId={workspaceId}
-                  onPickRealPerson={(slotIndex) => {
-                    if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
-                    setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
-                    setLibraryInitialTab('real_person')
-                    openDrawerPanel('assets')
-                  }}
-                  onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
-                  onPickRefFromLibrary={(slotIndex) => {
-                    if (!selectedNode) return
-                    if (remainingRefCapacity(selectedNode.id) <= 0) {
-                      showToast('当前模型的参考已达上限', 'info')
-                      return
-                    }
-                    setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
-                    setLibraryInitialTab('all')
-                    openDrawerPanel('assets')
-                  }}
-                  onRemoveRef={handleRemoveRef}
-                  onModeration={
-                    selectedNodeForPanel?.kind === 'image' || selectedNodeForPanel?.kind === 'video'
-                      ? (mediaType) => {
-                          const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                          const assetId = Number(node?.data.assetId)
-                          const moderationWorkspaceId = Number(node?.data.assetWorkspaceId || workspaceId || 0)
-                          if (!Number.isSafeInteger(assetId) || assetId <= 0) {
-                            showToast(`请先上传或生成${mediaType === 'video' ? '视频' : '图片'}`, 'error')
-                            return
-                          }
-                          if (!Number.isSafeInteger(moderationWorkspaceId) || moderationWorkspaceId <= 0) {
-                            showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
-                            return
-                          }
-                          void handleSeedanceModeration(assetId, moderationWorkspaceId, mediaType)
-                        }
-                      : undefined
-                  }
-                  onPreviewMentionRef={(ref) => {
-                    if (ref.kind === 'video') {
-                      nodePreviewRef.current.get(ref.sourceId)?.()
-                      return
-                    }
-                    if (latestRef.current.nodes.some((item) => item.id === ref.sourceId)) {
-                      openImagePreview(ref.sourceId)
-                    }
-                  }}
-                  resultHistory={selectedNodeHistory}
-                  onRevertToHistory={handleRevertToHistory}
-                  onRatioChange={handleRatioChange}
-                  onVideoModeChange={handleVideoModeChange}
-                  onModelChange={handleModelChange}
-                  onGenerate={handleNodeGenerate}
-                  onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
-                    if (requiresSeedanceModeration) {
-                      const imageIds = [
-                        ...new Set(
-                          sourceRefs
-                            .filter(
-                              (ref) =>
-                                ref.kind === 'image' &&
-                                inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
-                            )
-                            .map((ref) => Number(ref.assetId))
-                            .filter((id) => Number.isSafeInteger(id) && id > 0),
-                        ),
-                      ]
-                      const videoIds = [
-                        ...new Set(
-                          inputAssets
-                            .filter((asset) => asset.role === 'video')
-                            .map((asset) => Number(asset.asset_id))
-                            .filter((id) => Number.isSafeInteger(id) && id > 0),
-                        ),
-                      ]
-                      const moderationAssets = [
-                        ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
-                        ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
-                      ]
-                      for (const { assetId, mediaType } of moderationAssets) {
-                        const moderationError = await ensureCanvasSeedanceModeration(
-                          assetId,
-                          Number(workspaceId || 0),
-                          mediaType,
-                        )
-                        if (moderationError) return moderationError
+              <CanvasDragStablePanel dragging={draggingNode} nodeId={selectedNode.id}>
+                {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
+                  <CanvasVideoUpscaleResultPanel
+                    data={nodes.find((node) => node.id === selectedNode.id)?.data || {}}
+                    onRetry={async () => {
+                      const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                      const request = (node?.data.generationRequest || node?.data.videoUpscaleRequest) as
+                        | CanvasGenerationRequest
+                        | undefined
+                      if (!request || request.kind !== 'video' || request.operationCode !== 'video.upscale') {
+                        showToast('缺少原始超分请求，请从原视频重新打开超分', 'error')
+                        return
                       }
+                      await submitNodeGeneration(node.id, request)
+                    }}
+                  />
+                ) : (
+                  <CanvasNodePanel
+                    node={selectedNodeForPanel}
+                    mediaConnectionCounts={
+                      selectedNode
+                        ? {
+                            images: countIncomingMediaConnections(selectedNode.id, 'image'),
+                            videos: countIncomingMediaConnections(selectedNode.id, 'video'),
+                          }
+                        : undefined
                     }
-                    const unsavedAudio = sourceRefs.find((ref) => {
-                      if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
-                        return false
-                      const source = nodes.find((node) => node.id === ref.sourceId)
-                      if (source?.data?.audioRole !== 'editor') return false
-                      const audio = normalizeAudioSettings(source.data.audio)
-                      return (
-                        audio.inSec > 0.01 ||
-                        audio.outSec < audio.durationSec - 0.01 ||
-                        audio.volume < 0.99 ||
-                        audio.fadeInSec > 0 ||
-                        audio.fadeOutSec > 0
+                    currentUserId={currentUserId}
+                    workspaceId={workspaceId}
+                    onPickRealPerson={(slotIndex) => {
+                      if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
+                      setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                      setLibraryInitialTab('real_person')
+                      openDrawerPanel('assets')
+                    }}
+                    onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
+                    onPickRefFromLibrary={(slotIndex) => {
+                      if (!selectedNode) return
+                      if (remainingRefCapacity(selectedNode.id) <= 0) {
+                        showToast('当前模型的参考已达上限', 'info')
+                        return
+                      }
+                      setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                      setLibraryInitialTab('all')
+                      openDrawerPanel('assets')
+                    }}
+                    onRemoveRef={handleRemoveRef}
+                    onModeration={
+                      selectedNodeForPanel?.kind === 'image' || selectedNodeForPanel?.kind === 'video'
+                        ? (mediaType) => {
+                            const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                            const assetId = Number(node?.data.assetId)
+                            const moderationWorkspaceId = Number(node?.data.assetWorkspaceId || workspaceId || 0)
+                            if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+                              showToast(`请先上传或生成${mediaType === 'video' ? '视频' : '图片'}`, 'error')
+                              return
+                            }
+                            if (!Number.isSafeInteger(moderationWorkspaceId) || moderationWorkspaceId <= 0) {
+                              showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
+                              return
+                            }
+                            void handleSeedanceModeration(assetId, moderationWorkspaceId, mediaType)
+                          }
+                        : undefined
+                    }
+                    onPreviewMentionRef={(ref) => {
+                      if (ref.kind === 'video') {
+                        nodePreviewRef.current.get(ref.sourceId)?.()
+                        return
+                      }
+                      if (latestRef.current.nodes.some((item) => item.id === ref.sourceId)) {
+                        openImagePreview(ref.sourceId)
+                      }
+                    }}
+                    resultHistory={selectedNodeHistory}
+                    onRevertToHistory={handleRevertToHistory}
+                    onRatioChange={handleRatioChange}
+                    onVideoModeChange={handleVideoModeChange}
+                    onModelChange={handleModelChange}
+                    onGenerate={handleNodeGenerate}
+                    onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
+                      if (requiresSeedanceModeration) {
+                        const imageIds = [
+                          ...new Set(
+                            sourceRefs
+                              .filter(
+                                (ref) =>
+                                  ref.kind === 'image' &&
+                                  inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
+                              )
+                              .map((ref) => Number(ref.assetId))
+                              .filter((id) => Number.isSafeInteger(id) && id > 0),
+                          ),
+                        ]
+                        const videoIds = [
+                          ...new Set(
+                            inputAssets
+                              .filter((asset) => asset.role === 'video')
+                              .map((asset) => Number(asset.asset_id))
+                              .filter((id) => Number.isSafeInteger(id) && id > 0),
+                          ),
+                        ]
+                        const moderationAssets = [
+                          ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
+                          ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
+                        ]
+                        for (const { assetId, mediaType } of moderationAssets) {
+                          const moderationError = await ensureCanvasSeedanceModeration(
+                            assetId,
+                            Number(workspaceId || 0),
+                            mediaType,
+                          )
+                          if (moderationError) return moderationError
+                        }
+                      }
+                      const unsavedAudio = sourceRefs.find((ref) => {
+                        if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
+                          return false
+                        const source = nodes.find((node) => node.id === ref.sourceId)
+                        if (source?.data?.audioRole !== 'editor') return false
+                        const audio = normalizeAudioSettings(source.data.audio)
+                        return (
+                          audio.inSec > 0.01 ||
+                          audio.outSec < audio.durationSec - 0.01 ||
+                          audio.volume < 0.99 ||
+                          audio.fadeInSec > 0 ||
+                          audio.fadeOutSec > 0
+                        )
+                      })
+                      if (unsavedAudio)
+                        return Promise.resolve(
+                          '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
+                        )
+                      return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
+                    }}
+                    onInsufficientCredits={handleInsufficientCredits}
+                    onSaveText={handleSaveNodeText}
+                    onCreateVideoFromText={(currentPrompt) => {
+                      const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                      if (!source) {
+                        showToast('原文本节点已不存在，请重新选择节点', 'info')
+                        return
+                      }
+                      const text = (window as any).__canvasTextContents?.get(source.id) ?? source.data.text ?? ''
+                      const prompt = toCanvasPromptContext(text).trim() || currentPrompt.trim()
+                      if (!prompt) {
+                        showToast('请先输入文字或生成分镜，再创建视频节点', 'info')
+                        return
+                      }
+                      const id = appendNewNode(
+                        'video',
+                        {
+                          x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
+                          y: source.position.y,
+                        },
+                        { extraData: { prompt }, ratio: '16:9' },
                       )
-                    })
-                    if (unsavedAudio)
-                      return Promise.resolve(
-                        '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
-                      )
-                    return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
-                  }}
-                  onInsufficientCredits={handleInsufficientCredits}
-                  onSaveText={handleSaveNodeText}
-                  onCreateVideoFromText={(currentPrompt) => {
-                    const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                    if (!source) {
-                      showToast('原文本节点已不存在，请重新选择节点', 'info')
-                      return
-                    }
-                    const text = (window as any).__canvasTextContents?.get(source.id) ?? source.data.text ?? ''
-                    const prompt = toCanvasPromptContext(text).trim() || currentPrompt.trim()
-                    if (!prompt) {
-                      showToast('请先输入文字或生成分镜，再创建视频节点', 'info')
-                      return
-                    }
-                    const id = appendNewNode(
-                      'video',
-                      {
-                        x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
-                        y: source.position.y,
-                      },
-                      { extraData: { prompt }, ratio: '16:9' },
-                    )
-                    if (!id) return
-                    setEdges((items) => [
-                      ...items,
-                      {
-                        id: buildEdgeId(source.id, id, 0),
-                        source: source.id,
-                        target: id,
-                        data: { slotIndex: 0 },
-                      },
-                    ])
-                    setSaveStatus('dirty')
-                  }}
-                  onPromptChange={handleNodePromptChange}
-                  onParamsChange={handleNodeParamsChange}
-                  inheritedTexts={inheritedPromptTexts}
-                  onAdoptInheritedText={handleAdoptInheritedText}
-                  onPolishText={handlePolishNodeText}
-                  models={canvasModels}
-                  modelOperationStates={modelOperationStates}
-                  onReloadModels={reloadModels}
-                  modelsLoading={modelsLoading}
-                />
-              )}
+                      if (!id) return
+                      setEdges((items) => [
+                        ...items,
+                        {
+                          id: buildEdgeId(source.id, id, 0),
+                          source: source.id,
+                          target: id,
+                          data: { slotIndex: 0 },
+                        },
+                      ])
+                      setSaveStatus('dirty')
+                    }}
+                    onPromptChange={handleNodePromptChange}
+                    onParamsChange={handleNodeParamsChange}
+                    inheritedTexts={inheritedPromptTexts}
+                    onAdoptInheritedText={handleAdoptInheritedText}
+                    onPolishText={handlePolishNodeText}
+                    models={canvasModels}
+                    modelOperationStates={modelOperationStates}
+                    onReloadModels={reloadModels}
+                    modelsLoading={modelsLoading}
+                  />
+                )}
+              </CanvasDragStablePanel>
             </div>
           )}
 

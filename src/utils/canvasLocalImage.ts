@@ -143,10 +143,14 @@ export interface LocalMediaFiles {
 export function extractMediaFiles(data: DataTransfer | null | undefined): LocalMediaFiles {
   if (!data) return { images: [], videos: [], audios: [], unsupported: [] }
   const listedFiles = Array.from(data.files || [])
-  const items = Array.from(data.items || [])
-  const fromItems = items.filter((item) => item && item.kind === 'file').map((item) => item.getAsFile())
   // 拖放时优先使用原始 FileList，即使其中只有不支持的文件，也不要误落到重复的 items 分支。
-  const files = listedFiles.length ? listedFiles : fromItems.filter((file): file is File => Boolean(file))
+  // 原生文件项可能跨进程调用系统拖放接口；已有文件列表时不再重复读取这些项。
+  const files = listedFiles.length
+    ? listedFiles
+    : Array.from(data.items || [])
+        .filter((item) => item && item.kind === 'file')
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file))
   const images = pickImageFiles(files)
   const videos = pickVideoFiles(files)
   const audios = files.filter(isAudioFile)

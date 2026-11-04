@@ -103,6 +103,14 @@ describe('canvas local image import helpers', () => {
     })
   })
 
+  it('does not access native drag items when a file list is available', () => {
+    const mp4 = videoFile('clip.mp4')
+    const getAsFile = vi.fn(() => mp4)
+    const data = { files: [mp4], items: [{ kind: 'file', getAsFile }] } as unknown as DataTransfer
+    expect(extractMediaFiles(data).videos).toEqual([mp4])
+    expect(getAsFile).not.toHaveBeenCalled()
+  })
+
   it('falls back to clipboard items for videos as well as images', () => {
     const mp4 = videoFile('clip.mp4')
     expect(
