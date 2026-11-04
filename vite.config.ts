@@ -106,6 +106,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      // Verification builds and receipts are generated artifacts, not hot-update inputs.
+      // Watching them can create tens of thousands of filesystem watchers on Windows.
+      watch: { ignored: ['**/.codex/**'] },
       proxy: {
         '/api': createBusinessProxy(businessTarget),
         '/auth': {

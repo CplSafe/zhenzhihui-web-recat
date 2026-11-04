@@ -66,12 +66,10 @@ export default function CreativeModelSlots({
   const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const [closing, setClosing] = useState(false)
   const closeTimerRef = useRef<number | null>(null)
-  const hoverCloseTimerRef = useRef<number | null>(null)
 
   useEffect(
     () => () => {
       if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
-      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
     },
     [],
   )
@@ -129,25 +127,13 @@ export default function CreativeModelSlots({
           : emptyLabel
 
   const openPopover = () => {
-    if (hoverCloseTimerRef.current !== null) {
-      window.clearTimeout(hoverCloseTimerRef.current)
-      hoverCloseTimerRef.current = null
-    }
     if (authRequired || !slots.length || locked || open) return
     onOpen?.()
     setOpen(true)
   }
 
-  const scheduleHoverClose = () => {
-    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
-    hoverCloseTimerRef.current = window.setTimeout(() => {
-      setOpen(false)
-      hoverCloseTimerRef.current = null
-    }, 80)
-  }
-
   return (
-    <div className={barStyles.wrap} ref={wrapRef} onMouseEnter={openPopover} onMouseLeave={scheduleHoverClose}>
+    <div className={barStyles.wrap} ref={wrapRef}>
       <button
         type="button"
         className={`${barStyles.trigger}${open ? ` ${barStyles.isOpen}` : ''}`}
@@ -156,8 +142,8 @@ export default function CreativeModelSlots({
             onAuthRequired?.()
             return
           }
-          // 点击仍作为触屏与键盘的后备操作；鼠标场景由容器悬停展开。
-          openPopover()
+          if (open) setOpen(false)
+          else openPopover()
         }}
         disabled={!authRequired && (!slots.length || locked)}
         title={locked ? lockedReason : undefined}

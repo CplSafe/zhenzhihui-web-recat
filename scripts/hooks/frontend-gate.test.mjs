@@ -11,6 +11,7 @@ import {
   coversChanges,
   normalizeProjectPath,
   verificationBuildDirectory,
+  removeVerificationBuild,
 } from './frontend-gate.mjs'
 
 const baseline = { files: { 'src/page.tsx': 'old' }, fingerprint: 'old' }
@@ -94,4 +95,48 @@ test('each verification builds into its own safe directory instead of the shared
   assert.notEqual(a, b)
   assert.ok(a.startsWith('.codex/frontend-verification/build-'))
   assert.throws(() => verificationBuildDirectory('../dist'))
+  assert.throws(() => verificationBuildDirectory('-'.repeat(36)))
+})
+
+test('cleanup removes only its own build and preserves receipts, evidence and other runs', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frontend-build-cleanup-'))
+  const id = '11111111-1111-4111-8111-111111111111'
+  const other = '22222222-2222-4222-8222-222222222222'
+  try {
+    const ownBuild = path.join(dir, verificationBuildDirectory(id))
+    const otherBuild = path.join(dir, verificationBuildDirectory(other))
+    fs.mkdirSync(ownBuild, { recursive: true })
+    fs.mkdirSync(otherBuild, { recursive: true })
+    fs.writeFileSync(path.join(ownBuild, 'index.html'), 'temporary build')
+    fs.writeFileSync(path.join(otherBuild, 'index.html'), 'other run')
+    fs.writeFileSync(path.join(dir, '.codex/frontend-verification', `${id}.json`), 'receipt')
+    fs.mkdirSync(path.join(dir, 'test-results/frontend-gate', id), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'test-results/frontend-gate', id, 'screenshot.png'), 'evidence')
+    removeVerificationBuild(id, dir)
+    assert.equal(fs.existsSync(ownBuild), false)
+    assert.equal(fs.readFileSync(path.join(otherBuild, 'index.html'), 'utf8'), 'other run')
+    assert.equal(fs.existsSync(path.join(dir, '.codex/frontend-verification', `${id}.json`)), true)
+    assert.equal(fs.existsSync(path.join(dir, 'test-results/frontend-gate', id, 'screenshot.png')), true)
+    assert.doesNotThrow(() => removeVerificationBuild(id, dir))
+    assert.throws(() => removeVerificationBuild('../dist', dir))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('cleanup refuses a linked build directory', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frontend-build-link-'))
+  const id = '11111111-1111-4111-8111-111111111111'
+  try {
+    const outside = path.join(dir, 'outside')
+    const target = path.join(dir, verificationBuildDirectory(id))
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(outside, 'keep.txt'), 'keep')
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.symlinkSync(outside, target, process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(() => removeVerificationBuild(id, dir), /symlink/)
+    assert.equal(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8'), 'keep')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

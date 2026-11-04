@@ -92,31 +92,7 @@ export default function CreativeParamsDropdown({
   const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const adaptiveHintId = useId()
   const previousOpenSignalRef = useRef(openSignal)
-  const hoverCloseTimerRef = useRef<number | null>(null)
   const patch = (next: Partial<CreativeParamsValue>) => onChange({ ...value, ...next })
-
-  const openOnHover = () => {
-    if (hoverCloseTimerRef.current !== null) {
-      window.clearTimeout(hoverCloseTimerRef.current)
-      hoverCloseTimerRef.current = null
-    }
-    if (!blockedReason && !disabled) setOpen(true)
-  }
-
-  const scheduleHoverClose = () => {
-    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
-    hoverCloseTimerRef.current = window.setTimeout(() => {
-      setOpen(false)
-      hoverCloseTimerRef.current = null
-    }, 80)
-  }
-
-  useEffect(
-    () => () => {
-      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
-    },
-    [],
-  )
 
   useEffect(() => {
     if (openSignal === previousOpenSignalRef.current) return
@@ -125,7 +101,7 @@ export default function CreativeParamsDropdown({
   }, [openSignal, blockedReason, disabled, setOpen])
 
   return (
-    <div className={barStyles.wrap} ref={wrapRef} onMouseEnter={openOnHover} onMouseLeave={scheduleHoverClose}>
+    <div className={barStyles.wrap} ref={wrapRef}>
       <button
         type="button"
         className={`${barStyles.trigger}${open ? ` ${barStyles.isOpen}` : ''}`}
@@ -134,8 +110,7 @@ export default function CreativeParamsDropdown({
             onBlocked?.(blockedReason)
             return
           }
-          // 点击仍作为触屏与键盘的后备操作；鼠标场景由容器悬停展开。
-          setOpen(true)
+          setOpen(!open)
         }}
         disabled={disabled && !blockedReason}
         title={blockedReason || undefined}

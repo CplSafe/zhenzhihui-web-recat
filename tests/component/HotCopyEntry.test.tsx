@@ -119,7 +119,7 @@ function modelGroupsWith(models: Array<{ id: number; name: string; constraints?:
  * 创作台选择器，在卡片列表里按名称点选，选完自动收起。
  */
 async function pickModel(user: ReturnType<typeof userEvent.setup>, modelName: string) {
-  await user.hover(screen.getByRole('button', { name: /选择生成模型|生成模型，/ }))
+  await user.click(screen.getByRole('button', { name: /选择生成模型|生成模型，/ }))
   await user.click(screen.getByRole('option', { name: new RegExp(modelName) }))
 }
 
@@ -569,7 +569,7 @@ describe('HotCopyEntry project asset access', () => {
    * 不再由前端按 constraints 计算「最长 N 秒」的括注（那是 GenerationModelDropdown 的能力）。
    * 这里改为验证限制文案照常出现在卡片上，用户仍能在选之前看到差异。
    */
-  it('悬停后直接展示模型卡片且不闪现“生成模型”占位文字', async () => {
+  it('点击后展示模型卡片，悬停不展开', async () => {
     const user = userEvent.setup()
     const onReloadModels = vi.fn()
     render(
@@ -602,6 +602,8 @@ describe('HotCopyEntry project asset access', () => {
     const trigger = screen.getByRole('button', { name: '生成模型，请选择视频模型' })
     expect(trigger).toHaveTextContent('请选择视频模型')
     await user.hover(trigger)
+    expect(screen.queryByRole('dialog', { name: '生成模型' })).not.toBeInTheDocument()
+    await user.click(trigger)
     const options = screen.getAllByRole('option')
     expect(onReloadModels).not.toHaveBeenCalled()
     expect(options).toHaveLength(3)
