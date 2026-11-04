@@ -100,6 +100,72 @@ test('空画布列表显示创建引导', async ({ page }, testInfo) => {
   expectNoUnexpectedApi(api)
 })
 
+for (const width of [1440, 390]) {
+  test(`最近项目的不同尺寸封面在 ${width}px 均显示为正方形`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/canvases?**', (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            { id: 701, title: '竖图', updated_at: '2026-11-03T10:00:00Z' },
+            { id: 702, title: '横图', updated_at: '2026-11-02T10:00:00Z' },
+            { id: 703, title: '无封面', updated_at: '2026-11-01T10:00:00Z' },
+          ],
+        },
+      }),
+    )
+    await page.route('**/api/v1/canvases/*/elements?**', (route) => {
+      const id = Number(new URL(route.request().url()).pathname.split('/').at(-2))
+      return route.fulfill({
+        json: {
+          elements:
+            id === 703
+              ? []
+              : [
+                  {
+                    element_id: 'cover',
+                    kind: 'node',
+                    op: 'upsert',
+                    payload: { type: 'image', data: { kind: 'image', assetId: id } },
+                  },
+                ],
+          has_more: false,
+          sync_revision: 1,
+        },
+      })
+    })
+    await page.route('**/api/v1/assets/*/download?**', (route) => {
+      const id = Number(new URL(route.request().url()).pathname.split('/').at(-2))
+      const dimensions = id === 701 ? 'width="100" height="200"' : 'width="200" height="100"'
+      return route.fulfill({
+        contentType: 'image/svg+xml',
+        body: `<svg xmlns="http://www.w3.org/2000/svg" ${dimensions}><rect width="100%" height="100%" fill="#8cb5a7"/></svg>`,
+      })
+    })
+    await page.goto('/canvas')
+    for (const title of ['竖图', '横图', '无封面']) {
+      const card = page.getByRole('button', { name: `打开画布 ${title}` })
+      const cover = card.locator('[class*="projectCover_"]')
+      await expect(cover).toBeVisible()
+      if (title !== '无封面') {
+        const image = cover.locator('img')
+        await expect(image).toHaveJSProperty('complete', true)
+        await expect(image).toHaveCSS('object-fit', 'cover')
+        expect(await image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0)
+      } else {
+        await expect(cover.getByText('暂无预览')).toBeVisible()
+      }
+      const bounds = await cover.boundingBox()
+      expect(Math.abs(bounds!.width - bounds!.height)).toBeLessThan(1)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`canvas-square-covers-${width}.png`), fullPage: true })
+    await page.getByRole('button', { name: '画布操作 竖图' }).click()
+    await expect(page.getByRole('button', { name: '重命名', exact: true })).toBeVisible()
+    expectNoUnexpectedApi(api)
+  })
+}
+
 test('漫剧起始页可直达最近项目，画布返回时恢复侧栏', async ({ page }, testInfo) => {
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))

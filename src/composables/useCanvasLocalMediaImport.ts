@@ -48,6 +48,7 @@ export interface CanvasLocalMediaImportOptions {
       ratio: string
       size: { width: number; height: number }
       skipHistory: boolean
+      deferSync: boolean
       extraData: Record<string, unknown>
     },
   ) => string
@@ -55,6 +56,7 @@ export interface CanvasLocalMediaImportOptions {
   setSelectedNode: (updater: (node: any) => any) => void
   setSaveStatus: (status: 'dirty') => void
   resolveUploadedRealPerson: (assetId: number, file: File) => Promise<unknown>
+  scheduleImportSync: () => void
 }
 
 /** 画布本地媒体导入：统一负责文件规范化、预览地址生命周期、上传与失败清理。 */
@@ -67,6 +69,7 @@ export function useCanvasLocalMediaImport({
   setSelectedNode,
   setSaveStatus,
   resolveUploadedRealPerson,
+  scheduleImportSync,
 }: CanvasLocalMediaImportOptions) {
   const previewUrlsRef = useRef(new Set<string>())
 
@@ -111,23 +114,22 @@ export function useCanvasLocalMediaImport({
         return
       }
 
-      const imageChecks = await Promise.all(
-        allImages.map(async (file) => {
-          try {
-            return {
-              file: await normalizeImageFileForAiInput(await normalizeCanvasImageFile(file)),
-              title: file.name.replace(/\.[^.]+$/, ''),
-              error: '',
-            }
-          } catch (error: any) {
-            return {
-              file,
-              title: file.name.replace(/\.[^.]+$/, ''),
-              error: `${file.name}：${String(error?.message || '图片不符合要求')}`,
-            }
+      // 解码和缩放高分辨率图片会占用大量内存，上传限流不能限制这里的并发。
+      const imageChecks = await mapWithConcurrency(allImages, 2, async (file) => {
+        try {
+          return {
+            file: await normalizeImageFileForAiInput(await normalizeCanvasImageFile(file)),
+            title: file.name.replace(/\.[^.]+$/, ''),
+            error: '',
           }
-        }),
-      )
+        } catch (error: any) {
+          return {
+            file,
+            title: file.name.replace(/\.[^.]+$/, ''),
+            error: `${file.name}：${String(error?.message || '图片不符合要求')}`,
+          }
+        }
+      })
       const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
       const imageNames = new Map(imageChecks.filter((item) => !item.error).map((item) => [item.file, item.title]))
       const failures: string[] = imageChecks.filter((item) => item.error).map((item) => item.error)
@@ -171,11 +173,15 @@ export function useCanvasLocalMediaImport({
             ratio,
             size,
             skipHistory: true,
+            deferSync: true,
             extraData: { previewUrl, uploading: true, assetSource: 'upload', assetWorkspaceId: workspaceId, title },
           },
         )
         return { nodeId, file, title, previewUrl, kind }
       })
+
+      // 批量节点作为一次导入保存，避免每个节点重复同步序列化整张画布。
+      if (created.length) scheduleImportSync()
 
       await mapWithConcurrency(created, 4, async ({ nodeId, file, title, previewUrl, kind }) => {
         try {
@@ -237,6 +243,7 @@ export function useCanvasLocalMediaImport({
       commitHistory,
       releasePreviewUrl,
       resolveUploadedRealPerson,
+      scheduleImportSync,
       screenToFlowPosition,
       setNodes,
       setSaveStatus,

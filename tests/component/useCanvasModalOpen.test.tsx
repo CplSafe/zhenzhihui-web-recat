@@ -1,5 +1,5 @@
-import { renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { useCanvasModalOpen } from '@/composables/useCanvasModalOpen'
 
 describe('画布模态阻断', () => {
@@ -54,6 +54,34 @@ describe('画布模态阻断', () => {
       await waitFor(() => expect(result.current).toBe(false))
     } finally {
       wrapper.remove()
+    }
+  })
+
+  it('节点样式变化不扫描弹窗，真正的弹窗及其可见状态仍可更新', async () => {
+    const node = document.createElement('div')
+    document.body.append(node)
+    const query = vi.spyOn(document, 'querySelectorAll')
+    const { result } = renderHook(() => useCanvasModalOpen())
+    const initialScans = query.mock.calls.length
+    try {
+      await act(async () => {
+        node.style.transform = 'translate(10px, 10px)'
+        node.style.transform = 'translate(20px, 20px)'
+      })
+      expect(query.mock.calls.length).toBe(initialScans)
+      const dialog = document.createElement('div')
+      dialog.setAttribute('aria-modal', 'true')
+      node.append(dialog)
+      await waitFor(() => expect(result.current).toBe(true))
+      node.hidden = true
+      await waitFor(() => expect(result.current).toBe(false))
+      node.hidden = false
+      await waitFor(() => expect(result.current).toBe(true))
+      dialog.setAttribute('data-canvas-nonmodal', 'true')
+      await waitFor(() => expect(result.current).toBe(false))
+    } finally {
+      node.remove()
+      query.mockRestore()
     }
   })
 })

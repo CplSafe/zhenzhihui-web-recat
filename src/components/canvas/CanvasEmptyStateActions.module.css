@@ -477,6 +477,17 @@
 }
 
 /* Entry-page overrides are scoped away from the editor's empty canvas. */
+:global(.canvas-entry-main) .projectCover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  flex: none;
+  overflow: hidden;
+}
+:global(.canvas-entry-main) .projectCoverMedia {
+  position: absolute;
+  inset: 0;
+}
 :global(.canvas-entry-main) .projectCover,
 :global(.canvas-entry-main) .projectCoverMedia {
   background: #f1f4f3;
