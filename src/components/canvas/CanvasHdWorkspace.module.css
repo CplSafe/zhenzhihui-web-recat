@@ -18,11 +18,11 @@
   align-items: center;
   padding: 20px;
   margin-top: 20px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border-radius: 12px;
 }
 .total > strong {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
   font-size: 26px;
   white-space: nowrap;
 }
@@ -51,7 +51,7 @@
 }
 .stats strong {
   font-size: 26px;
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
 }
 .stats span {
   color: #7a8496;
@@ -71,8 +71,8 @@
   text-align: left;
 }
 .table th {
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font-weight: 500;
 }
 .table th,
@@ -89,12 +89,12 @@
   color: #7a8496;
 }
 .table tbody tr:hover {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 .fixedCell {
   position: sticky;
   right: 0;
-  background: white;
+  background: var(--canvas-surface-raised);
   min-width: 110px;
 }
 .pagination {
@@ -129,7 +129,7 @@
 .split {
   width: 100%;
   margin: 16px 0;
-  accent-color: #5767e5;
+  accent-color: var(--canvas-brand, #00e5be);
 }
 @media (max-width: 700px) {
   .desk {
@@ -147,4 +147,22 @@
     align-items: flex-start;
     flex-direction: column;
   }
+}
+.total,
+.table th,
+.table td {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.filters :is(input, select),
+.pagination button {
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.note,
+.stats,
+.fixedCell {
+  color: var(--canvas-text-muted, #9ca3af);
 }

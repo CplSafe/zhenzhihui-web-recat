@@ -16,15 +16,13 @@
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
   align-items: center;
-  gap: 3px;
-  padding: 5px 7px;
+  gap: 2px;
+  padding: 3px 4px;
   transform: translateX(-50%);
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 13px;
-  background: #fff;
-  box-shadow:
-    0 6px 20px rgb(28 57 45 / 9%),
-    0 1px 3px rgb(28 57 45 / 4%);
+  background: var(--canvas-surface, #262626);
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
   font-family: 'PingFang SC', sans-serif;
   white-space: nowrap;
   animation: node-bar-in 140ms ease-out;
@@ -51,8 +49,8 @@
 .divider {
   width: 1px;
   height: 18px;
-  margin: 0 4px;
-  background: #fff;
+  margin: 0 2px;
+  background: var(--canvas-surface-highest, #2b3145);
 }
 
 .textAction {
@@ -77,13 +75,13 @@
 }
 
 /*
- * 图标按钮：36×32 的触达面积远大于图标本身，
+ * 图标按钮：32×32 的触达面积大于图标本身，
  * 图标之间只留 2px 间隙也不会误点到隔壁。
  */
 .action {
   position: relative;
   display: inline-flex;
-  width: 36px;
+  width: 32px;
   height: 32px;
   align-items: center;
   justify-content: center;
@@ -91,7 +89,7 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -108,7 +106,7 @@
 }
 
 .action:hover:not(:disabled) {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
   color: #0e9377;
 }
 
@@ -118,31 +116,31 @@
 }
 
 .danger:hover:not(:disabled) {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
   color: #d75340;
 }
 
 /* 预览是视频最常用的观看动作，用轻微品牌色强调，但不抢删除等管理动作的层级。 */
 .preview {
-  background: #fff;
+  background: var(--canvas-surface-raised, #202433);
   color: #0c9276;
-  box-shadow: inset 0 0 0 1px #d8eee3;
+  box-shadow: inset 0 0 0 1px var(--canvas-border, rgb(255 255 255 / 12%));
 }
 
 .preview:hover:not(:disabled) {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
   color: #347866;
-  box-shadow: inset 0 0 0 1px #c8e5d6;
+  box-shadow: inset 0 0 0 1px var(--canvas-border, rgb(255 255 255 / 12%));
 }
 
 .action:focus-visible {
-  outline: 2px solid #16a88b;
+  outline: 2px solid #cbd5d9;
   outline-offset: 1px;
 }
 
 /* 展开态保持高亮，说明「下面那个菜单是这个按钮开的」 */
 .action[aria-expanded='true'] {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
   color: #0e9377;
 }
 
@@ -192,9 +190,9 @@
   min-width: 132px;
   padding: 6px;
   border-radius: 12px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 8px 24px rgb(28 57 45 / 12%);
+  background: var(--canvas-surface-raised, #202433);
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
   transform: translateX(-50%);
 }
 
@@ -205,7 +203,7 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #7a8496;
+  color: var(--canvas-text, #e5e7eb);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
@@ -214,12 +212,12 @@
 }
 
 .menuItem:hover {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
   color: #0e9377;
 }
 
 .menuItem:focus-visible {
-  outline: 2px solid #16a88b;
+  outline: 2px solid #cbd5d9;
   outline-offset: -2px;
 }
 
@@ -228,7 +226,7 @@
   display: block;
   margin-top: 2px;
   font-size: 11px;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   white-space: nowrap;
 }
 

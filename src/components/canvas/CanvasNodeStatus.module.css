@@ -11,7 +11,7 @@
 }
 
 .failure {
-  background: #fff;
+  background: var(--canvas-surface, #262626);
   color: #e75454;
 }
 
@@ -24,7 +24,7 @@
 .failureReason {
   margin: 0;
   max-width: 100%;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -38,7 +38,7 @@
   padding: 2px 0;
   border: 0;
   background: transparent;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font: inherit;
   font-size: 10px;
   line-height: 1.5;
@@ -47,13 +47,13 @@
 }
 
 .requestId:hover {
-  color: #5767e5;
+  color: var(--canvas-brand, #00e5be);
 }
 
 .running {
   z-index: 4;
-  background: rgb(248 255 252 / 94%);
-  color: #347866;
+  background: rgb(18 20 28 / 88%);
+  color: #63cdb2;
   pointer-events: none;
 }
 
@@ -147,12 +147,12 @@
   height: 18px;
 }
 
-.status:not([data-layout='full']) [data-status-details] {
+.status:not([data-layout='full']):not(.failure) [data-status-details] {
   position: absolute;
   inset: 0;
 }
 
-.status:not([data-layout='full']) [data-status-details] button {
+.status:not([data-layout='full']):not(.failure) [data-status-details] button {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -162,7 +162,7 @@
 }
 
 .content:focus-within {
-  outline: 2px solid #5767e5;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 3px;
   border-radius: 6px;
 }

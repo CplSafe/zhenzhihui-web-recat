@@ -68,7 +68,7 @@
 }
 .originalLane input {
   flex: 1;
-  accent-color: #5767e5;
+  accent-color: var(--canvas-brand, #00e5be);
 }
 .originalLane button {
   border: 1px solid #3c4657;
@@ -120,7 +120,7 @@
 .actions select {
   max-width: 180px;
   padding: 7px 12px;
-  border: 1px solid #397767;
+  border: 1px solid #cbd5d9;
   border-radius: 8px;
   background: #203b35;
   color: #82d8bd;

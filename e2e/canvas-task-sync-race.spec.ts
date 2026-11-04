@@ -151,3 +151,64 @@ for (const compacted of [false, true]) {
     expectNoUnexpectedApi(api)
   })
 }
+
+test('unchanged generation polls do not dirty or sync the canvas', async ({ page }) => {
+  const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  const node = {
+    element_id: 'stable-progress',
+    kind: 'node',
+    op: 'upsert',
+    payload: {
+      id: 'stable-progress',
+      type: 'image',
+      position: { x: 200, y: 100 },
+      style: { width: 250, height: 250 },
+      data: {
+        kind: 'image',
+        prompt: 'Stable generation status',
+        taskId: 15400,
+        taskRunId: 'stable-run',
+        taskStatus: 'processing',
+        taskProgress: 30,
+        taskError: '',
+        taskStatusQueryFailures: 0,
+      },
+    },
+  }
+  let revision = 1
+  let taskQueries = 0
+  let canvasPatches = 0
+  await page.route('**/api/v1/canvases/114**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/elements')) {
+      if (route.request().method() === 'PATCH') {
+        canvasPatches += 1
+        await route.fulfill({ json: { sync_revision: ++revision } })
+      } else {
+        await route.fulfill({
+          json: {
+            elements: Number(url.searchParams.get('after_revision')) > 0 ? [] : [node],
+            sync_revision: revision,
+            history_floor_revision: 0,
+            has_more: false,
+          },
+        })
+      }
+      return
+    }
+    await route.fulfill({ json: { id: 114, title: 'Stable task polling', status: 'active', revision } })
+  })
+  await page.route('**/api/v1/ai/tasks/15400?**', async (route) => {
+    taskQueries += 1
+    await route.fulfill({ json: { id: 15400, status: 'processing', progress: 0.3, outputs: [] } })
+  })
+  await page.clock.install()
+  await page.goto('/canvas/114')
+  await expect(page.getByRole('button', { name: '图片 · Stable generation status' })).toBeVisible()
+  await page.clock.runFor(6500)
+  await expect.poll(() => taskQueries).toBeGreaterThanOrEqual(2)
+  await expect(page.getByText('已保存到云端', { exact: true })).toBeVisible()
+  expect(canvasPatches).toBe(0)
+  expectNoUnexpectedApi(api)
+})

@@ -7,21 +7,23 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.42);
-  backdrop-filter: blur(4px);
+  background: rgba(5, 8, 15, 0.62);
+  backdrop-filter: blur(7px);
   font-family: 'PingFang SC', sans-serif;
 }
 
 .dialog {
   zoom: var(--canvas-ui-scale, 1);
   display: flex;
-  width: 520px;
+  width: 444px;
   max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
   max-height: calc((100dvh - 48px) / var(--canvas-ui-scale, 1));
   flex-direction: column;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 14px;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
 
@@ -29,13 +31,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
 }
 
 .title {
   margin: 0;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font-size: 16px;
   font-weight: 600;
 }
@@ -49,18 +51,19 @@
 .reset {
   height: 28px;
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 7px;
-  background: #fff;
-  color: #7a8496;
+  background: #262626;
+  color: #e5e7eb;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
 .reset:hover {
-  border-color: #e5e7eb;
-  color: #344054;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: #383838;
+  color: #fff;
 }
 
 .close {
@@ -69,28 +72,29 @@
   height: 28px;
   align-items: center;
   justify-content: center;
-  border: none;
+  border: 1px solid rgb(255 255 255 / 20%);
   border-radius: 7px;
-  background: transparent;
-  color: #7a8496;
-  font-size: 14px;
+  background: #262626;
+  color: #f2f5fb;
+  font-size: 16px;
   cursor: pointer;
 }
 
 .close:hover {
-  background: #fff;
-  color: #344054;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  background: #383838;
+  color: #fff;
 }
 
 .body {
-  padding: 4px 20px 20px;
+  padding: 4px 16px 14px;
   overflow-y: auto;
 }
 
 .section + .section {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
 }
 
 .sectionTitle {
@@ -103,7 +107,7 @@
 
 .sectionHint {
   margin: 4px 0 8px;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -129,8 +133,8 @@
   border: 1px solid #e5e7eb;
   border-bottom-width: 2px;
   border-radius: 7px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   font-size: 12px;
   white-space: nowrap;
@@ -139,8 +143,8 @@
 
 .shortcutRecording {
   border-color: #7c89ea;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .shortcutError {
@@ -165,12 +169,12 @@
 }
 
 .rowLabel {
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font-size: 13px;
 }
 
 .rowHint {
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -188,15 +192,15 @@
   padding: 0 12px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
-  color: #5767e5;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-brand, #00e5be);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
 .secondary:hover {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 
 /* 开关：与 antd Switch 同尺寸，但不引组件——这里的样式要和画布 chrome 一致 */
@@ -207,7 +211,7 @@
   padding: 0;
   border: none;
   border-radius: 11px;
-  background: #f2f4f7;
+  background: var(--canvas-surface-highest, #2b3145);
   cursor: pointer;
   transition: background-color 160ms ease;
 }
@@ -228,7 +232,7 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
   transition: transform 160ms ease;
 }
@@ -241,7 +245,7 @@
   display: inline-flex;
   padding: 2px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 
 .segment {
@@ -250,7 +254,7 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -260,8 +264,8 @@
 }
 
 .segmentActive {
-  background: #fff;
-  color: #5767e5;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-brand, #00e5be);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
@@ -283,4 +287,27 @@
   .shortcutList {
     grid-template-columns: 1fr;
   }
+}
+.dialog {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+}
+.header {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.title,
+.rowLabel {
+  color: var(--canvas-text, #e5e7eb);
+}
+.reset,
+.shortcutButton,
+.secondary,
+.segment {
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+  background: var(--canvas-surface-highest, #2b3145);
+  color: var(--canvas-text, #e5e7eb);
+}
+.rowHint,
+.sectionHint {
+  color: var(--canvas-text-muted, #9ca3af);
 }

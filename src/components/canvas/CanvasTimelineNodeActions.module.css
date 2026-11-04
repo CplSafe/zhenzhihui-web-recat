@@ -54,17 +54,17 @@
 }
 
 .action:focus-visible {
-  outline: 2px solid #91fff0;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }
 
 .refine {
-  background: rgb(255 255 255 / 8%);
+  background: var(--canvas-surface-raised);
   color: rgb(255 255 255 / 88%);
 }
 
 .refine:hover:not(:disabled) {
-  background: rgb(255 255 255 / 15%);
+  background: rgba(255, 255, 255, 0.14);
   color: #fff;
 }
 
@@ -95,7 +95,7 @@
   overflow-y: auto;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 10px 28px rgb(31 41 92 / 20%);
   cursor: default;
 }
@@ -108,7 +108,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font-family: 'PingFang SC', sans-serif;
   font-size: 12px;
   text-align: left;
@@ -147,19 +147,19 @@
   background: linear-gradient(135deg, #18c9a8 0%, #0eb798 55%, #079f88 100%);
   color: #f7fffd;
   box-shadow:
-    0 5px 14px rgb(14 183 152 / 30%),
+    0 5px 14px rgb(203 213 217 / 30%),
     inset 0 1px 0 rgb(255 255 255 / 28%);
 }
 
 .compose:hover:not(:disabled) {
   background: linear-gradient(135deg, #25d9b7 0%, #11c3a1 55%, #08aa91 100%);
   box-shadow:
-    0 8px 20px rgb(14 183 152 / 38%),
+    0 8px 20px rgb(203 213 217 / 38%),
     inset 0 1px 0 rgb(255 255 255 / 32%);
 }
 
 .compose:disabled {
-  background: rgb(255 255 255 / 6%);
+  background: rgba(255, 255, 255, 0.14);
   color: rgb(255 255 255 / 28%);
   box-shadow: none;
   cursor: not-allowed;

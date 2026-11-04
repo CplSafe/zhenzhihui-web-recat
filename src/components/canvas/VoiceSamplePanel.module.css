@@ -5,8 +5,8 @@
   padding: 14px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: #fff;
-  color: #30343b;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   max-height: 440px;
   overflow: auto;
 }
@@ -31,7 +31,7 @@
   padding: 7px 9px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: inherit;
   font: inherit;
 }
@@ -64,6 +64,6 @@
   grid-column: 1 / -1;
 }
 .panel :focus-visible {
-  outline: 2px solid #13b99a;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }

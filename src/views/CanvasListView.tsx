@@ -6,12 +6,14 @@
  * 数据源：/api/v1/canvases 的 list / create / delete 接口（canvasApi）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Pagination } from 'antd'
 import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import { getBusinessErrorMessage } from '@/api/business'
 import {
   createCanvas,
@@ -54,6 +56,10 @@ export default function CanvasListView() {
    * 或新建一个」的地方，因此把素材原样透传给下一跳，由编辑器落成节点。
    */
   const carriedMaterial = (location.state as any)?.carryMaterial || null
+  const createCanvasAction = (location.state as any)?.createCanvasAction as string | undefined
+  const manageView = new URLSearchParams(location.search).get('manage') === '1'
+  const initialCreateHandledRef = useRef(false)
+  const createCanvasActionRef = useRef(createCanvasAction)
   // useMemo 保持引用稳定，否则 openCanvas 每次渲染都会重建，卡片列表跟着重渲染。
   const carriedState = useMemo(
     () => (carriedMaterial ? { carryMaterial: carriedMaterial } : undefined),
@@ -66,6 +72,10 @@ export default function CanvasListView() {
   // 团队空间里只能改自己画布的名称；后端没给创建者（旧数据）或当前用户未知时不拦，交给后端裁决
   const isOthersCanvas = useCallback(
     (item: CanvasSummary | null) => Boolean(item?.userId && currentUserId && item.userId !== currentUserId),
+    [currentUserId],
+  )
+  const canDeleteCanvas = useCallback(
+    (item: CanvasSummary | null) => Boolean(item?.userId && currentUserId && item.userId === currentUserId),
     [currentUserId],
   )
 
@@ -83,6 +93,16 @@ export default function CanvasListView() {
   // 新建画布弹窗：可输入画布名称
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
+  useEffect(() => {
+    if (initialCreateHandledRef.current || !createCanvasAction) return
+    initialCreateHandledRef.current = true
+    createCanvasActionRef.current = createCanvasAction
+    setCreateOpen(true)
+    navigate(location.pathname, {
+      replace: true,
+      state: carriedMaterial ? { carryMaterial: carriedMaterial } : null,
+    })
+  }, [carriedMaterial, createCanvasAction, location.pathname, navigate])
   // 重命名弹窗：renameTarget 非空即打开
   const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
   const [renameName, setRenameName] = useState('')
@@ -265,7 +285,7 @@ export default function CanvasListView() {
     }
   }, [showToast])
 
-  // workspace 切换时重置并重新加载
+  // 起始页只由最近项目组件读取最近列表；完整画布详情只在管理列表或素材承接页加载。
   useEffect(() => {
     loadSequenceRef.current += 1
     canvasesWorkspaceIdRef.current = 0
@@ -273,9 +293,9 @@ export default function CanvasListView() {
     setCanvasesWorkspaceId(0)
     setOpenMenuId(0)
     setDeletingId(0)
-    loadCanvases()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId])
+    if (manageView || carriedMaterial) loadCanvases()
+    else setLoading(false)
+  }, [workspaceId, manageView, Boolean(carriedMaterial), loadCanvases])
 
   // 点击菜单外部关闭
   useEffect(() => {
@@ -309,7 +329,12 @@ export default function CanvasListView() {
       showToast('画布已创建', 'success')
       setCreateOpen(false)
       setNewName('')
-      navigate(`/canvas/${newId}`, carriedState ? { state: carriedState } : undefined)
+      navigate(`/canvas/${newId}`, {
+        state: {
+          ...(carriedState || {}),
+          ...(createCanvasActionRef.current ? { initialCanvasAction: createCanvasActionRef.current } : {}),
+        },
+      })
     } catch (error) {
       if (Number(workspaceIdRef.current || 0) === wsId) {
         showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
@@ -323,7 +348,13 @@ export default function CanvasListView() {
   const closeCreateModal = useCallback(() => {
     setCreateOpen(false)
     setNewName('')
-  }, [])
+    initialCreateHandledRef.current = false
+    createCanvasActionRef.current = undefined
+    navigate(`${location.pathname}${location.search}`, {
+      replace: true,
+      state: carriedMaterial ? { carryMaterial: carriedMaterial } : null,
+    })
+  }, [carriedMaterial, location.pathname, location.search, navigate])
 
   useEffect(() => {
     if (!createOpen) return
@@ -404,6 +435,10 @@ export default function CanvasListView() {
         showToast('workspace_id 缺失,无法删除', 'error')
         return
       }
+      if (!canDeleteCanvas(item)) {
+        showToast('只能删除自己创建的画布', 'info')
+        return
+      }
       if (deletingId) return
       setOpenMenuId(0)
       const confirmed = await requestConfirm(`确定删除画布「${item.title || '未命名画布'}」吗?画布内容不可恢复。`)
@@ -434,7 +469,7 @@ export default function CanvasListView() {
         setDeletingId(0)
       }
     },
-    [deletingId, requestConfirm, showToast],
+    [canDeleteCanvas, deletingId, requestConfirm, showToast],
   )
 
   // 创建副本：复制画布全部节点 / 连线到一张新画布，名称追加「-副本」后缀；成功后放到列表最前
@@ -506,184 +541,193 @@ export default function CanvasListView() {
       >
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        <section className="pm2-main" aria-label="漫剧制作">
-          {/* 头部：标题 + 新建 */}
-          <div className="pm2-head">
-            <div className="pm2-head-titles">
-              <h1 className="pm2-head-title">漫剧制作</h1>
-              <p className="pm2-head-sub">连接灵感、素材与 AI，继续你的创作。</p>
-            </div>
-            <div className="pm2-head-actions">
-              <button type="button" className="pm2-new-btn" onClick={() => setCreateOpen(true)}>
-                ＋ 新建画布
-              </button>
-            </div>
-          </div>
-
-          {/* 携带素材进来时的引导条：说明素材去向，并给一个「不带素材」的退出口 */}
-          {carriedMaterial ? (
-            <div className="cl-carry-banner" role="status">
-              <span className="cl-carry-banner__text">
-                已选素材「{String(carriedMaterial.name || '未命名素材')}」，选择一个画布加入，或新建画布
-              </span>
-              <button
-                type="button"
-                className="cl-carry-banner__exit"
-                onClick={() => navigate(location.pathname, { replace: true, state: null })}
-              >
-                取消
-              </button>
-            </div>
-          ) : null}
-
-          {/* 画布卡片网格 */}
-          <section className="pm2-section">
-            <div className="cl-section-head">
-              <h2>我的画布</h2>
-              <span>{loading ? '正在同步…' : `共 ${effectiveCanvases.length} 个画布`}</span>
-            </div>
-            {loading && !effectiveCanvases.length ? (
-              <div className="cl-empty" role="status">
-                正在加载画布…
+        {manageView ? (
+          <section className="pm2-main" aria-label="漫剧制作">
+            {/* 头部：标题 + 新建 */}
+            <div className="pm2-head">
+              <div className="pm2-head-titles">
+                <h1 className="pm2-head-title">漫剧制作</h1>
+                <p className="pm2-head-sub">连接灵感、素材与 AI，继续你的创作。</p>
               </div>
-            ) : !effectiveCanvases.length ? (
-              <div className="cl-empty">
-                <h3>还没有画布</h3>
-                <p>从一个想法开始，把文本、图片和视频连接成你的创作流程。</p>
-                <button type="button" onClick={() => setCreateOpen(true)}>
-                  创建第一张画布 →
+              <div className="pm2-head-actions">
+                <button type="button" className="pm2-new-btn" onClick={() => setCreateOpen(true)}>
+                  ＋ 新建画布
                 </button>
               </div>
-            ) : (
-              <div className="pm2-card-grid" ref={gridRef}>
-                {pagedCanvases.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`pm2-pcard${openMenuId === item.id ? ' is-menu-open' : ''}`}
-                    data-canvas-id={item.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`打开画布 ${item.title || '未命名画布'}`}
-                    onClick={() => openCanvas(item)}
-                    onKeyDown={(e) => {
-                      if (e.target !== e.currentTarget) return
-                      if (e.key !== 'Enter' && e.key !== ' ') return
-                      e.preventDefault()
-                      openCanvas(item)
-                    }}
-                  >
-                    <div className="pm2-pcard-cover">
-                      {covers[Number(item.id)] ? (
-                        covers[Number(item.id)]!.kind === 'video' ? (
-                          // 视频封面用首帧：preload=metadata 只取元数据和第一帧，不下载整片
-                          <video
-                            className="cl-cover-media"
-                            src={covers[Number(item.id)]!.url}
-                            preload="metadata"
-                            muted
-                            playsInline
-                          />
+            </div>
+
+            {/* 携带素材进来时的引导条：说明素材去向，并给一个「不带素材」的退出口 */}
+            {carriedMaterial ? (
+              <div className="cl-carry-banner" role="status">
+                <span className="cl-carry-banner__text">
+                  已选素材「{String(carriedMaterial.name || '未命名素材')}」，选择一个画布加入，或新建画布
+                </span>
+                <button
+                  type="button"
+                  className="cl-carry-banner__exit"
+                  onClick={() => navigate(location.pathname, { replace: true, state: null })}
+                >
+                  取消
+                </button>
+              </div>
+            ) : null}
+
+            {/* 画布卡片网格 */}
+            <section className="pm2-section">
+              <div className="cl-section-head">
+                <h2>我的画布</h2>
+                <span>{loading ? '正在同步…' : `共 ${effectiveCanvases.length} 个画布`}</span>
+              </div>
+              {loading && !effectiveCanvases.length ? (
+                <div className="cl-empty" role="status">
+                  正在加载画布…
+                </div>
+              ) : !effectiveCanvases.length ? (
+                <div className="cl-empty">
+                  <h3>还没有画布</h3>
+                  <p>从一个想法开始，把文本、图片和视频连接成你的创作流程。</p>
+                  <button type="button" onClick={() => setCreateOpen(true)}>
+                    创建第一张画布 →
+                  </button>
+                </div>
+              ) : (
+                <div className="pm2-card-grid" ref={gridRef}>
+                  {pagedCanvases.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`pm2-pcard${openMenuId === item.id ? ' is-menu-open' : ''}`}
+                      data-canvas-id={item.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`打开画布 ${item.title || '未命名画布'}`}
+                      onClick={() => openCanvas(item)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault()
+                        openCanvas(item)
+                      }}
+                    >
+                      <div className="pm2-pcard-cover">
+                        {covers[Number(item.id)] ? (
+                          covers[Number(item.id)]!.kind === 'video' ? (
+                            // 视频封面用首帧：preload=metadata 只取元数据和第一帧，不下载整片
+                            <video
+                              className="cl-cover-media"
+                              src={covers[Number(item.id)]!.url}
+                              preload="metadata"
+                              muted
+                              playsInline
+                            />
+                          ) : (
+                            <img className="cl-cover-media" src={covers[Number(item.id)]!.url} alt="" loading="lazy" />
+                          )
                         ) : (
-                          <img className="cl-cover-media" src={covers[Number(item.id)]!.url} alt="" loading="lazy" />
-                        )
-                      ) : (
-                        <span className="cl-cover" aria-hidden="true">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
-                            <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
-                            <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
-                            <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
-                            <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
-                          </svg>
-                          <span>暂无预览</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="pm2-pcard-body">
-                      <div className="pm2-pcard-head">
-                        <span className="pm2-pcard-title" title={item.title || '未命名画布'}>
-                          {item.title || '未命名画布'}
-                        </span>
-                        {item.status === 'archived' && (
-                          <span className="cl-status-badge" title="已归档">
-                            归档
+                          <span className="cl-cover" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
+                              <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+                              <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+                              <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+                              <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+                            </svg>
+                            <span>暂无预览</span>
                           </span>
                         )}
-                        <button
-                          type="button"
-                          className="pm2-pcard-more cl-menu-btn"
-                          aria-label="更多操作"
-                          aria-expanded={openMenuId === item.id}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setOpenMenuId((prev) => (prev === item.id ? 0 : Number(item.id)))
-                          }}
-                        >
-                          <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
-                            <circle cx="4" cy="10" r="1.4" fill="currentColor" />
-                            <circle cx="10" cy="10" r="1.4" fill="currentColor" />
-                            <circle cx="16" cy="10" r="1.4" fill="currentColor" />
-                          </svg>
-                        </button>
-                        {openMenuId === item.id && (
-                          <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              className="pm2-folder-menu-item"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openRenameModal(item)
-                              }}
-                            >
-                              重命名
-                            </button>
-                            <button
-                              type="button"
-                              className="pm2-folder-menu-item"
-                              disabled={duplicatingId === item.id}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void handleDuplicate(item)
-                              }}
-                            >
-                              {duplicatingId === item.id ? '创建中…' : '创建副本'}
-                            </button>
-                            <button
-                              type="button"
-                              className="pm2-folder-menu-item is-danger"
-                              disabled={deletingId === item.id}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleDelete(item)
-                              }}
-                            >
-                              {deletingId === item.id ? '删除中…' : '删除画布'}
-                            </button>
-                          </div>
-                        )}
                       </div>
-                      <div className="pm2-pcard-meta">
-                        <span className="pm2-pcard-time">
-                          {item.updated_at ? `更新于 ${formatTime(item.updated_at)}` : '暂无更新'}
-                        </span>
+                      <div className="pm2-pcard-body">
+                        <div className="pm2-pcard-head">
+                          <span className="pm2-pcard-title" title={item.title || '未命名画布'}>
+                            {item.title || '未命名画布'}
+                          </span>
+                          {item.status === 'archived' && (
+                            <span className="cl-status-badge" title="已归档">
+                              归档
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="pm2-pcard-more cl-menu-btn"
+                            aria-label="更多操作"
+                            aria-expanded={openMenuId === item.id}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setOpenMenuId((prev) => (prev === item.id ? 0 : Number(item.id)))
+                            }}
+                          >
+                            <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
+                              <circle cx="4" cy="10" r="1.4" fill="currentColor" />
+                              <circle cx="10" cy="10" r="1.4" fill="currentColor" />
+                              <circle cx="16" cy="10" r="1.4" fill="currentColor" />
+                            </svg>
+                          </button>
+                          {openMenuId === item.id && (
+                            <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="pm2-folder-menu-item"
+                                disabled={isOthersCanvas(item)}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  openRenameModal(item)
+                                }}
+                              >
+                                重命名
+                              </button>
+                              <button
+                                type="button"
+                                className="pm2-folder-menu-item"
+                                disabled={duplicatingId === item.id}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void handleDuplicate(item)
+                                }}
+                              >
+                                {duplicatingId === item.id ? '创建中…' : '创建副本'}
+                              </button>
+                              {canDeleteCanvas(item) && (
+                                <button
+                                  type="button"
+                                  className="pm2-folder-menu-item is-danger"
+                                  disabled={deletingId === item.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDelete(item)
+                                  }}
+                                >
+                                  {deletingId === item.id ? '删除中…' : '删除画布'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="pm2-pcard-meta">
+                          <span className="pm2-pcard-time">
+                            {item.updated_at ? `更新于 ${formatTime(item.updated_at)}` : '暂无更新'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {totalPages > 1 && (
-              <div className="pm2-pager">
-                <Pagination
-                  current={page}
-                  pageSize={pageSize}
-                  total={effectiveCanvases.length}
-                  showSizeChanger={false}
-                  onChange={setPage}
-                />
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+              {totalPages > 1 && (
+                <div className="pm2-pager">
+                  <Pagination
+                    current={page}
+                    pageSize={pageSize}
+                    total={effectiveCanvases.length}
+                    showSizeChanger={false}
+                    onChange={setPage}
+                  />
+                </div>
+              )}
+            </section>
           </section>
-        </section>
+        ) : (
+          <main className="canvas-entry-main" aria-label="漫剧制作创作入口">
+            <CanvasEmptyStateActions />
+          </main>
+        )}
       </div>
 
       {/* 创建画布：只收集名称，创建成功后进入空白画布自由添加节点。 */}
@@ -741,43 +785,50 @@ export default function CanvasListView() {
         </div>
       )}
       {/* 重命名画布弹窗 */}
-      {renameTarget && (
-        <div className="pm2-modal-mask" onClick={() => !renaming && closeRenameModal()}>
-          <div className="pm2-modal" role="dialog" aria-label="重命名画布" onClick={(e) => e.stopPropagation()}>
-            <div className="pm2-modal-head">
-              重命名画布
-              <button type="button" className="pm2-modal-close" aria-label="关闭" onClick={closeRenameModal}>
-                ×
-              </button>
+      {renameTarget &&
+        createPortal(
+          <div className="pm2-modal-mask cl-rename-mask" onClick={() => !renaming && closeRenameModal()}>
+            <div
+              className="pm2-modal cl-rename-modal"
+              role="dialog"
+              aria-label="重命名画布"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="pm2-modal-head">
+                重命名画布
+                <button type="button" className="pm2-modal-close" aria-label="关闭" onClick={closeRenameModal}>
+                  ×
+                </button>
+              </div>
+              <div className="pm2-modal-body">
+                <label className="pm2-modal-label">画布名称</label>
+                <input
+                  className="pm2-modal-input"
+                  value={renameName}
+                  placeholder="输入画布名称"
+                  autoFocus
+                  maxLength={60}
+                  onChange={(e) => setRenameName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !renaming && handleRename()}
+                />
+              </div>
+              <div className="pm2-modal-foot">
+                <button type="button" className="pm2-modal-btn" disabled={renaming} onClick={closeRenameModal}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="pm2-modal-btn pm2-modal-btn--primary"
+                  disabled={renaming || !renameName.trim()}
+                  onClick={handleRename}
+                >
+                  {renaming ? '保存中…' : '保存'}
+                </button>
+              </div>
             </div>
-            <div className="pm2-modal-body">
-              <label className="pm2-modal-label">画布名称</label>
-              <input
-                className="pm2-modal-input"
-                value={renameName}
-                placeholder="输入画布名称"
-                autoFocus
-                maxLength={60}
-                onChange={(e) => setRenameName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !renaming && handleRename()}
-              />
-            </div>
-            <div className="pm2-modal-foot">
-              <button type="button" className="pm2-modal-btn" disabled={renaming} onClick={closeRenameModal}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="pm2-modal-btn pm2-modal-btn--primary"
-                disabled={renaming || !renameName.trim()}
-                onClick={handleRename}
-              >
-                {renaming ? '保存中…' : '保存'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

@@ -16,8 +16,8 @@
 .tag {
   padding: 2px 7px;
   border-radius: 4px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font-size: 11px;
   line-height: 1.6;
 }

@@ -22,7 +22,7 @@
   max-width: 100%;
   padding: 20px 22px;
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
   font-family: 'PingFang SC', sans-serif;
 }
@@ -35,7 +35,7 @@
 }
 
 .title {
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font-size: 16px;
   font-weight: 600;
 }
@@ -49,17 +49,17 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   cursor: pointer;
 }
 
 .close:hover {
-  background: #fff;
-  color: #344054;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--canvas-text, #e5e7eb);
 }
 
 .close:focus-visible {
-  outline: 2px solid #11a98a;
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: 2px;
 }
 
@@ -84,8 +84,8 @@
   padding: 0 10px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font-size: 13px;
   font-family: inherit;
 }
@@ -108,7 +108,7 @@
 }
 
 .copy:disabled {
-  background: #f2f4f7;
+  background: rgba(255, 255, 255, 0.14);
   cursor: not-allowed;
 }
 
@@ -124,7 +124,7 @@
   justify-content: space-between;
   gap: 12px;
   margin-top: 14px;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   font-size: 13px;
 }
 
@@ -133,8 +133,8 @@
   padding: 0 10px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
 }
 
@@ -164,7 +164,7 @@
 }
 
 .primary:disabled {
-  background: #f2f4f7;
+  background: rgba(255, 255, 255, 0.14);
   cursor: not-allowed;
 }
 
@@ -175,7 +175,7 @@
   padding: 0 14px;
   border: 1px solid rgba(217, 76, 76, 0.4);
   border-radius: 999px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #d14343;
   font-size: 13px;
   cursor: pointer;
@@ -184,4 +184,18 @@
 .danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.dialog {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+}
+.title,
+.hint {
+  color: var(--canvas-text, #e5e7eb);
+}
+.linkRow,
+.link {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
 }

@@ -6,10 +6,10 @@
   transform: translate(-50%, -50%);
   width: min(500px, calc(100% - 180px));
   padding: 28px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 16px;
-  background: #fff;
-  color: #30343b;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
 }
 .starter h2 {
   margin: 0 0 12px;
@@ -30,18 +30,18 @@
 }
 .actions button {
   padding: 10px 14px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--canvas-surface-highest, #2b3145);
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 8px;
   color: #347866;
   cursor: pointer;
 }
 .actions button:hover {
-  background: #fff;
+  background: var(--canvas-surface-highest, #2b3145);
 }
 .actions .primaryAction {
   background: #087c63;
-  border-color: #087c63;
+  border-color: #cbd5d9;
   color: #fff;
 }
 .actions .primaryAction:hover {
@@ -59,14 +59,14 @@
   justify-content: space-between;
 }
 .starter .footer button {
-  color: #7a8496;
+  color: var(--canvas-text-muted, #9ca3af);
   border: 0;
   padding: 4px 0;
   background: transparent;
   cursor: pointer;
 }
 .starter button:focus-visible {
-  outline: 2px solid #009b7d;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 .importBody {
@@ -87,7 +87,7 @@
   font-size: 13px;
 }
 .preview {
-  background: #fff;
+  background: var(--canvas-surface-input, #0d0e14);
   border-radius: 8px;
   padding: 16px;
 }
@@ -121,10 +121,10 @@
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 8px;
-  background: #fff;
-  color: #30343b;
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   line-height: 1.6;
 }
@@ -135,21 +135,21 @@
 .importBody textarea:focus-visible,
 .importBody select:focus-visible,
 .importBody button:focus-visible {
-  outline: 2px solid #009b7d;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }
 .importBody .footer button {
   padding: 8px 16px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 8px;
-  background: #fff;
-  color: #30343b;
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
   cursor: pointer;
 }
 .importBody .footer .primary {
   background: #087c63;
   color: #fff;
-  border-color: #087c63;
+  border-color: #cbd5d9;
 }
 .importBody button:disabled {
   opacity: 0.5;

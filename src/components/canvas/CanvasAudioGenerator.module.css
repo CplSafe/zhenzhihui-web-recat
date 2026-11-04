@@ -21,13 +21,13 @@
   border: none;
   border-radius: 0;
   background: transparent;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   line-height: 1.6;
   resize: vertical;
 }
 .prompt:focus-visible {
-  outline: 2px solid #13b99a;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 .promptContainer {
@@ -48,7 +48,7 @@
   padding: 6px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 12px 28px rgb(26 54 47 / 14%);
 }
 .mentionMenu button,
@@ -59,13 +59,13 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #30343b;
+  color: var(--canvas-text, #e5e7eb);
   text-align: left;
   font: inherit;
 }
 .mentionMenu button:hover,
 .mentionMenu button:focus-visible {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
   outline: none;
 }
 .promptContainer .prompt {
@@ -77,7 +77,7 @@
   right: 20px;
   bottom: 10px;
   padding: 0 4px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   font-size: 11px;
   line-height: 16px;
@@ -124,7 +124,7 @@
   padding: 7px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   font: inherit;
   cursor: pointer;
@@ -132,7 +132,7 @@
 }
 .settingsTrigger:hover,
 .settingsTrigger[aria-expanded='true'] {
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #138d74;
   border-color: #e5e7eb;
 }
@@ -148,7 +148,7 @@
   padding: 16px;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
   z-index: 2;
 }
@@ -185,7 +185,7 @@
 .generator .references button,
 .generator .promptActions button,
 .generator .costActions button {
-  background: #fff;
+  background: var(--canvas-surface-raised);
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   color: #7a8496;
@@ -198,7 +198,7 @@
   padding: 6px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .reference span {
   max-width: 110px;
@@ -226,7 +226,7 @@
 .generator button:focus-visible,
 .generator select:focus-visible,
 .parameters summary:focus-visible {
-  outline: 2px solid #13b99a;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 
@@ -244,7 +244,7 @@
 }
 .references:focus-visible,
 .referencesDragging {
-  outline: 2px solid #13aa8a;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
   border-radius: 8px;
 }
@@ -255,13 +255,13 @@
 .generator .references > button {
   border: 1px solid #e5e7eb;
   border-radius: 999px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #347866;
   font-size: 12px;
   padding: 7px 11px;
 }
 .generator .references > button:hover:not(:disabled) {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
   border-color: #e5e7eb;
 }
 .generator .prompt {
@@ -272,8 +272,8 @@
   padding: 14px 16px;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font-size: 14px;
   line-height: 1.65;
   resize: vertical;
@@ -297,7 +297,7 @@
 .generator .costActions button {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #657487;
   font-size: 11px;
   padding: 7px 10px;
@@ -320,8 +320,8 @@
   padding: 0 11px;
   border: 1px solid #e5e7eb;
   border-radius: 9px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-input);
+  color: var(--canvas-text, #e5e7eb);
   font-size: 12px;
   font-weight: 500;
 }
@@ -345,8 +345,8 @@
   padding: 6px 9px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
-  color: #344054;
+  background: var(--canvas-surface-raised);
+  color: var(--canvas-text, #e5e7eb);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -354,7 +354,7 @@
 }
 .modelTrigger:hover:not(:disabled),
 .modelTrigger[aria-expanded='true'] {
-  border-color: #13aa8a;
+  border-color: #cbd5d9;
   color: #138d74;
 }
 .modelTrigger:disabled {
@@ -363,7 +363,7 @@
 }
 .modelTrigger:focus-visible,
 .modelOption:focus-visible {
-  outline: 2px solid #13aa8a;
+  outline: 2px solid #cbd5d9;
   outline-offset: 2px;
 }
 .modelTriggerText {
@@ -410,7 +410,7 @@
   padding: 5px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
 }
 .modelOption {
@@ -422,16 +422,16 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   text-align: left;
   cursor: pointer;
 }
 .modelOption:hover,
 .modelOption:focus-visible {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 .modelOptionSelected {
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .modelAvatar {
   display: inline-flex;
@@ -441,7 +441,7 @@
   width: 24px;
   height: 24px;
   border-radius: 7px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #138d74;
   font-size: 12px;
   font-weight: 700;
@@ -478,7 +478,7 @@
 }
 .parameters summary {
   border-color: #e5e7eb;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .costActions {
   margin-top: 12px;
@@ -533,7 +533,18 @@
 }
 
 .mentionMenu button[aria-selected='true'] {
-  border-color: #1fcfa9;
-  box-shadow: inset 0 0 0 1px #1fcfa9;
-  background: #fff;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  box-shadow: inset 0 0 0 1px #cbd5d9;
+  background: var(--canvas-surface-input);
+}
+.panel,
+.panel :is(header, footer) {
+  background: var(--canvas-surface-raised, #202433);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
+}
+.panel :is(input, textarea, select) {
+  background: var(--canvas-surface-input, #0d0e14);
+  color: var(--canvas-text, #e5e7eb);
+  border-color: var(--canvas-border, rgb(255 255 255 / 12%));
 }

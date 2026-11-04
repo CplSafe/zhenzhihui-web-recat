@@ -38,9 +38,9 @@
   padding: 64px 24px 20px;
   border: 1px solid #e5e7eb;
   border-radius: 24px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   box-shadow: 0 24px 80px rgb(24 32 44 / 18%);
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   color-scheme: light;
 }
 .caption {
@@ -64,7 +64,7 @@
   flex-shrink: 0;
   padding: 4px 10px;
   border-radius: 6px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #7a8496;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -81,20 +81,20 @@
   width: 100%;
   height: min(820px, calc(100dvh - 250px));
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .nav,
 .close {
   z-index: 2;
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   padding: 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: rgb(255 255 255 / 96%);
-  color: #344054;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 14px;
+  background: #262626;
+  color: #f5f7fb;
   cursor: pointer;
   backdrop-filter: blur(4px);
   transition:
@@ -124,8 +124,9 @@
 }
 .nav:hover:not(:disabled),
 .close:hover {
-  background: #fff;
-  border-color: #e5e7eb;
+  background: #343d52;
+  border-color: var(--canvas-border-active, #cbd5d9);
+  color: #fff;
 }
 .nav:disabled {
   opacity: 0.22;
@@ -136,9 +137,9 @@
   position: absolute;
   z-index: 2;
   padding: 9px 16px;
-  border: 1px solid rgb(17 169 138 / 28%);
+  border: 1px solid rgb(203 213 217 / 28%);
   border-radius: 9px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   color: #347866;
   font: inherit;
   font-size: 13px;
@@ -158,14 +159,14 @@
   right: 14px;
   isolation: isolate;
   pointer-events: auto;
-  box-shadow: 0 3px 12px rgb(8 127 104 / 12%);
+  box-shadow: 0 3px 12px rgb(203 213 217 / 12%);
 }
 .panoramaAction::before,
 .panoramaAction::after {
   position: absolute;
   z-index: -1;
   inset: -5px;
-  border: 1px solid rgb(17 169 138 / 34%);
+  border: 1px solid rgb(203 213 217 / 34%);
   border-radius: 12px;
   content: '';
   opacity: 0;
@@ -181,9 +182,9 @@
 }
 .hdAction:hover:not(:disabled),
 .panoramaAction:hover:not(:disabled) {
-  background: #fff;
-  border-color: rgb(17 169 138 / 52%);
-  box-shadow: 0 5px 16px rgb(8 127 104 / 18%);
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgb(203 213 217 / 52%);
+  box-shadow: 0 5px 16px rgb(203 213 217 / 18%);
   transform: translateY(-1px);
 }
 .hdAction:disabled {
@@ -203,7 +204,7 @@
   scrollbar-width: thin;
   scrollbar-color: #c5cbd5 transparent;
   border-radius: 14px;
-  background: #fff;
+  background: var(--canvas-surface-raised);
 }
 .thumb {
   position: relative;
@@ -214,7 +215,7 @@
   border: 2px solid transparent;
   border-radius: 9px;
   overflow: hidden;
-  background: #fff;
+  background: var(--canvas-surface-raised);
   cursor: pointer;
   opacity: 0.5;
   transition:
@@ -233,7 +234,7 @@
   transform: translateY(-2px);
 }
 .thumbActive {
-  border-color: #11a98a;
+  border-color: var(--canvas-border-active, #cbd5d9);
   opacity: 1;
   box-shadow: none;
 }
@@ -248,7 +249,7 @@
   font-size: 10px;
 }
 .dialog button:focus-visible {
-  outline: 2px solid #087f68;
+  outline: 2px solid #cbd5d9;
   outline-offset: 3px;
 }
 @keyframes preview-enter {
@@ -385,7 +386,7 @@
 }
 .infoList dd {
   margin: 0;
-  color: #344054;
+  color: var(--canvas-text, #e5e7eb);
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
@@ -414,7 +415,7 @@
   cursor: pointer;
 }
 .prompt button:hover {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 .emptyInfo {
   color: #7a8496;
@@ -443,4 +444,24 @@
   .thumbs {
     flex-shrink: 0;
   }
+}
+.dialog {
+  --image-viewport-text: #e5e7eb;
+  --image-toolbar-bg: #262626;
+  --image-toolbar-border: rgb(255 255 255 / 12%);
+  --image-toolbar-hover: #383838;
+  --image-toolbar-active: #454545;
+  --image-toolbar-muted: #9ca3af;
+  --image-toolbar-divider: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 12%);
+  background: #262626;
+  color: #e5e7eb;
+  color-scheme: dark;
+}
+.captionCount {
+  background: #262626;
+  color: #9ca3af;
+}
+.stage > div {
+  background: #262626;
 }

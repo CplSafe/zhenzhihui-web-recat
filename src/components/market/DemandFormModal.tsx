@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Select } from 'antd'
 import RatioLabel from '@/components/common/RatioLabel'
+import WakeSlider from '@/components/common/WakeSlider'
 import { getAssetDownloadUrl, uploadAssetFile } from '@/api/business'
 import {
   createMarketDemand,
@@ -265,19 +266,24 @@ export default function DemandFormModal({ open, targetIp = null, onClose, onPubl
                   options={RATIO_OPTIONS.map((value) => ({ value, label: <RatioLabel ratio={value} /> }))}
                 />
               </label>
-              <label className={styles.chip}>
+              <div className={`${styles.chip} ${styles.durationChip}`}>
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">
                   <circle cx="12" cy="12" r="9" />
                   <path d="M12 7v5l3.2 1.8" strokeLinecap="round" />
                 </svg>
-                <select value={duration} onChange={(event) => setDuration(event.target.value)} aria-label="视频时长">
-                  {DURATION_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <div className={styles.durationHeader}>
+                  <span>视频时长</span>
+                  <strong>{duration}</strong>
+                </div>
+                <WakeSlider
+                  options={DURATION_OPTIONS.map((option) => ({ value: option, label: option }))}
+                  value={duration}
+                  onChange={(next) => setDuration(String(next))}
+                  ariaLabel="视频时长"
+                  bars={36}
+                  wake={60}
+                />
+              </div>
             </div>
           </div>
 
