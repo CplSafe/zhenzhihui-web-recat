@@ -22,6 +22,7 @@ import AgentChatView from '@/views/AgentChatView'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
+import { MANUAL_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -81,10 +82,12 @@ const SplashView = lazy(() => import('../views/SplashView'))
 const LoginView = lazy(() => import('../views/LoginView'))
 /** 供需商单（IP / 需求市场）路由组件。 */
 const MarketView = lazy(routeImporters.market)
+const ScriptIdeasView = lazy(() => import('../views/ScriptIdeasView'))
 /** 模板库路由组件。 */
 const TemplatesView = lazy(routeImporters.templates)
 /** 智能成片创作路由组件。 */
 const SmartCreateView = lazy(routeImporters.smart)
+const PromoCreateView = lazy(routeImporters.promo)
 /** 爆款复制创作路由组件。 */
 const HotCopyCreateView = lazy(routeImporters.hotCopy)
 /** 项目管理路由组件。 */
@@ -103,7 +106,7 @@ const DistributionView = lazy(() => import('../views/DistributionView'))
 const StudioCreateView = lazy(routeImporters.studio)
 /** 创意画布路由组件。 */
 const CanvasView = lazy(routeImporters.canvas)
-/** 漫剧制作列表路由组件。 */
+/** 无限画布列表路由组件。 */
 const CanvasListView = lazy(routeImporters.canvasList)
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
 /** IP 创作者详情路由组件。 */
@@ -313,6 +316,12 @@ export const router = createBrowserRouter([
       // 首页已下线：保留 /home 仅为旧链接 / 书签兜底，统一落到爆款复刻。
       { path: 'home', element: <Navigate to={APP_HOME_PATH} replace />, handle: { requiresAuth: false } },
       { path: 'market', element: lazyPage(<MarketView />), handle: { requiresAuth: false } },
+      { path: 'script-ideas', element: lazyPage(<ScriptIdeasView />), handle: { requiresAuth: false } },
+      { path: 'script-ideas/join', element: lazyPage(<ScriptIdeasView />) },
+      { path: 'script-ideas/stage/:stage', element: lazyPage(<ScriptIdeasView />), handle: { requiresAuth: false } },
+      { path: 'script-ideas/new', element: lazyPage(<ScriptIdeasView />) },
+      { path: 'script-ideas/list', element: lazyPage(<ScriptIdeasView />) },
+      { path: 'script-ideas/:id', element: lazyPage(<ScriptIdeasView />) },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
       // 供需商单、IP 创作者主页与需求详情均为可浏览页,发起合作/申请接单在页面内鉴权。
       { path: 'ip/:userId', element: lazyPage(<IpDetailView />), handle: { requiresAuth: false } },
@@ -323,6 +332,10 @@ export const router = createBrowserRouter([
       { path: 'collaborations', element: lazyPage(<MyCollaborationsView />) },
       // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)
       { path: 'smart/:id?', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
+      {
+        path: 'promo',
+        element: MANUAL_DELIVERY_ENABLED ? lazyPage(<PromoCreateView />) : <Navigate to={APP_HOME_PATH} replace />,
+      },
       {
         path: 'real-person-video/:id?',
         element: lazyPage(<WorkspaceScopedSmartCreateRoute flowMode="real-person" />),

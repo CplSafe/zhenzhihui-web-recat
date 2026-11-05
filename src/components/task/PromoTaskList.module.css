@@ -1,0 +1,36 @@
+.list {
+  display: grid;
+  gap: 10px;
+}
+.card {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  color: #6b7280;
+  background: #fff;
+  border: 1px solid #e6e9ec;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.card:hover,
+.card:focus-visible {
+  border-color: #18b79b;
+}
+.title {
+  font-size: 14px;
+  font-weight: 650;
+  color: #202735;
+}
+.status {
+  color: #078f7a;
+  font-weight: 600;
+}
+.empty {
+  padding: 48px 20px;
+  color: #8993a2;
+  line-height: 1.8;
+  text-align: center;
+}

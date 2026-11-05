@@ -5,6 +5,7 @@
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import EntryCanvasBg from '../EntryCanvasBg'
 import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
 import EntryDropdown from '../EntryDropdown'
@@ -58,7 +59,7 @@ import {
 import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { DEFAULT_REFERENCE_IMAGE_LIMIT } from '@/utils/modelInputConstraints'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
-import { useUnsavedEntryLeaveGuard } from '@/composables/useHotCopyLeaveGuard'
+import UnsavedEntryLeaveGuard from '@/components/common/UnsavedEntryLeaveGuard'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { buildSmartImagePrompt, type SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
@@ -74,6 +75,12 @@ import { estimateAiTaskCost } from '@/api/business'
 import { estimateShotImageCost } from '@/api/smartShotImage'
 import { multiplyCredits, sumCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './SmartEntry.module.less'
+import RefineDemo from '@/components/smart/refine/RefineDemo'
+import ManualVideoFlow from '@/components/smart/refine/ManualVideoFlow'
+import { REFINE_DURATIONS, type RefineDuration } from '@/utils/refineDelivery'
+import { useRefineDemoStore } from '@/stores/refineDemo'
+import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import { registerUpdateDraftSaver } from '@/utils/updateDraftRegistry'
 
 /** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
 export interface EntryMeta {
@@ -316,11 +323,17 @@ export default function SmartEntry({
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const [submitting, setSubmitting] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const refineTasks = useRefineDemoStore((state) => state.tasks)
   const submittingRef = useRef(false)
   const draftPersistenceEnabledRef = useRef(true)
   // 回填优先级:initial(同一次挂载内「上一步」回填,值非空时为准)> sessionStorage 暂存(跨路由保活)> 默认。
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
   const [stored] = useState(() => (restoreSessionDraft ? loadSmartEntryDraft() : null))
+  const [refineSelected, setRefineSelected] = useState(MANUAL_DELIVERY_ENABLED && Boolean(stored?.refineSelected))
+  const [refineDemoOpen, setRefineDemoOpen] = useState(MANUAL_DELIVERY_ENABLED && Boolean(stored?.refineScreen))
+  const [refineScreen, setRefineScreen] = useState<'preparing' | 'order'>(stored?.refineScreen ?? 'preparing')
   const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
   const seedSkill = normalizeSmartScriptName(initial?.skill ?? stored?.skill ?? '')
   const seedImages = (initial?.images && initial.images.length ? initial.images : stored?.images) ?? []
@@ -360,6 +373,10 @@ export default function SmartEntry({
     setOutputCount(1)
     setGenerationModels({})
     clearSmartEntryDraft()
+    if (m === 'image') {
+      setRefineSelected(false)
+      if (skill === '测评视频') setSkill('')
+    }
     setMode(m)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
@@ -409,6 +426,11 @@ export default function SmartEntry({
   const [libraryQuery, setLibraryQuery] = useState('')
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  const refineTaskId = MANUAL_DELIVERY_ENABLED ? new URLSearchParams(location.search).get('refineDemo') || '' : ''
+  const manualTaskId = MANUAL_DELIVERY_ENABLED ? Number(new URLSearchParams(location.search).get('manualTask') || 0) : 0
+  const refineTask = refineTasks.find(
+    (task) => task.id === refineTaskId && task.ownerId === currentUserId && task.workspaceId === Number(workspaceId),
+  )
 
   /** 拉取素材库里的图片素材（只取本人可见的项目资产）。 */
   const loadLibraryImages = async () => {
@@ -515,24 +537,33 @@ export default function SmartEntry({
   const [atSource, setAtSource] = useState<'typed' | 'button'>('button')
   const atTriggerRangeRef = useRef<{ start: number; end: number } | null>(null)
 
-  // 实时把当前输入写进 sessionStorage(防抖 300ms),切走再回来可回填。text 存「剥离 skill 提示语」的干净正文。
+  const updateDraftRef = useRef<() => boolean>(() => true)
+  updateDraftRef.current = () => {
+    if (!draftPersistenceEnabledRef.current || new URLSearchParams(location.search).has('refineDemo')) return true
+    return saveSmartEntryDraft({
+      mode,
+      text: stripSkillLine(text).trim(),
+      ratio,
+      duration,
+      resolution,
+      generateAudio,
+      skill,
+      images,
+      imageAssetIds,
+      realPersonReferences,
+      outputCount,
+      generationModels,
+      refineSelected: MANUAL_DELIVERY_ENABLED ? refineSelected : stored?.refineSelected,
+      refineScreen: MANUAL_DELIVERY_ENABLED ? (refineDemoOpen ? refineScreen : undefined) : stored?.refineScreen,
+    })
+  }
+  useEffect(() => registerUpdateDraftSaver(() => updateDraftRef.current()), [])
+
+  // 实时把当前输入写进 sessionStorage(防抖 300ms),更新刷新前另行同步保存。
   useEffect(() => {
     const t = window.setTimeout(() => {
       if (!draftPersistenceEnabledRef.current) return
-      saveSmartEntryDraft({
-        mode,
-        text: stripSkillLine(text).trim(),
-        ratio,
-        duration,
-        resolution,
-        generateAudio,
-        skill,
-        images,
-        imageAssetIds,
-        realPersonReferences,
-        outputCount,
-        generationModels,
-      })
+      updateDraftRef.current()
       onDraftChange?.(stripSkillLine(text).trim(), {
         mode,
         style: '',
@@ -563,6 +594,9 @@ export default function SmartEntry({
     realPersonReferences,
     outputCount,
     generationModels,
+    refineSelected,
+    refineDemoOpen,
+    refineScreen,
     onDraftChange,
   ])
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
@@ -753,7 +787,7 @@ export default function SmartEntry({
   const hasDraftInput = Boolean(
     stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
   )
-  useUnsavedEntryLeaveGuard(hasDraftInput, clearSmartEntryDraft, (nextLocation) => {
+  const allowEntryNavigation = (nextLocation: import('react-router-dom').Location) => {
     // 首次建项是当前提交的内部绑定；不能被入口离开确认拦住，否则地址仍停在空白入口。
     // 其他导航继续走原确认逻辑，路由包装再校验绑定标记所属的会话和工作空间。
     const state = nextLocation.state
@@ -767,7 +801,7 @@ export default function SmartEntry({
       Number(state?.smartCreationBindWorkspaceId) > 0 &&
       nextLocation.pathname === `${isRealPersonVariant ? '/real-person-video' : '/smart'}/${projectId}`,
     )
-  })
+  }
   // 爆款成片的脚本模型自动选择，只向用户展示视频模型；校验与提交仍包含脚本模型。
   const displayedModelGroups = useMemo(
     () =>
@@ -806,8 +840,15 @@ export default function SmartEntry({
   // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
   const durationOptions = useMemo(
     () =>
-      getGenerationModelDurationOptions(visibleModelGroups, generationModels, 'video.generate', SMART_VIDEO_DURATIONS),
-    [visibleModelGroups, generationModels],
+      refineSelected
+        ? [...REFINE_DURATIONS]
+        : getGenerationModelDurationOptions(
+            visibleModelGroups,
+            generationModels,
+            'video.generate',
+            SMART_VIDEO_DURATIONS,
+          ).filter((seconds) => mode !== 'video' || isRealPersonVariant || seconds <= 30),
+    [visibleModelGroups, generationModels, refineSelected, mode, isRealPersonVariant],
   )
   const durationUnset = parseDurationSeconds(duration) === null
   //
@@ -936,11 +977,34 @@ export default function SmartEntry({
     (next: CreativeParamsValue) => {
       if (next.ratio !== ratio) pickRatio(next.ratio)
       if (next.resolution !== resolution) pickResolution(next.resolution)
+      if (
+        MANUAL_DELIVERY_ENABLED &&
+        mode === 'video' &&
+        !isRealPersonVariant &&
+        !refineSelected &&
+        next.durationSec > 30 &&
+        next.durationSec !== (parseDurationSeconds(duration) ?? 0)
+      ) {
+        setRefineSelected(true)
+        showToast('超过 30 秒已切换至精制交付（T+1）', 'info')
+      }
       if (next.durationSec > 0 && `${next.durationSec}s` !== duration) setDuration(`${next.durationSec}s`)
       if (next.count !== outputCount) setOutputCount(clampImageOutputCount(next.count))
       if (next.generateAudio !== generateAudio) setGenerateAudio(next.generateAudio)
     },
-    [ratio, resolution, duration, outputCount, generateAudio, pickRatio, pickResolution],
+    [
+      ratio,
+      resolution,
+      duration,
+      outputCount,
+      generateAudio,
+      pickRatio,
+      pickResolution,
+      mode,
+      isRealPersonVariant,
+      refineSelected,
+      showToast,
+    ],
   )
 
   /**
@@ -982,6 +1046,8 @@ export default function SmartEntry({
   // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
   const resumeMode = !!canResume && mode === (initial?.mode || 'video')
   const updateGenerationModel = (groupKey: string, modelId: number | string, subgroupKey?: string) => {
+    setRefineSelected(false)
+    if (skill === '测评视频') pickSkill(NO_SCRIPT_OPTION)
     const operationCode = (subgroupKey || groupKey) as GenerationOperationCode
     setGenerationModels((previous) => ({ ...previous, [operationCode]: modelId }))
   }
@@ -1076,7 +1142,7 @@ export default function SmartEntry({
         return { operationCode, modelVersionId: Number(modelVersionId) }
       })
 
-    if (!workspaceId || !modelSelectionComplete || !picked.length) {
+    if (refineSelected || !workspaceId || !modelSelectionComplete || !picked.length) {
       setModelEstimate(null)
       return
     }
@@ -1114,7 +1180,7 @@ export default function SmartEntry({
       alive = false
       window.clearTimeout(timer)
     }
-  }, [estimateSelectedModel, estimateTargetsKey, modelSelectionComplete, workspaceId])
+  }, [estimateSelectedModel, estimateTargetsKey, modelSelectionComplete, workspaceId, refineSelected])
 
   /**
    * 提交时未选够模型：提示原因。
@@ -1126,6 +1192,19 @@ export default function SmartEntry({
   }
   const submit = async () => {
     if (!canSubmit || submittingRef.current) return
+    if (refineSelected && mode === 'video' && !isRealPersonVariant) {
+      if (!currentUserId || !workspaceId) {
+        onAuthRequired?.()
+        return
+      }
+      if (!REFINE_DURATIONS.includes((parseDurationSeconds(duration) ?? 0) as RefineDuration)) {
+        showToast('请选择精制成片时长', 'info')
+        return
+      }
+      setRefineScreen('preparing')
+      setRefineDemoOpen(true)
+      return
+    }
     if (!modelGatePassed) {
       requestModelSelectionAttention()
       return
@@ -1186,7 +1265,7 @@ export default function SmartEntry({
   // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
   const pickSkill = (s: string) => {
     const nextSkill = s === NO_SCRIPT_OPTION ? '' : s
-    setText((cur) => composeWithSkill(stripSkillLine(cur), nextSkill))
+    setText((cur) => composeWithSkill(stripSkillLine(cur), nextSkill === '测评视频' ? '' : nextSkill))
     setSkill(nextSkill)
   }
 
@@ -1211,6 +1290,71 @@ export default function SmartEntry({
       )}
     </div>
   )
+
+  if ((refineDemoOpen && !refineTask) || manualTaskId > 0)
+    return (
+      <ManualVideoFlow
+        key={`${currentUserId}-${workspaceId}-${manualTaskId}`}
+        ownerId={currentUserId}
+        workspaceId={Number(workspaceId)}
+        taskId={manualTaskId}
+        description={cleanText}
+        script={skill}
+        duration={parseDurationSeconds(duration)}
+        ratio={ratio}
+        resolution={resolution}
+        images={images}
+        imageAssetIds={imageAssetIds}
+        onTask={(id, created) => {
+          if (created) clearSmartEntryDraft()
+          setRefineDemoOpen(false)
+          navigate(`/smart?manualTask=${id}`, { replace: true })
+        }}
+        onEdit={() => {
+          setRefineDemoOpen(false)
+          setRefineScreen('preparing')
+          navigate('/smart', { replace: true })
+        }}
+      />
+    )
+
+  if (refineTask)
+    return (
+      <>
+        <UnsavedEntryLeaveGuard
+          dirty={hasDraftInput}
+          discard={clearSmartEntryDraft}
+          allowNavigation={allowEntryNavigation}
+        />
+        <RefineDemo
+          key={refineTask?.id || 'draft'}
+          description={refineTask?.description ?? cleanText}
+          script={refineTask?.script ?? skill}
+          duration={refineTask?.duration ?? (parseDurationSeconds(duration) as RefineDuration)}
+          ratio={refineTask?.ratio ?? ratio}
+          resolution={refineTask?.resolution ?? resolution}
+          materialCount={refineTask?.materialCount ?? images.length}
+          images={images}
+          imageAssetIds={imageAssetIds}
+          ownerId={currentUserId}
+          workspaceId={Number(workspaceId)}
+          task={refineTask}
+          initialDraftScreen={refineScreen}
+          onDraftScreenChange={setRefineScreen}
+          onCreated={(id) => {
+            clearSmartEntryDraft()
+            setRefineDemoOpen(false)
+            setRefineScreen('preparing')
+            navigate(`/smart?refineDemo=${encodeURIComponent(id)}`, { replace: true })
+          }}
+          onEdit={() => {
+            setRefineDemoOpen(false)
+            setRefineScreen('preparing')
+            if (refineTaskId) navigate('/smart', { replace: true })
+          }}
+        />
+      </>
+    )
 
   return (
     <div
@@ -1251,6 +1395,11 @@ export default function SmartEntry({
         void pickImages(Array.from(event.dataTransfer.files))
       }}
     >
+      <UnsavedEntryLeaveGuard
+        dirty={hasDraftInput}
+        discard={clearSmartEntryDraft}
+        allowNavigation={allowEntryNavigation}
+      />
       {/* 背景弥散:Canvas 精确复刻 UI 设计「背景颜色」(Figma 677:3996)三层叠加;只绘制一次,
           切换 mode 时对画布做纯位移动画(GPU 合成,不卡) */}
       <div className={styles.bg} aria-hidden="true">
@@ -1496,7 +1645,7 @@ export default function SmartEntry({
             模型不可用与参数不兼容的提示。原本长在模型弹窗内部，换成创作台样式的胶囊后
             那里没有落脚点；放在工具条上方常驻，比藏进一个要点开才看得见的面板更早被看到。
           */}
-              {(modelError || modelSelectionConflicts.length > 0) && (
+              {!refineSelected && (modelError || modelSelectionConflicts.length > 0) && (
                 <div className={styles.capabilityNotice} role="status">
                   {modelError ? (
                     <>
@@ -1519,7 +1668,7 @@ export default function SmartEntry({
                 </div>
               )}
 
-              {modelEstimate && (
+              {!refineSelected && modelEstimate && (
                 <div className={styles.toolbarEstimate}>
                   <EntryCostEstimate
                     loading={modelEstimate.loading}
@@ -1531,6 +1680,36 @@ export default function SmartEntry({
                   />
                 </div>
               )}
+              <div className={styles.refineScriptRow}>
+                {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
+                {mode === 'video' && !isRealPersonVariant && (
+                  <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
+                    <EntryDropdown
+                      clearable
+                      placeholder="选择爆款脚本"
+                      value={skill}
+                      selectedOption={skill || NO_SCRIPT_OPTION}
+                      options={refineSelected ? [...SCRIPT_OPTIONS, '测评视频'] : SCRIPT_OPTIONS}
+                      onChange={pickSkill}
+                      icon={
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="20"
+                          height="20"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                          <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                        </svg>
+                      }
+                    />
+                  </span>
+                )}
+              </div>
               <div className={styles.toolbar}>
                 <div className={styles.tools}>
                   <div className={styles.settingsGroup} ref={toolbarSettings.wrapRef}>
@@ -1555,6 +1734,16 @@ export default function SmartEntry({
                         groups={displayedModelGroups}
                         selected={generationModels}
                         onChange={updateGenerationModel}
+                        refineSelected={refineSelected}
+                        onSelectRefine={
+                          MANUAL_DELIVERY_ENABLED && mode === 'video' && !isRealPersonVariant
+                            ? () => {
+                                setRefineSelected(true)
+                                if (!REFINE_DURATIONS.includes((parseDurationSeconds(duration) ?? 0) as RefineDuration))
+                                  setDuration('30s')
+                              }
+                            : undefined
+                        }
                         loading={Boolean(modelLoading)}
                         authRequired={authRequired}
                         onAuthRequired={onAuthRequired}
@@ -1571,6 +1760,16 @@ export default function SmartEntry({
                         value={creativeParamsValue}
                         options={creativeParamsOptions}
                         onChange={applyCreativeParams}
+                        refineDurations={
+                          MANUAL_DELIVERY_ENABLED && mode === 'video' && !isRealPersonVariant && !refineSelected
+                            ? REFINE_DURATIONS.filter((seconds) => seconds > 30)
+                            : []
+                        }
+                        onSelectRefineDuration={(seconds) => {
+                          setRefineSelected(true)
+                          setDuration(`${seconds}s`)
+                          showToast('超过 30 秒已切换至精制交付（T+1）', 'info')
+                        }}
                         /*
                   先选模型再选参数：比例/时长/分辨率的可选档位都由所选模型的 schema 决定，
                   没选模型时给出的只是兜底档位——用户可能选中一个该模型根本做不到的秒数，
@@ -1578,7 +1777,9 @@ export default function SmartEntry({
                   这里不用 disabled：点上去没反应的按钮不会告诉用户为什么，
                   照常可点、点了说明原因，用户才知道下一步该做什么。
                 */
-                        blockedReason={modelSelectionComplete ? undefined : '请先选择本次创作使用的模型'}
+                        blockedReason={
+                          refineSelected || modelSelectionComplete ? undefined : '请先选择本次创作使用的模型'
+                        }
                         onBlocked={(reason) => showToast(reason, 'info')}
                         openSignal={paramsOpenSignal}
                       />
@@ -1621,35 +1822,6 @@ export default function SmartEntry({
                         onSelect={pickRef}
                         onClose={closeAtMenu}
                       />
-
-                      {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
-                      {mode === 'video' && !isRealPersonVariant && (
-                        <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
-                          <EntryDropdown
-                            clearable
-                            placeholder="选择爆款脚本"
-                            value={skill}
-                            selectedOption={skill || NO_SCRIPT_OPTION}
-                            options={SCRIPT_OPTIONS}
-                            onChange={pickSkill}
-                            icon={
-                              <svg
-                                viewBox="0 0 24 24"
-                                width="20"
-                                height="20"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.7"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                                <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                              </svg>
-                            }
-                          />
-                        </span>
-                      )}
                     </div>
                   </div>
                 </div>

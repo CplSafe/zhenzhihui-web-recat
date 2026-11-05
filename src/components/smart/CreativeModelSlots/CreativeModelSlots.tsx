@@ -47,6 +47,8 @@ export interface CreativeModelSlotsProps {
   onModelSelected?: () => void
   /** 尚未选择过模型时的明确提示。 */
   emptyLabel?: string
+  refineSelected?: boolean
+  onSelectRefine?: () => void
 }
 
 /** 渲染模型摘要胶囊及其槽位弹层。 */
@@ -62,6 +64,8 @@ export default function CreativeModelSlots({
   onOpen,
   onModelSelected,
   emptyLabel = '请选择视频模型',
+  refineSelected = false,
+  onSelectRefine,
 }: CreativeModelSlotsProps) {
   const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const [closing, setClosing] = useState(false)
@@ -114,20 +118,22 @@ export default function CreativeModelSlots({
     (slot) => slot.models.find((model) => !model.disabled && String(model.id) === String(selected[slot.key]))?.name,
   )
   const chosenCount = chosenNames.filter(Boolean).length
-  const summary = authRequired
-    ? '登录后选择模型'
-    : !slots.length
-      ? loading
-        ? '模型加载中…'
-        : '暂无可用模型'
-      : chosenCount === slots.length
-        ? chosenNames.filter(Boolean).join(' · ')
-        : chosenCount > 0
-          ? `${chosenNames.filter(Boolean).join(' · ')} (${chosenCount}/${slots.length})`
-          : emptyLabel
+  const summary = refineSelected
+    ? '精制交付 · T+1'
+    : authRequired
+      ? '登录后选择模型'
+      : !slots.length
+        ? loading
+          ? '模型加载中…'
+          : '暂无可用模型'
+        : chosenCount === slots.length
+          ? chosenNames.filter(Boolean).join(' · ')
+          : chosenCount > 0
+            ? `${chosenNames.filter(Boolean).join(' · ')} (${chosenCount}/${slots.length})`
+            : emptyLabel
 
   const openPopover = () => {
-    if (authRequired || !slots.length || locked || open) return
+    if (authRequired || (!slots.length && !onSelectRefine) || locked || open) return
     onOpen?.()
     setOpen(true)
   }
@@ -145,7 +151,7 @@ export default function CreativeModelSlots({
           if (open) setOpen(false)
           else openPopover()
         }}
-        disabled={!authRequired && (!slots.length || locked)}
+        disabled={!authRequired && ((!slots.length && !onSelectRefine) || locked)}
         title={locked ? lockedReason : undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -158,7 +164,7 @@ export default function CreativeModelSlots({
         </span>
       </button>
 
-      {open && slots.length > 0 && (
+      {open && (slots.length > 0 || onSelectRefine) && (
         <div
           className={`${barStyles.popover} ${styles.popover}${closing ? ` ${styles.popoverClosing}` : ''}`}
           role="dialog"
@@ -233,6 +239,21 @@ export default function CreativeModelSlots({
               </div>
             </div>
           ))}
+          {onSelectRefine && (
+            <button
+              type="button"
+              className={`${styles.option}${refineSelected ? ` ${styles.optionActive}` : ''}`}
+              onClick={() => {
+                onSelectRefine()
+                closeAfterSelection()
+              }}
+            >
+              <span className={styles.optionBody}>
+                <span className={styles.optionName}>精制交付 · T+1 交付</span>
+                <span className={styles.optionDesc}>15 秒至 5 分钟 · 人工制作 · 提交前查看服务端报价</span>
+              </span>
+            </button>
+          )}
         </div>
       )}
     </div>

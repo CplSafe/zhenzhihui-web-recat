@@ -60,6 +60,9 @@ export interface CreativeParamsDropdownProps {
   onBlocked?: (reason: string) => void
   /** 变化时自动展开当前模型支持的规格选项。 */
   openSignal?: number
+  /** 长成片作为精制服务选择，不改变即时模型的可用档位。 */
+  refineDurations?: readonly number[]
+  onSelectRefineDuration?: (seconds: number) => void
 }
 
 /** 时长未选时摘要里的占位。 */
@@ -88,6 +91,8 @@ export default function CreativeParamsDropdown({
   blockedReason,
   onBlocked,
   openSignal = 0,
+  refineDurations = [],
+  onSelectRefineDuration,
 }: CreativeParamsDropdownProps) {
   const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const adaptiveHintId = useId()
@@ -186,6 +191,23 @@ export default function CreativeParamsDropdown({
                 value={value.durationSec}
                 onChange={(durationSec) => patch({ durationSec })}
               />
+            </div>
+          )}
+          {refineDurations.length > 0 && onSelectRefineDuration && (
+            <div className={`${barStyles.field} ${styles.field}`}>
+              <span className={barStyles.label}>超过 30 秒自动切换精制交付（T+1）</span>
+              <div className={barStyles.segments}>
+                {refineDurations.map((seconds) => (
+                  <button
+                    key={seconds}
+                    type="button"
+                    className={barStyles.segment}
+                    onClick={() => onSelectRefineDuration(seconds)}
+                  >
+                    {seconds < 60 ? `${seconds}秒` : `${seconds / 60}分钟`}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

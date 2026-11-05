@@ -31,6 +31,8 @@ export interface SmartEntryDraftStore {
   outputCount?: number
   /** 按 operation_code 保存的后端模型版本选择。 */
   generationModels?: GenerationModelSelectionMap
+  refineSelected?: boolean
+  refineScreen?: 'preparing' | 'order'
 }
 
 /** 当前入口草稿用户作用域。 */
@@ -102,16 +104,18 @@ export function loadSmartEntryDraft(): SmartEntryDraftStore | null {
 }
 
 /** 保存入口草稿；存储空间不足时移除图片后降级保存文本选项。 */
-export function saveSmartEntryDraft(draft: SmartEntryDraftStore): void {
-  if (isLogoutDraftWriteBlocked(entryDraftUserScope)) return
+export function saveSmartEntryDraft(draft: SmartEntryDraftStore): boolean {
+  if (isLogoutDraftWriteBlocked(entryDraftUserScope)) return false
   try {
     window.sessionStorage.setItem(keyOf(), JSON.stringify(draft))
+    return true
   } catch {
     try {
       window.sessionStorage.setItem(keyOf(), JSON.stringify({ ...draft, images: [], imageAssetIds: [] }))
     } catch {
       /* Storage is unavailable or full. */
     }
+    return false
   }
 }
 
