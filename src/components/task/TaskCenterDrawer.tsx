@@ -49,6 +49,13 @@ import { useWorkspaceMemberAccess } from '@/composables/useWorkspaceMemberAccess
 import { readAiTaskProgress } from '@/utils/taskProgress'
 import FilterSelect from '@/components/common/FilterSelect'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import RefineTaskList from '@/components/smart/refine/RefineTaskList'
+import PromoTaskList from './PromoTaskList'
+import ManualVideoHistory from '@/components/smart/refine/ManualVideoHistory'
+import { rememberTask } from '@/components/smart/refine/ManualVideoFlow'
+import { usePromoDemoStore } from '@/stores/promoDemo'
+import { useRefineDemoStore } from '@/stores/refineDemo'
+import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import styles from './TaskCenterDrawer.module.less'
 
 /** 当前任务类型页签、切换回调和布局扩展类名。 */
@@ -65,7 +72,7 @@ type TaskRecord = TaskCenterTask & Record<string, unknown>
 type TaskTone = 'active' | 'queued' | 'failed' | 'completed'
 
 /** 业务类型页签之外，补充跨业务汇总的“正在生成”状态页签。 */
-type TaskCenterTab = TaskCenterScope | 'generating'
+type TaskCenterTab = TaskCenterScope | 'generating' | 'promo'
 
 /** 项目草稿中可用于任务中心恢复封面的稳定源视频信息。 */
 interface TaskThumbnailSource {
@@ -118,6 +125,7 @@ const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
   { value: 'smart', label: '爆款成片' },
   { value: 'hot-copy', label: '爆款复刻' },
   { value: 'image', label: '图片' },
+  ...(MANUAL_DELIVERY_ENABLED ? [{ value: 'promo' as const, label: '宣传片' }] : []),
 ]
 
 /** 历史与实时任务状态的失败/完成别名集合。 */
@@ -833,6 +841,17 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const collapseButtonRef = useRef<HTMLButtonElement | null>(null)
   const scopeTabRefs = useRef<Partial<Record<TaskCenterTab, HTMLButtonElement | null>>>({})
   const [activeScope, setActiveScope] = useState<TaskCenterTab>(scope)
+  const refineOpenRequest = useRefineDemoStore((state) => state.openRequest)
+  const refineTasks = useRefineDemoStore((state) => state.tasks)
+  const promoOpenRequest = usePromoDemoStore((state) => state.openRequest)
+  const promoTasks = usePromoDemoStore((state) => state.tasks)
+  useEffect(() => {
+    if (MANUAL_DELIVERY_ENABLED && refineOpenRequest > 0) setActiveScope('smart')
+  }, [refineOpenRequest])
+  useEffect(() => {
+    if (MANUAL_DELIVERY_ENABLED && promoOpenRequest > 0 && window.location.pathname === '/promo')
+      setActiveScope('promo')
+  }, [promoOpenRequest])
   const [playingUrl, setPlayingUrl] = useState('')
   const [historicalTasks, setHistoricalTasks] = useState<TaskCenterTask[]>([])
   const [accessibleProjectIds, setAccessibleProjectIds] = useState<Set<number>>(() => new Set())
@@ -853,6 +872,15 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         currentUser?.uid ??
         0,
     ) || 0
+  const [hasRealPromo, setHasRealPromo] = useState(false)
+  const hasActivePromo =
+    MANUAL_DELIVERY_ENABLED &&
+    promoTasks.some(
+      (task) =>
+        task.ownerId === currentUserId &&
+        task.workspaceId === Number(workspaceId) &&
+        ['待交接', '制作中', '返工中', '逾期'].includes(task.status),
+    )
   // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
   const isTeamSpace = isTeamWorkspace(currentWorkspace)
   const { workspaceMembers } = useWorkspaceMemberAccess({
@@ -1085,7 +1113,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   ])
 
   // 「正在生成」全是本会话发起的任务，必然是自己的，不给成员筛选
-  const showOwnerFilter = isTeamSpace && activeScope !== 'generating'
+  const showOwnerFilter = isTeamSpace && activeScope !== 'generating' && activeScope !== 'promo'
   /** 与项目管理同口径：「我」按后端 mine 集合；本会话刚发起、项目还没进 mine 集合的任务也算我的。 */
   const matchesTaskOwner = useCallback(
     (task: TaskCenterTask, filter: string) => {
@@ -1120,6 +1148,11 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
       effectiveOwnerFilter ? scopedTasks.filter((task) => matchesTaskOwner(task, effectiveOwnerFilter)) : scopedTasks,
     [scopedTasks, effectiveOwnerFilter, matchesTaskOwner],
   )
+  const hasVisibleRefineTasks =
+    MANUAL_DELIVERY_ENABLED &&
+    activeScope === 'smart' &&
+    (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId)) &&
+    refineTasks.some((task) => task.ownerId === currentUserId && task.workspaceId === Number(workspaceId))
   /** 创作者展示名：任务自带（后端 creator_nickname）优先，否则按 ID 从成员列表查。 */
   const creatorLabelFor = (task: TaskCenterTask): string => {
     if (!isTeamSpace) return ''
@@ -1200,7 +1233,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
 
   const displayedTasks = activeScope === 'image' ? visibleTasks : visibleTasks.slice(0, MAX_VISIBLE_VIDEO_TASKS)
   const hiddenVideoCount =
-    activeScope === 'image' || activeScope === 'generating'
+    activeScope === 'image' || activeScope === 'generating' || activeScope === 'promo'
       ? 0
       : Math.max(0, visibleTasks.length - displayedTasks.length)
   const activeTaskCount = useMemo(() => {
@@ -1285,7 +1318,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               tabIndex={activeScope === tab.value ? 0 : -1}
               onClick={() => {
                 setActiveScope(tab.value)
-                if (tab.value !== 'generating') onScopeChange?.(tab.value)
+                if (tab.value !== 'generating' && tab.value !== 'promo') onScopeChange?.(tab.value)
               }}
               onKeyDown={(event) => {
                 const currentIndex = SCOPE_TABS.findIndex((candidate) => candidate.value === tab.value)
@@ -1299,7 +1332,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 event.preventDefault()
                 const nextScope = SCOPE_TABS[nextIndex].value
                 setActiveScope(nextScope)
-                if (nextScope !== 'generating') onScopeChange?.(nextScope)
+                if (nextScope !== 'generating' && nextScope !== 'promo') onScopeChange?.(nextScope)
                 scopeTabRefs.current[nextScope]?.focus()
               }}
             >
@@ -1334,9 +1367,43 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         <div
           className={styles.body}
           role="tabpanel"
-          aria-label={activeScope === 'generating' ? '正在生成任务' : `${getScopeLabel(activeScope)}任务`}
+          aria-label={
+            activeScope === 'generating'
+              ? '正在生成任务'
+              : activeScope === 'promo'
+                ? '宣传片任务'
+                : `${getScopeLabel(activeScope)}任务`
+          }
         >
-          {visibleTasks.length ? (
+          {MANUAL_DELIVERY_ENABLED && activeScope === 'generating' && (
+            <PromoTaskList
+              key={`${currentUserId}.${workspaceId}`}
+              ownerId={currentUserId}
+              workspaceId={Number(workspaceId)}
+              activeOnly
+              onPresenceChange={setHasRealPromo}
+            />
+          )}
+          {MANUAL_DELIVERY_ENABLED && activeScope === 'smart' && (
+            <ManualVideoHistory
+              key={`${currentUserId}.${workspaceId}`}
+              ownerId={currentUserId}
+              workspaceId={Number(workspaceId)}
+              includeLocal
+              onOpen={(id) => {
+                rememberTask(currentUserId, Number(workspaceId), id)
+                navigate(`/smart?manualTask=${id}`)
+              }}
+            />
+          )}
+          {hasVisibleRefineTasks && <RefineTaskList ownerId={currentUserId} workspaceId={Number(workspaceId)} />}
+          {activeScope === 'promo' ? (
+            <PromoTaskList
+              key={`${currentUserId}.${workspaceId}`}
+              ownerId={currentUserId}
+              workspaceId={Number(workspaceId)}
+            />
+          ) : visibleTasks.length ? (
             <div className={styles.taskList}>
               {displayedTasks.map((task) => {
                 const record = task as TaskRecord
@@ -1398,7 +1465,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 )
               })}
             </div>
-          ) : historyLoading && activeScope !== 'generating' ? (
+          ) : (activeScope === 'generating' && (hasActivePromo || hasRealPromo)) ||
+            hasVisibleRefineTasks ? null : historyLoading && activeScope !== 'generating' ? (
             <div className={styles.empty} role="status">
               <LoadingOutlined className={styles.emptySpinner} spin aria-hidden="true" />
               <span className={styles.emptyTitle}>正在加载历史{activeScope === 'image' ? '图片' : '视频'}</span>

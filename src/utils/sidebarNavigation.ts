@@ -6,9 +6,11 @@ export const SIDEBAR_ROUTE_MAP: Readonly<Record<string, string>> = Object.freeze
   // 首页已下线，旧的 home 键落到新的默认入口（爆款复刻）
   home: APP_HOME_PATH,
   market: '/market',
+  'script-ideas': '/script-ideas',
   canvas: '/canvas',
   studio: '/studio',
   creative: '/smart',
+  promo: '/promo',
   'real-person-video': '/real-person-video',
   'hot-copy': '/hot-copy',
   projects: '/projects',

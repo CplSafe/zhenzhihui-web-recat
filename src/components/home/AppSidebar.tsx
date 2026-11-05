@@ -1,6 +1,6 @@
 /**
  * 2.1 左侧导航栏（自包含静态实现）。
- * 浅色窄侧栏：品牌 + 分组（创作/管理/集市/团队）+ 底部设置。
+ * 浅色窄侧栏：品牌 + 分组（创作/我的/集市/团队）+ 底部设置。
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 菜单图标直接使用 Figma 导出的默认态/选中态 SVG，保持造型、尺寸和颜色一致。
  */
@@ -27,6 +27,7 @@ import { useUiStore } from '@/stores/ui'
 import { prefetchRoute } from '@/router/routePrefetch'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
+import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import { BookOutlined } from '@ant-design/icons'
 import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
@@ -63,9 +64,12 @@ const GROUPS: SidebarGroup[] = [
     items: [
       { key: 'hot-copy', label: '爆款复刻', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },
       { key: 'creative', label: '爆款成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
+      ...(MANUAL_DELIVERY_ENABLED
+        ? [{ key: 'promo', label: '定制宣传片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 as const }]
+        : []),
       { key: 'studio', label: 'AI 创作台', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
-      { key: 'canvas', label: '漫剧制作', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
+      { key: 'canvas', label: '无限画布', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'video-edit', label: '视频编辑', icon: videoEditIcon, iconSize: 16 },
     ],
   },
@@ -74,10 +78,11 @@ const GROUPS: SidebarGroup[] = [
     items: [
       // 原首页的「IP / 需求市场」两个标签，收进独立页面 /market
       { key: 'market', label: '供需商单', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
+      { key: 'script-ideas', label: '剧本创意', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
     ],
   },
   {
-    title: '管理',
+    title: '我的',
     items: [
       { key: 'projects', label: '项目管理', icon: projectsIcon, activeIcon: projectsActiveIcon, iconSize: 14 },
       { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
@@ -220,7 +225,7 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
         </div>
 
         <nav className="app-sidebar__nav">
-          {/* 创作 / 管理 / 集市 */}
+          {/* 创作 / 我的 / 集市 */}
           {GROUPS.map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>

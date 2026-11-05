@@ -20,6 +20,7 @@ import {
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
 import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
+import { clearRefineCommentDraftsForUser } from '../utils/refineCommentDraft'
 import { clearSmartDraftsForUser } from '../utils/smartDraft'
 import { clearAllCache } from '../utils/swrCache'
 import { clearPageCache } from '@/utils/pageDataCache'
@@ -59,6 +60,7 @@ function clearLocalDraftsOnLogout(userId: string) {
     clearSmartDraftsForUser(userId)
     clearHotCopyDraftsForUser(userId)
     clearSmartEntryDraftsForUser(userId)
+    clearRefineCommentDraftsForUser(userId)
   } catch {
     /* 隐私模式 / SSR:忽略 */
   }

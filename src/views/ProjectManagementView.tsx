@@ -75,6 +75,9 @@ import SeekableVideo from '@/components/common/SeekableVideo'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import { observeElementResize } from '@/utils/observeElementResize'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
+import { useRefineDemoStore } from '@/stores/refineDemo'
+import { usePromoDemoStore } from '@/stores/promoDemo'
+import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 
 /** 成员权限尚未加载时复用的稳定空数组。 */
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
@@ -434,6 +437,8 @@ export default function ProjectManagementView() {
   const currentUser = useCurrentUser()
   const currentWorkspace = useCurrentWorkspace()
   const currentUserId = resolveUserId(currentUser)
+  const refineTasks = useRefineDemoStore((state) => state.tasks)
+  const promoTasks = usePromoDemoStore((state) => state.tasks)
 
   // 工作空间成员,供成员权限弹窗及归属人名字查找
   const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
@@ -498,7 +503,7 @@ export default function ProjectManagementView() {
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('') // 搜索项目名称/团队
   const [typeFilter, setTypeFilter] = useState<'all' | '个人项目' | '协作项目'>('all')
-  const [flowFilter, setFlowFilter] = useState<'all' | 'smart' | 'hot-copy' | 'canvas'>('all')
+  const [flowFilter, setFlowFilter] = useState<'all' | 'smart' | 'hot-copy' | 'canvas' | 'promo'>('all')
   const [canvasItems, setCanvasItems] = useState<CanvasSummary[]>([])
   const [canvasItemsLoading, setCanvasItemsLoading] = useState(false)
   const [canvasCovers, setCanvasCovers] = useState<Record<number, CanvasCover | null>>({})
@@ -539,7 +544,7 @@ export default function ProjectManagementView() {
   const [vidCols, setVidCols] = useState(5)
   const [vidPage, setVidPage] = useState(1)
 
-  // 漫剧制作文件与普通项目来自不同 API；在项目管理的同名流程分类中汇总画布文件。
+  // 无限画布文件与普通项目来自不同 API；在项目管理的同名流程分类中汇总画布文件。
   useEffect(() => {
     const wsId = Number(workspaceId || 0)
     if (!wsId) {
@@ -753,6 +758,31 @@ export default function ProjectManagementView() {
 
   // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
   const isTeamSpace = isTeamWorkspace(currentWorkspace)
+  // 精制任务尚未接入云端项目；演示记录只在创建者自己的当前空间展示。
+  const ownRefineTasks = useMemo(
+    () =>
+      refineTasks.filter(
+        (task) =>
+          MANUAL_DELIVERY_ENABLED &&
+          currentUserId > 0 &&
+          activeWorkspaceId > 0 &&
+          task.ownerId === currentUserId &&
+          task.workspaceId === activeWorkspaceId,
+      ),
+    [refineTasks, currentUserId, activeWorkspaceId],
+  )
+  const ownPromoTasks = useMemo(
+    () =>
+      promoTasks.filter(
+        (task) =>
+          MANUAL_DELIVERY_ENABLED &&
+          currentUserId > 0 &&
+          activeWorkspaceId > 0 &&
+          task.ownerId === currentUserId &&
+          task.workspaceId === activeWorkspaceId,
+      ),
+    [promoTasks, currentUserId, activeWorkspaceId],
+  )
 
   /**
    * 成员下拉选项:全部 / 我(置顶) / 其他有项目的成员按项目数降序;数量随当前列表实时计算。
@@ -764,11 +794,19 @@ export default function ProjectManagementView() {
       const id = Number(folder.userId || 0)
       if (id) countsByUserId.set(id, (countsByUserId.get(id) || 0) + 1)
     })
+    if (currentUserId && (ownRefineTasks.length || ownPromoTasks.length)) {
+      countsByUserId.set(
+        currentUserId,
+        (countsByUserId.get(currentUserId) || 0) + ownRefineTasks.length + ownPromoTasks.length,
+      )
+    }
     const mineCount = myProjectIds
-      ? folders.reduce((total, folder) => total + (myProjectIds.has(Number(folder.id || 0)) ? 1 : 0), 0)
+      ? folders.reduce((total, folder) => total + (myProjectIds.has(Number(folder.id || 0)) ? 1 : 0), 0) +
+        ownRefineTasks.length +
+        ownPromoTasks.length
       : countsByUserId.get(currentUserId) || 0
     return buildOwnerFilterOptions({ countsByUserId, mineCount, members: effectiveWorkspaceMembers, currentUserId })
-  }, [folders, effectiveWorkspaceMembers, currentUserId, myProjectIds])
+  }, [folders, effectiveWorkspaceMembers, currentUserId, myProjectIds, ownRefineTasks, ownPromoTasks])
 
   /**
    * 生效的成员筛选:记忆值可能已失效(成员退出团队/项目清零),
@@ -802,6 +840,30 @@ export default function ProjectManagementView() {
     return sortDesc ? list : [...list].reverse()
   }, [folders, query, flowFilter, typeFilter, modelFilter, effectiveOwnerFilter, sortDesc, currentUserId, myProjectIds])
 
+  const shownRefineTasks = useMemo(() => {
+    if (
+      (flowFilter !== 'all' && flowFilter !== 'smart') ||
+      typeFilter === '协作项目' ||
+      modelFilter ||
+      (effectiveOwnerFilter && effectiveOwnerFilter !== String(currentUserId))
+    )
+      return []
+    const q = query.trim().toLowerCase()
+    return ownRefineTasks.filter((task) => !q || (task.description || '精制成片').toLowerCase().includes(q))
+  }, [ownRefineTasks, flowFilter, typeFilter, modelFilter, effectiveOwnerFilter, currentUserId, query])
+
+  const shownPromoTasks = useMemo(() => {
+    if (
+      (flowFilter !== 'all' && flowFilter !== 'promo') ||
+      typeFilter === '协作项目' ||
+      modelFilter ||
+      (effectiveOwnerFilter && effectiveOwnerFilter !== String(currentUserId))
+    )
+      return []
+    const q = query.trim().toLowerCase()
+    return ownPromoTasks.filter((task) => !q || `${task.scene} ${task.org}`.toLowerCase().includes(q))
+  }, [ownPromoTasks, flowFilter, typeFilter, modelFilter, effectiveOwnerFilter, currentUserId, query])
+
   const shownCanvases = useMemo(() => {
     const q = query.trim().toLowerCase()
     const list = canvasItems.filter(
@@ -828,15 +890,27 @@ export default function ProjectManagementView() {
 
   // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
   const pageSize = 9
-  const pagedFolders = useMemo(
-    () => shownFolders.slice((page - 1) * pageSize, page * pageSize),
-    [shownFolders, page, pageSize],
-  )
+  const pagedProjectItems = useMemo(() => {
+    const items = [
+      ...shownFolders.map((folder) => ({ kind: 'project' as const, updatedAt: folder.updatedAt, folder })),
+      ...shownRefineTasks.map((task) => ({
+        kind: 'refine' as const,
+        updatedAt: task.deliveredAt || task.createdAt,
+        task,
+      })),
+      ...shownPromoTasks.map((task) => ({
+        kind: 'promo' as const,
+        updatedAt: task.deliveredAt || task.createdAt,
+        task,
+      })),
+    ].sort((a, b) => (sortDesc ? b.updatedAt - a.updatedAt : a.updatedAt - b.updatedAt))
+    return items.slice((page - 1) * pageSize, page * pageSize)
+  }, [shownFolders, shownRefineTasks, shownPromoTasks, page, pageSize, sortDesc])
   const pagedCanvases = useMemo(
     () => shownCanvases.slice((page - 1) * pageSize, page * pageSize),
     [shownCanvases, page, pageSize],
   )
-  // 漫剧制作卡片需要从画布元素中选最近生成的图片/视频作为封面。
+  // 无限画布卡片需要从画布元素中选最近生成的图片/视频作为封面。
   // 每页最多 9 张，限 3 路并发，避免项目管理页加载时打满元素接口。
   useEffect(() => {
     const wsId = activeWorkspaceId
@@ -867,7 +941,10 @@ export default function ProjectManagementView() {
     }
   }, [activeWorkspaceId, pagedCanvases])
   const isCanvasTab = flowFilter === 'canvas'
-  const activeItemCount = isCanvasTab ? shownCanvases.length : shownFolders.length
+  const isPromoTab = flowFilter === 'promo'
+  const activeItemCount = isCanvasTab
+    ? shownCanvases.length
+    : shownFolders.length + shownRefineTasks.length + shownPromoTasks.length
   const activeTotalPages = Math.max(1, Math.ceil(activeItemCount / pageSize))
 
   // 列数变化 / 项目减少导致当前页越界时,夹回最后一页
@@ -1663,7 +1740,9 @@ export default function ProjectManagementView() {
                   <input
                     className="pm2-search-input"
                     value={query}
-                    placeholder={isCanvasTab ? '搜索画布文件' : '搜索项目名称、团队'}
+                    placeholder={
+                      isCanvasTab ? '搜索画布文件' : isPromoTab ? '搜索宣传片名称、单位' : '搜索项目名称、团队'
+                    }
                     onChange={(e) => setQuery(e.target.value)}
                   />
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -1680,9 +1759,11 @@ export default function ProjectManagementView() {
                 <button
                   type="button"
                   className="pm2-new-btn"
-                  onClick={() => (isCanvasTab ? navigate('/canvas') : setCreateOpen(true))}
+                  onClick={() =>
+                    isCanvasTab ? navigate('/canvas') : isPromoTab ? navigate('/promo') : setCreateOpen(true)
+                  }
                 >
-                  ＋ {isCanvasTab ? '进入漫剧制作' : '新建项目'}
+                  ＋ {isCanvasTab ? '进入无限画布' : isPromoTab ? '进入定制宣传片' : '新建项目'}
                 </button>
               </div>
             </div>
@@ -1695,20 +1776,23 @@ export default function ProjectManagementView() {
                     ['all', '全部'],
                     ['smart', '爆款成片'],
                     ['hot-copy', '爆款复刻'],
-                    ['canvas', '漫剧制作'],
+                    ['canvas', '无限画布'],
+                    ['promo', '宣传片'],
                   ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="tab"
-                    aria-selected={flowFilter === value}
-                    className={`pm2-flow-tab${flowFilter === value ? ' is-active' : ''}`}
-                    onClick={() => setFlowFilter(value)}
-                  >
-                    {label}
-                  </button>
-                ))}
+                )
+                  .filter(([value]) => MANUAL_DELIVERY_ENABLED || value !== 'promo')
+                  .map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      aria-selected={flowFilter === value}
+                      className={`pm2-flow-tab${flowFilter === value ? ' is-active' : ''}`}
+                      onClick={() => setFlowFilter(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
               </div>
               <span className="pm2-filter">
                 项目类型:
@@ -1785,17 +1869,23 @@ export default function ProjectManagementView() {
 
             {/* 项目卡片网格 */}
             <section className="pm2-section">
-              {(isCanvasTab ? canvasItemsLoading && !canvasItems.length : loading && !folders.length) ? (
-                <div className="pm2-hint">{isCanvasTab ? '正在加载漫剧制作文件…' : '正在加载项目…'}</div>
+              {(
+                isCanvasTab
+                  ? canvasItemsLoading && !canvasItems.length
+                  : loading && !folders.length && !ownRefineTasks.length && !ownPromoTasks.length
+              ) ? (
+                <div className="pm2-hint">{isCanvasTab ? '正在加载无限画布文件…' : '正在加载项目…'}</div>
               ) : activeItemCount === 0 ? (
                 <div className="pm2-hint">
                   {isCanvasTab
                     ? query
-                      ? '没有匹配的漫剧制作文件'
-                      : '还没有漫剧制作文件，进入漫剧制作后可新建画布'
-                    : query || flowFilter !== 'all' || typeFilter !== 'all' || modelFilter || effectiveOwnerFilter
-                      ? '没有匹配的项目'
-                      : '还没有项目,点右上角「新建项目」开始'}
+                      ? '没有匹配的无限画布文件'
+                      : '还没有无限画布文件，进入无限画布后可新建画布'
+                    : isPromoTab && !query && typeFilter === 'all' && !modelFilter && !effectiveOwnerFilter
+                      ? '暂无宣传片演示任务，可进入定制宣传片体验'
+                      : query || flowFilter !== 'all' || typeFilter !== 'all' || modelFilter || effectiveOwnerFilter
+                        ? '没有匹配的项目'
+                        : '还没有项目,点右上角「新建项目」开始'}
                 </div>
               ) : (
                 <div className="pm2-card-grid" ref={gridRef}>
@@ -1809,7 +1899,7 @@ export default function ProjectManagementView() {
                             className={`pm2-pcard${openMenuId === canvas.id ? ' is-menu-open' : ''}`}
                             role="button"
                             tabIndex={0}
-                            aria-label={`打开漫剧制作文件 ${title}`}
+                            aria-label={`打开无限画布文件 ${title}`}
                             onClick={() => navigate(`/canvas/${canvas.id}`)}
                             onKeyDown={(event) => {
                               if (event.target !== event.currentTarget) return
@@ -1896,7 +1986,7 @@ export default function ProjectManagementView() {
                                 {canvas.status === 'archived' && <span className="cl-status-badge">归档</span>}
                               </div>
                               <div className="pm2-pcard-meta">
-                                <span className="pm2-pcard-type">漫剧制作</span>
+                                <span className="pm2-pcard-type">无限画布</span>
                                 <span className="pm2-pcard-counts">画布文件</span>
                               </div>
                               <div className="pm2-pcard-foot">
@@ -1907,196 +1997,274 @@ export default function ProjectManagementView() {
                           </div>
                         )
                       })
-                    : pagedFolders.map((folder) => (
-                        <div
-                          key={folder.id}
-                          className={`pm2-pcard${dragOverFolderId === folder.id ? ' is-dropover' : ''}${
-                            openMenuId === folder.id ? ' is-menu-open' : ''
-                          }`}
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`打开项目 ${folder.title}`}
-                          onClick={() => openFolder(folder)}
-                          onKeyDown={(e) => {
-                            if (e.key !== 'Enter' && e.key !== ' ') return
-                            e.preventDefault()
-                            void openFolder(folder)
-                          }}
-                          onDragOver={(e) => {
-                            e.preventDefault()
-                            if (dragOverFolderId !== folder.id) setDragOverFolderId(folder.id)
-                          }}
-                          onDragLeave={() => dragOverFolderId === folder.id && setDragOverFolderId(0)}
-                          onDrop={(e) => {
-                            e.preventDefault()
-                            handleDropToFolder(folder, e.dataTransfer.getData('text/plain'))
-                          }}
-                        >
-                          <div className="pm2-pcard-cover">
-                            {folder.coverVideo && !coverVideoError.has(folder.id) ? (
-                              // ① 视频项目:最后一版成功成片的首帧
-                              <video
-                                className="pm2-pcard-cover-media"
-                                src={folder.coverVideo}
-                                muted
-                                playsInline
-                                preload="metadata"
-                                onError={() => setCoverVideoError((prev) => new Set(prev).add(folder.id))}
-                              />
-                            ) : folder.cover && !coverError.has(folder.id) ? (
-                              // ② 图片项目，或成片不可用时的原素材回退
-                              <img
-                                className="pm2-pcard-cover-media"
-                                src={folder.cover}
-                                alt=""
-                                loading="lazy"
-                                onError={() => setCoverError((prev) => new Set(prev).add(folder.id))}
-                              />
-                            ) : (
-                              // ③ 空项目兜底:渐变 + 完整项目标题占位封面
-                              <span className="pm2-pcard-cover-ph">{folder.title}</span>
-                            )}
-                          </div>
-                          <div className="pm2-pcard-body">
-                            <div className="pm2-pcard-head">
-                              {/* 重命名编辑态要拦住冒泡:否则点进输入框会把整张卡片点开,回车/空格也会被卡片的
-                              onKeyDown 抢走(空格甚至打不出来)。展示态放行,标题照旧可点开项目。 */}
-                              <span
-                                className="pm2-pcard-title"
-                                title={renamingProjectId === folder.id ? undefined : folder.title}
-                                onClick={(e) => renamingProjectId === folder.id && e.stopPropagation()}
-                                onDoubleClick={(e) => renamingProjectId === folder.id && e.stopPropagation()}
-                                onMouseDown={(e) => renamingProjectId === folder.id && e.stopPropagation()}
-                                onKeyDown={(e) => renamingProjectId === folder.id && e.stopPropagation()}
-                              >
-                                <InlineEdit
-                                  value={folder.title}
-                                  trigger="none"
-                                  maxLength={60}
-                                  className="pm2-pcard-title-edit"
-                                  openSignal={renamingProjectId === folder.id}
-                                  onEditingEnd={() => setRenamingProjectId(0)}
-                                  onCommit={(next) => void renameProject(folder, next)}
-                                />
-                              </span>
-                              <button
-                                type="button"
-                                className="pm2-pcard-more"
-                                aria-label="更多操作"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setOpenMenuId((prev) => (prev === folder.id ? 0 : folder.id))
-                                }}
-                              >
-                                <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
-                                  <circle cx="4" cy="10" r="1.4" fill="currentColor" />
-                                  <circle cx="10" cy="10" r="1.4" fill="currentColor" />
-                                  <circle cx="16" cy="10" r="1.4" fill="currentColor" />
-                                </svg>
-                                {openMenuId === folder.id && (
-                                  <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
-                                    {/* 重命名不设额外门槛:能看到这张卡片就有访问权,后端也是"空间成员即可" */}
-                                    <button
-                                      type="button"
-                                      className="pm2-folder-menu-item"
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        setOpenMenuId(0)
-                                        setRenamingProjectId(folder.id)
-                                      }}
-                                    >
-                                      重命名
-                                    </button>
-                                    {folder.userId > 0 && (folder.userId === currentUserId || isWsAdminOrOwner) && (
-                                      <button
-                                        type="button"
-                                        className="pm2-folder-menu-item"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          openMemberPermModal({
-                                            id: folder.id,
-                                            title: folder.title,
-                                            userId: folder.userId,
-                                            workspaceId: folder.workspaceId,
-                                          })
-                                        }}
-                                      >
-                                        成员权限
-                                      </button>
-                                    )}
-                                    {(isWsAdminOrOwner || (folder.userId > 0 && folder.userId === currentUserId)) && (
-                                      <button
-                                        type="button"
-                                        className="pm2-folder-menu-item is-danger"
-                                        disabled={deletingProjectId === folder.id}
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          deleteProject(folder)
-                                        }}
-                                      >
-                                        {deletingProjectId === folder.id ? '删除中…' : '删除项目'}
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                              </button>
+                    : pagedProjectItems.map((item) =>
+                        item.kind === 'promo' ? (
+                          <div
+                            key={`promo-${item.task.id}`}
+                            className="pm2-pcard"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`打开宣传片演示任务 ${item.task.scene} · ${item.task.org}`}
+                            onClick={() => navigate(`/promo?task=${encodeURIComponent(item.task.id)}`)}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== ' ') return
+                              event.preventDefault()
+                              navigate(`/promo?task=${encodeURIComponent(item.task.id)}`)
+                            }}
+                          >
+                            <div className="pm2-pcard-cover">
+                              <span className="pm2-pcard-cover-ph">定制宣传片 · 演示</span>
                             </div>
-                            <div className="pm2-pcard-meta">
-                              <span className="pm2-pcard-type">
-                                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                                  <circle cx="12" cy="8" r="3.4" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                                  <path
-                                    d="M5 19c0-3.3 3.1-5 7-5s7 1.7 7 5"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.6"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                                {folder.type}
-                              </span>
-                              <span className="pm2-pcard-counts">
-                                {folder.members} {folder.membersLabel} · {folder.works} {folder.worksLabel}
-                              </span>
-                            </div>
-                            <div className="pm2-pcard-foot">
-                              {folder.participantAvatars && folder.participantAvatars.length > 0 ? (
-                                <span className="pm2-pcard-avatars">
-                                  {folder.participantAvatars.map((av: any, idx: number) => (
-                                    <span
-                                      key={idx}
-                                      className={`pm2-pcard-avatar${idx > 0 ? ' is-stacked' : ''}`}
-                                      title={av.name || ''}
-                                    >
-                                      {av.url ? (
-                                        <img
-                                          src={av.url}
-                                          alt={av.name || ''}
-                                          onError={(e) => {
-                                            const el = e.currentTarget as HTMLImageElement
-                                            el.style.display = 'none'
-                                            const fallback = el.nextElementSibling as HTMLElement | null
-                                            if (fallback) fallback.style.display = 'inline-flex'
-                                          }}
-                                        />
-                                      ) : null}
-                                      <span
-                                        className="pm2-pcard-avatar-txt"
-                                        style={av.url ? { display: 'none' } : undefined}
-                                      >
-                                        {(av.name || '?').slice(0, 1)}
-                                      </span>
-                                    </span>
-                                  ))}
+                            <div className="pm2-pcard-body">
+                              <div className="pm2-pcard-head">
+                                <span className="pm2-pcard-title">
+                                  {item.task.scene} · {item.task.org}
                                 </span>
-                              ) : (
-                                <span className="pm2-pcard-avatar">{folder.title.slice(0, 1)}</span>
-                              )}
-                              <span className="pm2-pcard-time">{relativeUpdated(folder.updatedAt)}</span>
+                              </div>
+                              <div className="pm2-pcard-meta">
+                                <span className="pm2-pcard-type">宣传片 · 演示</span>
+                                <span className="pm2-pcard-counts">{item.task.status}</span>
+                              </div>
+                              <div className="pm2-pcard-foot">
+                                <span className="pm2-pcard-avatar">宣</span>
+                                <span className="pm2-pcard-time">{relativeUpdated(item.updatedAt)}</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ) : item.kind === 'refine' ? (
+                          <div
+                            key={`refine-${item.task.id}`}
+                            className="pm2-pcard"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`打开精制演示任务 ${item.task.description || '精制成片'}`}
+                            onClick={() => navigate(`/smart?refineDemo=${encodeURIComponent(item.task.id)}`)}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== ' ') return
+                              event.preventDefault()
+                              navigate(`/smart?refineDemo=${encodeURIComponent(item.task.id)}`)
+                            }}
+                          >
+                            <div className="pm2-pcard-cover">
+                              <span className="pm2-pcard-cover-ph">精制成片 · 演示</span>
+                            </div>
+                            <div className="pm2-pcard-body">
+                              <div className="pm2-pcard-head">
+                                <span className="pm2-pcard-title" title={item.task.description || '精制成片'}>
+                                  {item.task.description || '精制成片'}
+                                </span>
+                              </div>
+                              <div className="pm2-pcard-meta">
+                                <span className="pm2-pcard-type">爆款成片 · 精制演示</span>
+                                <span className="pm2-pcard-counts">{item.task.status}</span>
+                              </div>
+                              <div className="pm2-pcard-foot">
+                                <span className="pm2-pcard-avatar">精</span>
+                                <span className="pm2-pcard-time">{relativeUpdated(item.updatedAt)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          ((folder) => (
+                            <div
+                              key={folder.id}
+                              className={`pm2-pcard${dragOverFolderId === folder.id ? ' is-dropover' : ''}${
+                                openMenuId === folder.id ? ' is-menu-open' : ''
+                              }`}
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`打开项目 ${folder.title}`}
+                              onClick={() => openFolder(folder)}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter' && e.key !== ' ') return
+                                e.preventDefault()
+                                void openFolder(folder)
+                              }}
+                              onDragOver={(e) => {
+                                e.preventDefault()
+                                if (dragOverFolderId !== folder.id) setDragOverFolderId(folder.id)
+                              }}
+                              onDragLeave={() => dragOverFolderId === folder.id && setDragOverFolderId(0)}
+                              onDrop={(e) => {
+                                e.preventDefault()
+                                handleDropToFolder(folder, e.dataTransfer.getData('text/plain'))
+                              }}
+                            >
+                              <div className="pm2-pcard-cover">
+                                {folder.coverVideo && !coverVideoError.has(folder.id) ? (
+                                  // ① 视频项目:最后一版成功成片的首帧
+                                  <video
+                                    className="pm2-pcard-cover-media"
+                                    src={folder.coverVideo}
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                    onError={() => setCoverVideoError((prev) => new Set(prev).add(folder.id))}
+                                  />
+                                ) : folder.cover && !coverError.has(folder.id) ? (
+                                  // ② 图片项目，或成片不可用时的原素材回退
+                                  <img
+                                    className="pm2-pcard-cover-media"
+                                    src={folder.cover}
+                                    alt=""
+                                    loading="lazy"
+                                    onError={() => setCoverError((prev) => new Set(prev).add(folder.id))}
+                                  />
+                                ) : (
+                                  // ③ 空项目兜底:渐变 + 完整项目标题占位封面
+                                  <span className="pm2-pcard-cover-ph">{folder.title}</span>
+                                )}
+                              </div>
+                              <div className="pm2-pcard-body">
+                                <div className="pm2-pcard-head">
+                                  {/* 重命名编辑态要拦住冒泡:否则点进输入框会把整张卡片点开,回车/空格也会被卡片的
+                              onKeyDown 抢走(空格甚至打不出来)。展示态放行,标题照旧可点开项目。 */}
+                                  <span
+                                    className="pm2-pcard-title"
+                                    title={renamingProjectId === folder.id ? undefined : folder.title}
+                                    onClick={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                                    onDoubleClick={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                                    onMouseDown={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                                    onKeyDown={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                                  >
+                                    <InlineEdit
+                                      value={folder.title}
+                                      trigger="none"
+                                      maxLength={60}
+                                      className="pm2-pcard-title-edit"
+                                      openSignal={renamingProjectId === folder.id}
+                                      onEditingEnd={() => setRenamingProjectId(0)}
+                                      onCommit={(next) => void renameProject(folder, next)}
+                                    />
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="pm2-pcard-more"
+                                    aria-label="更多操作"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setOpenMenuId((prev) => (prev === folder.id ? 0 : folder.id))
+                                    }}
+                                  >
+                                    <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
+                                      <circle cx="4" cy="10" r="1.4" fill="currentColor" />
+                                      <circle cx="10" cy="10" r="1.4" fill="currentColor" />
+                                      <circle cx="16" cy="10" r="1.4" fill="currentColor" />
+                                    </svg>
+                                    {openMenuId === folder.id && (
+                                      <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                                        {/* 重命名不设额外门槛:能看到这张卡片就有访问权,后端也是"空间成员即可" */}
+                                        <button
+                                          type="button"
+                                          className="pm2-folder-menu-item"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setOpenMenuId(0)
+                                            setRenamingProjectId(folder.id)
+                                          }}
+                                        >
+                                          重命名
+                                        </button>
+                                        {folder.userId > 0 && (folder.userId === currentUserId || isWsAdminOrOwner) && (
+                                          <button
+                                            type="button"
+                                            className="pm2-folder-menu-item"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              openMemberPermModal({
+                                                id: folder.id,
+                                                title: folder.title,
+                                                userId: folder.userId,
+                                                workspaceId: folder.workspaceId,
+                                              })
+                                            }}
+                                          >
+                                            成员权限
+                                          </button>
+                                        )}
+                                        {(isWsAdminOrOwner ||
+                                          (folder.userId > 0 && folder.userId === currentUserId)) && (
+                                          <button
+                                            type="button"
+                                            className="pm2-folder-menu-item is-danger"
+                                            disabled={deletingProjectId === folder.id}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              deleteProject(folder)
+                                            }}
+                                          >
+                                            {deletingProjectId === folder.id ? '删除中…' : '删除项目'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </button>
+                                </div>
+                                <div className="pm2-pcard-meta">
+                                  <span className="pm2-pcard-type">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                                      <circle
+                                        cx="12"
+                                        cy="8"
+                                        r="3.4"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="1.6"
+                                      />
+                                      <path
+                                        d="M5 19c0-3.3 3.1-5 7-5s7 1.7 7 5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="1.6"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                    {folder.type}
+                                  </span>
+                                  <span className="pm2-pcard-counts">
+                                    {folder.members} {folder.membersLabel} · {folder.works} {folder.worksLabel}
+                                  </span>
+                                </div>
+                                <div className="pm2-pcard-foot">
+                                  {folder.participantAvatars && folder.participantAvatars.length > 0 ? (
+                                    <span className="pm2-pcard-avatars">
+                                      {folder.participantAvatars.map((av: any, idx: number) => (
+                                        <span
+                                          key={idx}
+                                          className={`pm2-pcard-avatar${idx > 0 ? ' is-stacked' : ''}`}
+                                          title={av.name || ''}
+                                        >
+                                          {av.url ? (
+                                            <img
+                                              src={av.url}
+                                              alt={av.name || ''}
+                                              onError={(e) => {
+                                                const el = e.currentTarget as HTMLImageElement
+                                                el.style.display = 'none'
+                                                const fallback = el.nextElementSibling as HTMLElement | null
+                                                if (fallback) fallback.style.display = 'inline-flex'
+                                              }}
+                                            />
+                                          ) : null}
+                                          <span
+                                            className="pm2-pcard-avatar-txt"
+                                            style={av.url ? { display: 'none' } : undefined}
+                                          >
+                                            {(av.name || '?').slice(0, 1)}
+                                          </span>
+                                        </span>
+                                      ))}
+                                    </span>
+                                  ) : (
+                                    <span className="pm2-pcard-avatar">{folder.title.slice(0, 1)}</span>
+                                  )}
+                                  <span className="pm2-pcard-time">{relativeUpdated(folder.updatedAt)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))(item.folder)
+                        ),
+                      )}
                 </div>
               )}
               {activeTotalPages > 1 && (

@@ -2,7 +2,7 @@
  * 路由页面代码预加载。
  *
  * 页面都是 lazy() 按需加载的：以前要等点了侧边栏才开始下载那一页的 chunk，
- * 漫剧制作、爆款成片这种大页面第一次打开会先卡一下加载态。这里把「下载 chunk」提前：
+ * 无限画布、爆款成片这种大页面第一次打开会先卡一下加载态。这里把「下载 chunk」提前：
  * - 鼠标悬停 / 键盘聚焦到侧边栏入口时预取该页（用户大概率马上会点）；
  * - 登录后浏览器空闲时顺手预取几个最常用的页面。
  *
@@ -13,6 +13,7 @@
 export const routeImporters = {
   hotCopy: () => import('../views/HotCopyCreateView'),
   smart: () => import('../views/SmartCreateView'),
+  promo: () => import('../views/PromoCreateView'),
   studio: () => import('../views/StudioCreateView'),
   canvasList: () => import('../views/CanvasListView'),
   canvas: () => import('../views/CanvasView'),
@@ -31,6 +32,7 @@ type RouteImporterKey = keyof typeof routeImporters
 const PATH_PREFETCH: Array<[prefix: string, keys: RouteImporterKey[]]> = [
   ['/hot-copy', ['hotCopy']],
   ['/smart', ['smart']],
+  ['/promo', ['promo']],
   ['/real-person-video', ['smart']],
   ['/studio', ['studio']],
   ['/canvas', ['canvasList', 'canvas']],
