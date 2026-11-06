@@ -254,7 +254,6 @@ export default function ScriptIdeasView() {
   const [listQuery, setListQuery] = useState('')
   const [listStage, setListStage] = useState('')
   const [listStatus, setListStatus] = useState('')
-  const [listGenre, setListGenre] = useState('')
   const [stats, setStats] = useState<Record<string, number> | null>(null)
   const [content, setContent] = useState(''),
     [error, setError] = useState(''),
@@ -460,7 +459,7 @@ export default function ScriptIdeasView() {
     if (!isList) return
     let cancelled = false
     setLoading(true)
-    listApplications(offset, { q: listQuery, stage: listStage, review_status: listStatus, genre: listGenre })
+    listApplications(offset, { q: listQuery, stage: listStage, review_status: listStatus })
       .then((r) => {
         if (!cancelled) {
           setItems(r.items)
@@ -483,7 +482,7 @@ export default function ScriptIdeasView() {
     return () => {
       cancelled = true
     }
-  }, [isList, offset, listQuery, listStage, listStatus, listGenre])
+  }, [isList, offset, listQuery, listStage, listStatus])
   const open = (path: string) => void requireAuth(() => navigate(path), { returnTo: path })
   const markScriptErrors = (values: Record<string, string>) => {
     const errors = validateScriptFields(values)
@@ -1281,8 +1280,6 @@ export default function ScriptIdeasView() {
                             ['creative', '创意'],
                             ['card', '一卡'],
                             ['script', '剧本'],
-                            ['final', '终稿'],
-                            ['production', '制作'],
                           ].map(([value, label]) => (
                             <option key={value} value={value}>
                               {label}
@@ -1304,24 +1301,12 @@ export default function ScriptIdeasView() {
                             </option>
                           ))}
                         </select>
-                        <label>
-                          题材
-                          <input
-                            value={listGenre}
-                            onChange={(e) => {
-                              setOffset(0)
-                              setListGenre(e.target.value)
-                            }}
-                            placeholder="输入题材"
-                          />
-                        </label>
                         <button
                           onClick={() => {
                             setOffset(0)
                             setListQuery('')
                             setListStage('')
                             setListStatus('')
-                            setListGenre('')
                           }}
                         >
                           重置
@@ -1359,9 +1344,7 @@ export default function ScriptIdeasView() {
                         ))
                       ) : (
                         <p className="si-list-empty">
-                          {listQuery || listStage || listStatus || listGenre
-                            ? '没有匹配的申请。'
-                            : '暂无已提交的创意。'}
+                          {listQuery || listStage || listStatus ? '没有匹配的申请。' : '暂无已提交的创意。'}
                         </p>
                       )}
                       <div className="si-pagination">

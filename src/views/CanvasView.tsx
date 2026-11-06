@@ -4272,6 +4272,35 @@ function CanvasInner() {
     [selectedNode?.id, selectedNode?.kind, inheritedPromptTexts, commitHistory, setEdges, setNodes, setSaveStatus],
   )
 
+  // 同类节点连线时继承来源的生成配置，素材、提示词和生成结果仍属于各自节点。
+  const inheritedConnectionConfig = useCallback((source: Node | undefined, targetKind: string) => {
+    if (!source || !['image', 'video', 'text'].includes(targetKind)) return undefined
+    if (String(source.data?.kind || source.type || '') !== targetKind) return undefined
+    const modelVersionId = Number(source.data?.modelVersionId || resolvedModelByNodeRef.current.get(source.id) || 0)
+    if (!modelVersionId) return undefined
+    return {
+      modelVersionId,
+      params: { ...((source.data?.params as Record<string, unknown>) || {}) },
+      ...(typeof source.data?.ratio === 'string' ? { ratio: source.data.ratio } : {}),
+      ...(targetKind === 'video' && source.data?.videoMode !== undefined
+        ? { videoMode: source.data.videoMode as CanvasVideoMode }
+        : {}),
+    }
+  }, [])
+
+  const applyConnectionConfig = useCallback(
+    (targetId: string, config: ReturnType<typeof inheritedConnectionConfig>) => {
+      if (!config) return
+      setNodes((items) =>
+        items.map((node) => (node.id === targetId ? { ...node, data: { ...node.data, ...config } } : node)),
+      )
+      setSelectedNode((current) => (current?.id === targetId ? { ...current, ...config } : current))
+      setSaveStatus('dirty')
+      scheduleSyncRef.current()
+    },
+    [setNodes],
+  )
+
   const handlePickRefNode = useCallback(
     (sourceNode: Node) => {
       if (!pickingTargetId) return
@@ -4322,6 +4351,8 @@ function CanvasInner() {
       // 添加参考连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => [...eds, newEdge])
+      const targetKind = String(latestRef.current.nodes.find((n) => n.id === pickingTargetId)?.data?.kind || 'text')
+      applyConnectionConfig(pickingTargetId, inheritedConnectionConfig(sourceNode, targetKind))
       // 支持连续点选多个参考：通用「+」进来的留在选择模式，直到名额用完或用户点「完成」。
       // 指定槽位（首帧/尾帧）只替换那一格，选完即退出。setEdges 尚未落到 latestRef，名额手动减一。
       const remaining = remainingRefCapacity(pickingTargetId) - 1
@@ -4367,6 +4398,8 @@ function CanvasInner() {
       validateConnection,
       flashDuplicateEdge,
       remainingRefCapacity,
+      applyConnectionConfig,
+      inheritedConnectionConfig,
     ],
   )
 
@@ -4449,12 +4482,16 @@ function CanvasInner() {
       // 添加连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => created.reduce((acc, edge) => addEdge(edge, acc), eds))
+      const configSource = created
+        .map((edge) => latestRef.current.nodes.find((node) => node.id === edge.source))
+        .find((source) => inheritedConnectionConfig(source, targetKind))
+      applyConnectionConfig(targetId, inheritedConnectionConfig(configSource, targetKind))
       if ((target.data?.resultUrl || target.data?.assetId) && (targetKind === 'image' || targetKind === 'video')) {
         showToast(`已添加新的输入，当前结果保持不变；点击“重新生成”后应用`, 'success')
       }
       return created.length
     },
-    [setEdges, commitHistory, validateConnection],
+    [setEdges, commitHistory, validateConnection, applyConnectionConfig, inheritedConnectionConfig],
   )
 
   const confirmBatchConnection = useCallback(
@@ -4686,9 +4723,10 @@ function CanvasInner() {
           id,
           kind: type,
           sourceRefs: [],
-          ratio,
-          videoMode,
-          modelVersionId: undefined,
+          ratio: newNode.data.ratio as string | undefined,
+          videoMode: newNode.data.videoMode as CanvasVideoMode | undefined,
+          modelVersionId: newNode.data.modelVersionId as number | undefined,
+          params: newNode.data.params as Record<string, unknown> | undefined,
         })
       setSaveStatus('dirty')
       // 新节点是项目的首个持久化内容。立即写入草稿并排入云端同步队列，
@@ -4821,10 +4859,12 @@ function CanvasInner() {
             })),
         })
       }
-      const newNodeId = appendNewNode(type, position, { ratio: inheritNodeRatio(type) })
+      const sourceNode = latestRef.current.nodes.find((n) => n.id === addMenu.sourceId)
+      const configSource = batch ? batch.sources.find((node) => inheritedConnectionConfig(node, type)) : sourceNode
+      const inheritedConfig = inheritedConnectionConfig(configSource, type)
+      const newNodeId = appendNewNode(type, position, { ratio: inheritNodeRatio(type), extraData: inheritedConfig })
       // 自动连线：拖线源节点 → 新节点（来源限制已在菜单项过滤时校验，新节点参考数不会超限）。
       // 起点在多选里时把整个选区都连上：「选中三张图拖出来建个视频节点」一步到位。
-      const sourceNode = latestRef.current.nodes.find((n) => n.id === addMenu.sourceId)
       if (newNodeId && sourceNode) {
         const sources = batch
           ? batch.sources.map((node) => node.id)
@@ -4898,6 +4938,7 @@ function CanvasInner() {
       appendNewNode,
       setEdges,
       inheritNodeRatio,
+      inheritedConnectionConfig,
       resolveConnectSources,
       resolveAddMenuInputs,
       fitView,
