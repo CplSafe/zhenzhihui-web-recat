@@ -15,7 +15,7 @@ export default function CanvasDirectorDock({
   const [mounted, setMounted] = useState(false)
   return (
     <div
-      className={`${styles.dock} canvas-panel-area nodrag nopan nowheel`}
+      className={`${styles.dock} canvas-director-area nodrag nopan nowheel`}
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}

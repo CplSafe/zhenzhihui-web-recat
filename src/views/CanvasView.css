@@ -162,6 +162,7 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
 
 /* 只调整操作界面，不对 React Flow 的坐标层施加 zoom/transform。 */
 .canvas-view.has-modal .canvas-panel-area,
+.canvas-view.has-modal .canvas-director-area,
 .canvas-view.has-modal .canvas-audio-panel {
   visibility: hidden;
   pointer-events: none;

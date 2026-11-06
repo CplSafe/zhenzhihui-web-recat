@@ -10950,7 +10950,7 @@ function CanvasInner() {
         }}
         onPointerDownCapture={(event) => {
           const target = event.target as HTMLElement
-          pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area'))
+          pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
           nodePointerSelectionRef.current = nodeId
             ? {

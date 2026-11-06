@@ -3,7 +3,7 @@
   right: 20px;
   bottom: 24px;
   width: min(420px, calc(100% - 40px));
-  z-index: 40;
+  z-index: 1200;
   pointer-events: none;
 }
 .dock > * {
