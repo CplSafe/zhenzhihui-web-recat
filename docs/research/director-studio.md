@@ -68,3 +68,12 @@ Used the `clone-website` skill from `JCodesMore/ai-website-cloner-template`; the
 Verified actual history, current-revision document preview, collapse/restore, anchored pickers and context receipts. Completed/cancelled batches now start collapsed. The existing14-shot run plus3replacement clips and2merged versions loaded19video players at readyState4 without media errors; both merged versions measured158.965333seconds. These are existing assets, not new generation or a renewed quality inspection. The actual latest text input was12,782tokens; cumulative usage remained7,233.545credits. Automatic summary remains disabled and context capacity remains unknown, so no remaining percentage is invented.
 
 Targeted verification:26React tests, changed-file lint/type checking and production build passed; existing bundle-size warnings remain. Integration contract and safe canvas-refresh example: [无限画布接入文档](../director-canvas-integration.md). The component is reusable; `/director` only provides a floating preview host. Sharing/plugins/reaction persistence and automatic context summarization are not implemented by this UI batch.
+
+
+## 2026-11-06 图标与上下文补齐
+
+参考来自 Codex 内置浏览器当前 LibTV 画布的 rendered DOM。`StudioIcons.tsx` 收录新建对话、设置、布局、附件、模型、Skill、手动/自动模式、发送、思考、文档、复制、合成、回到底部的实际 SVG 几何，保留原 viewBox 与 fill/transform；不加载远程代码或运行第三方 bundle。提示词输入区域聚焦不增加轮廓，其他按钮保留中性键盘焦点提示。
+
+上下文显示协议和计费说明见 `docs/director-canvas-integration.md`。工具卡和审批卡已取消原始 JSON 展示，不展示私有摘要与系统工具代码；审批仍以冻结参数原样提交。公开 Skill 元数据不包含 Skill 正文。
+
+空态入口使用实际加载的 `/assets/agent/welcome/{skill,script,adaptation,storyboard,arrow}.svg` 几何，暗色反转与源一致。提示层通过 Portal 显示，采用实测的黑底、12px 字号、8px 圆角、4px 箭头和 100ms 渐显；hover 与键盘焦点可见，点击/Escape/滚动/resize 清除。

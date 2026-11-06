@@ -132,7 +132,11 @@ Agent 已在后端将制作文档、任务、图片和视频写入绑定画布�
 
 `RUN_STATE` 更新执行状态；`ACTIVITY_SNAPSHOT` **替换**费用快照；事件按稳定 ID upsert，cursor 旧帧被忽略。费用不能把旧帧反复累加；预留与实际结算分别展示。当前文本通过已完成消息和进度事件反馈，没有 token delta 时不伪造打字流。
 
-上下文入口显示最近一次真实文本推理的输入 tokens，不能当作累计量或剩余百分比。当前模型容量未返回，自动摘要关闭；后续启用需要后端提供真实容量和计费摘要状态。
+上下文入口读取 `GET run.context`，并通过 `MESSAGE_UPSERT` 中 `kind=context` 的持久事件更新。只有 `measurement=provider_usage` 且有有效的 `capacity_tokens/input_tokens` 时，才显示“上次请求后剩余”比例；容量未知显示“未提供”。这里是最近一次实际请求的占用，不是累计 token，也不是下一次请求的精确预测。新增消息和工具会改变下一次用量。`auto_compaction/status/compaction_count` 控制压缩状态展示，不由前端猜测。
+
+压缩回执仍为 `cost` 事件，`data.tool=model.generate_text`、`data.purpose=context_compaction`，在对话中显示“整理上下文”，纳入现有实际费用快照，不另加固定压缩费。压缩摘要内容不渲染在用户聊天；剧本、素材与审批的原始记录由后端保留。
+
+工具卡只显示人类可读的用途、状态、实际费用与 token 回执，不展开原始请求/响应 JSON。审批卡显示创作描述、时长、清晰度、声音与参考素材数量，批准时原样提交后端冻结的 `arguments` 与 `decision_id`。修改意见走回复/重新规划，不允许直接编辑幂等键、空间或工具代码。
 
 ## 5. 本地联调与部署边界
 

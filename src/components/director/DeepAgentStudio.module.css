@@ -1302,3 +1302,83 @@
     max-width: none;
   }
 }
+
+.composer textarea:focus,
+.composer textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: 0;
+}
+.approvalScope {
+  color: #bbb;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.approvalScope section {
+  padding: 10px 0;
+  border-bottom: 1px solid #383838;
+}
+.approvalScope p {
+  margin: 6px 0;
+}
+
+.studio svg[data-icon='chevron'] {
+  transform: rotate(-90deg);
+}
+.composerActions svg {
+  width: 16px;
+  height: 16px;
+}
+.send svg[data-icon='send'] {
+  width: 12px;
+  height: 12px;
+}
+.tooltip {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  max-width: min(280px, calc(100vw - 16px));
+  color: #f7f7f7;
+  background: #000;
+  border: 0.5px solid #363636;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font:
+    12px/normal ui-sans-serif,
+    system-ui,
+    sans-serif;
+  box-shadow:
+    0 8px 16px #0000002e,
+    0 2px 4px #0003;
+  transform: translateY(-100%);
+  animation: tooltipIn 0.1s ease;
+}
+.tooltip::after {
+  content: '';
+  position: absolute;
+  left: calc(50% - 2px);
+  bottom: -3px;
+  width: 4px;
+  height: 4px;
+  background: #000;
+  border-right: 0.5px solid #363636;
+  border-bottom: 0.5px solid #363636;
+  transform: rotate(45deg);
+}
+.tooltip[data-below='true'] {
+  transform: none;
+}
+.tooltip[data-below='true']::after {
+  bottom: auto;
+  top: -3px;
+  transform: rotate(225deg);
+}
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

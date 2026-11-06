@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw'
 import { server } from './mocks/server'
 import DeepAgentStudio from '@/components/director/DeepAgentStudio'
 import DirectorStudioView from '@/views/DirectorStudioView'
-import { DocumentEditor, Markdown, EventCard, Conversation } from '@/components/director/StudioCards'
+import { DocumentEditor, Markdown, EventCard, Conversation, Approval } from '@/components/director/StudioCards'
 import { Media, StudioMediaContext } from '@/components/director/StudioMedia'
 import { applyStudioFrame, createStudioAPI, defaultModel, mediaURLs } from '@/components/director/studio'
 import type { StudioRun, StudioDocument } from '@/components/director/studio'
@@ -534,7 +534,7 @@ describe('Director conversation parity', () => {
     fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
     expect(screen.getByText('上下文用量未提供')).toBeInTheDocument()
     expect(screen.getByText('模型上下文总容量：未提供')).toBeInTheDocument()
-    expect(screen.getByText('自动摘要：未启用')).toBeInTheDocument()
+    expect(screen.getByText('自动压缩：状态未提供')).toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
     server.use(
       http.get('*/agent-studio/api/runs/run1', () =>
@@ -579,4 +579,136 @@ describe('Director conversation parity', () => {
     expect(screen.getAllByText('本次共消耗 1326.000 积分')).toHaveLength(1)
     expect(screen.queryByText(/2652/)).not.toBeInTheDocument()
   })
+})
+
+it('keeps execution internals hidden while retaining readable task outcomes', () => {
+  render(
+    <EventCard
+      event={{
+        id: 'tool',
+        kind: 'tool',
+        text: 'studio.read_context({secret_internal: true})',
+        data: { tool: 'studio.read_context', status: 'succeeded', secret_internal: 'private-payload' },
+      }}
+    />,
+  )
+  expect(screen.getByText('读取制作资料', { selector: 'strong' })).toBeInTheDocument()
+  expect(document.body.textContent).not.toMatch(/secret_internal|private-payload|studio\.read_context/)
+  expect(document.querySelector('pre')).toBeNull()
+})
+it('replaces raw approval JSON with readable content without changing its frozen scope', async () => {
+  const args = {
+    batch_id: 'internal-batch',
+    nodes: [
+      {
+        title: '雨夜入场',
+        estimated_cost: 34,
+        arguments: {
+          model_version_id: 18,
+          params: { prompt: '人物进入房间', duration: 8, resolution: '480p', generate_audio: true },
+          idempotency_key: 'internal-key',
+        },
+      },
+    ],
+  }
+  const onDecision = vi.fn().mockResolvedValue(undefined)
+  render(
+    <Approval
+      models={catalog.models}
+      run={snapshot({
+        status: 'waiting',
+        decision_id: 'd1',
+        pending: { tool: 'production.generate_batch', arguments: args },
+      })}
+      busy={false}
+      onDecision={onDecision}
+    />,
+  )
+  expect(screen.getByText('雨夜入场')).toBeInTheDocument()
+  expect(screen.getByText('模型：Seedance 2.5')).toBeInTheDocument()
+  expect(screen.getByText('清晰度：480p')).toBeInTheDocument()
+  expect(document.body.textContent).not.toMatch(/internal-batch|internal-key|idempotency_key/)
+  fireEvent.click(screen.getByRole('button', { name: '确认并继续' }))
+  await waitFor(() =>
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ decision_id: 'd1', decision: 'approve', arguments: args }),
+    ),
+  )
+})
+
+it('updates real context remaining over websocket without rendering the summary in chat', async () => {
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const data = {
+    capacity_tokens: 100000,
+    input_tokens: 25000,
+    remaining_percent: 75,
+    measurement: 'provider_usage',
+    auto_compaction: true,
+    compaction_count: 2,
+    status: 'ready',
+  }
+  act(() =>
+    Socket.instances[0].emit({
+      event: 'update',
+      cursor: 8,
+      data: {
+        run_id: 'run1',
+        type: 'MESSAGE_UPSERT',
+        data: { id: 'ctx', kind: 'context', text: 'private-context-summary', data },
+      },
+    }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
+  expect(screen.getByText('上次请求后剩余 75%')).toBeInTheDocument()
+  expect(screen.getByText('上次请求后可用：75,000 tokens')).toBeInTheDocument()
+  expect(screen.getByText('自动压缩：已开启')).toBeInTheDocument()
+  expect(screen.getByText('已整理 2 次')).toBeInTheDocument()
+  expect(document.body.textContent).not.toContain('private-context-summary')
+  act(() =>
+    Socket.instances[0].emit({
+      event: 'update',
+      cursor: 9,
+      data: {
+        run_id: 'run1',
+        type: 'MESSAGE_UPSERT',
+        data: { id: 'ctx', kind: 'context', text: '', data: { ...data, capacity_tokens: null } },
+      },
+    }),
+  )
+  expect(screen.queryByText(/剩余.*%/)).not.toBeInTheDocument()
+  expect(screen.getByText('模型上下文总容量：未提供')).toBeInTheDocument()
+})
+it('preserves user-facing correction and recovery progress messages', () => {
+  render(
+    <Conversation
+      onDocument={() => {}}
+      events={[
+        { id: 'fix', kind: 'progress', text: '分镜资料需要补充，正在自动纠正', data: { reason: 'draft_validation' } },
+        {
+          id: 'restore',
+          kind: 'progress',
+          text: '成功素材已保留，正在恢复任务',
+          data: { status: 'running', internal: 'hidden' },
+        },
+      ]}
+    />,
+  )
+  expect(screen.getByText('分镜资料需要补充，正在自动纠正')).toBeVisible()
+  expect(document.body.textContent).toContain('成功素材已保留，正在恢复任务')
+  expect(document.body.textContent).not.toMatch(/draft_validation|internal/)
+})
+it('hover and keyboard focus show the same custom tooltip without native duplicates', async () => {
+  render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+  const button = screen.getByRole('button', { name: '模型', exact: true })
+  expect(button).not.toHaveAttribute('title')
+  fireEvent.pointerOver(button)
+  expect(screen.getByRole('tooltip')).toHaveTextContent('选择模型')
+  fireEvent.pointerOut(button)
+  expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  fireEvent.focus(button)
+  expect(screen.getByRole('tooltip')).toHaveTextContent('选择模型')
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 })

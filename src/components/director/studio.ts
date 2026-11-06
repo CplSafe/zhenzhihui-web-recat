@@ -28,13 +28,14 @@ export interface StudioRun {
   status: RunStatus
   stop?: boolean
   cursor: number
-  selection?: { image: number; video: number; mode: 'manual' | 'auto' }
+  selection?: { image: number; video: number; chat?: number; mode: 'manual' | 'auto' }
   skill_name?: string
   events: StudioEvent[]
   documents?: StudioDocument[]
   nodes?: Data[]
   batches?: StudioBatch[]
   canvas?: Data | null
+  context?: Data
   billing?: Data
   pending?: Data | null
   decision_id?: string
@@ -56,6 +57,7 @@ export interface StudioModel {
 }
 export interface StudioCatalog {
   models: StudioModel[]
+  context_defaults?: Data
   planning_model?: StudioModel
   skills: Array<{ id: number; name: string; description: string }>
 }
@@ -163,6 +165,7 @@ export function applyStudioFrame(run: StudioRun, frame: StudioFrame): StudioRun 
     if (data.kind === 'batch' && data.data?.id) next.batches = upsert(run.batches, data.data)
     if (data.kind === 'node' && data.data?.id) next.nodes = upsert(run.nodes as Array<Data & { id: string }>, data.data)
     if (data.kind === 'canvas') next.canvas = data.data
+    if (data.kind === 'context') next.context = data.data
   }
   return next
 }
@@ -216,4 +219,34 @@ export function defaultModel(catalog: StudioCatalog, kind: 'image' | 'video'): n
   return catalog.models.find(
     (model) => model.operation_codes.includes(operation) && match.test(model.display_name || model.model),
   )?.id
+}
+
+/** Percentages require both provider-reported input usage and a verified capacity. */
+export function contextInfo(run: StudioRun | null, catalog?: StudioCatalog) {
+  const events = run?.events || []
+  const defaults =
+    !run || (typeof run.selection?.chat === 'number' && run.selection.chat === catalog?.planning_model?.id)
+      ? catalog?.context_defaults
+      : undefined
+  const context =
+    run?.context || [...events].reverse().find((event) => event.kind === 'context')?.data || defaults || {}
+  const lastUsage = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.kind === 'cost' &&
+        event.data?.tool === 'model.generate_text' &&
+        event.data?.purpose !== 'context_compaction' &&
+        Number.isFinite(event.data?.usage?.input_tokens) &&
+        event.data!.usage.input_tokens >= 0,
+    )?.data?.usage
+  const input =
+    Number.isFinite(context.input_tokens) && context.input_tokens >= 0 ? context.input_tokens : lastUsage?.input_tokens
+  const capacity =
+    Number.isFinite(context.capacity_tokens) && context.capacity_tokens > 0 ? context.capacity_tokens : null
+  const measured =
+    context.measurement === 'provider_usage' && Number.isFinite(context.input_tokens) && context.input_tokens >= 0
+  const remaining = capacity && measured ? Math.max(0, capacity - context.input_tokens) : null
+  const percent = remaining !== null ? Math.round((remaining / capacity) * 100) : null
+  return { context, input, capacity, remaining, percent }
 }

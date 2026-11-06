@@ -1,29 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ArrowRight,
-  ArrowDown,
-  Check,
-  ArrowUp,
-  Box,
-  ChevronDown,
-  CirclePlus,
-  Clapperboard,
-  Diamond,
-  FileText,
-  Hand,
-  LayoutPanelLeft,
-  List,
-  Plus,
-  SlidersHorizontal,
-  Sparkles,
-  Square,
-  X,
-} from 'lucide-react'
-import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results } from './StudioCards'
-import { defaultModel, StudioHTTPError } from './studio'
+import { Check, List, Square, X } from 'lucide-react'
+import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
+import { defaultModel, StudioHTTPError, contextInfo } from './studio'
 import type { Data, StudioAttachment, StudioDocument } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
+import { StudioIcon } from './StudioIcons'
 import styles from './DeepAgentStudio.module.css'
 
 export interface DeepAgentStudioProps {
@@ -43,6 +25,7 @@ export default function DeepAgentStudio({
   onCollapse,
   className = '',
 }: DeepAgentStudioProps) {
+  const tooltipScope = useRef<HTMLElement>(null)
   const studio = useStudio(apiBase, workspaceId)
   const { api, state, catalog, current, run, loading, mismatch } = studio
   const mediaService = useMemo(
@@ -295,15 +278,13 @@ export default function DeepAgentStudio({
     return model?.display_name || model?.model || (id ? `模型 #${id}` : '选择模型')
   }
   const currentSkill = catalog.skills.find((s) => s.name === skill)
-  const latestUsage = [...(run?.events || [])]
-    .reverse()
-    .find(
-      (event) =>
-        event.kind === 'cost' &&
-        event.data?.tool === 'model.generate_text' &&
-        Number.isFinite(event.data?.usage?.input_tokens) &&
-        event.data?.usage?.input_tokens >= 0,
-    )?.data?.usage
+  const context = contextInfo(run, catalog)
+  const contextLabel =
+    context.percent !== null
+      ? `上次请求后剩余 ${context.percent}%`
+      : context.input != null
+        ? `上次输入 ${context.input.toLocaleString()} tokens`
+        : '上下文用量未提供'
 
   const activeBatch = run?.batches?.find((b) => b.id === run.active_batch)
   const batchHasRunning = Object.values(activeBatch?.nodes || {}).some((node) =>
@@ -324,7 +305,8 @@ export default function DeepAgentStudio({
 
   return (
     <StudioMediaContext.Provider value={mediaService}>
-      <section className={`${styles.studio} ${className}`} aria-label="帧智汇导演">
+      <section ref={tooltipScope} className={`${styles.studio} ${className}`} aria-label="帧智汇导演">
+        <TooltipLayer scope={tooltipScope} />
         <header className={styles.header}>
           <div className={styles.historyAnchor} ref={historyAnchor}>
             <button
@@ -334,7 +316,7 @@ export default function DeepAgentStudio({
               onClick={() => setHistory(!history)}
             >
               <span>{current ? run?.title || '创作对话' : '新对话'}</span>
-              <ChevronDown size={18} />
+              <StudioIcon name="history" size={18} />
             </button>
             {history && (
               <div className={styles.historyMenu}>
@@ -395,53 +377,57 @@ export default function DeepAgentStudio({
               type="button"
               className={styles.iconButton}
               aria-label="新建会话"
+              data-tooltip="新建对话"
               disabled={actionBusy || uploading}
               onClick={newConversation}
             >
-              <CirclePlus size={16} />
+              <StudioIcon name="new" size={16} />
             </button>
             <button
               type="button"
               className={styles.iconButton}
               aria-label="制作文档"
+              data-tooltip="制作文档"
               disabled={!run}
               onClick={() => openDialog('documents')}
             >
-              <FileText size={16} />
+              <StudioIcon name="file" size={16} />
             </button>
             <button
               type="button"
               className={styles.iconButton}
               aria-label="导演设置"
-              title="导演设置与连接"
+              data-tooltip="导演全局设置"
               onClick={() => openDialog('connection')}
             >
-              <SlidersHorizontal size={16} />
+              <StudioIcon name="settings" size={16} />
             </button>
             <button
               type="button"
               className={styles.iconButton}
               aria-label={results ? '返回对话' : '查看制作成果'}
+              data-tooltip={results ? '返回对话' : '查看制作成果'}
               aria-pressed={results}
               onClick={() => {
                 followUpdates.current = true
                 setResults(!results)
               }}
             >
-              <LayoutPanelLeft size={16} />
+              <StudioIcon name="layout" size={16} />
             </button>
             {onCollapse && (
               <button
                 type="button"
                 className={styles.iconButton}
                 aria-label="收起导演"
+                data-tooltip="收起导演"
                 onClick={() => {
                   setDialog(null)
                   setHistory(false)
                   onCollapse()
                 }}
               >
-                −
+                <StudioIcon name="minus" />
               </button>
             )}
           </div>
@@ -563,7 +549,13 @@ export default function DeepAgentStudio({
                 </section>
               )}
               {run.status === 'waiting' && run.pending && (
-                <Approval key={run.decision_id} run={run} busy={actionBusy} onDecision={decide} />
+                <Approval
+                  models={catalog.models}
+                  key={run.decision_id}
+                  run={run}
+                  busy={actionBusy}
+                  onDecision={decide}
+                />
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
@@ -604,9 +596,9 @@ export default function DeepAgentStudio({
               <h1>让帧智汇导演辅助你的无限创意</h1>
               <div className={styles.starters}>
                 <button type="button" onClick={() => openDialog('skills')}>
-                  <SlidersHorizontal size={20} />
+                  <StudioIcon name="welcome_skill" size={16} />
                   <span>选择 Skill 开始创作</span>
-                  <ArrowRight size={18} />
+                  <StudioIcon name="welcome_arrow" size={16} />
                 </button>
                 <button
                   type="button"
@@ -615,17 +607,17 @@ export default function DeepAgentStudio({
                     prompt.current?.focus()
                   }}
                 >
-                  <Sparkles size={20} />
+                  <StudioIcon name="welcome_script" size={16} />
                   <span>从创意开始剧本原创</span>
-                  <ArrowRight size={18} />
+                  <StudioIcon name="welcome_arrow" size={16} />
                 </button>
                 <button
                   type="button"
                   onClick={() => (state.connected ? files.current?.click() : openDialog('connection'))}
                 >
-                  <FileText size={20} />
+                  <StudioIcon name="welcome_adaptation" size={16} />
                   <span>上传故事来改编</span>
-                  <ArrowRight size={18} />
+                  <StudioIcon name="welcome_arrow" size={16} />
                 </button>
                 <button
                   type="button"
@@ -634,9 +626,9 @@ export default function DeepAgentStudio({
                     prompt.current?.focus()
                   }}
                 >
-                  <Clapperboard size={20} />
+                  <StudioIcon name="welcome_storyboard" size={16} />
                   <span>批量创建分镜</span>
-                  <ArrowRight size={18} />
+                  <StudioIcon name="welcome_arrow" size={16} />
                 </button>
               </div>
               {!state.connected && !loading && (
@@ -659,7 +651,7 @@ export default function DeepAgentStudio({
                 setShowBottom(false)
               }}
             >
-              <ArrowDown size={18} />
+              <StudioIcon name="down" size={18} />
             </button>
           )}
           {!run && (
@@ -679,7 +671,16 @@ export default function DeepAgentStudio({
                     prompt.current?.focus()
                   }}
                 >
-                  <Clapperboard size={16} />
+                  <StudioIcon
+                    name={
+                      label === '剧本原创'
+                        ? 'welcome_script'
+                        : label === '剧本改编'
+                          ? 'welcome_adaptation'
+                          : 'welcome_storyboard'
+                    }
+                    size={16}
+                  />
                   {label}
                 </button>
               ))}
@@ -708,7 +709,7 @@ export default function DeepAgentStudio({
               <div className={styles.attachments}>
                 {attachments.map((item, index) => (
                   <div key={`${item.id || item.name}-${index}`}>
-                    <FileText size={18} />
+                    <StudioIcon name="file" size={18} />
                     <span>
                       {item.name}
                       <small>
@@ -748,42 +749,43 @@ export default function DeepAgentStudio({
                   type="button"
                   className={styles.iconButton}
                   aria-label="上传图片或剧本"
+                  data-tooltip="添加附件"
                   disabled={!state.connected || disabled || unfinished}
                   onClick={() => files.current?.click()}
                 >
-                  <Plus size={24} />
+                  <StudioIcon name="plus" size={16} />
                 </button>
                 <button
                   type="button"
                   aria-label="模型"
-                  title="选择模型"
+                  data-tooltip="选择模型"
                   aria-expanded={dialog === 'models'}
                   disabled={disabled || unfinished}
                   onClick={() => openDialog('models')}
                 >
-                  <Box size={20} />
+                  <StudioIcon name="box" size={16} />
                   <span>模型</span>
                 </button>
                 <button
                   type="button"
                   aria-label="Skill"
-                  title="选择 Skill"
+                  data-tooltip="选择 Skill"
                   aria-expanded={dialog === 'skills'}
                   disabled={disabled || unfinished}
                   onClick={() => openDialog('skills')}
                 >
-                  <Sparkles size={20} />
+                  <StudioIcon name="skill" size={16} />
                   <span>Skill</span>
                 </button>
                 <button
                   type="button"
-                  title={mode === 'auto' ? '自动生成' : '手动确认'}
+                  data-tooltip={mode === 'auto' ? '自动生成' : '手动确认'}
                   aria-label={mode === 'auto' ? '自动生成' : '手动确认'}
                   aria-expanded={dialog === 'mode'}
                   disabled={disabled || unfinished}
                   onClick={() => openDialog('mode')}
                 >
-                  {mode === 'auto' ? <Diamond size={20} /> : <Hand size={20} />}
+                  {mode === 'auto' ? <StudioIcon name="auto" size={16} /> : <StudioIcon name="hand" size={16} />}
                   <span>{mode === 'auto' ? '自动生成' : '手动确认'}</span>
                 </button>
               </div>
@@ -791,20 +793,25 @@ export default function DeepAgentStudio({
                 type="button"
                 className={styles.contextButton}
                 aria-label="上下文用量"
-                title={latestUsage ? `上次输入 ${latestUsage.input_tokens} tokens` : '上下文用量未提供'}
+                data-tooltip={contextLabel}
                 aria-expanded={dialog === 'context'}
                 onClick={() => openDialog('context')}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-                  <circle
-                    cx="8"
-                    cy="8"
-                    r="5.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeDasharray="2 2"
-                  />
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <circle cx="6" cy="6" r="5.25" stroke="currentColor" strokeWidth="1.5" opacity=".25" />
+                  {context.percent !== null && (
+                    <circle
+                      cx="6"
+                      cy="6"
+                      r="5.25"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeDasharray="32.9867"
+                      strokeDashoffset={(32.9867 * context.percent) / 100}
+                      transform="rotate(-90 6 6)"
+                    />
+                  )}
                 </svg>
               </button>
               {run && ['running', 'waiting'].includes(run.status) ? (
@@ -831,7 +838,7 @@ export default function DeepAgentStudio({
                     (!message.trim() && !attachments.length)
                   }
                 >
-                  <ArrowUp size={27} />
+                  <StudioIcon name="send" size={12} />
                 </button>
               )}
             </div>
@@ -940,7 +947,7 @@ export default function DeepAgentStudio({
                         onClick={() => (modelTab === 'image' ? setImage(model.id) : setVideo(model.id))}
                       >
                         <span className={styles.optionIcon}>
-                          <Box size={19} />
+                          <StudioIcon name="box" size={19} />
                         </span>
                         <span>
                           <strong>{model.display_name || model.model}</strong>
@@ -949,7 +956,7 @@ export default function DeepAgentStudio({
                         {(modelTab === 'image' ? image : video) === model.id ? (
                           <Check size={16} />
                         ) : (
-                          <CirclePlus size={16} />
+                          <StudioIcon name="new" size={16} />
                         )}
                       </button>
                     ))
@@ -967,7 +974,7 @@ export default function DeepAgentStudio({
                         }}
                       >
                         <span className={styles.optionIcon}>
-                          <Sparkles size={18} />
+                          <StudioIcon name="skill" size={18} />
                         </span>
                         <span>
                           <strong>{item.description || item.name}</strong>
@@ -997,7 +1004,7 @@ export default function DeepAgentStudio({
                   setDialog(null)
                 }}
               >
-                <Hand size={18} />
+                <StudioIcon name="hand" size={18} />
                 <span>
                   <strong>手动确认</strong>
                   <small>先看制作方案，每次生成前确认。</small>
@@ -1013,7 +1020,7 @@ export default function DeepAgentStudio({
                   setDialog(null)
                 }}
               >
-                <Diamond size={18} />
+                <StudioIcon name="auto" size={16} />
                 <span>
                   <strong>自动生成</strong>
                   <small>按你的要求连续执行并计费，可随时停止。必要的信息仍会向你询问。</small>
@@ -1026,10 +1033,23 @@ export default function DeepAgentStudio({
         {dialog === 'context' && (
           <Popover anchor={composerAnchor.current} title="上下文用量" onClose={() => setDialog(null)}>
             <div className={styles.contextInfo}>
-              <p>{latestUsage ? `上次输入 ${latestUsage.input_tokens.toLocaleString()} tokens` : '上下文用量未提供'}</p>
-              <p>模型上下文总容量：未提供</p>
-              <p>自动摘要：未启用</p>
-              <small>输入用量来自最近一次推理的实际回执，不代表剩余上下文比例。</small>
+              <p>{contextLabel}</p>
+              <p>模型上下文总容量：{context.capacity ? `${context.capacity.toLocaleString()} tokens` : '未提供'}</p>
+              {context.remaining !== null && <p>上次请求后可用：{context.remaining.toLocaleString()} tokens</p>}
+              <p>
+                自动压缩：
+                {context.context.status === 'compacting'
+                  ? '正在整理'
+                  : context.context.auto_compaction === true
+                    ? '已开启'
+                    : '状态未提供'}
+              </p>
+              {Number.isSafeInteger(context.context.compaction_count) && (
+                <p>已整理 {context.context.compaction_count} 次</p>
+              )}
+              <small>
+                用量来自最近一次模型请求的实际回执。新增消息、素材与工具会改变下次用量；剧本、素材和审批原始记录会保留。整理上下文按实际用量计费。
+              </small>
             </div>
           </Popover>
         )}

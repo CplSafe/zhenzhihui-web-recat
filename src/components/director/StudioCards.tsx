@@ -2,11 +2,88 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronRight, Copy, Download, FileText, LoaderCircle, X } from 'lucide-react'
+import { Check, Download, LoaderCircle, X } from 'lucide-react'
+import { StudioIcon } from './StudioIcons'
 import { isSettled } from './studio'
 import { Media } from './StudioMedia'
-import type { Data, StudioDocument, StudioEvent, StudioRun } from './studio'
+import type { Data, StudioDocument, StudioEvent, StudioRun, StudioModel } from './studio'
 import styles from './DeepAgentStudio.module.css'
+
+/** Tooltip surface is outside the panel so rounded overflow never cuts it off. */
+export function TooltipLayer({ scope }: { scope: React.RefObject<HTMLElement> }) {
+  const [tip, setTip] = useState<{ text: string; x: number; y: number; below: boolean } | null>(null)
+  const tooltip = useRef<HTMLDivElement>(null)
+  const target = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    const root = scope.current
+    if (!root) return
+    const hide = () => {
+      target.current = null
+      setTip(null)
+    }
+    const show = (event: Event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>('button[data-tooltip]')
+      if (!button || button.disabled || button.getAttribute('aria-expanded') === 'true') {
+        hide()
+        return
+      }
+      target.current = button
+      const rect = button.getBoundingClientRect()
+      setTip({
+        text: button.dataset.tooltip || '',
+        x: rect.left + rect.width / 2,
+        y: rect.top < 44 ? rect.bottom + 8 : rect.top - 8,
+        below: rect.top < 44,
+      })
+    }
+    const leave = (event: Event) => {
+      if (!target.current?.contains((event as FocusEvent).relatedTarget as Node)) hide()
+    }
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') hide()
+    }
+    root.addEventListener('pointerover', show)
+    root.addEventListener('focusin', show)
+    root.addEventListener('pointerout', leave)
+    root.addEventListener('focusout', leave)
+    document.addEventListener('pointerdown', hide)
+    document.addEventListener('click', hide)
+    document.addEventListener('scroll', hide, true)
+    document.addEventListener('keydown', key)
+    window.addEventListener('resize', hide)
+    return () => {
+      root.removeEventListener('pointerover', show)
+      root.removeEventListener('focusin', show)
+      root.removeEventListener('pointerout', leave)
+      root.removeEventListener('focusout', leave)
+      document.removeEventListener('pointerdown', hide)
+      document.removeEventListener('click', hide)
+      document.removeEventListener('scroll', hide, true)
+      document.removeEventListener('keydown', key)
+      window.removeEventListener('resize', hide)
+    }
+  }, [scope])
+  useLayoutEffect(() => {
+    const box = tooltip.current
+    if (!box || !tip) return
+    const width = box.offsetWidth
+    box.style.left = Math.max(8, Math.min(tip.x - width / 2, window.innerWidth - width - 8)) + 'px'
+  }, [tip])
+  return tip
+    ? createPortal(
+        <div
+          ref={tooltip}
+          role="tooltip"
+          className={styles.tooltip}
+          data-below={tip.below}
+          style={{ top: tip.y, left: tip.x }}
+        >
+          {tip.text}
+        </div>,
+        document.body,
+      )
+    : null
+}
 
 export function Markdown({ children }: { children: string }) {
   return (
@@ -147,7 +224,7 @@ function CopyMessage({ text }: { text: string }) {
       <button
         type="button"
         aria-label={copied ? '已复制' : '复制消息'}
-        title={copied ? '已复制' : '复制'}
+        data-tooltip={copied ? '已复制' : '复制'}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(text)
@@ -158,7 +235,7 @@ function CopyMessage({ text }: { text: string }) {
           }
         }}
       >
-        {copied ? <Check size={14} /> : <Copy size={14} />}
+        {copied ? <Check size={14} /> : <StudioIcon name="copy" size={14} />}
       </button>
       {failed && <span role="status">复制失败，请选择文字复制。</span>}
     </div>
@@ -169,6 +246,18 @@ const taskNames: Record<string, string> = {
   'model.generate_text': '思考与编剧',
   'model.generate_image': '生成图片',
   'model.generate_video': '生成视频',
+  'asset.get': '读取素材',
+  'asset.list': '查找素材',
+  'model.get': '读取模型设置',
+  'model.list': '查看可用模型',
+  'billing.get_balance': '查询余额',
+  'task.get': '查询任务',
+  'task.wait': '等待任务完成',
+  'canvas.get': '读取画布',
+  'canvas.update': '更新画布',
+  save_document: '保存制作文档',
+  'studio.read_context': '读取制作资料',
+  'studio.load_tools': '准备制作工具',
 }
 export function EventCard({
   event,
@@ -207,7 +296,7 @@ export function EventCard({
     return (
       <article className={styles.event}>
         <div className={styles.artifactStatus}>
-          <FileText size={14} />
+          <StudioIcon name="file" size={14} />
           创作文本已保存
         </div>
         <button
@@ -216,37 +305,47 @@ export function EventCard({
           disabled={!onDocument}
           onClick={() => onDocument?.(data.id)}
         >
-          <FileText size={20} />
+          <StudioIcon name="document" size={22} />
           <span>
             {data.title || '制作文档'}
             <small>制作文档 · 版本 {data.revision}</small>
           </span>
-          <ChevronRight size={16} />
+          <StudioIcon name="chevron" size={16} />
         </button>
       </article>
     )
-  if (['canvas', 'node', 'batch'].includes(event.kind)) return null
+  if (['canvas', 'node', 'batch', 'context'].includes(event.kind)) return null
+  const taskLabel =
+    event.kind === 'progress'
+      ? event.text
+      : data.purpose === 'context_compaction'
+        ? '整理上下文'
+        : taskNames[data.tool] ||
+          (event.kind === 'merge' ? '合并完整视频' : event.kind === 'tool' ? '处理制作资料' : '制作进度')
+  const taskState = settled ? '已完成' : failed ? '未完成' : event.kind === 'tool' ? '已返回' : '处理中'
   if (['cost', 'tool', 'merge'].includes(event.kind) || (event.kind === 'progress' && data.status))
     return (
       <article className={styles.event}>
         <details className={styles.taskCard}>
           <summary>
-            {settled ? (
-              <Check size={18} />
+            {data.tool === 'model.generate_text' ? (
+              <StudioIcon name="process" size={16} />
+            ) : settled ? (
+              <Check size={16} />
             ) : failed ? (
               <span>!</span>
             ) : event.kind === 'tool' ? (
-              <ChevronRight size={18} />
+              <StudioIcon name="chevron" size={18} />
             ) : (
               <LoaderCircle size={18} className={styles.spin} />
             )}
-            <strong>
-              {taskNames[data.tool] || (event.kind === 'merge' ? '合并完整视频' : event.text.split(' · ')[0])}
-            </strong>
-            <small>{settled ? '已完成' : failed ? '未完成' : event.kind === 'tool' ? '已返回' : '处理中'}</small>
+            <strong>{taskLabel}</strong>
+            <small>{taskState}</small>
           </summary>
           <div className={styles.taskContent}>
-            <p>{event.text}</p>
+            <p>
+              {taskLabel} · {taskState}
+            </p>
             {settled && data.actual_cost != null && <p>实际消耗 {data.actual_cost} 积分</p>}
             {!settled && !failed && data.estimated_cost != null && <p>已预留 {data.estimated_cost} 积分 · 待结算</p>}
             {data.usage && (
@@ -313,7 +412,7 @@ export function Conversation({
         group.length > 1 ? (
           <details className={styles.toolGroup} key={group[0].id}>
             <summary>
-              <ChevronRight size={14} />
+              <StudioIcon name="chevron" size={14} />
               已执行 {group.length} 个工具
             </summary>
             {group.map((event) => (
@@ -372,20 +471,62 @@ export function Results({ run }: { run: StudioRun | null }) {
           <details key={e.id}>
             <summary>成片检查</summary>
             <Markdown>{e.text}</Markdown>
-            <pre>{JSON.stringify(e.data, null, 2)}</pre>
           </details>
         ))}
     </section>
+  )
+}
+function ApprovalScope({ argumentsValue, models }: { argumentsValue: Data; models: StudioModel[] }) {
+  const nodes: Data[] = Array.isArray(argumentsValue.nodes) ? argumentsValue.nodes : [{ arguments: argumentsValue }]
+  const fields = [
+    ['prompt', '创作描述'],
+    ['duration', '时长（秒）'],
+    ['resolution', '清晰度'],
+    ['aspect_ratio', '画面比例'],
+    ['ratio', '画面比例'],
+    ['generate_audio', '生成声音'],
+    ['audio', '生成声音'],
+    ['num_images', '图片数量'],
+  ]
+  return (
+    <div className={styles.approvalScope}>
+      {nodes.map((node, index) => {
+        const args = node.arguments || {},
+          params = args.params || {}
+        const model = models.find((item) => item.id === args.model_version_id)
+        return (
+          <section key={index}>
+            <strong>{node.title || `制作项目 ${index + 1}`}</strong>
+            {model && <p>模型：{model.display_name || model.model}</p>}
+            {fields.map(([key, label]) => {
+              const value = params[key] ?? args[key]
+              return ['string', 'number', 'boolean'].includes(typeof value) ? (
+                <p key={key}>
+                  {label}：{typeof value === 'boolean' ? (value ? '是' : '否') : String(value)}
+                </p>
+              ) : null
+            })}
+            {Array.isArray(args.input_assets) && args.input_assets.length > 0 && (
+              <p>参考素材：{args.input_assets.length} 项</p>
+            )}
+            {node.estimated_cost != null && <p>预计积分：{String(node.estimated_cost)}</p>}
+          </section>
+        )
+      })}
+      <p>需要调整时，请在下方说明；导演会重新准备方案，再由你确认。</p>
+    </div>
   )
 }
 export function Approval({
   run,
   busy,
   onDecision,
+  models = [],
 }: {
   run: StudioRun
   busy: boolean
   onDecision: (data: Data) => Promise<void>
+  models?: StudioModel[]
 }) {
   const pending = run.pending!,
     ask = pending.tool === 'ask_user',
@@ -463,8 +604,8 @@ export function Approval({
       )}
       {!ask && (
         <details>
-          <summary>查看生成参数和审批范围</summary>
-          <pre>{JSON.stringify(pending.arguments || {}, null, 2)}</pre>
+          <summary>查看制作内容</summary>
+          <ApprovalScope argumentsValue={pending.arguments || {}} models={models} />
         </details>
       )}
       <textarea
@@ -501,7 +642,7 @@ export function DocumentEditor({
   return (
     <section>
       <h3>
-        <FileText size={18} /> {document.title}
+        <StudioIcon name="file" size={18} /> {document.title}
       </h3>
       <div className={styles.documentMeta}>
         <p className={styles.muted}>版本 {document.revision}</p>
