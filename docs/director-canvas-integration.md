@@ -199,3 +199,9 @@ pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入�
 - `GET /agent-studio/api/library?type=image&offset=0` 返回 `{items,total}`，每页 30 项；`POST /agent-studio/api/attachments/library` 接收 `{asset_ids:[...]}`，返回 `{attachments:[...]}`，最多 8 项。组件继续发送业务空间/画布请求头及同源会话，外部连接继续使用既有 OAuth 会话。
 - 服务端逐项执行 MCP `asset.get` 校验后整体登记附件；以账号、空间、资产派生稳定附件 ID。附件在送入模型前按资产 ID 去重，上传和素材库选择同一图片也只引用一次。
 - 模型、Skill、模式及附件菜单的 body portal 层级为 1600，高于画布面板 1200 和底部菜单 1450。宿主调整层级时必须同时检查这些弹层；原生 dialog 使用浏览器顶层。关闭弹层不丢草稿，取消素材选择后迟到响应不会回填。
+
+### 对话与实时进度
+
+对话正文由 `assistant` 事件提供，原样按 Markdown 展示。不要把工具回执或费用记录替换成回答正文。`model.generate_text` 的 `cost` 事件展示紧凑的“正在思考 / 思考”状态；积分保留在可展开明细和本轮费用中，token 与任务编号不在聊天正文展示。
+
+目前 WebSocket 传输的是持久化事件和任务状态；推理任务完成后才产生完整 `assistant` 正文，并非上游 token delta。不要用打字动画冒充模型文字流式返回。恢复连接沿用事件游标，不重新提交推理或媒体任务。

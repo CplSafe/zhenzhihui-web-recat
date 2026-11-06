@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, Download, LoaderCircle, X } from 'lucide-react'
+import { Check, Download, ImageIcon, LoaderCircle, X } from 'lucide-react'
 import { StudioIcon } from './StudioIcons'
 import { isSettled } from './studio'
 import { Media } from './StudioMedia'
@@ -243,7 +243,7 @@ function CopyMessage({ text }: { text: string }) {
 }
 
 const taskNames: Record<string, string> = {
-  'model.generate_text': '思考与编剧',
+  'model.generate_text': '思考',
   'model.generate_image': '生成图片',
   'model.generate_video': '生成视频',
   'asset.get': '读取素材',
@@ -263,7 +263,9 @@ export function EventCard({
   event,
   canvas,
   onDocument,
+  active = true,
 }: {
+  active?: boolean
   event: StudioEvent
   canvas?: Data | null
   onDocument?: (id: string) => void
@@ -314,7 +316,8 @@ export function EventCard({
         </button>
       </article>
     )
-  if (['canvas', 'node', 'batch', 'context'].includes(event.kind)) return null
+  if (['canvas', 'node', 'batch', 'context', 'tool_start'].includes(event.kind)) return null
+  const thinking = data.tool === 'model.generate_text' && data.purpose !== 'context_compaction'
   const taskLabel =
     event.kind === 'progress'
       ? event.text
@@ -322,11 +325,27 @@ export function EventCard({
         ? '整理上下文'
         : taskNames[data.tool] ||
           (event.kind === 'merge' ? '合并完整视频' : event.kind === 'tool' ? '处理制作资料' : '制作进度')
-  const taskState = settled ? '已完成' : failed ? '未完成' : event.kind === 'tool' ? '已返回' : '处理中'
+  const taskState = settled
+    ? '已完成'
+    : failed
+      ? '未完成'
+      : event.kind === 'tool'
+        ? '已返回'
+        : active
+          ? '处理中'
+          : '已暂停'
+  const mediaType = data.tool === 'model.generate_image' ? '图片' : data.tool === 'model.generate_video' ? '视频' : null
+  const hasMedia = !!(data.assets?.length || data.asset)
+  const mediaPending =
+    mediaType &&
+    !settled &&
+    !failed &&
+    ['submitting', 'submitted', 'queued', 'pending', 'running', 'processing', 'waiting'].includes(data.status)
+
   if (['cost', 'tool', 'merge'].includes(event.kind) || (event.kind === 'progress' && data.status))
     return (
       <article className={styles.event}>
-        <details className={styles.taskCard}>
+        <details className={`${styles.taskCard} ${thinking ? styles.thinkingCard : ''}`}>
           <summary>
             {data.tool === 'model.generate_text' ? (
               <StudioIcon name="process" size={16} />
@@ -336,27 +355,53 @@ export function EventCard({
               <span>!</span>
             ) : event.kind === 'tool' ? (
               <StudioIcon name="chevron" size={18} />
+            ) : !active ? (
+              <StudioIcon name="minus" size={18} />
             ) : (
               <LoaderCircle size={18} className={styles.spin} />
             )}
-            <strong>{taskLabel}</strong>
-            <small>{taskState}</small>
+            <strong>
+              {thinking ? (settled ? '思考' : failed ? '思考未完成' : active ? '正在思考' : '思考已暂停') : taskLabel}
+            </strong>
+            {!thinking && <small>{taskState}</small>}
           </summary>
           <div className={styles.taskContent}>
-            <p>
-              {taskLabel} · {taskState}
-            </p>
-            {settled && data.actual_cost != null && <p>实际消耗 {data.actual_cost} 积分</p>}
-            {!settled && !failed && data.estimated_cost != null && <p>已预留 {data.estimated_cost} 积分 · 待结算</p>}
-            {data.usage && (
+            {!thinking && (
               <p>
-                输入 {data.usage.input_tokens ?? '未知'} · 输出 {data.usage.output_tokens ?? '未知'} · 缓存命中{' '}
-                {data.usage.cached_input_tokens ?? '未知'} token
+                {taskLabel} · {taskState}
               </p>
             )}
-            {data.task_id && <p>任务 #{data.task_id}</p>}
+            {settled && data.actual_cost != null && <p>实际消耗 {data.actual_cost} 积分</p>}
+            {!settled && !failed && data.estimated_cost != null && <p>已预留 {data.estimated_cost} 积分 · 待结算</p>}
           </div>
         </details>
+        {mediaType && !hasMedia && (mediaPending || failed || settled) && (
+          <div
+            className={`${styles.mediaPlaceholder} ${mediaPending && active ? styles.mediaGenerating : ''}`}
+            role="status"
+            aria-busy={!!mediaPending && active}
+            aria-label={
+              failed
+                ? `${mediaType}未生成`
+                : settled
+                  ? `${mediaType}已生成，素材准备中`
+                  : active
+                    ? `正在生成${mediaType}`
+                    : `${mediaType}进度已保留`
+            }
+          >
+            {mediaType === '视频' ? <StudioIcon name="film" size={26} /> : <ImageIcon size={26} />}
+            <span>
+              {failed
+                ? `${mediaType}未生成`
+                : settled
+                  ? '已生成，素材准备中'
+                  : active
+                    ? `正在生成${mediaType}…`
+                    : '进度已保留，等待恢复'}
+            </span>
+          </div>
+        )}
         {(data.assets || data.asset) && (
           <>
             {settled && (
@@ -390,7 +435,9 @@ export function Conversation({
   events,
   canvas,
   onDocument,
+  active = true,
 }: {
+  active?: boolean
   events: StudioEvent[]
   canvas?: Data | null
   onDocument: (id: string) => void
@@ -416,11 +463,11 @@ export function Conversation({
               已执行 {group.length} 个工具
             </summary>
             {group.map((event) => (
-              <EventCard key={event.id} event={event} canvas={canvas} onDocument={onDocument} />
+              <EventCard key={event.id} event={event} canvas={canvas} onDocument={onDocument} active={active} />
             ))}
           </details>
         ) : (
-          <EventCard key={group[0].id} event={group[0]} canvas={canvas} onDocument={onDocument} />
+          <EventCard key={group[0].id} event={group[0]} canvas={canvas} onDocument={onDocument} active={active} />
         ),
       )}
     </>

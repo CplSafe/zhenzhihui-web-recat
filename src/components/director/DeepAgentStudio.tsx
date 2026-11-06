@@ -439,7 +439,10 @@ export default function DeepAgentStudio({
             )}
           </div>
         </header>
-        <div className={styles.statusRow} hidden={!current && state.connected && !loading}>
+        <div
+          className={styles.statusRow}
+          hidden={state.connected && !loading && (!current || run?.status === 'complete')}
+        >
           <span>
             {run ? <DoudouMascot state={mascotState} compact /> : <i />}
             {status}
@@ -481,6 +484,7 @@ export default function DeepAgentStudio({
             <>
               <div className={styles.conversation}>
                 <Conversation
+                  active={running && !run.stop}
                   events={run.events}
                   canvas={run.canvas}
                   onDocument={(id) => {

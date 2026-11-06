@@ -303,6 +303,8 @@
   margin-bottom: 10px;
 }
 .userMessage {
+  position: relative;
+  margin-bottom: 26px;
   align-self: flex-end;
   max-width: 90%;
   background: #2c2c2c;
@@ -1008,7 +1010,23 @@
   font-size: 11px;
 }
 .userMessage .messageActions {
+  position: absolute;
+  right: 0;
+  top: 100%;
   justify-content: flex-end;
+}
+.thinkingCard summary {
+  justify-content: flex-start;
+  width: fit-content;
+}
+.thinkingCard strong {
+  flex: initial;
+  font-size: 13px;
+}
+.thinkingCard .taskContent {
+  border-left: 0;
+  padding: 4px 0;
+  margin-left: 22px;
 }
 .billing summary {
   cursor: pointer;
@@ -1370,5 +1388,41 @@
   }
   to {
     opacity: 1;
+  }
+}
+
+.mediaPlaceholder {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 320px);
+  aspect-ratio: 16 / 10;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #292929;
+  color: #999;
+  font-size: 12px;
+}
+.mediaGenerating::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, #ffffff0c 48%, transparent 80%);
+  transform: translateX(-100%);
+  animation: mediaSweep 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes mediaSweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mediaGenerating::after {
+    animation: none;
   }
 }

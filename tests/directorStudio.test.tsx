@@ -431,7 +431,8 @@ describe('Director interactions', () => {
     act(() => socket.emit({ event: 'snapshot', cursor: 9, data: snapshot({ cursor: 9, status: 'waiting' }) }))
     expect(screen.getByRole('img', { name: /豆豆在等你确认/ })).toBeInTheDocument()
     act(() => socket.emit({ event: 'snapshot', cursor: 10, data: snapshot({ cursor: 10, status: 'complete' }) }))
-    expect(screen.getByRole('img', { name: /豆豆已完成本轮创作/ })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /豆豆已完成本轮创作/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('本轮完成')).not.toBeVisible()
   })
   it('reconnect updates keep one task card and canvas callback; switching closes the socket', async () => {
     const onCanvasChange = vi.fn()
@@ -749,11 +750,85 @@ describe('Director conversation parity', () => {
     expect(screen.getByRole('button', { name: '第一集测试' })).toBeInTheDocument()
     expect(Socket.instances).toHaveLength(1)
   })
+  it.each([
+    ['image', '图片', 'png'],
+    ['video', '视频', 'mp4'],
+  ])(
+    'replaces the %s generating placeholder with media and never animates failed or paused work',
+    (type, label, extension) => {
+      const event = {
+        id: 'media-task',
+        kind: 'cost',
+        text: '生成',
+        data: {
+          tool: `model.generate_${type}`,
+          status: 'running',
+          task_id: 99,
+        },
+      }
+      const { container, rerender } = render(<EventCard event={event} />)
+      const placeholder = screen.getByRole('status', { name: `正在生成${label}` })
+      expect(placeholder).toHaveAttribute('aria-busy', 'true')
+      expect(placeholder.className).toContain('mediaGenerating')
+      rerender(<EventCard event={event} active={false} />)
+      expect(screen.getByRole('status', { name: `${label}进度已保留` })).toHaveAttribute('aria-busy', 'false')
+      expect(container.innerHTML).not.toMatch(/mediaGenerating|_spin_/)
+      rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'failed' } }} />)
+      expect(screen.getByRole('status', { name: `${label}未生成` })).toHaveAttribute('aria-busy', 'false')
+      expect(container.innerHTML).not.toMatch(/mediaGenerating|_spin_/)
+      rerender(
+        <EventCard
+          event={{
+            ...event,
+            data: {
+              ...event.data,
+              status: 'succeeded',
+              assets: [{ id: 42, download_url: `https://media.test/result.${extension}` }],
+            },
+          }}
+        />,
+      )
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      expect(container.querySelector(type === 'video' ? 'video' : 'img')).toHaveAttribute(
+        'src',
+        `https://media.test/result.${extension}`,
+      )
+    },
+  )
+  it('keeps inference compact and hides internal task/token data while retaining settled cost', () => {
+    const event = {
+      id: 'plan',
+      kind: 'cost',
+      text: '思考与编剧完成',
+      data: {
+        tool: 'model.generate_text',
+        status: 'succeeded',
+        actual_cost: '1.37',
+        task_id: 4509,
+        usage: { input_tokens: 2469, output_tokens: 419, cached_input_tokens: 0 },
+      },
+    }
+    const { container, rerender } = render(<EventCard event={event} />)
+    expect(screen.getByText('思考')).toBeInTheDocument()
+    const detail = container.querySelector('details')!
+    expect(detail.open).toBe(false)
+    fireEvent.click(detail.querySelector('summary')!)
+    expect(screen.getByText('实际消耗 1.37 积分')).toBeVisible()
+    expect(container.textContent).not.toMatch(/4509|2469|419|token|思考与编剧/)
+    rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'running' } }} />)
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
+    rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'running' } }} active={false} />)
+    expect(screen.getByText('思考已暂停')).toBeInTheDocument()
+    expect(screen.queryByText(/实际消耗/)).not.toBeInTheDocument()
+    rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'failed' } }} />)
+    expect(screen.getByText('思考未完成')).toBeInTheDocument()
+  })
   it('groups adjacent tool receipts while keeping generated media and messages visible', () => {
     render(
       <Conversation
         onDocument={() => {}}
         events={[
+          { id: 'start', kind: 'tool_start', text: '正在执行 model.get', data: { tool: 'model.get' } },
           { id: 'a', kind: 'tool', text: '读取模型参数', data: { status: 'succeeded' } },
           { id: 'b', kind: 'tool', text: '加载制作工具', data: { status: 'succeeded' } },
           { id: 'c', kind: 'assistant', text: '素材准备完成。' },
@@ -770,6 +845,7 @@ describe('Director conversation parity', () => {
       />,
     )
     expect(screen.getByText('已执行 2 个工具')).toBeInTheDocument()
+    expect(screen.queryByText('正在执行 model.get')).not.toBeInTheDocument()
     expect(screen.getByText('素材准备完成。')).toBeVisible()
     expect(screen.getByRole('img', { name: '生成素材' })).toBeVisible()
   })
