@@ -19,7 +19,7 @@ export default function DirectorStudioView() {
       {collapsed && (
         <button type="button" className={styles.restoreDirector} onClick={() => setCollapsed(false)}>
           <MessageCircle size={18} />
-          打开导演
+          打开 DoDo Agent
         </button>
       )}
     </main>

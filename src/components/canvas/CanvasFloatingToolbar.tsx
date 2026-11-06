@@ -454,12 +454,12 @@ function CanvasFloatingToolbar({
           type="button"
           className={styles.directorButton}
           onClick={onToggleDirector}
-          aria-label={directorOpen ? '收起豆豆导演' : '打开豆豆导演'}
+          aria-label={directorOpen ? '收起 DoDo Agent' : '打开 DoDo Agent'}
           aria-expanded={directorOpen}
-          title={directorOpen ? '收起豆豆导演' : '和豆豆一起创作'}
+          title={directorOpen ? '收起 DoDo Agent' : '和 DoDo Agent 一起创作'}
         >
           <img src={doudouLogo} alt="" width={34} height={38} draggable={false} />
-          <span className={styles.toolLabel}>豆豆导演</span>
+          <span className={styles.toolLabel}>DoDo Agent</span>
         </button>
       )}
     </div>

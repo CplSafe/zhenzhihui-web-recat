@@ -513,7 +513,7 @@ function ApprovalScope({ argumentsValue, models }: { argumentsValue: Data; model
           </section>
         )
       })}
-      <p>需要调整时，请在下方说明；导演会重新准备方案，再由你确认。</p>
+      <p>需要调整时，请在下方说明；DoDo Agent 会重新准备方案，再由你确认。</p>
     </div>
   )
 }
@@ -559,7 +559,7 @@ export function Approval({
     })
   }
   return (
-    <section className={styles.approval} aria-label={ask ? '导演的问题' : '生成确认'}>
+    <section className={styles.approval} aria-label={ask ? 'DoDo Agent 的问题' : '生成确认'}>
       <h3>{replan ? '制作资料已更新' : ask ? '需要你的想法' : '确认这一步制作'}</h3>
       <Markdown>{pending.message || ''}</Markdown>
       {ask && questions.length > 0 && (
@@ -610,7 +610,7 @@ export function Approval({
       )}
       <textarea
         aria-label="补充意见"
-        placeholder={ask ? '输入你的回复或补充说明…' : '告诉导演你的想法，或者直接确认继续…'}
+        placeholder={ask ? '输入你的回复或补充说明…' : '告诉 DoDo Agent 你的想法，或者直接确认继续…'}
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}
         maxLength={12000}

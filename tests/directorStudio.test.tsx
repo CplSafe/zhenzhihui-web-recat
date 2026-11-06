@@ -1,5 +1,6 @@
+import { File as NodeFile } from 'node:buffer'
 import { useState } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from './mocks/server'
@@ -72,7 +73,7 @@ beforeEach(() => {
   )
 })
 async function openHistory() {
-  await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
   fireEvent.click(screen.getByRole('button', { name: '新对话' }))
   fireEvent.click(screen.getByRole('button', { name: /第一集测试/ }))
   await waitFor(() => expect(Socket.instances.length).toBe(1))
@@ -112,22 +113,27 @@ describe('Studio transport', () => {
     }
     render(<CanvasHost />)
     expect(seen).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: '打开豆豆导演' }).closest('[data-canvas-floating-toolbar]')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
-    await screen.findByText('图片 · Nano Banana Pro (Google)')
+    expect(screen.getByRole('button', { name: '打开 DoDo Agent' }).closest('[data-canvas-floating-toolbar]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '打开 DoDo Agent' }))
+    await screen.findByRole('button', { name: '发送创作要求' })
     expect(seen).toHaveBeenCalledWith('business', '40')
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: '保留草稿' } })
     fireEvent.keyDown(input, { key: 'Backspace' })
     expect(canvasKey).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '收起导演' }))
-    fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'DoDo Agent' })).getByRole('button', { name: '收起 DoDo Agent' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '打开 DoDo Agent' }))
     expect(screen.getByRole('textbox')).toHaveValue('保留草稿')
     expect(seen).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: '收起豆豆导演' })).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.click(screen.getByRole('button', { name: '收起豆豆导演' }))
+    expect(screen.getByRole('button', { name: '收起 DoDo Agent', expanded: true })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    fireEvent.click(screen.getByRole('button', { name: '收起 DoDo Agent', expanded: true }))
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开 DoDo Agent' }))
     expect(screen.getByRole('textbox')).toHaveValue('保留草稿')
   })
 
@@ -208,7 +214,7 @@ describe('Studio transport', () => {
     expect(Socket.instances).toHaveLength(1)
     expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
     valid = true
-    fireEvent.click(screen.getByRole('button', { name: '导演设置' }))
+    fireEvent.click(screen.getByRole('button', { name: 'DoDo Agent 设置' }))
     fireEvent.click(screen.getByRole('button', { name: '重新检查业务登录' }))
     await waitFor(() => expect(Socket.instances).toHaveLength(2))
   })
@@ -258,8 +264,8 @@ describe('Studio transport', () => {
       }),
     )
     render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
-    await screen.findByText('图片 · Nano Banana Pro (Google)')
-    fireEvent.click(screen.getByRole('button', { name: '导演设置' }))
+    await screen.findByRole('button', { name: '发送创作要求' })
+    fireEvent.click(screen.getByRole('button', { name: 'DoDo Agent 设置' }))
     expect(screen.queryByText('重新授权')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '重新检查业务登录' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '重新检查业务登录' })).not.toBeDisabled())
@@ -272,7 +278,7 @@ describe('Studio transport', () => {
     render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
     await screen.findByText('请先登录业务系统')
     expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '导演设置' }))
+    fireEvent.click(screen.getByRole('button', { name: 'DoDo Agent 设置' }))
     expect(screen.queryByRole('button', { name: '登录并连接' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新检查业务登录' })).toBeInTheDocument()
   })
@@ -342,7 +348,7 @@ describe('Director interactions', () => {
       }),
     )
     render(<DeepAgentStudio />)
-    await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
     expect(screen.queryByText(/内置 Skill|默认 Skill/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '手动确认' }))
     fireEvent.click(screen.getByRole('button', { name: /自动生成.*按你的要求/ }))
@@ -651,7 +657,7 @@ describe('Director conversation parity', () => {
   })
   it('closes composer popovers on Escape or outside click without clearing the draft or starting work', async () => {
     render(<DeepAgentStudio />)
-    await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
     fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '尚未发送的创意' } })
     fireEvent.click(screen.getByRole('button', { name: '模型', exact: true }))
     expect(screen.getByRole('dialog', { name: '选择模型' })).not.toHaveAttribute('aria-modal', 'true')
@@ -735,10 +741,10 @@ describe('Director conversation parity', () => {
     await openHistory()
     fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '保留这一段草稿' } })
     fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
-    fireEvent.click(screen.getByRole('button', { name: '收起导演' }))
+    fireEvent.click(screen.getByRole('button', { name: '收起 DoDo Agent' }))
     expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: '创作要求' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '打开导演' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开 DoDo Agent' }))
     expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('保留这一段草稿')
     expect(screen.getByRole('button', { name: '第一集测试' })).toBeInTheDocument()
     expect(Socket.instances).toHaveLength(1)
@@ -769,7 +775,7 @@ describe('Director conversation parity', () => {
   })
   it('shows unavailable context honestly and uses only reported input usage without inventing a percentage', async () => {
     render(<DeepAgentStudio />)
-    await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
     expect(screen.getByText('上下文用量未提供')).toBeInTheDocument()
     expect(screen.getByText('模型上下文总容量：未提供')).toBeInTheDocument()
@@ -939,7 +945,7 @@ it('preserves user-facing correction and recovery progress messages', () => {
 })
 it('hover and keyboard focus show the same custom tooltip without native duplicates', async () => {
   render(<DeepAgentStudio />)
-  await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
   const button = screen.getByRole('button', { name: '模型', exact: true })
   expect(button).not.toHaveAttribute('title')
   fireEvent.pointerOver(button)
@@ -950,4 +956,109 @@ it('hover and keyboard focus show the same custom tooltip without native duplica
   expect(screen.getByRole('tooltip')).toHaveTextContent('选择模型')
   fireEvent.keyDown(document, { key: 'Escape' })
   expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+})
+
+it('attachment menu offers local upload and library; selected existing assets are sent once with selected models', async () => {
+  const registered = vi.fn(),
+    submitted = vi.fn()
+  server.use(
+    http.post('*/agent-studio/api/attachments', () =>
+      HttpResponse.json({ id: 'uploaded44', asset_id: 44, name: '角色参考', type: 'image' }),
+    ),
+    http.get('*/agent-studio/api/library', () =>
+      HttpResponse.json({ items: [{ id: 44, name: '角色参考', type: 'image' }], total: 1 }),
+    ),
+    http.post('*/agent-studio/api/attachments/library', async ({ request }) => {
+      registered(await request.json())
+      return HttpResponse.json({ attachments: [{ id: 'existing44', asset_id: 44, name: '角色参考', type: 'image' }] })
+    }),
+    http.post('*/agent-studio/api/runs', async ({ request }) => {
+      submitted(await request.json())
+      return HttpResponse.json({ id: 'run1' })
+    }),
+  )
+  const { container } = render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  expect(screen.queryByText('图片 · Nano Banana Pro (Google)')).not.toBeInTheDocument()
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new NodeFile(['image'], 'reference.png', { type: 'image/png' })] },
+  })
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '上传图片或剧本' }))
+  expect(screen.getByRole('button', { name: '本地上传' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '从素材库选择' }))
+  fireEvent.click(await screen.findByRole('button', { name: /角色参考/ }))
+  fireEvent.click(screen.getByRole('button', { name: '添加所选素材（1）' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '从素材库选择' })).not.toBeInTheDocument())
+  expect(registered).toHaveBeenCalledExactlyOnceWith({ asset_ids: [44] })
+  expect(screen.getAllByRole('button', { name: /移除/ })).toHaveLength(1)
+  fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '使用这个角色' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await waitFor(() => expect(submitted).toHaveBeenCalledOnce())
+  expect(submitted.mock.calls[0][0]).toMatchObject({
+    attachments: ['existing44'],
+    selection: { image: 29, video: 18, mode: 'manual' },
+  })
+})
+it('library errors stay visible and never attach or submit assets', async () => {
+  server.use(http.get('*/agent-studio/api/library', () => HttpResponse.json({ error: '无素材权限' }, { status: 403 })))
+  render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '上传图片或剧本' }))
+  fireEvent.click(screen.getByRole('button', { name: '从素材库选择' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('无素材权限')
+  expect(screen.getByRole('button', { name: '添加所选素材（0）' })).toBeDisabled()
+})
+
+it('local upload remains available from the attachment menu', async () => {
+  const uploaded = vi.fn()
+  server.use(
+    http.post('*/agent-studio/api/attachments', async ({ request }) => {
+      uploaded(await request.text())
+      return HttpResponse.json({ id: 'local-script', type: 'prompt', characters: 5 })
+    }),
+  )
+  const { container } = render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+  const open = vi.spyOn(input, 'click')
+  fireEvent.click(screen.getByRole('button', { name: '上传图片或剧本' }))
+  fireEvent.click(screen.getByRole('button', { name: '本地上传' }))
+  expect(open).toHaveBeenCalledOnce()
+  fireEvent.change(input, { target: { files: [new NodeFile(['scene'], 'story.txt', { type: 'text/plain' })] } })
+  expect(await screen.findByRole('button', { name: '移除 story.txt' })).toBeInTheDocument()
+  await waitFor(() => expect(uploaded).toHaveBeenCalledExactlyOnceWith('scene'))
+})
+
+it('closing library registration ignores its late response without attaching or generating', async () => {
+  let finish!: () => void
+  const registered = vi.fn()
+  server.use(
+    http.get('*/agent-studio/api/library', () =>
+      HttpResponse.json({ items: [{ id: 44, name: '参考图', type: 'image' }], total: 1 }),
+    ),
+    http.post('*/agent-studio/api/attachments/library', async () => {
+      registered()
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      return HttpResponse.json({ attachments: [{ id: 'late', asset_id: 44, name: '迟到素材', type: 'image' }] })
+    }),
+  )
+  render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '上传图片或剧本' }))
+  fireEvent.click(screen.getByRole('button', { name: '从素材库选择' }))
+  fireEvent.click(await screen.findByRole('button', { name: /参考图/ }))
+  fireEvent.click(screen.getByRole('button', { name: '添加所选素材（1）' }))
+  await waitFor(() => expect(registered).toHaveBeenCalledOnce())
+  fireEvent.click(
+    within(screen.getByRole('dialog', { name: '从素材库选择' })).getByRole('button', { name: '关闭', exact: true }),
+  )
+  await act(async () => {
+    finish()
+    await Promise.resolve()
+  })
+  expect(screen.queryByRole('button', { name: '移除 迟到素材' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
 })
