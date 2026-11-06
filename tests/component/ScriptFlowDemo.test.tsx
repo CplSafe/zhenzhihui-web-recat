@@ -18,7 +18,7 @@ describe('剧本创意本机演示', () => {
     await user.type(screen.getByLabelText(/申请人/), '测试申请人')
     await user.type(screen.getByLabelText(/学校/), '测试学校')
     await user.type(screen.getByLabelText(/剧名/), '测试剧名')
-    await user.type(screen.getByLabelText(/题材/), '悬疑')
+    await user.type(screen.getByRole('combobox', { name: '题材' }), '悬疑{Enter}')
     await user.type(screen.getByLabelText(/剧情简介/), '故事简介')
     await user.upload(
       screen.getByLabelText(/剧本文档附件/),
@@ -31,16 +31,17 @@ describe('剧本创意本机演示', () => {
     expect(screen.getByRole('heading', { name: '已提交内容（只读）' })).toBeInTheDocument()
     expect(screen.getByText('故事.docx')).toBeInTheDocument()
   })
-  it('示例填充保留附件必填，审核中不显示模拟审核操作', async () => {
+  it('手动填写并提交后，审核中不显示模拟审核操作', async () => {
     const user = userEvent.setup()
     render(
       <MemoryRouter>
         <ScriptFlowDemo owner="second-user" />
       </MemoryRouter>,
     )
-    await user.click(screen.getByRole('button', { name: '一键填入示例' }))
-    expect(screen.getByLabelText(/剧名/)).toHaveValue('血月禁域：双王血契')
-    expect(screen.getByRole('alert')).toHaveTextContent('请自行选择附件')
+    expect(screen.queryByRole('button', { name: '一键填入示例' })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(/剧名/), '测试剧名')
+    await user.type(screen.getByRole('combobox', { name: '题材' }), '悬疑{Enter}')
+    await user.type(screen.getByLabelText(/剧情简介/), '故事简介')
     await user.type(screen.getByLabelText(/申请人/), '测试申请人')
     await user.type(screen.getByLabelText(/学校/), '测试学校')
     await user.upload(screen.getByLabelText(/剧本文档附件/), new File(['测试'], '故事.docx'))

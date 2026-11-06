@@ -1680,36 +1680,6 @@ export default function SmartEntry({
                   />
                 </div>
               )}
-              <div className={styles.refineScriptRow}>
-                {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
-                {mode === 'video' && !isRealPersonVariant && (
-                  <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
-                    <EntryDropdown
-                      clearable
-                      placeholder="选择爆款脚本"
-                      value={skill}
-                      selectedOption={skill || NO_SCRIPT_OPTION}
-                      options={refineSelected ? [...SCRIPT_OPTIONS, '测评视频'] : SCRIPT_OPTIONS}
-                      onChange={pickSkill}
-                      icon={
-                        <svg
-                          viewBox="0 0 24 24"
-                          width="20"
-                          height="20"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.7"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                          <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                        </svg>
-                      }
-                    />
-                  </span>
-                )}
-              </div>
               <div className={styles.toolbar}>
                 <div className={styles.tools}>
                   <div className={styles.settingsGroup} ref={toolbarSettings.wrapRef}>
@@ -1824,6 +1794,35 @@ export default function SmartEntry({
                       />
                     </div>
                   </div>
+                  {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
+                  {mode === 'video' && !isRealPersonVariant && (
+                    <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
+                      <EntryDropdown
+                        clearable
+                        placement="top"
+                        placeholder="选择爆款脚本"
+                        value={skill}
+                        selectedOption={skill || NO_SCRIPT_OPTION}
+                        options={refineSelected ? [...SCRIPT_OPTIONS, '测评视频'] : SCRIPT_OPTIONS}
+                        onChange={pickSkill}
+                        icon={
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="20"
+                            height="20"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                            <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                          </svg>
+                        }
+                      />
+                    </span>
+                  )}
                 </div>
 
                 <div className={styles.sendArea}>
