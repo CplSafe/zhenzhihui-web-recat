@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from './mocks/server'
+import { resetSharedSessionRefreshForTests } from '@/api/sessionRefresh'
 import DeepAgentStudio from '@/components/director/DeepAgentStudio'
 import DirectorStudioView from '@/views/DirectorStudioView'
 import { DocumentEditor, Markdown, EventCard, Conversation, Approval } from '@/components/director/StudioCards'
@@ -44,6 +45,7 @@ class Socket {
   }
 }
 beforeEach(() => {
+  resetSharedSessionRefreshForTests()
   Socket.instances = []
   vi.stubGlobal('WebSocket', Socket)
   HTMLDialogElement.prototype.showModal = function () {
@@ -53,6 +55,7 @@ beforeEach(() => {
     this.removeAttribute('open')
   }
   server.use(
+    http.post('*/api/v1/auth/refresh', () => HttpResponse.json({ message: 'login required' }, { status: 401 })),
     http.get('*/agent-studio/', () => new HttpResponse('studio')),
     http.get('*/agent-studio/api/state', () =>
       HttpResponse.json({
@@ -73,6 +76,151 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it.each([65_000, 0])(
+    'limits rapid auth reconnects but permits normal long-lived renewals (interval %d)',
+    async (interval) => {
+      render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
+      await openHistory()
+      let now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+      try {
+        for (let index = 0; index < 4; index++) {
+          now += interval
+          act(() => Socket.instances.at(-1)!.emit({ event: 'stream_error', data: { code: 'AUTH_CHANGED' } }))
+          if (interval || index < 3) {
+            await waitFor(() => expect(Socket.instances).toHaveLength(index + 2))
+          } else {
+            await screen.findByText('登录状态持续变化，请重新检查业务登录。')
+            expect(Socket.instances).toHaveLength(4)
+          }
+        }
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+  it('renews business login and only replays safe reads, never generation', async () => {
+    let reads = 0,
+      writes = 0,
+      refreshes = 0
+    server.use(
+      http.get('*/agent-studio/api/state', () =>
+        ++reads === 1 ? HttpResponse.json({}, { status: 401 }) : HttpResponse.json({ connected: true }),
+      ),
+      http.post('*/api/v1/auth/refresh', () => {
+        refreshes++
+        return HttpResponse.json({})
+      }),
+      http.post('*/agent-studio/api/runs', () => {
+        writes++
+        return HttpResponse.json({}, { status: 401 })
+      }),
+    )
+    const api = createStudioAPI('/agent-studio', { workspaceId: 54, canvasId: 40 })
+    expect(await api.request('/api/state')).toEqual({ connected: true })
+    await expect(api.request('/api/runs', { message: 'generate' })).rejects.toMatchObject({ status: 401 })
+    expect([reads, writes, refreshes]).toEqual([2, 1, 1])
+  })
+  it('revalidates with current browser cookies and reconnects at the saved cursor after old handshake expires', async () => {
+    render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
+    await openHistory()
+    let reads = 0
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => {
+        reads++
+        return HttpResponse.json(snapshot({ cursor: 12 }))
+      }),
+    )
+    const old = Socket.instances[0]
+    act(() => old.emit({ event: 'stream_error', data: { code: 'AUTH_CHANGED' } }))
+    await waitFor(() => expect(Socket.instances).toHaveLength(2))
+    expect(old.close).toHaveBeenCalled()
+    expect(old.onclose).toBeNull()
+    expect(reads).toBe(1)
+    expect(new URL(Socket.instances[1].url).searchParams.get('after')).toBe('12')
+  })
+  it('stops on real logout, clears stale results and allows explicit recheck to restore the read stream', async () => {
+    render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
+    await openHistory()
+    let valid = false
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        valid ? HttpResponse.json(snapshot()) : HttpResponse.json({ detail: '业务登录已失效' }, { status: 401 }),
+      ),
+    )
+    act(() => Socket.instances[0].onclose?.({ code: 1008 }))
+    await screen.findByText('业务登录已失效')
+    expect(Socket.instances).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
+    valid = true
+    fireEvent.click(screen.getByRole('button', { name: '导演设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '重新检查业务登录' }))
+    await waitFor(() => expect(Socket.instances).toHaveLength(2))
+  })
+  it('forwards business binding with cookies on reads, writes, uploads and websocket without tokens', async () => {
+    const seen: Request[] = []
+    server.use(
+      http.get('*/agent-studio/api/state', ({ request }) => {
+        seen.push(request)
+        return HttpResponse.json({ connected: true })
+      }),
+      http.post('*/agent-studio/api/runs', ({ request }) => {
+        seen.push(request)
+        return HttpResponse.json({ id: 'new' })
+      }),
+      http.post('*/agent-studio/api/attachments', ({ request }) => {
+        seen.push(request)
+        return HttpResponse.json({ id: 'file' })
+      }),
+    )
+    const api = createStudioAPI('/agent-studio', { workspaceId: 54, canvasId: 40 })
+    await api.request('/api/state')
+    await api.request('/api/runs', { message: 'test' })
+    await api.upload(new File(['text'], 'script.txt'))
+    expect(seen).toHaveLength(3)
+    for (const request of seen) {
+      expect(request.credentials).toBe('same-origin')
+      expect(request.headers.get('X-Agent-Auth')).toBe('business')
+      expect(request.headers.get('X-Agent-Workspace-Id')).toBe('54')
+      expect(request.headers.get('X-Agent-Canvas-Id')).toBe('40')
+      expect(request.headers.has('Authorization')).toBe(false)
+    }
+    const url = new URL(api.socketURL('run1', 7))
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      after: '7',
+      auth: 'business',
+      workspace_id: '54',
+      canvas_id: '40',
+    })
+    expect(() => createStudioAPI('/agent-studio', { workspaceId: 54, canvasId: 0 })).toThrow()
+  })
+  it('embedded canvas uses business session without calling OAuth connect', async () => {
+    const connect = vi.fn()
+    server.use(
+      http.post('*/agent-studio/api/connect', () => {
+        connect()
+        return HttpResponse.json({ url: 'https://oauth.example' })
+      }),
+    )
+    render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
+    await screen.findByText('图片 · Nano Banana Pro (Google)')
+    fireEvent.click(screen.getByRole('button', { name: '导演设置' }))
+    expect(screen.queryByText('重新授权')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重新检查业务登录' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '重新检查业务登录' })).not.toBeDisabled())
+    expect(connect).not.toHaveBeenCalled()
+  })
+  it('expired business login never falls back to external OAuth or permits generation', async () => {
+    server.use(
+      http.get('*/agent-studio/api/state', () => HttpResponse.json({ detail: '请先登录业务系统' }, { status: 401 })),
+    )
+    render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
+    await screen.findByText('请先登录业务系统')
+    expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '导演设置' }))
+    expect(screen.queryByRole('button', { name: '登录并连接' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新检查业务登录' })).toBeInTheDocument()
+  })
   it('only accepts a same-origin mount and keeps cookie credentials out of socket URLs', () => {
     expect(() => createStudioAPI('https://other.test')).toThrow()
     expect(() => createStudioAPI('//other.test')).toThrow()

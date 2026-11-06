@@ -1,3 +1,5 @@
+import { runSharedSessionRefresh } from '@/api/sessionRefresh'
+
 /** Public Studio contract. MCP credentials and private Skill bodies never reach this client. */
 export type Data = Record<string, any>
 export type RunStatus = 'running' | 'waiting' | 'complete' | 'paused' | 'error'
@@ -82,23 +84,47 @@ export class StudioHTTPError extends Error {
   }
 }
 
-export function createStudioAPI(base = '/agent-studio') {
+export interface StudioBusinessBinding {
+  workspaceId: number
+  canvasId: number
+}
+
+export function createStudioAPI(base = '/agent-studio', business?: StudioBusinessBinding) {
   // Same-origin only: a component prop must never send the user's cookie to another service.
   if (!base.startsWith('/') || base.startsWith('//') || /[?#\\]/.test(base))
     throw new Error('Agent 服务必须使用同源路径。')
   const prefix = base.replace(/\/$/, '')
-  async function request<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  if (business && [business.workspaceId, business.canvasId].some((id) => !Number.isSafeInteger(id) || id <= 0))
+    throw new Error('站内导演需要有效的工作空间与画布。')
+  const authHeaders: Record<string, string> = business
+    ? {
+        'X-Agent-Auth': 'business',
+        'X-Agent-Workspace-Id': String(business.workspaceId),
+        'X-Agent-Canvas-Id': String(business.canvasId),
+      }
+    : {}
+  async function request<T>(path: string, data?: unknown, signal?: AbortSignal, renewed = false): Promise<T> {
     const response = await fetch(prefix + path, {
       credentials: 'same-origin',
       signal,
+      headers: {
+        ...authHeaders,
+        ...(data === undefined ? {} : { 'Content-Type': 'application/json', 'X-Agent-Request': '1' }),
+      },
       ...(data === undefined
         ? {}
         : {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Agent-Request': '1' },
             body: JSON.stringify(data),
           }),
     })
+    // Only replay reads. A generation/approval with an uncertain response must
+    // never be submitted again as a side effect of login renewal.
+    if (business && data === undefined && response.status === 401 && !renewed) {
+      const refresh = await runSharedSessionRefresh()
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      if (refresh.ok) return request<T>(path, undefined, signal, true)
+    }
     const value = await response.json().catch(() => null)
     if (!response.ok)
       throw new StudioHTTPError(
@@ -122,7 +148,7 @@ export function createStudioAPI(base = '/agent-studio') {
       const response = await fetch(prefix + '/api/attachments?name=' + encodeURIComponent(file.name), {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'X-Agent-Request': '1', 'Content-Type': 'application/octet-stream' },
+        headers: { ...authHeaders, 'X-Agent-Request': '1', 'Content-Type': 'application/octet-stream' },
         body: file,
       })
       const value = await response.json()
@@ -133,6 +159,11 @@ export function createStudioAPI(base = '/agent-studio') {
       const url = new URL(prefix + '/api/runs/' + encodeURIComponent(id) + '/ws', window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       url.searchParams.set('after', String(cursor))
+      if (business) {
+        url.searchParams.set('auth', 'business')
+        url.searchParams.set('workspace_id', String(business.workspaceId))
+        url.searchParams.set('canvas_id', String(business.canvasId))
+      }
       return url.toString()
     },
   }

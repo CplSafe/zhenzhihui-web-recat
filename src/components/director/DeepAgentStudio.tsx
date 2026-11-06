@@ -12,6 +12,7 @@ export interface DeepAgentStudioProps {
   apiBase?: string
   workspaceId?: number
   canvasId?: number
+  authMode?: 'business' | 'oauth'
   onCanvasChange?: (canvas: Data) => void
   onCollapse?: () => void
   className?: string
@@ -21,12 +22,15 @@ export default function DeepAgentStudio({
   apiBase = '/agent-studio',
   workspaceId,
   canvasId,
+  authMode,
   onCanvasChange,
   onCollapse,
   className = '',
 }: DeepAgentStudioProps) {
   const tooltipScope = useRef<HTMLElement>(null)
-  const studio = useStudio(apiBase, workspaceId)
+  const business =
+    authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
+  const studio = useStudio(apiBase, workspaceId, canvasId, business)
   const { api, state, catalog, current, run, loading, mismatch } = studio
   const mediaService = useMemo(
     () => ({ refresh: (assetId: number) => api.request<Data>(`/api/runs/${current}/assets/${assetId}`) }),
@@ -633,7 +637,7 @@ export default function DeepAgentStudio({
               </div>
               {!state.connected && !loading && (
                 <button type="button" className={styles.connectButton} onClick={() => openDialog('connection')}>
-                  连接工作空间，开始创作
+                  {business ? '检查业务登录' : '连接工作空间，开始创作'}
                 </button>
               )}
             </section>
@@ -876,7 +880,9 @@ export default function DeepAgentStudio({
             <p>
               {state.connected
                 ? `当前已连接工作空间 #${state.workspace_id}`
-                : '使用业务账号登录，并授权可使用的工作空间。'}
+                : business
+                  ? '请先登录业务系统；画布导演会复用当前账号和空间权限。'
+                  : '使用业务账号登录，并授权可使用的工作空间。'}
             </p>
             <p className={styles.muted}>生成按实际用量结算。你可以随时停止后续步骤，已提交任务会保留。</p>
             <button
@@ -885,6 +891,10 @@ export default function DeepAgentStudio({
               disabled={actionBusy || running}
               onClick={() =>
                 void action(async () => {
+                  if (business) {
+                    await studio.initialize()
+                    return
+                  }
                   const response = await api.request<{ url: string }>('/api/connect', {})
                   const url = new URL(response.url)
                   if (!['https:', 'http:'].includes(url.protocol)) throw new Error('授权链接无效')
@@ -892,7 +902,7 @@ export default function DeepAgentStudio({
                 })
               }
             >
-              {state.connected ? '重新授权' : '登录并连接'}
+              {business ? '重新检查业务登录' : state.connected ? '重新授权' : '登录并连接'}
             </button>
             <button
               type="button"
