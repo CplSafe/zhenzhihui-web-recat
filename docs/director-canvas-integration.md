@@ -205,3 +205,7 @@ pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入�
 对话正文由 `assistant` 事件提供，原样按 Markdown 展示。不要把工具回执或费用记录替换成回答正文。`model.generate_text` 的 `cost` 事件展示紧凑的“正在思考 / 思考”状态；积分保留在可展开明细和本轮费用中，token 与任务编号不在聊天正文展示。
 
 目前 WebSocket 传输的是持久化事件和任务状态；推理任务完成后才产生完整 `assistant` 正文，并非上游 token delta。不要用打字动画冒充模型文字流式返回。恢复连接沿用事件游标，不重新提交推理或媒体任务。
+
+### 当前发布状态（2026-11-06）
+
+本次发布暂时隐藏无限画布的 DoDo Agent。`CanvasView` 中 `showCanvasDirector=false` 同时关闭独立入口和 `CanvasDirectorDock` 挂载，不创建 Agent 会话或免授权连接。组件与独立调试页保留，历史会话不删除；下一版本恢复时统一打开此开关。
