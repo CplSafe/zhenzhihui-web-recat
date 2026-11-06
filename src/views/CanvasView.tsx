@@ -1,6 +1,7 @@
+import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
+import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
 import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
-import { useCanvasKeyboardPriority } from '@/composables/useCanvasKeyboardPriority'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import CanvasGettingStarted from '@/components/canvas/CanvasGettingStarted'
 import CanvasGlobalActions from '@/components/canvas/CanvasGlobalActions'
@@ -10,6 +11,7 @@ import { imageGenerationInfo, canvasImageDetails } from '@/utils/canvasImageInfo
 import { listCanvasTools } from '@/api/canvasTools'
 import { availableCanvasImageTools } from '@/utils/canvasTools'
 import CanvasNodeFailure from '@/components/canvas/CanvasNodeFailure'
+import CanvasFailureDetails from '@/components/canvas/CanvasFailureDetails'
 import { hasActiveVideoUpscale } from '@/utils/canvasUpscale'
 import {
   snapshotVideoAudio,
@@ -110,6 +112,7 @@ import type { HdRequest } from '@/components/canvas/CanvasHdWorkspace'
 import { materializeHdResults } from '@/utils/canvasHd'
 import type { HdTask } from '@/api/canvasHd'
 import CanvasViewControls from '@/components/canvas/CanvasViewControls'
+import CanvasBottomBar from '@/components/canvas/CanvasBottomBar'
 import CanvasNodeSearch from '@/components/canvas/CanvasNodeSearch'
 import CanvasSettingsPanel from '@/components/canvas/CanvasSettingsPanel'
 import CanvasShortcutsHelp from '@/components/canvas/CanvasShortcutsHelp'
@@ -2335,39 +2338,51 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
-      {(taskFailed || (connectionError && !taskRunning)) && (
-        <CanvasNodeFailure
-          zoom={canvasZoom}
-          title={
-            connectionError
-              ? '连接异常'
-              : (data.videoAudioComposition as VideoAudioComposition | undefined)?.failed
-                ? '配音合成失败'
-                : data.operationCode === 'video.upscale'
-                  ? '上次超分失败'
-                  : '生成失败'
-          }
-          failedAt={
-            connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
-          }
-          reason={connectionError || (data as any)?.taskFailure?.message || taskError}
-          requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
-          detailsData={data}
-        >
+      {taskFailed && kind === 'video' && mediaUrl && !connectionError ? (
+        <div className="canvas-video-previous-failure nodrag nopan" role="alert">
+          <span>上次任务失败，视频已保留</span>
+          <CanvasFailureDetails data={data} />
           {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
-            <button
-              type="button"
-              className="canvas-node-voice-retry nodrag nopan"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                onRetryAudioComposition?.(id)
-              }}
-            >
+            <button type="button" onClick={() => onRetryAudioComposition?.(id)}>
               重试配音合成
             </button>
           )}
-        </CanvasNodeFailure>
+        </div>
+      ) : (
+        (taskFailed || (connectionError && !taskRunning)) && (
+          <CanvasNodeFailure
+            zoom={canvasZoom}
+            title={
+              connectionError
+                ? '连接异常'
+                : (data.videoAudioComposition as VideoAudioComposition | undefined)?.failed
+                  ? '配音合成失败'
+                  : data.operationCode === 'video.upscale'
+                    ? '上次超分失败'
+                    : '生成失败'
+            }
+            failedAt={
+              connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
+            }
+            reason={connectionError || (data as any)?.taskFailure?.message || taskError}
+            requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
+            detailsData={data}
+          >
+            {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
+              <button
+                type="button"
+                className="canvas-node-voice-retry nodrag nopan"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRetryAudioComposition?.(id)
+                }}
+              >
+                重试配音合成
+              </button>
+            )}
+          </CanvasNodeFailure>
+        )
       )}
 
       {uploadingLocalFile && (
@@ -2388,55 +2403,63 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           </CanvasNodeStatus>
         )}
 
-      {taskRunning && !uploadingLocalFile && (
-        <CanvasNodeStatus zoom={canvasZoom} label={taskPresentation.title}>
-          {imagePreviews?.[id] && (
-            <img
-              src={imagePreviews[id]}
-              alt="生成预览"
-              style={{ maxWidth: '100%', maxHeight: '60%', objectFit: 'contain' }}
-            />
-          )}
-          <span className="canvas-node-generation-spinner" aria-hidden="true" />
-          <strong>{taskPresentation.title}</strong>
-          <span
-            className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
-            role={videoEstimatedProgress !== null ? 'progressbar' : undefined}
-            aria-label={videoEstimatedProgress !== null ? '视频生成预计进度' : undefined}
-            aria-valuemin={videoEstimatedProgress !== null ? 0 : undefined}
-            aria-valuemax={videoEstimatedProgress !== null ? 100 : undefined}
-            aria-valuenow={videoEstimatedProgress ?? undefined}
-            aria-hidden={videoEstimatedProgress === null ? 'true' : undefined}
-          >
-            <span
-              className="canvas-node-generation-progress__fill"
-              style={
-                videoEstimatedProgress !== null
-                  ? { width: `${videoEstimatedProgress}%` }
-                  : taskPresentation.progress
-                    ? { width: `${Math.round(taskPresentation.progress)}%` }
-                    : undefined
-              }
-            />
-          </span>
-          {videoEstimatedProgress !== null ? (
-            <span className="canvas-node-generation-estimate" aria-hidden="true">
-              预计进度 {videoEstimatedProgress.toFixed(2)}%
-            </span>
-          ) : null}
-          <span className="canvas-node-generation-detail">
-            {videoEstimatedProgress !== null && taskPresentation.detail.endsWith('%')
-              ? '模型处理中'
-              : taskPresentation.detail}
-          </span>
-          {taskElapsedLabel ? (
-            // 读屏只在状态文案变化时播报，每秒跳动的计时不进 live region
-            <span className="canvas-node-generation-elapsed" aria-hidden="true">
-              已用时 {taskElapsedLabel}
-            </span>
-          ) : null}
-        </CanvasNodeStatus>
+      {taskStatus === 'status_query_failed' && kind === 'video' && mediaUrl && !uploadingLocalFile && (
+        <div className="canvas-video-previous-failure nodrag nopan" role="status">
+          <span>任务状态查询异常，继续自动重试；当前展示已有视频，本次结果待确认</span>
+        </div>
       )}
+
+      {taskRunning &&
+        !uploadingLocalFile &&
+        !(taskStatus === 'status_query_failed' && kind === 'video' && mediaUrl) && (
+          <CanvasNodeStatus zoom={canvasZoom} label={taskPresentation.title}>
+            {imagePreviews?.[id] && (
+              <img
+                src={imagePreviews[id]}
+                alt="生成预览"
+                style={{ maxWidth: '100%', maxHeight: '60%', objectFit: 'contain' }}
+              />
+            )}
+            <span className="canvas-node-generation-spinner" aria-hidden="true" />
+            <strong>{taskPresentation.title}</strong>
+            <span
+              className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
+              role={videoEstimatedProgress !== null ? 'progressbar' : undefined}
+              aria-label={videoEstimatedProgress !== null ? '视频生成预计进度' : undefined}
+              aria-valuemin={videoEstimatedProgress !== null ? 0 : undefined}
+              aria-valuemax={videoEstimatedProgress !== null ? 100 : undefined}
+              aria-valuenow={videoEstimatedProgress ?? undefined}
+              aria-hidden={videoEstimatedProgress === null ? 'true' : undefined}
+            >
+              <span
+                className="canvas-node-generation-progress__fill"
+                style={
+                  videoEstimatedProgress !== null
+                    ? { width: `${videoEstimatedProgress}%` }
+                    : taskPresentation.progress
+                      ? { width: `${Math.round(taskPresentation.progress)}%` }
+                      : undefined
+                }
+              />
+            </span>
+            {videoEstimatedProgress !== null ? (
+              <span className="canvas-node-generation-estimate" aria-hidden="true">
+                预计进度 {videoEstimatedProgress.toFixed(2)}%
+              </span>
+            ) : null}
+            <span className="canvas-node-generation-detail">
+              {videoEstimatedProgress !== null && taskPresentation.detail.endsWith('%')
+                ? '模型处理中'
+                : taskPresentation.detail}
+            </span>
+            {taskElapsedLabel ? (
+              // 读屏只在状态文案变化时播报，每秒跳动的计时不进 live region
+              <span className="canvas-node-generation-elapsed" aria-hidden="true">
+                已用时 {taskElapsedLabel}
+              </span>
+            ) : null}
+          </CanvasNodeStatus>
+        )}
 
       {videoDetailsOpen && kind === 'video' && (
         <Suspense fallback={null}>
@@ -2641,6 +2664,16 @@ function CanvasInner() {
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
+  const directorOpen = openDirectorBinding === directorBindingKey
+  const requestDirectorSyncRef = useRef<() => void>(() => {})
+  const onDirectorCanvasChange = useCallback(
+    (snapshot: Record<string, any>) => {
+      if (snapshot.id === canvasId && Number.isSafeInteger(snapshot.revision)) requestDirectorSyncRef.current()
+    },
+    [canvasId],
+  )
   // 模型目录：来自 /api/v1/ai/models
   const {
     groups,
@@ -2791,7 +2824,6 @@ function CanvasInner() {
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const canvasRootRef = useRef<HTMLDivElement>(null)
-  const keyboardPriority = useCanvasKeyboardPriority(canvasRootRef, preferences.shortcuts)
   const nodePointerSelectionRef = useRef<{ id: string; selectedIds: string[] } | null>(null)
   const pointerStartedInPanelRef = useRef(false)
   const shortcutsBlockedRef = useRef(false)
@@ -4240,6 +4272,35 @@ function CanvasInner() {
     [selectedNode?.id, selectedNode?.kind, inheritedPromptTexts, commitHistory, setEdges, setNodes, setSaveStatus],
   )
 
+  // 同类节点连线时继承来源的生成配置，素材、提示词和生成结果仍属于各自节点。
+  const inheritedConnectionConfig = useCallback((source: Node | undefined, targetKind: string) => {
+    if (!source || !['image', 'video', 'text'].includes(targetKind)) return undefined
+    if (String(source.data?.kind || source.type || '') !== targetKind) return undefined
+    const modelVersionId = Number(source.data?.modelVersionId || resolvedModelByNodeRef.current.get(source.id) || 0)
+    if (!modelVersionId) return undefined
+    return {
+      modelVersionId,
+      params: { ...((source.data?.params as Record<string, unknown>) || {}) },
+      ...(typeof source.data?.ratio === 'string' ? { ratio: source.data.ratio } : {}),
+      ...(targetKind === 'video' && source.data?.videoMode !== undefined
+        ? { videoMode: source.data.videoMode as CanvasVideoMode }
+        : {}),
+    }
+  }, [])
+
+  const applyConnectionConfig = useCallback(
+    (targetId: string, config: ReturnType<typeof inheritedConnectionConfig>) => {
+      if (!config) return
+      setNodes((items) =>
+        items.map((node) => (node.id === targetId ? { ...node, data: { ...node.data, ...config } } : node)),
+      )
+      setSelectedNode((current) => (current?.id === targetId ? { ...current, ...config } : current))
+      setSaveStatus('dirty')
+      scheduleSyncRef.current()
+    },
+    [setNodes],
+  )
+
   const handlePickRefNode = useCallback(
     (sourceNode: Node) => {
       if (!pickingTargetId) return
@@ -4290,6 +4351,8 @@ function CanvasInner() {
       // 添加参考连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => [...eds, newEdge])
+      const targetKind = String(latestRef.current.nodes.find((n) => n.id === pickingTargetId)?.data?.kind || 'text')
+      applyConnectionConfig(pickingTargetId, inheritedConnectionConfig(sourceNode, targetKind))
       // 支持连续点选多个参考：通用「+」进来的留在选择模式，直到名额用完或用户点「完成」。
       // 指定槽位（首帧/尾帧）只替换那一格，选完即退出。setEdges 尚未落到 latestRef，名额手动减一。
       const remaining = remainingRefCapacity(pickingTargetId) - 1
@@ -4335,6 +4398,8 @@ function CanvasInner() {
       validateConnection,
       flashDuplicateEdge,
       remainingRefCapacity,
+      applyConnectionConfig,
+      inheritedConnectionConfig,
     ],
   )
 
@@ -4417,12 +4482,16 @@ function CanvasInner() {
       // 添加连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => created.reduce((acc, edge) => addEdge(edge, acc), eds))
+      const configSource = created
+        .map((edge) => latestRef.current.nodes.find((node) => node.id === edge.source))
+        .find((source) => inheritedConnectionConfig(source, targetKind))
+      applyConnectionConfig(targetId, inheritedConnectionConfig(configSource, targetKind))
       if ((target.data?.resultUrl || target.data?.assetId) && (targetKind === 'image' || targetKind === 'video')) {
         showToast(`已添加新的输入，当前结果保持不变；点击“重新生成”后应用`, 'success')
       }
       return created.length
     },
-    [setEdges, commitHistory, validateConnection],
+    [setEdges, commitHistory, validateConnection, applyConnectionConfig, inheritedConnectionConfig],
   )
 
   const confirmBatchConnection = useCallback(
@@ -4654,9 +4723,10 @@ function CanvasInner() {
           id,
           kind: type,
           sourceRefs: [],
-          ratio,
-          videoMode,
-          modelVersionId: undefined,
+          ratio: newNode.data.ratio as string | undefined,
+          videoMode: newNode.data.videoMode as CanvasVideoMode | undefined,
+          modelVersionId: newNode.data.modelVersionId as number | undefined,
+          params: newNode.data.params as Record<string, unknown> | undefined,
         })
       setSaveStatus('dirty')
       // 新节点是项目的首个持久化内容。立即写入草稿并排入云端同步队列，
@@ -4789,10 +4859,12 @@ function CanvasInner() {
             })),
         })
       }
-      const newNodeId = appendNewNode(type, position, { ratio: inheritNodeRatio(type) })
+      const sourceNode = latestRef.current.nodes.find((n) => n.id === addMenu.sourceId)
+      const configSource = batch ? batch.sources.find((node) => inheritedConnectionConfig(node, type)) : sourceNode
+      const inheritedConfig = inheritedConnectionConfig(configSource, type)
+      const newNodeId = appendNewNode(type, position, { ratio: inheritNodeRatio(type), extraData: inheritedConfig })
       // 自动连线：拖线源节点 → 新节点（来源限制已在菜单项过滤时校验，新节点参考数不会超限）。
       // 起点在多选里时把整个选区都连上：「选中三张图拖出来建个视频节点」一步到位。
-      const sourceNode = latestRef.current.nodes.find((n) => n.id === addMenu.sourceId)
       if (newNodeId && sourceNode) {
         const sources = batch
           ? batch.sources.map((node) => node.id)
@@ -4866,6 +4938,7 @@ function CanvasInner() {
       appendNewNode,
       setEdges,
       inheritNodeRatio,
+      inheritedConnectionConfig,
       resolveConnectSources,
       resolveAddMenuInputs,
       fitView,
@@ -5389,7 +5462,6 @@ function CanvasInner() {
   // 本地存在未保存变更时暂缓应用远端，先让保存队列完成，避免覆盖用户正在编辑的内容。
   useEffect(() => {
     let disposed = false
-    let timer = 0
     // 连续拉到空增量的轮次：画布闲置时逐步拉长间隔，一有变化立刻回到基础频率。
     // 上限刻意压在 10 秒（而不是 30 秒）：这条循环同时承担多人协作的变更合并，
     // 退避过久会让「别人改了我这边多久能看到」变得难以接受。
@@ -5398,7 +5470,7 @@ function CanvasInner() {
     const MAX_IDLE_DELAY = 10000
     const nextIdleDelay = () => Math.min(MAX_IDLE_DELAY, BASE_DELAY * Math.pow(1.5, Math.min(idleRounds, 4)))
     const schedule = (delay = nextIdleDelay()) => {
-      if (!disposed) timer = window.setTimeout(pullRemoteChanges, delay)
+      if (!disposed) loop.schedule(delay)
     }
     const pullRemoteChanges = async () => {
       const canvasId = canvasIdRef.current
@@ -5499,6 +5571,8 @@ function CanvasInner() {
       }
       schedule()
     }
+    const loop = createCanvasPullLoop(pullRemoteChanges)
+    requestDirectorSyncRef.current = loop.wake
     schedule(1500)
     const onOnline = () => {
       setCloudStatus('loading')
@@ -5512,22 +5586,22 @@ function CanvasInner() {
     const onVisible = () => {
       if (document.hidden) return
       idleRounds = 0
-      window.clearTimeout(timer)
-      schedule(0)
+      loop.wake()
     }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     return () => {
       disposed = true
-      window.clearTimeout(timer)
+      loop.dispose()
+      if (requestDirectorSyncRef.current === loop.wake) requestDirectorSyncRef.current = () => {}
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
     // 不依赖 saveStatus：它每次编辑都会三态翻转，进依赖数组会让整个循环反复重建、
     // 每次都从最短间隔重新起步（编辑越频繁轮询越密）。循环内改用 saveStatusRef 读取。
-  }, [pushCanvasMutations, setEdges, setNodes, workspaceId])
+  }, [pushCanvasMutations, setEdges, setNodes, workspaceId, canvasId])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -7734,6 +7808,7 @@ function CanvasInner() {
                         .filter((id) => !prevHistory.some((entry) => entry.assetId === id))
                         .map((id) => ({
                           assetId: id,
+                          taskId,
                           kind: kind === 'video' ? 'video' : 'image',
                           createdAt: new Date().toISOString(),
                           prompt: String(node.data.prompt || '') || undefined,
@@ -10765,16 +10840,6 @@ function CanvasInner() {
     ],
   )
 
-  /** 底部读数：节点 / 连线 / 生成失败数 */
-  const canvasStats = useMemo(
-    () => ({
-      nodes: nodes.length,
-      edges: edges.length,
-      failed: nodes.filter((node) => normalizeAiTaskStatus((node.data as any)?.taskStatus) === 'failed').length,
-    }),
-    [nodes, edges],
-  )
-
   const canvasShortcutsBlocked = Boolean(
     canvasModalOpen ||
     imageTool ||
@@ -10943,7 +11008,7 @@ function CanvasInner() {
         }}
         onPointerDownCapture={(event) => {
           const target = event.target as HTMLElement
-          pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area'))
+          pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
           nodePointerSelectionRef.current = nodeId
             ? {
@@ -10977,6 +11042,16 @@ function CanvasInner() {
           <div key={interactionHint.id} className="canvas-interaction-hint" role="status" aria-live="polite">
             {interactionHint.text}
           </div>
+        )}
+        {currentUserId && workspaceId > 0 && canvasId > 0 && (
+          <CanvasDirectorDock
+            key={directorBindingKey}
+            workspaceId={workspaceId}
+            canvasId={canvasId}
+            onCanvasChange={onDirectorCanvasChange}
+            opened={directorOpen}
+            onCollapse={() => setOpenDirectorBinding(null)}
+          />
         )}
         <CanvasNavigationStatus
           saveStatus={saveStatus}
@@ -11059,23 +11134,67 @@ function CanvasInner() {
           </Suspense>
         )}
 
-        {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
-        {!drawerPanel && (
-          <CanvasFloatingToolbar
-            shortcuts={preferences.shortcuts}
-            leaving={toolbarLeaving}
-            onAddNode={handleAddNode}
-            panModeEnabled={panModeEnabled}
-            onPanModeToggle={handlePanModeToggle}
-            dragEnabled={dragEnabled}
-            onDragToggle={handleDragToggle}
-            onAddLocalImage={() => openLocalImagePicker()}
-            onOpenSearch={() => setSearchOpen(true)}
-            onOpenAssets={() => openDrawerPanel('assets')}
-            onOpenHistory={() => openDrawerPanel('history')}
-            onOpenHelp={() => setShortcutsOpen(true)}
-          />
-        )}
+        <CanvasBottomBar
+          overview={
+            nodes.length > 0 &&
+            minimapVisible && (
+              <MiniMap
+                className="canvas-minimap"
+                position="bottom-left"
+                pannable
+                zoomable
+                ariaLabel="画布缩略图"
+                nodeColor={miniMapNodeColor}
+                nodeStrokeWidth={0}
+                maskColor="rgba(8, 9, 13, 0.78)"
+              />
+            )
+          }
+          controls={
+            nodes.length > 0 && (
+              <CanvasViewControls
+                zoom={transform[2]}
+                onArrange={() => void arrangeNodes()}
+                onZoomReset={() => zoomTo(1, { duration: 160 })}
+                snapEnabled={snapEnabled}
+                onSnapToggle={() => setSnapEnabled((value) => !value)}
+                minimapVisible={minimapVisible}
+                onMinimapToggle={() =>
+                  setMinimapVisible((value) => {
+                    saveMinimapVisible(!value)
+                    return !value
+                  })
+                }
+                edgesHidden={edgesHidden}
+                onEdgesToggle={() => setEdgesHidden((value) => !value)}
+              />
+            )
+          }
+        >
+          {!drawerPanel && (
+            <CanvasFloatingToolbar
+              shortcuts={preferences.shortcuts}
+              leaving={toolbarLeaving}
+              onAddNode={handleAddNode}
+              panModeEnabled={panModeEnabled}
+              onPanModeToggle={handlePanModeToggle}
+              dragEnabled={dragEnabled}
+              onDragToggle={handleDragToggle}
+              onAddLocalImage={() => openLocalImagePicker()}
+              onOpenSearch={() => setSearchOpen(true)}
+              onOpenAssets={() => openDrawerPanel('assets')}
+              onOpenHistory={() => openDrawerPanel('history')}
+              onOpenHelp={() => setShortcutsOpen(true)}
+              directorOpen={directorOpen}
+              onToggleDirector={
+                currentUserId && workspaceId > 0 && canvasId > 0
+                  ? () =>
+                      setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
+                  : undefined
+              }
+            />
+          )}
+        </CanvasBottomBar>
 
         {/* 剪辑时间线编辑器：节点上的「精修」或双击打开，用于逐帧裁剪与分割；
           加片段/删片段/合成在节点卡片上就能做，不必进这里 */}
@@ -11601,23 +11720,6 @@ function CanvasInner() {
                 />
               ))}
             </ViewportPortal>
-            {/*
-              小地图：节点多到一定程度后，缩小到 minZoom(0.01) 虽然装得下全图，
-              但节点只剩色块、认不出谁是谁——「能缩出去」不等于「能定位」。
-              小地图给的是俯瞰 + 点击直达，这才是大图的导航手段。
-            */}
-            {nodes.length > 0 && minimapVisible && (
-              <MiniMap
-                className="canvas-minimap"
-                position="bottom-left"
-                pannable
-                zoomable
-                ariaLabel="画布缩略图"
-                nodeColor={miniMapNodeColor}
-                nodeStrokeWidth={0}
-                maskColor="rgba(8, 9, 13, 0.78)"
-              />
-            )}
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
 
@@ -11925,36 +12027,6 @@ function CanvasInner() {
         {/* 左下角复位视图按钮 */}
         {searchOpen && (
           <CanvasNodeSearch nodes={searchableNodes} onPick={focusNodeFromSearch} onClose={() => setSearchOpen(false)} />
-        )}
-
-        {nodes.length > 0 && (
-          <CanvasViewControls
-            keyboardPriority={keyboardPriority.enabled}
-            keyboardPriorityPending={keyboardPriority.pending}
-            onKeyboardPriorityToggle={() => void keyboardPriority.toggle()}
-            uiSize={preferences.uiSize}
-            onUiSizeChange={(uiSize) => updatePreferences({ uiSize })}
-            zoom={transform[2]}
-            onZoomIn={() => zoomIn({ duration: 160 })}
-            onZoomOut={() => zoomOut({ duration: 160 })}
-            onZoomTo={(zoom) => void zoomTo(zoom, { duration: 150 })}
-            onZoomReset={() => zoomTo(1, { duration: 160 })}
-            onFitView={() => fitView({ padding: 0.2, duration: 300, maxZoom: 1 })}
-            snapEnabled={snapEnabled}
-            onSnapToggle={() => setSnapEnabled((value) => !value)}
-            minimapVisible={minimapVisible}
-            onMinimapToggle={() =>
-              setMinimapVisible((value) => {
-                saveMinimapVisible(!value)
-                return !value
-              })
-            }
-            edgesHidden={edgesHidden}
-            onEdgesToggle={() => setEdgesHidden((value) => !value)}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onOpenHelp={() => setShortcutsOpen(true)}
-            stats={canvasStats}
-          />
         )}
 
         {/* 连线剪刀图标层 — 选中连线时显示 */}

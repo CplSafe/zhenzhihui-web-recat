@@ -254,7 +254,6 @@ export default function ScriptIdeasView() {
   const [listQuery, setListQuery] = useState('')
   const [listStage, setListStage] = useState('')
   const [listStatus, setListStatus] = useState('')
-  const [listGenre, setListGenre] = useState('')
   const [stats, setStats] = useState<Record<string, number> | null>(null)
   const [content, setContent] = useState(''),
     [error, setError] = useState(''),
@@ -460,7 +459,7 @@ export default function ScriptIdeasView() {
     if (!isList) return
     let cancelled = false
     setLoading(true)
-    listApplications(offset, { q: listQuery, stage: listStage, review_status: listStatus, genre: listGenre })
+    listApplications(offset, { q: listQuery, stage: listStage, review_status: listStatus })
       .then((r) => {
         if (!cancelled) {
           setItems(r.items)
@@ -483,7 +482,7 @@ export default function ScriptIdeasView() {
     return () => {
       cancelled = true
     }
-  }, [isList, offset, listQuery, listStage, listStatus, listGenre])
+  }, [isList, offset, listQuery, listStage, listStatus])
   const open = (path: string) => void requireAuth(() => navigate(path), { returnTo: path })
   const markScriptErrors = (values: Record<string, string>) => {
     const errors = validateScriptFields(values)
@@ -1281,8 +1280,6 @@ export default function ScriptIdeasView() {
                             ['creative', '创意'],
                             ['card', '一卡'],
                             ['script', '剧本'],
-                            ['final', '终稿'],
-                            ['production', '制作'],
                           ].map(([value, label]) => (
                             <option key={value} value={value}>
                               {label}
@@ -1304,24 +1301,12 @@ export default function ScriptIdeasView() {
                             </option>
                           ))}
                         </select>
-                        <label>
-                          题材
-                          <input
-                            value={listGenre}
-                            onChange={(e) => {
-                              setOffset(0)
-                              setListGenre(e.target.value)
-                            }}
-                            placeholder="输入题材"
-                          />
-                        </label>
                         <button
                           onClick={() => {
                             setOffset(0)
                             setListQuery('')
                             setListStage('')
                             setListStatus('')
-                            setListGenre('')
                           }}
                         >
                           重置
@@ -1359,9 +1344,7 @@ export default function ScriptIdeasView() {
                         ))
                       ) : (
                         <p className="si-list-empty">
-                          {listQuery || listStage || listStatus || listGenre
-                            ? '没有匹配的申请。'
-                            : '暂无已提交的创意。'}
+                          {listQuery || listStage || listStatus ? '没有匹配的申请。' : '暂无已提交的创意。'}
                         </p>
                       )}
                       <div className="si-pagination">
@@ -1738,7 +1721,15 @@ export default function ScriptIdeasView() {
                                         }}
                                       />
                                       <span>
-                                        我确认本剧本为原创，并同意平台用于后续制作评估 <em>*</em>
+                                        我确认本剧本为原创，已阅读
+                                        <a
+                                          href="/script-ideas/originality-statement"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          《原创说明》
+                                        </a>
+                                        并同意平台用于后续制作评估 <em>*</em>
                                       </span>
                                     </label>
                                   </div>
@@ -1794,7 +1785,8 @@ export default function ScriptIdeasView() {
                                             className={index >= 7 ? 'si-card-field-wide' : undefined}
                                           >
                                             <span>
-                                              {field} {props.required && <em>*</em>}
+                                              {field}
+                                              {(index === 3 || index === 4) && '（秒）'} {props.required && <em>*</em>}
                                               {index === 6 && '（多个集数用逗号分隔）'}
                                             </span>
                                             {index >= 7 ? (
@@ -1803,7 +1795,15 @@ export default function ScriptIdeasView() {
                                               <input
                                                 {...props}
                                                 type={index >= 2 && index !== 6 ? 'number' : 'text'}
-                                                min={index >= 2 && index !== 6 ? 1 : undefined}
+                                                min={
+                                                  index === 3 || index === 4
+                                                    ? 10
+                                                    : index >= 2 && index !== 6
+                                                      ? 1
+                                                      : undefined
+                                                }
+                                                max={index === 3 || index === 4 ? 600 : undefined}
+                                                step={index >= 2 && index !== 6 ? 1 : undefined}
                                               />
                                             )}
                                             {fieldError && (
@@ -1827,7 +1827,15 @@ export default function ScriptIdeasView() {
                                           }}
                                         />
                                         <span>
-                                          我确认本剧本为原创，并同意平台用于后续制作评估 <em>*</em>
+                                          我确认本剧本为原创，已阅读
+                                          <a
+                                            href="/script-ideas/originality-statement"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                          >
+                                            《原创说明》
+                                          </a>
+                                          并同意平台用于后续制作评估 <em>*</em>
                                         </span>
                                       </label>
                                     )}

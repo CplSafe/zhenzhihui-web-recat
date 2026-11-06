@@ -1,0 +1,20 @@
+.dock {
+  position: absolute;
+  right: 20px;
+  bottom: 24px;
+  width: min(420px, calc(100% - 40px));
+  z-index: 1200;
+  pointer-events: none;
+}
+.dock > * {
+  pointer-events: auto;
+}
+.dock > [hidden] {
+  display: none;
+}
+.loading {
+  padding: 24px;
+  border-radius: 20px;
+  color: #ddd;
+  background: #202020;
+}

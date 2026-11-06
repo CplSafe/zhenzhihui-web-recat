@@ -30,6 +30,8 @@ export interface CanvasResultHistoryEntry {
   imageInfo?: import('./canvasImageInfo').CanvasImageInfo
   /** 生成结果素材 ID（耐久，展示时按它现算下载地址） */
   assetId: number
+  /** 产生该素材的任务；旧历史可能没有此字段。 */
+  taskId?: number
   /** 结果类型：决定缩略图用 <img> 还是 <video> 首帧 */
   kind: 'image' | 'video' | 'audio'
   /** 生成时间（ISO），用于排序与展示 */

@@ -1,409 +1,90 @@
-/**
- * 画布左下角的视图控制条。
- *
- * 把「怎么看这张画布」的开关收在一处：缩放、复位、网格吸附、隐藏连线。
- * 之前这里只有一个孤立的复位按钮，缩放全靠滚轮——没有当前倍率的读数，
- * 也没法回到 100%，用户只能一直滚到「看着差不多」。
- *
- * 与小地图同处左下角是有意的：它们同属「视图导航」，分散在两角会让人来回找。
- */
+import { Tooltip, type TooltipProps } from 'antd'
 import styles from './CanvasViewControls.module.css'
+import { ArrangeIcon, MiniMapIcon, EdgeIcon, MagnetIcon } from './CanvasControlIcons'
 
 export interface CanvasViewControlsProps {
-  keyboardPriority?: boolean
-  keyboardPriorityPending?: boolean
-  onKeyboardPriorityToggle?: () => void
-  uiSize?: 'standard' | 'large' | 'extra-large'
-  onUiSizeChange?: (size: 'standard' | 'large' | 'extra-large') => void
-  /** 当前缩放倍率（1 = 100%） */
   zoom: number
-  onZoomIn: () => void
-  onZoomOut: () => void
-  /** 点击倍率读数回到 100% */
+  onArrange: () => void
   onZoomReset: () => void
-  onZoomTo?: (zoom: number) => void
-  /** 复位视图：缩放到刚好装下全部节点 */
-  onFitView: () => void
   snapEnabled: boolean
   onSnapToggle: () => void
   edgesHidden: boolean
   onEdgesToggle: () => void
-  /** 小地图当前是否显示；开关就放在这条控制条上（它本就是「怎么看画布」的一部分） */
   minimapVisible: boolean
   onMinimapToggle: () => void
-  /** 打开画布设置（滚轮行为、辅助线、通知…）；不传则不显示按钮 */
-  onOpenSettings?: () => void
-  /** 打开快捷键速查；不传则不显示按钮 */
-  onOpenHelp?: () => void
-  /**
-   * 画布规模读数：节点 / 连线 / 失败数。
-   * 几百个节点的画布里「有几个生成失败了」靠肉眼扫不出来，这里给个数，失败数不为零就红。
-   */
-  stats?: { nodes: number; edges: number; failed: number }
 }
 
+/** Only the five persistent controls shown beside the canvas. */
 export default function CanvasViewControls({
-  keyboardPriority = false,
-  keyboardPriorityPending = false,
-  onKeyboardPriorityToggle,
-  uiSize = 'standard',
-  onUiSizeChange,
   zoom,
-  onZoomIn,
-  onZoomOut,
+  onArrange,
   onZoomReset,
-  onZoomTo,
-  onFitView,
   snapEnabled,
   onSnapToggle,
   edgesHidden,
   onEdgesToggle,
   minimapVisible,
   onMinimapToggle,
-  onOpenSettings,
-  onOpenHelp,
-  stats,
 }: CanvasViewControlsProps) {
-  // 极小倍率下 1% 的精度已经没有意义，但读数不能显示成 0%——那看起来像坏了
+  const tooltipProps: TooltipProps = {
+    placement: 'top' as const,
+    trigger: ['hover', 'focus'],
+    mouseEnterDelay: 0.12,
+    destroyOnHidden: true,
+    color: '#262626',
+    classNames: { root: styles.tooltip },
+  }
   const percent = Math.max(1, Math.round((Number(zoom) || 1) * 100))
-
   return (
     <div className={`${styles.bar} nodrag nopan`} role="toolbar" aria-label="画布视图控制">
-      {onUiSizeChange && (
-        <select
-          className={styles.uiSize}
-          aria-label="界面大小"
-          value={uiSize}
-          onChange={(event) => onUiSizeChange(event.target.value as 'standard' | 'large' | 'extra-large')}
+      <Tooltip {...tooltipProps} title="整理画布">
+        <button type="button" className={styles.btn} onClick={onArrange} aria-label="整理画布">
+          <ArrangeIcon />
+        </button>
+      </Tooltip>
+      <Tooltip {...tooltipProps} title={minimapVisible ? '隐藏小地图' : '显示小地图'}>
+        <button
+          type="button"
+          className={`${styles.btn} ${minimapVisible ? styles.active : ''}`}
+          onClick={onMinimapToggle}
+          aria-label="小地图"
+          aria-pressed={minimapVisible}
         >
-          <option value="standard">界面：标准</option>
-          <option value="large">界面：较大</option>
-          <option value="extra-large">界面：特大</option>
-        </select>
-      )}
-      <button type="button" className={styles.btn} onClick={onZoomOut} title="缩小" aria-label="缩小">
-        <MinusIcon />
-      </button>
-
-      {/* 读数本身可点：这是回到 100% 最直觉的入口，比再加一个按钮省地方 */}
-      {onZoomTo ? (
-        <select
-          aria-label="画布缩放"
-          className={styles.zoomValue}
-          value={percent}
-          onChange={(event) => onZoomTo(Number(event.target.value) / 100)}
+          <MiniMapIcon />
+        </button>
+      </Tooltip>
+      <Tooltip {...tooltipProps} title={edgesHidden ? '显示节点连线' : '隐藏节点连线'}>
+        <button
+          type="button"
+          className={`${styles.btn} ${edgesHidden ? styles.active : ''}`}
+          onClick={onEdgesToggle}
+          aria-label="隐藏连线"
+          aria-pressed={edgesHidden}
         >
-          {![1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].includes(percent) && (
-            <option value={percent}>{percent}%</option>
-          )}
-          {[1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].map((value) => (
-            <option key={value} value={value}>
-              {value}%
-            </option>
-          ))}
-        </select>
-      ) : (
+          <EdgeIcon />
+        </button>
+      </Tooltip>
+      <Tooltip {...tooltipProps} title={snapEnabled ? '关闭网格吸附' : '开启网格吸附'}>
+        <button
+          type="button"
+          className={`${styles.btn} ${snapEnabled ? styles.active : ''}`}
+          onClick={onSnapToggle}
+          aria-label="网格吸附"
+          aria-pressed={snapEnabled}
+        >
+          <MagnetIcon />
+        </button>
+      </Tooltip>
+      <Tooltip {...tooltipProps} title="回到 100%">
         <button
           type="button"
           className={styles.zoomValue}
           onClick={onZoomReset}
-          title="点击回到 100%"
           aria-label={`当前缩放 ${percent}%，点击回到 100%`}
         >
           {percent}%
         </button>
-      )}
-
-      <button type="button" className={styles.btn} onClick={onZoomIn} title="放大" aria-label="放大">
-        <PlusIcon />
-      </button>
-
-      <span className={styles.divider} aria-hidden="true" />
-
-      <button type="button" className={styles.btn} onClick={onFitView} title="复位视图" aria-label="复位视图">
-        <FitIcon />
-      </button>
-
-      <button
-        type="button"
-        className={`${styles.btn} ${snapEnabled ? styles.btnActive : ''}`}
-        onClick={onSnapToggle}
-        title={snapEnabled ? '关闭网格吸附' : '开启网格吸附'}
-        aria-label="网格吸附"
-        aria-pressed={snapEnabled}
-      >
-        <GridIcon />
-      </button>
-
-      <button
-        type="button"
-        className={`${styles.btn} ${edgesHidden ? styles.btnActive : ''}`}
-        onClick={onEdgesToggle}
-        title={edgesHidden ? '显示连线' : '隐藏连线'}
-        aria-label="隐藏连线"
-        aria-pressed={edgesHidden}
-      >
-        <EdgeIcon hidden={edgesHidden} />
-      </button>
-
-      {/*
-       * 小地图开关。它本来只能一直占着左下角那 190×130，
-       * 画布内容靠近左下时挡视线也关不掉——开关放这里最顺手，
-       * 因为这条控制条本就是「怎么看这张画布」的集合。
-       */}
-      <button
-        type="button"
-        className={`${styles.btn} ${styles.minimapToggle} ${minimapVisible ? styles.btnActive : ''}`}
-        onClick={onMinimapToggle}
-        title={minimapVisible ? '隐藏小地图' : '显示小地图'}
-        aria-label="小地图"
-        aria-pressed={minimapVisible}
-      >
-        <MiniMapIcon />
-      </button>
-
-      {(onOpenSettings || onOpenHelp) && <span className={styles.divider} aria-hidden="true" />}
-
-      {onOpenSettings && (
-        <button type="button" className={styles.btn} onClick={onOpenSettings} title="画布设置" aria-label="画布设置">
-          <GearIcon />
-        </button>
-      )}
-
-      {onKeyboardPriorityToggle && (
-        <button
-          type="button"
-          className={`${styles.btn} ${keyboardPriority ? styles.btnActive : ''}`}
-          onClick={onKeyboardPriorityToggle}
-          disabled={keyboardPriorityPending}
-          aria-label="全屏快捷键模式"
-          aria-pressed={keyboardPriority}
-          aria-busy={keyboardPriorityPending}
-          title={keyboardPriority ? '退出全屏快捷键模式（Esc）' : '进入全屏，让画布快捷键优先于浏览器'}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            aria-hidden="true"
-          >
-            <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
-            <rect x="7" y="9" width="10" height="7" rx="1.5" />
-            <path d="M9 12h1m1 0h1m1 0h2M10 14h4" />
-          </svg>
-        </button>
-      )}
-      {onOpenHelp && (
-        <button
-          type="button"
-          className={styles.btn}
-          onClick={onOpenHelp}
-          title="快捷键速查（? / Shift + /）"
-          aria-label="快捷键速查"
-        >
-          <HelpIcon />
-        </button>
-      )}
-
-      {stats && (
-        <>
-          <span className={styles.divider} aria-hidden="true" />
-          <span
-            className={styles.stats}
-            title={`节点 ${stats.nodes} · 连线 ${stats.edges}${stats.failed > 0 ? ` · ${stats.failed} 个生成失败` : ''}`}
-            aria-label={`画布共 ${stats.nodes} 个节点、${stats.edges} 条连线${stats.failed > 0 ? `，${stats.failed} 个生成失败` : ''}`}
-          >
-            <span className={styles.stat}>
-              <NodeCountIcon />
-              {stats.nodes}
-            </span>
-            <span className={styles.stat}>
-              <EdgeCountIcon />
-              {stats.edges}
-            </span>
-            {stats.failed > 0 && (
-              <span className={`${styles.stat} ${styles.statFailed}`}>
-                <WarnIcon />
-                {stats.failed}
-              </span>
-            )}
-          </span>
-        </>
-      )}
+      </Tooltip>
     </div>
-  )
-}
-
-function GearIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
-    </svg>
-  )
-}
-
-function HelpIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7" />
-      <circle cx="12" cy="17" r="0.6" fill="currentColor" />
-    </svg>
-  )
-}
-
-function NodeCountIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
-      <rect x="4" y="4" width="16" height="16" rx="3" />
-    </svg>
-  )
-}
-
-function EdgeCountIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <circle cx="5" cy="6" r="2" />
-      <circle cx="19" cy="18" r="2" />
-      <path d="M7 7.5C11 10 13 14 17 16.5" />
-    </svg>
-  )
-}
-
-function WarnIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 3 2.5 20h19L12 3z" />
-      <path d="M12 10v4M12 17.5v.5" />
-    </svg>
-  )
-}
-
-function MinusIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  )
-}
-
-function PlusIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <line x1="12" y1="5" x2="12" y2="19" />
-      <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  )
-}
-
-function FitIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
-    </svg>
-  )
-}
-
-function GridIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
-    </svg>
-  )
-}
-
-/** 小地图图标：一个外框 + 右下角的视口方块，正是小地图本身的样子。 */
-function MiniMapIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <rect x="12.5" y="12" width="6" height="5" rx="1" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function EdgeIcon({ hidden }: { hidden: boolean }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-    >
-      <circle cx="5" cy="6" r="2.2" />
-      <circle cx="19" cy="18" r="2.2" />
-      <path d="M7 7.6C11 10 13 14 17 16.4" />
-      {/* 隐藏态加一道斜杠，光靠高亮分不出「开着」还是「关着」 */}
-      {hidden && <line x1="4" y1="20" x2="20" y2="4" strokeWidth="1.8" />}
-    </svg>
   )
 }

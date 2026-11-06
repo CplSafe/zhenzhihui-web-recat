@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
@@ -20,9 +20,9 @@ it('从添加菜单手动创建音频编辑节点并关闭菜单', async () => {
       onOpenHistory={vi.fn()}
     />,
   )
-  await user.click(screen.getByRole('button', { name: '添加' }))
-  expect(screen.getByRole('button', { name: /音频节点/ })).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: /音频编辑/ }))
+  await user.click(screen.getByRole('button', { name: '添加节点' }))
+  expect(await screen.findByRole('menuitem', { name: /音频节点/ })).toBeInTheDocument()
+  await user.click(screen.getByRole('menuitem', { name: /音频编辑/ }))
   expect(onAddNode).toHaveBeenCalledWith('audio-editor')
-  expect(screen.queryByRole('button', { name: /音频编辑/ })).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.queryByRole('menuitem', { name: /音频编辑/ })).not.toBeInTheDocument())
 })

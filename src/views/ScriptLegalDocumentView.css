@@ -1,0 +1,25 @@
+.script-legal-page {
+  min-height: 100vh;
+  padding: 32px 16px;
+  background: #f5f7fb;
+  color: #1f2937;
+}
+.script-legal-document {
+  box-sizing: border-box;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: clamp(20px, 5vw, 48px);
+  border: 1px solid #e0e7f1;
+  border-radius: 12px;
+  background: white;
+}
+.script-legal-document h1 {
+  margin: 0 0 24px;
+  font-size: 24px;
+}
+.script-legal-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  font-size: 15px;
+}

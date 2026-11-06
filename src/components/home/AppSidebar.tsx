@@ -27,7 +27,7 @@ import { useUiStore } from '@/stores/ui'
 import { prefetchRoute } from '@/router/routePrefetch'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
-import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import { PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import { BookOutlined } from '@ant-design/icons'
 import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
@@ -64,7 +64,7 @@ const GROUPS: SidebarGroup[] = [
     items: [
       { key: 'hot-copy', label: '爆款复刻', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },
       { key: 'creative', label: '爆款成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
-      ...(MANUAL_DELIVERY_ENABLED
+      ...(PROMO_DELIVERY_ENABLED
         ? [{ key: 'promo', label: '定制宣传片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 as const }]
         : []),
       { key: 'studio', label: 'AI 创作台', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },

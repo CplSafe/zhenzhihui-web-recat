@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import styles from './AppVersionNotice.module.css'
 import { saveDraftsBeforeUpdate } from '@/utils/updateDraftRegistry'
 
@@ -15,6 +15,21 @@ export default function AppVersionNotice({
   const [availableVersion, setAvailableVersion] = useState('')
   const [dismissedVersion, setDismissedVersion] = useState('')
   const [saveError, setSaveError] = useState(false)
+  const dialog = useRef<HTMLDialogElement>(null)
+  const descriptionId = useId()
+  const visible = !!availableVersion && availableVersion !== dismissedVersion
+  const dismiss = () => {
+    dialog.current?.close()
+    setDismissedVersion(availableVersion)
+  }
+
+  useEffect(() => {
+    const element = dialog.current
+    if (visible && element && !element.open) element.showModal()
+    return () => {
+      if (element?.open) element.close()
+    }
+  }, [visible])
 
   useEffect(() => {
     if (!enabled || !currentVersion) return
@@ -54,16 +69,27 @@ export default function AppVersionNotice({
     }
   }, [enabled, currentVersion])
 
-  if (!availableVersion || availableVersion === dismissedVersion) return null
+  if (!visible) return null
   return (
-    <section className={styles.notice} role="status" aria-label="系统更新提示">
+    <dialog
+      ref={dialog}
+      className={styles.notice}
+      role="dialog"
+      aria-label="系统更新提示"
+      aria-describedby={descriptionId}
+      onCancel={(event) => {
+        event.preventDefault()
+        dismiss()
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       <div className={styles.content}>
-        <strong>系统已更新</strong>
-        <p>刷新页面以使用最新版本，请先确认其他未保存内容。</p>
+        <h2>发现新版本</h2>
+        <p id={descriptionId}>新版本已准备好。你可以稍后再更新，或确认未保存内容后刷新页面。</p>
         {saveError && <p role="alert">草稿保存失败，请保留当前页面并检查浏览器存储后重试。</p>}
       </div>
       <div className={styles.actions}>
-        <button type="button" className={styles.later} onClick={() => setDismissedVersion(availableVersion)}>
+        <button autoFocus type="button" className={styles.later} onClick={dismiss}>
           稍后再说
         </button>
         <button
@@ -80,6 +106,6 @@ export default function AppVersionNotice({
           立即刷新
         </button>
       </div>
-    </section>
+    </dialog>
   )
 }

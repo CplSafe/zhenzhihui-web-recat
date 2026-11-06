@@ -1,8 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
-for (const mode of ['generate', 'edit', 'extend'] as const) {
-  test(`参考视频按${mode}预估和提交，编辑与延长保留必填时长`, async ({ page }, testInfo) => {
+for (const scenario of [
+  { mode: 'generate', seedance20: false },
+  { mode: 'edit', seedance20: false },
+  { mode: 'extend', seedance20: false },
+  { mode: 'generate', seedance20: true },
+] as const) {
+  const { mode, seedance20 } = scenario
+  test(`参考视频按${mode}预估和提交 seedance20=${seedance20}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     const api = await installStrictAuthenticatedApp(page)
     const errors: string[] = []
@@ -24,7 +30,7 @@ for (const mode of ['generate', 'edit', 'extend'] as const) {
           items: [
             {
               id: 42,
-              display_name: 'Seedance 2.5',
+              display_name: seedance20 ? 'Seedance 2.0' : 'Seedance 2.5',
               capability: 'video',
               operation_codes: ['video.generate'],
               params_schema: {
@@ -73,7 +79,11 @@ for (const mode of ['generate', 'edit', 'extend'] as const) {
                                 resultUrl: `/api/v1/assets/601/download?workspace_id=${WORKSPACE_ID}`,
                                 modelVersionId: 42,
                                 operationCode: 'video.generate',
-                                params: { mode: 'generate', duration: 5, generate_audio: false },
+                                params: {
+                                  mode: seedance20 ? 'extend' : 'generate',
+                                  duration: 5,
+                                  generate_audio: false,
+                                },
                                 prompt: '将音频全量合成进视频里，替换掉原视频的音频',
                               },
                             },
@@ -126,12 +136,20 @@ for (const mode of ['generate', 'edit', 'extend'] as const) {
     await expect(page.getByText(/自动生成背景音|有背景音|无背景音/)).toHaveCount(0)
     await expect(menu.getByText('生成声音', { exact: true })).toBeVisible()
     await expect(menu.getByRole('button', { name: '无声音', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await expect(menu.getByText('任务类型', { exact: true })).toBeVisible()
-    await menu.getByRole('button', { name: '编辑', exact: true }).click()
-    await expect(panel.locator('button[title*="比例时长跟随原视频"]')).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('edit-option-retained.png') })
-    if (mode === 'generate') await menu.getByRole('button', { name: '生成', exact: true }).click()
-    if (mode === 'extend') await menu.getByRole('button', { name: '延长', exact: true }).click()
+    if (seedance20) {
+      await expect(menu.getByText('任务类型', { exact: true })).toHaveCount(0)
+      await expect(menu.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0)
+      await expect(menu.getByRole('button', { name: '延长', exact: true })).toHaveCount(0)
+      await expect(menu.getByRole('slider', { name: '时长' })).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath('seedance20-generation-parameters.png') })
+    } else {
+      await expect(menu.getByText('任务类型', { exact: true })).toBeVisible()
+      await menu.getByRole('button', { name: '编辑', exact: true }).click()
+      await expect(panel.locator('button[title*="比例时长跟随原视频"]')).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath('edit-option-retained.png') })
+      if (mode === 'generate') await menu.getByRole('button', { name: '生成', exact: true }).click()
+      if (mode === 'extend') await menu.getByRole('button', { name: '延长', exact: true }).click()
+    }
     await menu.getByRole('button', { name: '关闭生成参数' }).click()
     await expect(send).toBeEnabled()
     await expect(panel.getByText('预计消耗：10 积分', { exact: true })).toBeVisible()

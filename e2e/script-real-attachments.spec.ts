@@ -30,18 +30,20 @@ for (const width of [1440, 390]) {
           code: 0,
           data: {
             file: { id: 55 },
-            url: '/test-script-upload',
+            url: 'https://s3oss-yy.youliangads.com/goujie/',
             form_fields: { key: 'document' },
             upload_required: true,
           },
         },
       })
     })
-    await page.route('**/test-script-upload', async (route) => {
+    await page.route('https://s3oss-yy.youliangads.com/goujie/', async (route) => {
       uploadAttempts++
       expect(route.request().postData()).toContain('content')
-      if (uploadAttempts === 1) return route.fulfill({ status: 500, body: 'failed' })
-      await route.fulfill({ status: 204 })
+      expect(route.request().headers().cookie).toBeUndefined()
+      if (uploadAttempts === 1)
+        return route.fulfill({ status: 500, body: 'failed', headers: { 'access-control-allow-origin': '*' } })
+      await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } })
     })
     await page.route('**/api/v1/script-files/55/complete', async (route) => {
       complete = true
@@ -83,6 +85,9 @@ for (const width of [1440, 390]) {
       }),
     )
     await page.goto('/script-ideas/new')
+    await page.getByLabel('姓名').fill('测试用户')
+    await page.getByLabel('学校 / 机构').fill('测试学校')
+    await page.getByLabel('联系电话').fill('13800000000')
     await page.getByLabel('剧名').fill('示例剧')
     await page.getByRole('combobox', { name: '题材' }).fill('悬疑')
     await page.getByRole('combobox', { name: '题材' }).press('Enter')
@@ -101,6 +106,53 @@ for (const width of [1440, 390]) {
     await expect(page).toHaveURL(/script-ideas\/123/)
     expect(submissions).toBe(1)
     expect(tickets).toBe(2)
+  })
+}
+
+for (const uploadUrl of [
+  'https://s3oss-yy.youliangads.com.attacker.example/goujie/',
+  'http://s3oss-yy.youliangads.com/goujie/',
+]) {
+  test(`剧本附件拒绝未经授权的上传地址 ${uploadUrl}`, async ({ page }) => {
+    await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/script-creators/me', (route) =>
+      route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            profile: { real_name: '测试用户', school: '测试学校', phone: '13800000000' },
+            agreement_version: 'agreement-v1',
+            originality_version: 'originality-v1',
+            workflow_synced: true,
+          },
+        },
+      }),
+    )
+    await page.route('**/api/v1/script-files/uploads', (route) =>
+      route.fulfill({
+        json: { code: 0, data: { file: { id: 55 }, url: uploadUrl, form_fields: {}, upload_required: true } },
+      }),
+    )
+    let unexpectedUpload = 0
+    await page.route(uploadUrl, (route) => {
+      unexpectedUpload++
+      return route.abort()
+    })
+    await page.goto('/script-ideas/new')
+    await page.getByLabel('姓名').fill('测试用户')
+    await page.getByLabel('学校 / 机构').fill('测试学校')
+    await page.getByLabel('联系电话').fill('13800000000')
+    await page.getByLabel('剧名').fill('示例剧')
+    await page.getByRole('combobox', { name: '题材' }).fill('悬疑')
+    await page.getByRole('combobox', { name: '题材' }).press('Enter')
+    await page.getByLabel('故事创意').fill('故事简介')
+    await page
+      .getByLabel('剧本文档附件')
+      .setInputFiles({ name: '故事.txt', mimeType: 'text/plain', buffer: Buffer.from('content') })
+    await page.getByRole('button', { name: '提交创意', exact: true }).click()
+    await expect(page.getByText(/文件上传地址不在受信任的存储域名列表中/)).toBeVisible()
+    expect(unexpectedUpload).toBe(0)
+    await expect(page.getByLabel('剧名')).toHaveValue('示例剧')
   })
 }
 

@@ -431,21 +431,21 @@ export function JoinPreview({ user }: { user: any }) {
               })}
             </div>
           </div>
-          <div className="si-form-section">
-            <h3>创作者入驻协议（临时版）</h3>
-            <div className="si-spec" aria-label="创作者入驻协议内容">
-              <p>1. 创作者应提供真实、准确的入驻资料，以便平台开展入驻审核及联系。</p>
-              <p>2. 创作者提交的创意和附件将提供给平台相关人员用于审核和后续沟通。</p>
-              <p>3. 创作者应确保有权提交相关内容，并对所提交资料的合法性负责。</p>
-              <p>4. 作品的具体授权范围、使用方式及相关报酬，由双方另行约定。</p>
-              <p>
-                此协议为临时版。提交时使用平台当前返回的协议版本
-                {creator?.agreement_version ? `：${creator.agreement_version}` : '；协议版本尚未获取'}。
-              </p>
-            </div>
+          <div className="si-agreement-section">
             <label className="si-agreement">
-              <input type="checkbox" required checked={agreed} onChange={(event) => setAgreed(event.target.checked)} />{' '}
-              我已阅读并同意创作者入驻协议（临时版）
+              <input
+                type="checkbox"
+                aria-label="我已阅读并同意《创作者入驻协议》"
+                required
+                checked={agreed}
+                onChange={(event) => setAgreed(event.target.checked)}
+              />
+              <span>
+                我已阅读并同意
+                <a href="/script-ideas/creator-agreement" target="_blank" rel="noopener noreferrer">
+                  《创作者入驻协议》
+                </a>
+              </span>
             </label>
           </div>
           {saveError && <p role="alert">{saveError}</p>}

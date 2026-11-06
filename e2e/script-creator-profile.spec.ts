@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 390]) {
-  test(`阅读临时协议并提交入驻资料 ${width}px`, async ({ page }, testInfo) => {
+  test(`查看入驻协议并提交入驻资料 ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     const api = await installStrictAuthenticatedApp(page)
     let submitted: any = null
@@ -41,9 +41,19 @@ for (const width of [1440, 390]) {
     await expect(page.getByText('资料提交后保存到服务端')).toHaveCount(0)
     await expect(page.getByText('填写一次创作者资料，之后可随时修改。')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: '关于信息同步' })).toHaveCount(0)
-    await expect(page.getByLabel('创作者入驻协议内容')).toContainText('临时版')
+    await expect(page.getByText('创作者入驻协议（临时版）')).toHaveCount(0)
     await expect(page.getByRole('checkbox', { name: /我已阅读并同意/ })).not.toBeChecked()
     await page.getByLabel('真实姓名').fill('林知秋')
+    const popupPromise = page.waitForEvent('popup')
+    await page.getByRole('link', { name: '《创作者入驻协议》' }).click()
+    const agreementPage = await popupPromise
+    await agreementPage.setViewportSize({ width, height: 900 })
+    await expect(agreementPage.getByRole('heading', { name: '创作者入驻协议' })).toBeVisible()
+    await expect(agreementPage.getByText('第六条　权利归属')).toBeVisible()
+    await expect(page.getByLabel('真实姓名')).toHaveValue('林知秋')
+    await expect(page.getByRole('checkbox', { name: /我已阅读并同意/ })).not.toBeChecked()
+    await agreementPage.screenshot({ path: testInfo.outputPath(`agreement-${width}.png`) })
+    await agreementPage.close()
     await page.screenshot({ path: testInfo.outputPath(`join-${width}.png`), fullPage: true })
     await page.getByRole('checkbox', { name: /我已阅读并同意/ }).check()
     await page.getByRole('button', { name: '保存修改' }).click()

@@ -22,7 +22,7 @@ import AgentChatView from '@/views/AgentChatView'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
-import { MANUAL_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
+import { PROMO_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -83,6 +83,7 @@ const LoginView = lazy(() => import('../views/LoginView'))
 /** 供需商单（IP / 需求市场）路由组件。 */
 const MarketView = lazy(routeImporters.market)
 const ScriptIdeasView = lazy(() => import('../views/ScriptIdeasView'))
+const ScriptLegalDocumentView = lazy(() => import('../views/ScriptLegalDocumentView'))
 /** 模板库路由组件。 */
 const TemplatesView = lazy(routeImporters.templates)
 /** 智能成片创作路由组件。 */
@@ -320,6 +321,16 @@ export const router = createBrowserRouter([
       { path: 'market', element: lazyPage(<MarketView />), handle: { requiresAuth: false } },
       { path: 'script-ideas', element: lazyPage(<ScriptIdeasView />), handle: { requiresAuth: false } },
       { path: 'script-ideas/join', element: lazyPage(<ScriptIdeasView />) },
+      {
+        path: 'script-ideas/creator-agreement',
+        element: lazyPage(<ScriptLegalDocumentView document="agreement" />),
+        handle: { requiresAuth: false },
+      },
+      {
+        path: 'script-ideas/originality-statement',
+        element: lazyPage(<ScriptLegalDocumentView document="originality" />),
+        handle: { requiresAuth: false },
+      },
       { path: 'script-ideas/stage/:stage', element: lazyPage(<ScriptIdeasView />), handle: { requiresAuth: false } },
       { path: 'script-ideas/new', element: lazyPage(<ScriptIdeasView />) },
       { path: 'script-ideas/list', element: lazyPage(<ScriptIdeasView />) },
@@ -336,7 +347,7 @@ export const router = createBrowserRouter([
       { path: 'smart/:id?', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
       {
         path: 'promo',
-        element: MANUAL_DELIVERY_ENABLED ? lazyPage(<PromoCreateView />) : <Navigate to={APP_HOME_PATH} replace />,
+        element: PROMO_DELIVERY_ENABLED ? lazyPage(<PromoCreateView />) : <Navigate to={APP_HOME_PATH} replace />,
       },
       {
         path: 'real-person-video/:id?',

@@ -180,10 +180,14 @@ test('列表使用服务端筛选、统计和审核状态', async ({ page }) => 
   await expect(page.locator('.si-list-summary')).toContainText('8')
   await page.getByLabel('全部阶段').selectOption('card')
   await page.getByLabel('全部状态').selectOption('needs_changes')
-  await page.getByLabel('题材', { exact: true }).fill('悬疑')
+  await expect(page.getByPlaceholder('输入题材')).toHaveCount(0)
+  await expect(page.getByLabel('全部阶段').locator('option')).toHaveText(['全部阶段', '创意', '一卡', '剧本'])
   await expect.poll(() => seen).toContain('stage=card')
   await expect.poll(() => seen).toContain('review_status=needs_changes')
-  await expect.poll(() => new URLSearchParams(seen).get('genre')).toBe('悬疑')
+  await expect.poll(() => new URLSearchParams(seen).has('genre')).toBe(false)
+  await page.getByRole('button', { name: '重置' }).click()
+  await expect(page.getByLabel('全部阶段')).toHaveValue('')
+  await expect(page.getByLabel('全部状态')).toHaveValue('')
 })
 
 test('创意退回保留结构化字段并复用附件', async ({ page }) => {

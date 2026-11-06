@@ -55,7 +55,7 @@ import ManualVideoHistory from '@/components/smart/refine/ManualVideoHistory'
 import { rememberTask } from '@/components/smart/refine/ManualVideoFlow'
 import { usePromoDemoStore } from '@/stores/promoDemo'
 import { useRefineDemoStore } from '@/stores/refineDemo'
-import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import { MANUAL_DELIVERY_ENABLED, PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import styles from './TaskCenterDrawer.module.less'
 
 /** 当前任务类型页签、切换回调和布局扩展类名。 */
@@ -125,7 +125,7 @@ const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
   { value: 'smart', label: '爆款成片' },
   { value: 'hot-copy', label: '爆款复刻' },
   { value: 'image', label: '图片' },
-  ...(MANUAL_DELIVERY_ENABLED ? [{ value: 'promo' as const, label: '宣传片' }] : []),
+  ...(PROMO_DELIVERY_ENABLED ? [{ value: 'promo' as const, label: '宣传片' }] : []),
 ]
 
 /** 历史与实时任务状态的失败/完成别名集合。 */
@@ -849,8 +849,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     if (MANUAL_DELIVERY_ENABLED && refineOpenRequest > 0) setActiveScope('smart')
   }, [refineOpenRequest])
   useEffect(() => {
-    if (MANUAL_DELIVERY_ENABLED && promoOpenRequest > 0 && window.location.pathname === '/promo')
-      setActiveScope('promo')
+    if (PROMO_DELIVERY_ENABLED && promoOpenRequest > 0 && window.location.pathname === '/promo') setActiveScope('promo')
   }, [promoOpenRequest])
   const [playingUrl, setPlayingUrl] = useState('')
   const [historicalTasks, setHistoricalTasks] = useState<TaskCenterTask[]>([])
@@ -874,7 +873,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     ) || 0
   const [hasRealPromo, setHasRealPromo] = useState(false)
   const hasActivePromo =
-    MANUAL_DELIVERY_ENABLED &&
+    PROMO_DELIVERY_ENABLED &&
     promoTasks.some(
       (task) =>
         task.ownerId === currentUserId &&
@@ -1375,7 +1374,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 : `${getScopeLabel(activeScope)}任务`
           }
         >
-          {MANUAL_DELIVERY_ENABLED && activeScope === 'generating' && (
+          {PROMO_DELIVERY_ENABLED && activeScope === 'generating' && (
             <PromoTaskList
               key={`${currentUserId}.${workspaceId}`}
               ownerId={currentUserId}

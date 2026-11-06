@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { applyStudioFrame, createStudioAPI } from './studio'
 import type { StudioCatalog, StudioRun, StudioState } from './studio'
 
-export function useStudio(base: string, workspaceId?: number) {
-  const api = useMemo(() => createStudioAPI(base), [base])
+export function useStudio(base: string, workspaceId?: number, canvasId?: number, business = false) {
+  const api = useMemo(
+    () => createStudioAPI(base, business ? { workspaceId: workspaceId!, canvasId: canvasId! } : undefined),
+    [base, workspaceId, canvasId, business],
+  )
   const [state, setState] = useState<StudioState>({ connected: false, runs: [] })
   const [catalog, setCatalog] = useState<StudioCatalog>({ models: [], skills: [] })
   const [current, setCurrent] = useState<string | null>(null)
@@ -11,6 +14,7 @@ export function useStudio(base: string, workspaceId?: number) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [streamState, setStreamState] = useState('')
+  const [connectionEpoch, setConnectionEpoch] = useState(0)
   const currentRef = useRef(current)
   currentRef.current = current
   const generation = useRef(0)
@@ -38,8 +42,15 @@ export function useStudio(base: string, workspaceId?: number) {
         if (next.connected && (!workspaceId || next.workspace_id === workspaceId))
           setCatalog(await api.request<StudioCatalog>('/api/catalog', undefined, signal))
         setError('')
+        setConnectionEpoch((value) => value + 1)
       } catch (e) {
-        if (!signal?.aborted) setError(e instanceof Error ? e.message : '连接失败')
+        if (!signal?.aborted) {
+          setState({ connected: false, runs: [] })
+          setCatalog({ models: [], skills: [] })
+          setCurrent(null)
+          setRun(null)
+          setError(e instanceof Error ? e.message : '连接失败')
+        }
       } finally {
         if (!signal?.aborted) setLoading(false)
       }
@@ -50,6 +61,7 @@ export function useStudio(base: string, workspaceId?: number) {
     const controller = new AbortController()
     setCurrent(null)
     setRun(null)
+    setState({ connected: false, runs: [] })
     setCatalog({ models: [], skills: [] })
     void initialize(controller.signal)
     return () => controller.abort()
@@ -96,8 +108,50 @@ export function useStudio(base: string, workspaceId?: number) {
       timer: ReturnType<typeof setTimeout> | undefined
     let cursor = 0,
       retries = 0,
-      delay = 1000
+      delay = 1000,
+      recovering = false,
+      authRetries = 0,
+      authWindowStarted = 0
     const controller = new AbortController()
+    const recoverLogin = async () => {
+      if (disposed || recovering) return
+      recovering = true
+      if (socket) {
+        socket.onclose = null
+        socket.onmessage = null
+        socket.close()
+      }
+      setStreamState('正在重新验证登录，已有任务继续执行')
+      try {
+        const now = Date.now()
+        if (now - authWindowStarted >= 60_000) {
+          authRetries = 0
+          authWindowStarted = now
+        }
+        if (++authRetries > 3) throw new Error('登录状态持续变化，请重新检查业务登录。')
+        // HTTP uses the browser's latest cookie, unlike the old WS handshake.
+        // Reading this run also confirms the renewed user still owns it.
+        const snapshot = await api.request<StudioRun>(
+          '/api/runs/' + encodeURIComponent(current),
+          undefined,
+          controller.signal,
+        )
+        if (disposed) return
+        cursor = snapshot.cursor
+        setRun(snapshot)
+        setError('')
+        recovering = false
+        open()
+      } catch (e) {
+        if (disposed) return
+        disposed = true
+        setState({ connected: false, runs: [] })
+        setCatalog({ models: [], skills: [] })
+        setRun(null)
+        setStreamState('连接已断开')
+        setError(e instanceof Error ? e.message : '业务登录已失效，请重新登录。')
+      }
+    }
     const open = () => {
       if (disposed) return
       setStreamState(retries ? '正在重连，已有任务继续执行' : '正在连接实时更新')
@@ -115,6 +169,10 @@ export function useStudio(base: string, workspaceId?: number) {
           return
         }
         if (frame.event === 'stream_error') {
+          if (business && frame.data?.code === 'AUTH_CHANGED') {
+            void recoverLogin()
+            return
+          }
           disposed = true
           socket?.close()
           setStreamState('连接已断开')
@@ -131,7 +189,11 @@ export function useStudio(base: string, workspaceId?: number) {
         })
       }
       socket.onclose = (event) => {
-        if (disposed) return
+        if (disposed || recovering) return
+        if (business && event.code === 1008) {
+          void recoverLogin()
+          return
+        }
         if (event.code === 1008 || ++retries > 5) {
           setStreamState('连接已断开')
           setError(
@@ -165,7 +227,7 @@ export function useStudio(base: string, workspaceId?: number) {
       clearTimeout(timer)
       socket?.close()
     }
-  }, [api, current, mismatch])
+  }, [api, current, mismatch, business, connectionEpoch])
   return {
     api,
     state,

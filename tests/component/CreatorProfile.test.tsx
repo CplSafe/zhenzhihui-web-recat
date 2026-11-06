@@ -10,7 +10,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-it('阅读临时协议并主动同意后提交创作者资料', async () => {
+it('查看入驻协议并主动同意后提交创作者资料', async () => {
   vi.mocked(getCreator).mockResolvedValue({
     profile: null,
     agreement_version: 'v1',
@@ -37,7 +37,11 @@ it('阅读临时协议并主动同意后提交创作者资料', async () => {
   await user.type(screen.getByLabelText(/联系手机/), '13800001111')
   await user.type(screen.getByLabelText(/联系邮箱/), 'test@example.com')
   await user.type(screen.getByLabelText(/擅长题材/), '悬疑{Enter}')
-  expect(screen.getByLabelText('创作者入驻协议内容')).toHaveTextContent('临时版')
+  expect(screen.getByRole('link', { name: '《创作者入驻协议》' })).toHaveAttribute(
+    'href',
+    '/script-ideas/creator-agreement',
+  )
+  expect(screen.queryByText('创作者入驻协议（临时版）')).not.toBeInTheDocument()
   await user.click(submit)
   expect(saveCreator).not.toHaveBeenCalled()
   await user.click(screen.getByRole('checkbox', { name: /我已阅读并同意/ }))

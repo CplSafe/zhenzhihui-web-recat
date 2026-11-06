@@ -12,6 +12,13 @@
 .workspace {
   display: flex;
   min-width: 0;
+  min-height: calc(100vh - 56px);
+}
+.workspace > aside[aria-label='任务管理（已收起）'] {
+  position: sticky;
+  top: 56px;
+  align-self: flex-start;
+  height: calc(100vh - 56px);
 }
 .content {
   flex: 1;

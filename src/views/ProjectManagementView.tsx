@@ -77,7 +77,7 @@ import { observeElementResize } from '@/utils/observeElementResize'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { useRefineDemoStore } from '@/stores/refineDemo'
 import { usePromoDemoStore } from '@/stores/promoDemo'
-import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import { MANUAL_DELIVERY_ENABLED, PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 
 /** 成员权限尚未加载时复用的稳定空数组。 */
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
@@ -775,7 +775,7 @@ export default function ProjectManagementView() {
     () =>
       promoTasks.filter(
         (task) =>
-          MANUAL_DELIVERY_ENABLED &&
+          PROMO_DELIVERY_ENABLED &&
           currentUserId > 0 &&
           activeWorkspaceId > 0 &&
           task.ownerId === currentUserId &&
@@ -1780,7 +1780,7 @@ export default function ProjectManagementView() {
                     ['promo', '宣传片'],
                   ] as const
                 )
-                  .filter(([value]) => MANUAL_DELIVERY_ENABLED || value !== 'promo')
+                  .filter(([value]) => PROMO_DELIVERY_ENABLED || value !== 'promo')
                   .map(([value, label]) => (
                     <button
                       key={value}

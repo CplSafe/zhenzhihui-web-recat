@@ -1,103 +1,88 @@
-import { render, screen } from '@testing-library/react'
+import { ConfigProvider } from 'antd'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import CanvasViewControls from '@/components/canvas/CanvasViewControls'
 
-function renderControls(overrides: Partial<React.ComponentProps<typeof CanvasViewControls>> = {}) {
+function mount(overrides: Partial<React.ComponentProps<typeof CanvasViewControls>> = {}) {
   const props = {
-    zoom: 1,
-    onZoomIn: vi.fn(),
-    onZoomOut: vi.fn(),
+    zoom: 0.89,
+    onArrange: vi.fn(),
     onZoomReset: vi.fn(),
-    onFitView: vi.fn(),
     snapEnabled: false,
     onSnapToggle: vi.fn(),
     edgesHidden: false,
     onEdgesToggle: vi.fn(),
-    minimapVisible: true,
+    minimapVisible: false,
     onMinimapToggle: vi.fn(),
     ...overrides,
   }
-  render(<CanvasViewControls {...props} />)
+  render(
+    <ConfigProvider theme={{ token: { motion: false } }}>
+      <CanvasViewControls {...props} />
+    </ConfigProvider>,
+  )
   return props
 }
 
-describe('CanvasViewControls', () => {
-  it('快捷键优先按钮展示状态并转交用户点击', async () => {
-    const user = userEvent.setup()
-    const toggle = vi.fn()
-    renderControls({ keyboardPriority: true, onKeyboardPriorityToggle: toggle })
-    const button = screen.getByRole('button', { name: '全屏快捷键模式' })
+it('左下只显示四个图标与百分比，顺序固定且不再提供额外菜单', () => {
+  mount()
+  const bar = screen.getByRole('toolbar', { name: '画布视图控制' })
+  expect(
+    within(bar)
+      .getAllByRole('button')
+      .map((button) => button.getAttribute('aria-label')),
+  ).toEqual(['整理画布', '小地图', '隐藏连线', '网格吸附', '当前缩放 89%，点击回到 100%'])
+  expect(bar.querySelector('[aria-haspopup],[aria-expanded],select')).toBeNull()
+  expect(screen.queryByText('更多视图选项')).not.toBeInTheDocument()
+})
+it('整理、地图、连线和磁吸分别执行原有操作', async () => {
+  const user = userEvent.setup(),
+    props = mount()
+  for (const name of ['整理画布', '小地图', '隐藏连线', '网格吸附'])
+    await user.click(screen.getByRole('button', { name }))
+  for (const callback of [props.onArrange, props.onMinimapToggle, props.onEdgesToggle, props.onSnapToggle])
+    expect(callback).toHaveBeenCalledOnce()
+})
+it('百分比保持真实倍率，点击直接复位，不打开任何菜单', async () => {
+  const user = userEvent.setup(),
+    props = mount()
+  await user.click(screen.getByRole('button', { name: /当前缩放 89%/ }))
+  expect(props.onZoomReset).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  expect(screen.getAllByRole('button')).toHaveLength(5)
+})
+it('开关悬停显示下一步操作，离开后关闭气泡', async () => {
+  const user = userEvent.setup()
+  mount({ snapEnabled: true, minimapVisible: true, edgesHidden: true })
+  for (const [name, hint] of [
+    ['隐藏连线', '显示节点连线'],
+    ['小地图', '隐藏小地图'],
+    ['网格吸附', '关闭网格吸附'],
+  ]) {
+    const button = screen.getByRole('button', { name })
     expect(button).toHaveAttribute('aria-pressed', 'true')
-    await user.click(button)
-    expect(toggle).toHaveBeenCalledOnce()
-  })
-  it('等待全屏和权限时禁用按钮，防止重复请求', () => {
-    renderControls({ keyboardPriorityPending: true, onKeyboardPriorityToggle: vi.fn() })
-    expect(screen.getByRole('button', { name: '全屏快捷键模式' })).toBeDisabled()
-  })
-  it('选择预设倍率时调用缩放回调', async () => {
-    const user = userEvent.setup()
-    const onZoomTo = vi.fn()
-    renderControls({ onZoomTo })
-    await user.selectOptions(screen.getByRole('combobox', { name: '画布缩放' }), '60')
-    expect(onZoomTo).toHaveBeenCalledWith(0.6)
-  })
-  it('把当前倍率读成百分比，点读数回到 100%', async () => {
-    const user = userEvent.setup()
-    const props = renderControls({ zoom: 0.8 })
-
-    const value = screen.getByRole('button', { name: /当前缩放 80%/ })
-    expect(value).toHaveTextContent('80%')
-    await user.click(value)
-    expect(props.onZoomReset).toHaveBeenCalledTimes(1)
-  })
-
-  it('极小倍率下不显示成 0%——那看起来像坏了', () => {
-    // 画布 minZoom 是 0.02，四舍五入到 2%；再小也要保底 1%
-    renderControls({ zoom: 0.002 })
-    expect(screen.getByRole('button', { name: /当前缩放 1%/ })).toHaveTextContent('1%')
-  })
-
-  it('缩放与复位各自接到对应回调', async () => {
-    const user = userEvent.setup()
-    const props = renderControls()
-
-    await user.click(screen.getByRole('button', { name: '放大' }))
-    await user.click(screen.getByRole('button', { name: '缩小' }))
-    await user.click(screen.getByRole('button', { name: '复位视图' }))
-    expect(props.onZoomIn).toHaveBeenCalledTimes(1)
-    expect(props.onZoomOut).toHaveBeenCalledTimes(1)
-    expect(props.onFitView).toHaveBeenCalledTimes(1)
-  })
-
-  it('两个开关把当前状态报给辅助技术，不只靠颜色区分', () => {
-    renderControls({ snapEnabled: true, edgesHidden: false })
-    expect(screen.getByRole('button', { name: '网格吸附' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: '隐藏连线' })).toHaveAttribute('aria-pressed', 'false')
-  })
-
-  it('开关的提示文案说的是「点下去会怎样」，而不是当前状态', () => {
-    renderControls({ edgesHidden: true })
-    expect(screen.getByRole('button', { name: '隐藏连线' })).toHaveAttribute('title', '显示连线')
-  })
-
-  it('小地图开关把点击转交出去，并报出当前显隐状态', async () => {
-    const user = userEvent.setup()
-    const props = renderControls({ minimapVisible: true })
-
-    const toggle = screen.getByRole('button', { name: '小地图' })
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    expect(toggle).toHaveAttribute('title', '隐藏小地图')
-
-    await user.click(toggle)
-    expect(props.onMinimapToggle).toHaveBeenCalledOnce()
-  })
-
-  it('小地图已隐藏时，开关提示变成「显示」', () => {
-    renderControls({ minimapVisible: false })
-    const toggle = screen.getByRole('button', { name: '小地图' })
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    expect(toggle).toHaveAttribute('title', '显示小地图')
-  })
+    expect(button).not.toHaveAttribute('title')
+    await user.hover(button)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(hint)
+    await user.unhover(button)
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument())
+  }
+})
+it('键盘聚焦也显示提示，不触发任何操作', async () => {
+  const user = userEvent.setup()
+  const props = mount()
+  await user.tab()
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('整理画布')
+  expect(props.onArrange).not.toHaveBeenCalled()
+})
+it('连线开启时提示隐藏节点连线', async () => {
+  const user = userEvent.setup()
+  mount()
+  await user.hover(screen.getByRole('button', { name: '隐藏连线' }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('隐藏节点连线')
+})
+it('极小倍率下百分比不显示为零', () => {
+  mount({ zoom: 0.002 })
+  expect(screen.getByRole('button', { name: /当前缩放 1%/ })).toHaveTextContent('1%')
 })

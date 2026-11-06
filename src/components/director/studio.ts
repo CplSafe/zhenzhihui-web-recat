@@ -1,3 +1,5 @@
+import { runSharedSessionRefresh } from '@/api/sessionRefresh'
+
 /** Public Studio contract. MCP credentials and private Skill bodies never reach this client. */
 export type Data = Record<string, any>
 export type RunStatus = 'running' | 'waiting' | 'complete' | 'paused' | 'error'
@@ -28,13 +30,14 @@ export interface StudioRun {
   status: RunStatus
   stop?: boolean
   cursor: number
-  selection?: { image: number; video: number; mode: 'manual' | 'auto' }
+  selection?: { image: number; video: number; chat?: number; mode: 'manual' | 'auto' }
   skill_name?: string
   events: StudioEvent[]
   documents?: StudioDocument[]
   nodes?: Data[]
   batches?: StudioBatch[]
   canvas?: Data | null
+  context?: Data
   billing?: Data
   pending?: Data | null
   decision_id?: string
@@ -56,10 +59,12 @@ export interface StudioModel {
 }
 export interface StudioCatalog {
   models: StudioModel[]
+  context_defaults?: Data
   planning_model?: StudioModel
   skills: Array<{ id: number; name: string; description: string }>
 }
 export interface StudioAttachment {
+  asset_id?: number
   id?: string
   name: string
   type?: string
@@ -80,23 +85,47 @@ export class StudioHTTPError extends Error {
   }
 }
 
-export function createStudioAPI(base = '/agent-studio') {
+export interface StudioBusinessBinding {
+  workspaceId: number
+  canvasId: number
+}
+
+export function createStudioAPI(base = '/agent-studio', business?: StudioBusinessBinding) {
   // Same-origin only: a component prop must never send the user's cookie to another service.
   if (!base.startsWith('/') || base.startsWith('//') || /[?#\\]/.test(base))
     throw new Error('Agent 服务必须使用同源路径。')
   const prefix = base.replace(/\/$/, '')
-  async function request<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  if (business && [business.workspaceId, business.canvasId].some((id) => !Number.isSafeInteger(id) || id <= 0))
+    throw new Error('站内 DoDo Agent需要有效的工作空间与画布。')
+  const authHeaders: Record<string, string> = business
+    ? {
+        'X-Agent-Auth': 'business',
+        'X-Agent-Workspace-Id': String(business.workspaceId),
+        'X-Agent-Canvas-Id': String(business.canvasId),
+      }
+    : {}
+  async function request<T>(path: string, data?: unknown, signal?: AbortSignal, renewed = false): Promise<T> {
     const response = await fetch(prefix + path, {
       credentials: 'same-origin',
       signal,
+      headers: {
+        ...authHeaders,
+        ...(data === undefined ? {} : { 'Content-Type': 'application/json', 'X-Agent-Request': '1' }),
+      },
       ...(data === undefined
         ? {}
         : {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Agent-Request': '1' },
             body: JSON.stringify(data),
           }),
     })
+    // Only replay reads. A generation/approval with an uncertain response must
+    // never be submitted again as a side effect of login renewal.
+    if (business && data === undefined && response.status === 401 && !renewed) {
+      const refresh = await runSharedSessionRefresh()
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      if (refresh.ok) return request<T>(path, undefined, signal, true)
+    }
     const value = await response.json().catch(() => null)
     if (!response.ok)
       throw new StudioHTTPError(
@@ -120,7 +149,7 @@ export function createStudioAPI(base = '/agent-studio') {
       const response = await fetch(prefix + '/api/attachments?name=' + encodeURIComponent(file.name), {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'X-Agent-Request': '1', 'Content-Type': 'application/octet-stream' },
+        headers: { ...authHeaders, 'X-Agent-Request': '1', 'Content-Type': 'application/octet-stream' },
         body: file,
       })
       const value = await response.json()
@@ -131,6 +160,11 @@ export function createStudioAPI(base = '/agent-studio') {
       const url = new URL(prefix + '/api/runs/' + encodeURIComponent(id) + '/ws', window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       url.searchParams.set('after', String(cursor))
+      if (business) {
+        url.searchParams.set('auth', 'business')
+        url.searchParams.set('workspace_id', String(business.workspaceId))
+        url.searchParams.set('canvas_id', String(business.canvasId))
+      }
       return url.toString()
     },
   }
@@ -163,6 +197,7 @@ export function applyStudioFrame(run: StudioRun, frame: StudioFrame): StudioRun 
     if (data.kind === 'batch' && data.data?.id) next.batches = upsert(run.batches, data.data)
     if (data.kind === 'node' && data.data?.id) next.nodes = upsert(run.nodes as Array<Data & { id: string }>, data.data)
     if (data.kind === 'canvas') next.canvas = data.data
+    if (data.kind === 'context') next.context = data.data
   }
   return next
 }
@@ -216,4 +251,34 @@ export function defaultModel(catalog: StudioCatalog, kind: 'image' | 'video'): n
   return catalog.models.find(
     (model) => model.operation_codes.includes(operation) && match.test(model.display_name || model.model),
   )?.id
+}
+
+/** Percentages require both provider-reported input usage and a verified capacity. */
+export function contextInfo(run: StudioRun | null, catalog?: StudioCatalog) {
+  const events = run?.events || []
+  const defaults =
+    !run || (typeof run.selection?.chat === 'number' && run.selection.chat === catalog?.planning_model?.id)
+      ? catalog?.context_defaults
+      : undefined
+  const context =
+    run?.context || [...events].reverse().find((event) => event.kind === 'context')?.data || defaults || {}
+  const lastUsage = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.kind === 'cost' &&
+        event.data?.tool === 'model.generate_text' &&
+        event.data?.purpose !== 'context_compaction' &&
+        Number.isFinite(event.data?.usage?.input_tokens) &&
+        event.data!.usage.input_tokens >= 0,
+    )?.data?.usage
+  const input =
+    Number.isFinite(context.input_tokens) && context.input_tokens >= 0 ? context.input_tokens : lastUsage?.input_tokens
+  const capacity =
+    Number.isFinite(context.capacity_tokens) && context.capacity_tokens > 0 ? context.capacity_tokens : null
+  const measured =
+    context.measurement === 'provider_usage' && Number.isFinite(context.input_tokens) && context.input_tokens >= 0
+  const remaining = capacity && measured ? Math.max(0, capacity - context.input_tokens) : null
+  const percent = remaining !== null ? Math.round((remaining / capacity) * 100) : null
+  return { context, input, capacity, remaining, percent }
 }

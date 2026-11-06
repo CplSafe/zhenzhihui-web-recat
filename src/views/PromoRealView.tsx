@@ -72,6 +72,10 @@ export default function PromoRealView() {
   const [started, setStarted] = useState(false)
   const [stage, setStage] = useState<'intro' | 'form' | 'materials' | 'order'>('intro')
   const [token, setToken] = useState('')
+  const [restoreToken, setRestoreToken] = useState('')
+  const [restoreAttempt, setRestoreAttempt] = useState(0)
+  const [restoreLoading, setRestoreLoading] = useState(false)
+  const [restoreError, setRestoreError] = useState('')
   const [materials, setMaterials] = useState<PromoMaterial[]>([])
   const [offline, setOffline] = useState(false)
   const [form, setForm] = useState<Form>(initial)
@@ -146,6 +150,9 @@ export default function PromoRealView() {
     setStarted(false)
     setQuote(null)
     setPending(null)
+    setRestoreToken('')
+    setRestoreError('')
+    setRestoreLoading(false)
     setForm(initial)
     setDraftScope('')
     try {
@@ -155,7 +162,6 @@ export default function PromoRealView() {
       /* ignore invalid draft */
     }
     setDraftScope(scope)
-    const controller = new AbortController()
     const saved = localStorage.getItem(`zzh.promo.intake.${scope}`)
     try {
       const body = localStorage.getItem(`zzh.promo.pending.${scope}`)
@@ -167,19 +173,31 @@ export default function PromoRealView() {
       setToken(saved)
       setStarted(true)
       setStage('form')
-      void getPromoIntake(saved, controller.signal)
-        .then((result) => {
-          if (!controller.signal.aborted) {
-            setMaterials(result.materials)
-            setOffline(localStorage.getItem(`zzh.promo.offline.${scope}`) === '1')
-          }
-        })
-        .catch((reason) => {
-          if (!controller.signal.aborted) setError(errorMessage(reason))
-        })
+      setRestoreLoading(true)
+      setRestoreToken(saved)
     }
-    return () => controller.abort()
   }, [scope, owner, workspace])
+
+  useEffect(() => {
+    if (!restoreToken) return
+    const controller = new AbortController()
+    setRestoreLoading(true)
+    setRestoreError('')
+    void getPromoIntake(restoreToken, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) {
+          setMaterials(result.materials)
+          setOffline(localStorage.getItem(`zzh.promo.offline.${scope}`) === '1')
+        }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setRestoreError(errorMessage(reason))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRestoreLoading(false)
+      })
+    return () => controller.abort()
+  }, [restoreToken, restoreAttempt, scope])
 
   useEffect(() => {
     if (started && draftScope === scope) {
@@ -327,6 +345,7 @@ export default function PromoRealView() {
         localStorage.removeItem(`zzh.promo.draft.${scope}`)
         if (alive.current) {
           setPending(null)
+          setRestoreToken('')
           setConfirm(false)
           setToken('')
           setStarted(false)
@@ -374,6 +393,7 @@ export default function PromoRealView() {
             ) : (
               <div className={styles.screen}>
                 {configLoading && <p role="status">正在加载服务配置…</p>}
+                {restoreLoading && <p role="status">正在恢复上次上传会话…</p>}
                 {error && (
                   <p role="alert" className={styles.notice}>
                     {error}{' '}
@@ -382,6 +402,14 @@ export default function PromoRealView() {
                         重试
                       </button>
                     )}
+                  </p>
+                )}
+                {restoreError && (
+                  <p role="alert" className={styles.notice}>
+                    上次上传会话恢复失败：{restoreError}{' '}
+                    <button type="button" disabled={restoreLoading} onClick={() => setRestoreAttempt((v) => v + 1)}>
+                      重试恢复
+                    </button>
                   </p>
                 )}
                 {pending && (
@@ -463,7 +491,7 @@ export default function PromoRealView() {
                     </section>
                   </>
                 )}
-                {config?.enabled && started && !pending && (
+                {config?.enabled && started && !pending && !restoreLoading && !restoreError && (
                   <>
                     <div className={`smart__progress ${styles.steps}`}>
                       <StepProgress
