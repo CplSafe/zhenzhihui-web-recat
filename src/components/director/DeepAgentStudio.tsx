@@ -6,6 +6,7 @@ import type { Data, StudioAttachment, StudioDocument } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
+import directorMascot from '../../assets/logo/director-mascot.png'
 import styles from './DeepAgentStudio.module.css'
 
 export interface DeepAgentStudioProps {
@@ -596,7 +597,9 @@ export default function DeepAgentStudio({
             </>
           ) : (
             <section className={styles.welcome}>
-              <div className={styles.orb} aria-hidden="true" />
+              <div className={styles.mascot} aria-hidden="true">
+                <img src={directorMascot} alt="" width={88} height={88} draggable={false} />
+              </div>
               <h1>让帧智汇导演辅助你的无限创意</h1>
               <div className={styles.starters}>
                 <button type="button" onClick={() => openDialog('skills')}>

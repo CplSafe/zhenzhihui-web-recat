@@ -249,16 +249,54 @@
   min-height: 100%;
   padding: 8px 0 0;
 }
-.orb {
+.mascot {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+  width: 88px;
+  height: 88px;
   margin-bottom: 12px;
-  background: radial-gradient(ellipse at 60% 48%, #55aafa 0, #54e3e4 38%, #8dffd7 65%, #4bc2ec 80%);
-  box-shadow:
-    inset 5px -4px 12px #4195e6aa,
-    inset -5px 3px 9px #bdfff9a6;
+  transition: transform 220ms ease-out;
+}
+.mascot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  transform-origin: 50% 80%;
+  animation: directorGreeting 4.6s ease-in-out both;
+}
+.mascot:hover {
+  transform: translateY(-3px) rotate(-3deg);
+}
+/* A short greeting settles naturally instead of looping beside the editor. */
+@keyframes directorGreeting {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  20% {
+    transform: translateY(-6px) rotate(-6deg);
+  }
+  40% {
+    transform: translateY(-3px) rotate(4deg);
+  }
+  65% {
+    transform: translateY(-5px) rotate(-3deg);
+  }
+  85% {
+    transform: translateY(-1px) rotate(1deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot {
+    transition: none;
+  }
+  .mascot img {
+    animation: none;
+  }
+  .mascot:hover {
+    transform: none;
+  }
 }
 .welcome h1 {
   font-size: 17px;
@@ -873,9 +911,9 @@
     padding: 8px 4px;
     gap: 12px;
   }
-  .orb {
-    width: 40px;
-    height: 40px;
+  .mascot {
+    width: 72px;
+    height: 72px;
     margin-bottom: 12px;
   }
   .composerArea {
