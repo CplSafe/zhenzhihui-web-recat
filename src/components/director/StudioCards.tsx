@@ -1,0 +1,380 @@
+import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Check, ChevronRight, FileText, LoaderCircle, X } from 'lucide-react'
+import { isSettled } from './studio'
+import { Media } from './StudioMedia'
+import type { Data, StudioDocument, StudioEvent, StudioRun } from './studio'
+import styles from './DeepAgentStudio.module.css'
+
+export function Markdown({ children }: { children: string }) {
+  return (
+    <div className={styles.markdown}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        components={{
+          a: ({ children, href }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          ),
+          img: ({ alt }) => <span>{alt || '图片引用'}</span>,
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  )
+}
+export function Dialog({
+  title,
+  onClose,
+  children,
+  error,
+}: {
+  title: string
+  onClose: () => void
+  children: React.ReactNode
+  error?: string
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const dialog = ref.current
+    dialog?.showModal()
+    return () => dialog?.close()
+  }, [])
+  return (
+    <dialog
+      ref={ref}
+      className={styles.dialog}
+      aria-label={title}
+      onCancel={(e) => {
+        e.preventDefault()
+        onClose()
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className={styles.dialogBody}>
+        <header>
+          <h2>{title}</h2>
+          <button type="button" className={styles.iconButton} aria-label="关闭" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </header>
+        {error && (
+          <p role="alert" className={styles.alert}>
+            {error}
+          </p>
+        )}
+        {children}
+      </div>
+    </dialog>
+  )
+}
+const taskNames: Record<string, string> = {
+  'model.generate_text': '思考与编剧',
+  'model.generate_image': '生成图片',
+  'model.generate_video': '生成视频',
+}
+export function EventCard({ event, canvas }: { event: StudioEvent; canvas?: Data | null }) {
+  const data = event.data || {},
+    settled = isSettled(event),
+    failed = ['failed', 'cancelled', 'canceled', 'payment_failed'].includes(data.status)
+  if (['document', 'canvas', 'node', 'batch'].includes(event.kind)) return null
+  if (['cost', 'tool', 'merge'].includes(event.kind) || (event.kind === 'progress' && data.status))
+    return (
+      <article className={styles.event}>
+        <details className={styles.taskCard}>
+          <summary>
+            {settled ? (
+              <Check size={18} />
+            ) : failed ? (
+              <span>!</span>
+            ) : event.kind === 'tool' ? (
+              <ChevronRight size={18} />
+            ) : (
+              <LoaderCircle size={18} className={styles.spin} />
+            )}
+            <strong>
+              {taskNames[data.tool] || (event.kind === 'merge' ? '合并完整视频' : event.text.split(' · ')[0])}
+            </strong>
+            <small>{settled ? '已完成' : failed ? '未完成' : event.kind === 'tool' ? '已返回' : '处理中'}</small>
+          </summary>
+          <div className={styles.taskContent}>
+            <p>{event.text}</p>
+            {settled && data.actual_cost != null && <p>实际消耗 {data.actual_cost} 积分</p>}
+            {!settled && !failed && data.estimated_cost != null && <p>已预留 {data.estimated_cost} 积分 · 待结算</p>}
+            {data.usage && (
+              <p>
+                输入 {data.usage.input_tokens ?? '未知'} · 输出 {data.usage.output_tokens ?? '未知'} · 缓存命中{' '}
+                {data.usage.cached_input_tokens ?? '未知'} token
+              </p>
+            )}
+            {data.task_id && <p>任务 #{data.task_id}</p>}
+          </div>
+        </details>
+        {(data.assets || data.asset) && <Media canvas={canvas} data={{ assets: data.assets, asset: data.asset }} />}
+      </article>
+    )
+  return (
+    <article
+      className={`${styles.event} ${event.kind === 'user' ? styles.userMessage : event.kind === 'error' ? styles.errorMessage : styles.assistantMessage}`}
+    >
+      <small>
+        {event.kind === 'user'
+          ? '你'
+          : event.kind === 'assistant'
+            ? '帧智汇导演'
+            : event.kind === 'attachment'
+              ? '已添加附件'
+              : '执行提示'}
+      </small>
+      <Markdown>{event.text}</Markdown>
+      {event.data && event.kind !== 'inspection' && <Media canvas={canvas} data={event.data} />}
+    </article>
+  )
+}
+export function Results({ run }: { run: StudioRun | null }) {
+  const events = run?.events || []
+  const images = events.filter(
+    (e) => e.kind === 'cost' && isSettled(e) && e.data?.tool === 'model.generate_image' && e.data.assets?.length,
+  )
+  const videos = events.filter(
+    (e) => e.kind === 'cost' && isSettled(e) && e.data?.tool === 'model.generate_video' && e.data.assets?.length,
+  )
+  const merges = events.filter((e) => e.kind === 'merge' && isSettled(e))
+  return (
+    <section className={styles.results}>
+      <h2>制作成果</h2>
+      <p>
+        {images.reduce((n, e) => n + e.data!.assets.length, 0)} 张图片 · {videos.length} 段视频 · {merges.length} 个成片
+      </p>
+      {!images.length && !videos.length && !merges.length && (
+        <p className={styles.muted}>制作完成的图片、镜头和合并视频会在这里呈现。</p>
+      )}
+      {(
+        [
+          ['合并完整视频', merges],
+          ['视频结果集', videos],
+          ['图片结果集', images],
+        ] as const
+      ).map(
+        ([title, list]) =>
+          list.length > 0 && (
+            <section key={title}>
+              <h3>{title}</h3>
+              {list.map((e) => (
+                <article key={e.id}>
+                  <p>{e.text}</p>
+                  <Media canvas={run?.canvas} data={{ assets: e.data?.assets, asset: e.data?.asset }} />
+                </article>
+              ))}
+            </section>
+          ),
+      )}
+      {events
+        .filter((e) => e.kind === 'inspection' || e.kind === 'delivery')
+        .map((e) => (
+          <details key={e.id}>
+            <summary>成片检查</summary>
+            <Markdown>{e.text}</Markdown>
+            <pre>{JSON.stringify(e.data, null, 2)}</pre>
+          </details>
+        ))}
+    </section>
+  )
+}
+export function Approval({
+  run,
+  busy,
+  onDecision,
+}: {
+  run: StudioRun
+  busy: boolean
+  onDecision: (data: Data) => Promise<void>
+}) {
+  const pending = run.pending!,
+    ask = pending.tool === 'ask_user',
+    replan = pending.requires_replan
+  const [feedback, setFeedback] = useState(''),
+    [error, setError] = useState('')
+  const [answers, setAnswers] = useState<Record<number, string>>({}),
+    [page, setPage] = useState(0)
+  const questions: Data[] = Array.isArray(pending.arguments?.questions) ? pending.arguments.questions : []
+  async function submit(approve: boolean) {
+    let message = feedback.trim()
+    if (ask && approve && questions.length) {
+      if (questions.some((_, index) => !answers[index]?.trim())) {
+        setError('请完成全部问题后继续。')
+        return
+      }
+      message =
+        questions.map((q, i) => `${i + 1}. ${q.question}\n回答：${answers[i]}`).join('\n\n') +
+        (message ? '\n补充：' + message : '')
+    }
+    if (ask && approve && !message) {
+      setError('请输入回复后继续。')
+      return
+    }
+    await onDecision({
+      decision_id: run.decision_id,
+      decision: approve ? (ask || replan ? 'reply' : 'approve') : 'reject',
+      message: message || (approve ? (replan ? '按最新制作文档重新规划。' : '用户确认继续') : '用户取消了这个操作'),
+      ...(!ask && !replan && approve ? { arguments: pending.arguments || {} } : {}),
+    })
+  }
+  return (
+    <section className={styles.approval} aria-label={ask ? '导演的问题' : '生成确认'}>
+      <h3>{replan ? '制作资料已更新' : ask ? '需要你的想法' : '确认这一步制作'}</h3>
+      <Markdown>{pending.message || ''}</Markdown>
+      {ask && questions.length > 0 && (
+        <>
+          <p className={styles.muted}>
+            问题 {page + 1} / {questions.length}
+          </p>
+          <fieldset>
+            <legend>{questions[page].question}</legend>
+            {(questions[page].options || []).map((choice: Data, index: number) =>
+              choice.type === 'input' ? (
+                <input
+                  key={`${page}-${index}`}
+                  aria-label={choice.content || '其他想法'}
+                  placeholder={choice.content}
+                  maxLength={2000}
+                  onChange={(e) => setAnswers((old) => ({ ...old, [page]: e.target.value }))}
+                />
+              ) : (
+                <label key={index} className={styles.choice}>
+                  <input
+                    type="radio"
+                    name={`question-${page}`}
+                    checked={answers[page] === choice.content}
+                    onChange={() => setAnswers((old) => ({ ...old, [page]: choice.content }))}
+                  />
+                  {choice.content}
+                </label>
+              ),
+            )}
+          </fieldset>
+          <div className={styles.row}>
+            <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>
+              上一题
+            </button>
+            <button type="button" disabled={page === questions.length - 1} onClick={() => setPage(page + 1)}>
+              下一题
+            </button>
+          </div>
+        </>
+      )}
+      {!ask && (
+        <details>
+          <summary>查看生成参数和审批范围</summary>
+          <pre>{JSON.stringify(pending.arguments || {}, null, 2)}</pre>
+        </details>
+      )}
+      <textarea
+        aria-label="补充意见"
+        placeholder={ask ? '输入你的回复或补充说明…' : '告诉导演你的想法，或者直接确认继续…'}
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+        maxLength={12000}
+      />
+      {error && <p role="alert">{error}</p>}
+      <div className={styles.row}>
+        <button type="button" disabled={busy} onClick={() => void submit(false)}>
+          取消此操作
+        </button>
+        <button type="button" className={styles.primary} disabled={busy} onClick={() => void submit(true)}>
+          {replan ? '按最新文档继续' : ask ? '提交并继续' : '确认并继续'}
+        </button>
+      </div>
+    </section>
+  )
+}
+export function DocumentEditor({
+  document,
+  busy,
+  onSave,
+}: {
+  document: StudioDocument
+  busy: boolean
+  onSave: (document: StudioDocument, body: string, key: string) => Promise<void | boolean>
+}) {
+  const [body, setBody] = useState(document.body),
+    [editing, setEditing] = useState<StudioDocument | null>(null)
+  const request = useRef<{ body: string; revision: number; key: string } | null>(null)
+  return (
+    <section>
+      <h3>
+        <FileText size={18} /> {document.title}
+      </h3>
+      <p className={styles.muted}>版本 {document.revision}</p>
+      {editing && editing.revision !== document.revision && (
+        <div role="status" className={styles.alert}>
+          文档已更新为版本 {document.revision}。当前草稿仍基于版本 {editing.revision}，不会覆盖新版本。
+          <details>
+            <summary>查看最新正文</summary>
+            <Markdown>{document.body}</Markdown>
+          </details>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setBody(document.body)
+              setEditing({ ...document })
+              request.current = null
+            }}
+          >
+            用最新版本替换当前草稿
+          </button>
+        </div>
+      )}
+      {editing ? (
+        <textarea
+          className={styles.documentEditor}
+          aria-label="制作文档正文"
+          maxLength={40000}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
+      ) : (
+        <Markdown>{document.body}</Markdown>
+      )}
+      <div className={styles.row}>
+        {editing ? (
+          <>
+            <button type="button" disabled={busy} onClick={() => setEditing(null)}>
+              关闭编辑
+            </button>
+            <button
+              type="button"
+              className={styles.primary}
+              disabled={busy || !body.trim()}
+              onClick={async () => {
+                if (request.current?.body !== body || request.current.revision !== editing.revision)
+                  request.current = { body, revision: editing.revision, key: crypto.randomUUID() }
+                if (await onSave(editing, body, request.current.key)) setEditing(null)
+              }}
+            >
+              保存修订
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setBody(document.body)
+              setEditing({ ...document })
+            }}
+          >
+            编辑文档
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}

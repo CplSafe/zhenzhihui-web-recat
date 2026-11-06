@@ -119,6 +119,7 @@ const DemandDetailView = lazy(() => import('../views/DemandDetailView'))
 const MyCollaborationsView = lazy(routeImporters.collaborations)
 /** 积分明细路由组件。 */
 const CreditsView = lazy(() => import('../views/CreditsView'))
+const DirectorStudioView = lazy(() => import('../views/DirectorStudioView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -303,6 +304,7 @@ function WelcomeRoute() {
 
 /** 应用唯一的浏览器路由实例。 */
 export const router = createBrowserRouter([
+  { path: '/director', element: lazyPage(<DirectorStudioView />), errorElement: <RouteErrorBoundary /> },
   {
     // AppShell 提供全局布局、会话守卫和全局弹层；各业务页面作为它的子路由渲染。
     element: <App />,

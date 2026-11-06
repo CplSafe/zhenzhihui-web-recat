@@ -128,6 +128,15 @@ export default defineConfig(({ mode }) => {
       // Watching them can create tens of thousands of filesystem watchers on Windows.
       watch: { ignored: ['**/.codex/**'] },
       proxy: {
+        // Preserve Host and Origin: Studio validates the explicitly allowed
+        // frontend origin for HTTP and WebSocket instead of bypassing CSRF.
+        '/agent-studio': {
+          target: 'http://127.0.0.1:8090',
+          changeOrigin: false,
+          ws: true,
+          timeout: 660_000,
+          proxyTimeout: 660_000,
+        },
         '/api': createBusinessProxy(businessTarget),
         '/auth': {
           ...createBusinessProxy(businessTarget),
