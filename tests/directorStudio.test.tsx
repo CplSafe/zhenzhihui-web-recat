@@ -112,6 +112,7 @@ describe('Studio transport', () => {
     }
     render(<CanvasHost />)
     expect(seen).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '打开豆豆导演' }).closest('[data-canvas-floating-toolbar]')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
     await screen.findByText('图片 · Nano Banana Pro (Google)')
     expect(seen).toHaveBeenCalledWith('business', '40')

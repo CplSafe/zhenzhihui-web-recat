@@ -7,7 +7,10 @@
  *
  * 与小地图同处左下角是有意的：它们同属「视图导航」，分散在两角会让人来回找。
  */
+import { useEffect, useRef, useState } from 'react'
+import { MoreHorizontal } from 'lucide-react'
 import styles from './CanvasViewControls.module.css'
+import { useCanvasMenuHeight } from './useCanvasMenuHeight'
 
 export interface CanvasViewControlsProps {
   keyboardPriority?: boolean
@@ -67,59 +70,34 @@ export default function CanvasViewControls({
   // 极小倍率下 1% 的精度已经没有意义，但读数不能显示成 0%——那看起来像坏了
   const percent = Math.max(1, Math.round((Number(zoom) || 1) * 100))
 
+  const [moreOpen, setMoreOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const menuHeight = useCanvasMenuHeight(rootRef, moreOpen)
+  useEffect(() => {
+    if (!moreOpen) return
+    const outside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setMoreOpen(false)
+    }
+    document.addEventListener('pointerdown', outside)
+    return () => document.removeEventListener('pointerdown', outside)
+  }, [moreOpen])
+
   return (
-    <div className={`${styles.bar} nodrag nopan`} role="toolbar" aria-label="画布视图控制">
-      {onUiSizeChange && (
-        <select
-          className={styles.uiSize}
-          aria-label="界面大小"
-          value={uiSize}
-          onChange={(event) => onUiSizeChange(event.target.value as 'standard' | 'large' | 'extra-large')}
-        >
-          <option value="standard">界面：标准</option>
-          <option value="large">界面：较大</option>
-          <option value="extra-large">界面：特大</option>
-        </select>
-      )}
-      <button type="button" className={styles.btn} onClick={onZoomOut} title="缩小" aria-label="缩小">
-        <MinusIcon />
-      </button>
-
-      {/* 读数本身可点：这是回到 100% 最直觉的入口，比再加一个按钮省地方 */}
-      {onZoomTo ? (
-        <select
-          aria-label="画布缩放"
-          className={styles.zoomValue}
-          value={percent}
-          onChange={(event) => onZoomTo(Number(event.target.value) / 100)}
-        >
-          {![1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].includes(percent) && (
-            <option value={percent}>{percent}%</option>
-          )}
-          {[1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].map((value) => (
-            <option key={value} value={value}>
-              {value}%
-            </option>
-          ))}
-        </select>
-      ) : (
-        <button
-          type="button"
-          className={styles.zoomValue}
-          onClick={onZoomReset}
-          title="点击回到 100%"
-          aria-label={`当前缩放 ${percent}%，点击回到 100%`}
-        >
-          {percent}%
-        </button>
-      )}
-
-      <button type="button" className={styles.btn} onClick={onZoomIn} title="放大" aria-label="放大">
-        <PlusIcon />
-      </button>
-
-      <span className={styles.divider} aria-hidden="true" />
-
+    <div
+      ref={rootRef}
+      className={`${styles.bar} nodrag nopan`}
+      role="toolbar"
+      aria-label="画布视图控制"
+      onKeyDown={(event) => {
+        if (!moreOpen) return
+        event.stopPropagation()
+        if (event.key === 'Escape') {
+          setMoreOpen(false)
+          moreRef.current?.focus()
+        }
+      }}
+    >
       <button type="button" className={styles.btn} onClick={onFitView} title="复位视图" aria-label="复位视图">
         <FitIcon />
       </button>
@@ -162,76 +140,156 @@ export default function CanvasViewControls({
         <MiniMapIcon />
       </button>
 
-      {(onOpenSettings || onOpenHelp) && <span className={styles.divider} aria-hidden="true" />}
-
-      {onOpenSettings && (
-        <button type="button" className={styles.btn} onClick={onOpenSettings} title="画布设置" aria-label="画布设置">
-          <GearIcon />
-        </button>
-      )}
-
-      {onKeyboardPriorityToggle && (
+      {onZoomTo ? (
+        <select
+          aria-label="画布缩放"
+          className={styles.zoomValue}
+          value={percent}
+          onChange={(event) => onZoomTo(Number(event.target.value) / 100)}
+        >
+          {![1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].includes(percent) && (
+            <option value={percent}>{percent}%</option>
+          )}
+          {[1, 2, 5, 10, 25, 50, 60, 75, 100, 125, 150, 200, 400, 800, 1600, 3200].map((value) => (
+            <option key={value} value={value}>
+              {value}%
+            </option>
+          ))}
+        </select>
+      ) : (
         <button
           type="button"
-          className={`${styles.btn} ${keyboardPriority ? styles.btnActive : ''}`}
-          onClick={onKeyboardPriorityToggle}
-          disabled={keyboardPriorityPending}
-          aria-label="全屏快捷键模式"
-          aria-pressed={keyboardPriority}
-          aria-busy={keyboardPriorityPending}
-          title={keyboardPriority ? '退出全屏快捷键模式（Esc）' : '进入全屏，让画布快捷键优先于浏览器'}
+          className={styles.zoomValue}
+          onClick={onZoomReset}
+          title="点击回到 100%"
+          aria-label={`当前缩放 ${percent}%，点击回到 100%`}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            aria-hidden="true"
-          >
-            <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
-            <rect x="7" y="9" width="10" height="7" rx="1.5" />
-            <path d="M9 12h1m1 0h1m1 0h2M10 14h4" />
-          </svg>
-        </button>
-      )}
-      {onOpenHelp && (
-        <button
-          type="button"
-          className={styles.btn}
-          onClick={onOpenHelp}
-          title="快捷键速查（? / Shift + /）"
-          aria-label="快捷键速查"
-        >
-          <HelpIcon />
+          {percent}%
         </button>
       )}
 
-      {stats && (
-        <>
-          <span className={styles.divider} aria-hidden="true" />
-          <span
-            className={styles.stats}
-            title={`节点 ${stats.nodes} · 连线 ${stats.edges}${stats.failed > 0 ? ` · ${stats.failed} 个生成失败` : ''}`}
-            aria-label={`画布共 ${stats.nodes} 个节点、${stats.edges} 条连线${stats.failed > 0 ? `，${stats.failed} 个生成失败` : ''}`}
-          >
-            <span className={styles.stat}>
-              <NodeCountIcon />
-              {stats.nodes}
-            </span>
-            <span className={styles.stat}>
-              <EdgeCountIcon />
-              {stats.edges}
-            </span>
-            {stats.failed > 0 && (
-              <span className={`${styles.stat} ${styles.statFailed}`}>
-                <WarnIcon />
-                {stats.failed}
+      <button
+        ref={moreRef}
+        type="button"
+        className={styles.btn}
+        aria-label="更多视图选项"
+        title="更多视图选项"
+        aria-expanded={moreOpen}
+        aria-controls="canvas-view-options"
+        onClick={() => setMoreOpen((open) => !open)}
+      >
+        <MoreHorizontal size={18} aria-hidden="true" />
+      </button>
+      {moreOpen && (
+        <div
+          id="canvas-view-options"
+          className={styles.options}
+          style={{ maxHeight: menuHeight }}
+          role="group"
+          aria-label="更多视图选项"
+        >
+          <div className={styles.zoomActions}>
+            <button type="button" className={styles.btn} onClick={onZoomOut} title="缩小" aria-label="缩小">
+              <MinusIcon />
+            </button>
+            <button type="button" className={styles.zoomValue} onClick={onZoomReset}>
+              重置为 100%
+            </button>
+            <button type="button" className={styles.btn} onClick={onZoomIn} title="放大" aria-label="放大">
+              <PlusIcon />
+            </button>
+          </div>
+          {onUiSizeChange && (
+            <select
+              className={styles.uiSize}
+              aria-label="界面大小"
+              value={uiSize}
+              onChange={(event) => onUiSizeChange(event.target.value as 'standard' | 'large' | 'extra-large')}
+            >
+              <option value="standard">界面：标准</option>
+              <option value="large">界面：较大</option>
+              <option value="extra-large">界面：特大</option>
+            </select>
+          )}
+          {onOpenSettings && (
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={onOpenSettings}
+              title="画布设置"
+              aria-label="画布设置"
+            >
+              <GearIcon />
+              <span>画布设置</span>
+            </button>
+          )}
+
+          {onKeyboardPriorityToggle && (
+            <button
+              type="button"
+              className={`${styles.btn} ${keyboardPriority ? styles.btnActive : ''}`}
+              onClick={onKeyboardPriorityToggle}
+              disabled={keyboardPriorityPending}
+              aria-label="全屏快捷键模式"
+              aria-pressed={keyboardPriority}
+              aria-busy={keyboardPriorityPending}
+              title={keyboardPriority ? '退出全屏快捷键模式（Esc）' : '进入全屏，让画布快捷键优先于浏览器'}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                aria-hidden="true"
+              >
+                <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
+                <rect x="7" y="9" width="10" height="7" rx="1.5" />
+                <path d="M9 12h1m1 0h1m1 0h2M10 14h4" />
+              </svg>
+              <span>全屏快捷键模式</span>
+            </button>
+          )}
+          {onOpenHelp && (
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={onOpenHelp}
+              title="快捷键速查（? / Shift + /）"
+              aria-label="快捷键速查"
+            >
+              <HelpIcon />
+              <span>快捷键速查</span>
+            </button>
+          )}
+
+          {stats && (
+            <>
+              <span className={styles.divider} aria-hidden="true" />
+              <span
+                className={styles.stats}
+                title={`节点 ${stats.nodes} · 连线 ${stats.edges}${stats.failed > 0 ? ` · ${stats.failed} 个生成失败` : ''}`}
+                aria-label={`画布共 ${stats.nodes} 个节点、${stats.edges} 条连线${stats.failed > 0 ? `，${stats.failed} 个生成失败` : ''}`}
+              >
+                <span className={styles.stat}>
+                  <NodeCountIcon />
+                  {stats.nodes}
+                </span>
+                <span className={styles.stat}>
+                  <EdgeCountIcon />
+                  {stats.edges}
+                </span>
+                {stats.failed > 0 && (
+                  <span className={`${styles.stat} ${styles.statFailed}`}>
+                    <WarnIcon />
+                    {stats.failed}
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-        </>
+            </>
+          )}
+        </div>
       )}
     </div>
   )

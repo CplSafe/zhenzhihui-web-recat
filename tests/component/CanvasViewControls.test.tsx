@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasViewControls from '@/components/canvas/CanvasViewControls'
@@ -27,13 +27,16 @@ describe('CanvasViewControls', () => {
     const user = userEvent.setup()
     const toggle = vi.fn()
     renderControls({ keyboardPriority: true, onKeyboardPriorityToggle: toggle })
+    await user.click(screen.getByRole('button', { name: '更多视图选项' }))
     const button = screen.getByRole('button', { name: '全屏快捷键模式' })
     expect(button).toHaveAttribute('aria-pressed', 'true')
     await user.click(button)
     expect(toggle).toHaveBeenCalledOnce()
   })
-  it('等待全屏和权限时禁用按钮，防止重复请求', () => {
+  it('等待全屏和权限时禁用按钮，防止重复请求', async () => {
+    const user = userEvent.setup()
     renderControls({ keyboardPriorityPending: true, onKeyboardPriorityToggle: vi.fn() })
+    await user.click(screen.getByRole('button', { name: '更多视图选项' }))
     expect(screen.getByRole('button', { name: '全屏快捷键模式' })).toBeDisabled()
   })
   it('选择预设倍率时调用缩放回调', async () => {
@@ -63,6 +66,7 @@ describe('CanvasViewControls', () => {
     const user = userEvent.setup()
     const props = renderControls()
 
+    await user.click(screen.getByRole('button', { name: '更多视图选项' }))
     await user.click(screen.getByRole('button', { name: '放大' }))
     await user.click(screen.getByRole('button', { name: '缩小' }))
     await user.click(screen.getByRole('button', { name: '复位视图' }))
@@ -100,4 +104,37 @@ describe('CanvasViewControls', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
     expect(toggle).toHaveAttribute('title', '显示小地图')
   })
+})
+
+it('低频选项收起但仍可操作，Escape 还原焦点，外部点击关闭', async () => {
+  const user = userEvent.setup()
+  const onUiSizeChange = vi.fn()
+  renderControls({ onUiSizeChange, stats: { nodes: 42, edges: 10, failed: 2 } })
+  expect(screen.queryByRole('combobox', { name: '界面大小' })).not.toBeInTheDocument()
+  expect(screen.queryByLabelText(/画布共/)).not.toBeInTheDocument()
+  const more = screen.getByRole('button', { name: '更多视图选项' })
+  await user.click(more)
+  expect(screen.getByLabelText(/画布共/)).toHaveTextContent('42')
+  await user.selectOptions(screen.getByRole('combobox', { name: '界面大小' }), 'extra-large')
+  expect(onUiSizeChange).toHaveBeenCalledWith('extra-large')
+  await user.keyboard('{Escape}')
+  expect(more).toHaveFocus()
+  expect(more).toHaveAttribute('aria-expanded', 'false')
+  await user.click(more)
+  await user.click(document.body)
+  expect(screen.queryByRole('combobox', { name: '界面大小' })).not.toBeInTheDocument()
+})
+
+it('特大界面的菜单高度扣除缩放后的间距，缩放窗口后重新计算', async () => {
+  const user = userEvent.setup()
+  renderControls()
+  const bar = screen.getByRole('toolbar', { name: '画布视图控制' })
+  vi.spyOn(bar, 'offsetWidth', 'get').mockReturnValue(163)
+  const bounds = vi.spyOn(bar, 'getBoundingClientRect').mockReturnValue(new DOMRect(32, 308, 326, 136))
+  await user.click(screen.getByRole('button', { name: '更多视图选项' }))
+  const menu = screen.getByRole('group', { name: '更多视图选项' })
+  expect(menu).toHaveStyle({ maxHeight: '134px' })
+  bounds.mockReturnValue(new DOMRect(32, 200, 326, 136))
+  fireEvent(window, new Event('resize'))
+  expect(menu).toHaveStyle({ maxHeight: '80px' })
 })

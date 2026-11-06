@@ -112,6 +112,7 @@ import type { HdRequest } from '@/components/canvas/CanvasHdWorkspace'
 import { materializeHdResults } from '@/utils/canvasHd'
 import type { HdTask } from '@/api/canvasHd'
 import CanvasViewControls from '@/components/canvas/CanvasViewControls'
+import CanvasBottomBar from '@/components/canvas/CanvasBottomBar'
 import CanvasNodeSearch from '@/components/canvas/CanvasNodeSearch'
 import CanvasSettingsPanel from '@/components/canvas/CanvasSettingsPanel'
 import CanvasShortcutsHelp from '@/components/canvas/CanvasShortcutsHelp'
@@ -11079,27 +11080,76 @@ function CanvasInner() {
           </Suspense>
         )}
 
-        {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
-        {!drawerPanel && (
-          <CanvasFloatingToolbar
-            shortcuts={preferences.shortcuts}
-            leaving={toolbarLeaving}
-            onAddNode={handleAddNode}
-            panModeEnabled={panModeEnabled}
-            onPanModeToggle={handlePanModeToggle}
-            dragEnabled={dragEnabled}
-            onDragToggle={handleDragToggle}
-            onAddLocalImage={() => openLocalImagePicker()}
-            onOpenSearch={() => setSearchOpen(true)}
-            onOpenAssets={() => openDrawerPanel('assets')}
-            onOpenHistory={() => openDrawerPanel('history')}
-            onOpenHelp={() => setShortcutsOpen(true)}
-            directorOpen={directorOpen}
-            onToggleDirector={currentUserId && workspaceId > 0 && canvasId > 0
-              ? () => setOpenDirectorBinding((current) => current === directorBindingKey ? null : directorBindingKey)
-              : undefined}
-          />
-        )}
+        <CanvasBottomBar
+          overview={
+            nodes.length > 0 && minimapVisible && (
+              <MiniMap
+                className="canvas-minimap"
+                position="bottom-left"
+                pannable
+                zoomable
+                ariaLabel="画布缩略图"
+                nodeColor={miniMapNodeColor}
+                nodeStrokeWidth={0}
+                maskColor="rgba(8, 9, 13, 0.78)"
+              />
+            )
+          }
+          controls={
+            nodes.length > 0 && (
+              <CanvasViewControls
+                keyboardPriority={keyboardPriority.enabled}
+                keyboardPriorityPending={keyboardPriority.pending}
+                onKeyboardPriorityToggle={() => void keyboardPriority.toggle()}
+                uiSize={preferences.uiSize}
+                onUiSizeChange={(uiSize) => updatePreferences({ uiSize })}
+                zoom={transform[2]}
+                onZoomIn={() => zoomIn({ duration: 160 })}
+                onZoomOut={() => zoomOut({ duration: 160 })}
+                onZoomTo={(zoom) => void zoomTo(zoom, { duration: 150 })}
+                onZoomReset={() => zoomTo(1, { duration: 160 })}
+                onFitView={() => fitView({ padding: 0.2, duration: 300, maxZoom: 1 })}
+                snapEnabled={snapEnabled}
+                onSnapToggle={() => setSnapEnabled((value) => !value)}
+                minimapVisible={minimapVisible}
+                onMinimapToggle={() =>
+                  setMinimapVisible((value) => {
+                    saveMinimapVisible(!value)
+                    return !value
+                  })
+                }
+                edgesHidden={edgesHidden}
+                onEdgesToggle={() => setEdgesHidden((value) => !value)}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onOpenHelp={() => setShortcutsOpen(true)}
+                stats={canvasStats}
+              />
+            )
+          }
+        >
+          {!drawerPanel && (
+            <CanvasFloatingToolbar
+              shortcuts={preferences.shortcuts}
+              leaving={toolbarLeaving}
+              onAddNode={handleAddNode}
+              panModeEnabled={panModeEnabled}
+              onPanModeToggle={handlePanModeToggle}
+              dragEnabled={dragEnabled}
+              onDragToggle={handleDragToggle}
+              onAddLocalImage={() => openLocalImagePicker()}
+              onOpenSearch={() => setSearchOpen(true)}
+              onOpenAssets={() => openDrawerPanel('assets')}
+              onOpenHistory={() => openDrawerPanel('history')}
+              onOpenHelp={() => setShortcutsOpen(true)}
+              directorOpen={directorOpen}
+              onToggleDirector={
+                currentUserId && workspaceId > 0 && canvasId > 0
+                  ? () => setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
+                  : undefined
+              }
+            />
+          )}
+        </CanvasBottomBar>
 
         {/* 剪辑时间线编辑器：节点上的「精修」或双击打开，用于逐帧裁剪与分割；
           加片段/删片段/合成在节点卡片上就能做，不必进这里 */}
@@ -11625,23 +11675,6 @@ function CanvasInner() {
                 />
               ))}
             </ViewportPortal>
-            {/*
-              小地图：节点多到一定程度后，缩小到 minZoom(0.01) 虽然装得下全图，
-              但节点只剩色块、认不出谁是谁——「能缩出去」不等于「能定位」。
-              小地图给的是俯瞰 + 点击直达，这才是大图的导航手段。
-            */}
-            {nodes.length > 0 && minimapVisible && (
-              <MiniMap
-                className="canvas-minimap"
-                position="bottom-left"
-                pannable
-                zoomable
-                ariaLabel="画布缩略图"
-                nodeColor={miniMapNodeColor}
-                nodeStrokeWidth={0}
-                maskColor="rgba(8, 9, 13, 0.78)"
-              />
-            )}
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
 
@@ -11949,36 +11982,6 @@ function CanvasInner() {
         {/* 左下角复位视图按钮 */}
         {searchOpen && (
           <CanvasNodeSearch nodes={searchableNodes} onPick={focusNodeFromSearch} onClose={() => setSearchOpen(false)} />
-        )}
-
-        {nodes.length > 0 && (
-          <CanvasViewControls
-            keyboardPriority={keyboardPriority.enabled}
-            keyboardPriorityPending={keyboardPriority.pending}
-            onKeyboardPriorityToggle={() => void keyboardPriority.toggle()}
-            uiSize={preferences.uiSize}
-            onUiSizeChange={(uiSize) => updatePreferences({ uiSize })}
-            zoom={transform[2]}
-            onZoomIn={() => zoomIn({ duration: 160 })}
-            onZoomOut={() => zoomOut({ duration: 160 })}
-            onZoomTo={(zoom) => void zoomTo(zoom, { duration: 150 })}
-            onZoomReset={() => zoomTo(1, { duration: 160 })}
-            onFitView={() => fitView({ padding: 0.2, duration: 300, maxZoom: 1 })}
-            snapEnabled={snapEnabled}
-            onSnapToggle={() => setSnapEnabled((value) => !value)}
-            minimapVisible={minimapVisible}
-            onMinimapToggle={() =>
-              setMinimapVisible((value) => {
-                saveMinimapVisible(!value)
-                return !value
-              })
-            }
-            edgesHidden={edgesHidden}
-            onEdgesToggle={() => setEdgesHidden((value) => !value)}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onOpenHelp={() => setShortcutsOpen(true)}
-            stats={canvasStats}
-          />
         )}
 
         {/* 连线剪刀图标层 — 选中连线时显示 */}

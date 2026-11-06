@@ -1,31 +1,26 @@
-/*
- * 左侧竖排工具栏：以视口中线为中心，高度由内容撑开。
- *
- * 不要给它 top + bottom 双向定位——那会把工具栏拉成一条贯穿全屏的白色长条
- * （试过，反而压住了顶部标题）。它只有六个按钮，高度本就该由内容决定。
- */
-.toolbar {
-  zoom: var(--canvas-ui-scale, 1);
-  max-height: calc(100dvh / var(--canvas-ui-scale, 1) - 140px);
-  position: absolute;
-  top: auto;
-  bottom: max(12px, env(safe-area-inset-bottom));
-  left: 50%;
-  /* chrome 档（见 CanvasView.css 顶部的层级口径）：低于 1000 会被选中的节点盖住 */
-  z-index: 1100;
+/* The director sits beside the tool surface, never inside it. Positioning and
+   UI scaling belong to CanvasBottomBar so both bottom regions share one layout. */
+.group {
   display: flex;
-  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  pointer-events: auto;
+}
+.toolbar {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  padding: 8px;
+  padding: 6px;
   background: var(--canvas-surface, #262626);
   backdrop-filter: blur(12px);
   border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 14px;
   box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
   animation: toolbar-enter 0.2s ease-out;
-  transform: translateX(-50%);
-  will-change: opacity, transform;
 }
 
 /* 添加菜单展开时提升到画布浮动菜单层级，避免被选中面板和节点控件遮挡。 */
@@ -42,22 +37,22 @@
 @keyframes toolbar-enter {
   from {
     opacity: 0;
-    transform: translate(-50%, 12px);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
 }
 
 @keyframes toolbar-leave {
   from {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
   to {
     opacity: 0;
-    transform: translate(-50%, 12px) scale(0.96);
+    transform: translateY(12px) scale(0.96);
   }
 }
 
@@ -85,19 +80,49 @@
   color: var(--canvas-brand, #00e5be);
 }
 .directorButton {
-  margin-left: 6px;
-  flex-shrink: 0;
+  position: relative;
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 50%;
+  background: var(--canvas-surface, #262626);
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 22%);
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
 }
 .directorButton img {
   display: block;
   object-fit: contain;
 }
+.directorButton:hover {
+  transform: translateY(-3px);
+}
 .directorButton[aria-expanded='true'] {
-  background: rgb(143 182 109 / 16%);
+  background: #34402d;
 }
 .directorButton:focus-visible {
   outline: 2px solid #a6ca8c;
-  outline-offset: 2px;
+  outline-offset: 3px;
+}
+.directorButton:hover .toolLabel,
+.directorButton:focus-visible .toolLabel {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .directorButton {
+    transition: none;
+  }
+  .directorButton:hover {
+    transform: none;
+  }
 }
 
 /* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
@@ -206,7 +231,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  max-height: calc(100dvh - 112px);
+  max-height: calc(100dvh / var(--canvas-ui-scale, 1) - 160px);
+  max-width: calc(100cqi - 16px);
   overflow-x: hidden;
   overflow-y: auto;
   z-index: 20;
@@ -296,50 +322,32 @@
   transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }
 
-/*
- * 窄屏不再把整条工具栏竖着压在左侧画布上：改为顶部横排，给节点和底部视图控件让路。
- * 44px 按钮保持触控面积，不靠缩小按钮硬塞布局；空间不足时工具栏自身横向滚动。
- */
-@media (max-width: 900px) {
+@container canvas-bottom (max-width: 480px) {
   .toolbar {
-    top: auto;
-    bottom: max(12px, env(safe-area-inset-bottom));
-    left: 50%;
-    max-width: calc(100vw / var(--canvas-ui-scale, 1) - 32px);
-    flex-direction: row;
+    gap: 2px;
+    padding: 4px;
+  }
+  .toolBtn {
+    width: 36px;
+    height: 40px;
+  }
+  .addBtnWrap {
+    flex-basis: 36px;
+  }
+  .group {
     gap: 8px;
-    padding: 8px 10px;
-    overflow-x: auto;
-    overflow-y: visible;
-    animation: none;
-    transform: translateX(-50%);
-    scrollbar-width: none;
   }
-
-  .toolbar::-webkit-scrollbar {
-    display: none;
+  .directorButton {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
   }
-
-  .toolbarLeaving {
-    animation: none;
-    opacity: 0;
-  }
-
   .toolLabel {
     display: none;
   }
 }
-
 @media (hover: none) {
-  /* 触屏没有可靠 hover，悬浮标签会粘住并挡住相邻按钮；title/aria-label 仍保留名称。 */
   .toolLabel {
     display: none;
-  }
-}
-
-/* Leave the view controls unobstructed when the two bottom bars cannot sit side by side. */
-@media (max-width: 1400px) {
-  .toolbar {
-    bottom: calc(68px + env(safe-area-inset-bottom));
   }
 }

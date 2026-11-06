@@ -148,7 +148,7 @@ Agent 已在后端将制作文档、任务、图片和视频写入绑定画布�
 uv run agent-studio/run.py --mcp-url https://zzh-dev.zhongdahengrui.com --port 8090 --frontend-origin http://127.0.0.1:8080
 ```
 
-上面命令在**后端仓库**运行。前端仓库现有 Vite 已代理 `/agent-studio` 到8090并启用 WebSocket，保持 Host/Origin，不要为了连通而移除校验。前端运行后访问 `http://127.0.0.1:8080/director`。实际画布 `/canvas/:id` 已挂载 `CanvasDirectorDock`，底部工具栏末端的豆豆 Logo 按需打开对话窗；收起保留草稿，切换账号/空间/画布重建实例。Agent 的 revision 通知触发现有完整增量同步，保留保存队列、冲突合并和本地未提交编辑；不直接使用聊天投影覆盖节点。没有 workspace/canvas 参数的独立 `/director` 仍通过设置连接 OAuth。嵌入画布时先在业务站登录；浏览器业务 Cookie 必须可发送到同源 `/agent-studio`，由代理转发给 Agent。Agent 的 `--mcp-url` 必须指向签发该业务会话的后端环境。本地前端连测试后端时，在本地业务登录页登录获得本地域 Cookie，仅在测试域登录不会把 Cookie 自动带给 localhost。不能把账号密码或 MCP token 写进组件配置。
+上面命令在**后端仓库**运行。前端仓库现有 Vite 已代理 `/agent-studio` 到8090并启用 WebSocket，保持 Host/Origin，不要为了连通而移除校验。前端运行后访问 `http://127.0.0.1:8080/director`。实际画布 `/canvas/:id` 已挂载 `CanvasDirectorDock`，底部创作工具栏右侧、独立于工具栏外的豆豆 Logo 按需打开对话窗；收起保留草稿，切换账号/空间/画布重建实例。Agent 的 revision 通知触发现有完整增量同步，保留保存队列、冲突合并和本地未提交编辑；不直接使用聊天投影覆盖节点。没有 workspace/canvas 参数的独立 `/director` 仍通过设置连接 OAuth。嵌入画布时先在业务站登录；浏览器业务 Cookie 必须可发送到同源 `/agent-studio`，由代理转发给 Agent。Agent 的 `--mcp-url` 必须指向签发该业务会话的后端环境。本地前端连测试后端时，在本地业务登录页登录获得本地域 Cookie，仅在测试域登录不会把 Cookie 自动带给 localhost。不能把账号密码或 MCP token 写进组件配置。
 
 推送前端 `dev` 只交付组件代码，不会自动部署 Python Agent 服务。当前 Studio 是单进程测试服务，支持显式指定的 HTTPS origin，并始终仅监听 loopback；不能直接公开 8090 端口或宣称支持生产水平扩容。线上接入需先落实服务部署、持久存储、认证会话、正确外部 OAuth 回调地址和可信 origin；反代还须支持 `/agent-studio` 的 HTTP 与 WebSocket Upgrade、保留 Origin、合理超时，并与后端 mount 一致。不得移除 Host/Origin/CSRF/权限校验来绕过部署问题。
 
@@ -186,3 +186,8 @@ pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入�
 欢迎页展示持续呼吸、眨眼的豆豆；进入会话后在状态栏展示紧凑版本。表情由现有 run 状态、批次节点和任务回执驱动，包括思考、素材生成/合并、待确认、完成、暂停、异常及实时连接中断，不解析聊天文案，不新增接口调用或计费。任务回执以时间戳判新旧，合并使用独立的 `merge_id`。
 
 点击豆豆只暂停/播放角色动画，不暂停制作任务。面板收起、离开可见区域或浏览器页面隐藏时自动暂停；系统开启减少动态效果时显示静态表情。DeepAgentStudio 宿主无需传入新的属性或管理动画定时器。画布的 CanvasDirectorDock 由 opened/onCollapse 控制显隐，CanvasFloatingToolbar 的 onToggleDirector/directorOpen 负责入口；账号、空间与画布绑定保持隔离。
+
+
+### 画布底部布局
+
+`CanvasBottomBar` 统一布局视图控制与创作工具，按实际可用宽度（包含用户界面缩放）自动分行，避免两组独立绝对定位互相覆盖。`CanvasFloatingToolbar` 的豆豆入口是工具栏旁的独立圆形按钮。左侧常驻复位、小地图、连线、吸附与缩放；界面大小、全屏、帮助、设置、统计和步进缩放在“更多视图选项”中，功能和回调保持原样。
