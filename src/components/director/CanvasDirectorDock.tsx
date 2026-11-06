@@ -28,7 +28,7 @@ export default function CanvasDirectorDock({
     >
       {mounted && (
         <div hidden={!opened}>
-          <Suspense fallback={<div className={styles.loading}>正在连接导演…</div>}>
+          <Suspense fallback={<div className={styles.loading}>正在连接 DoDo Agent…</div>}>
             <DeepAgentStudio
               workspaceId={workspaceId}
               canvasId={canvasId}

@@ -64,6 +64,7 @@ export interface StudioCatalog {
   skills: Array<{ id: number; name: string; description: string }>
 }
 export interface StudioAttachment {
+  asset_id?: number
   id?: string
   name: string
   type?: string
@@ -95,7 +96,7 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
     throw new Error('Agent 服务必须使用同源路径。')
   const prefix = base.replace(/\/$/, '')
   if (business && [business.workspaceId, business.canvasId].some((id) => !Number.isSafeInteger(id) || id <= 0))
-    throw new Error('站内导演需要有效的工作空间与画布。')
+    throw new Error('站内 DoDo Agent需要有效的工作空间与画布。')
   const authHeaders: Record<string, string> = business
     ? {
         'X-Agent-Auth': 'business',

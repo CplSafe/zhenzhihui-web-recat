@@ -6,6 +6,7 @@ import type { Data, StudioAttachment, StudioDocument } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
+import { StudioAssetPicker } from './StudioAssetPicker'
 import { DoudouMascot } from './DoudouMascot'
 import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
@@ -43,9 +44,9 @@ export default function DeepAgentStudio({
   const [image, setImage] = useState<number>(),
     [video, setVideo] = useState<number>(),
     [skill, setSkill] = useState('')
-  const [dialog, setDialog] = useState<'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'context' | null>(
-    null,
-  )
+  const [dialog, setDialog] = useState<
+    'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'context' | 'attachments' | 'assets' | null
+  >(null)
   const [modelTab, setModelTab] = useState<'image' | 'video'>('image'),
     [query, setQuery] = useState('')
   const [history, setHistory] = useState(false),
@@ -279,10 +280,6 @@ export default function DeepAgentStudio({
       }
     })
   }
-  const modelName = (id?: number) => {
-    const model = catalog.models.find((m) => m.id === id)
-    return model?.display_name || model?.model || (id ? `模型 #${id}` : '选择模型')
-  }
   const currentSkill = catalog.skills.find((s) => s.name === skill)
   const context = contextInfo(run, catalog)
   const contextLabel =
@@ -315,7 +312,7 @@ export default function DeepAgentStudio({
 
   return (
     <StudioMediaContext.Provider value={mediaService}>
-      <section ref={tooltipScope} className={`${styles.studio} ${className}`} aria-label="帧智汇导演">
+      <section ref={tooltipScope} className={`${styles.studio} ${className}`} aria-label="DoDo Agent">
         <TooltipLayer scope={tooltipScope} />
         <header className={styles.header}>
           <div className={styles.historyAnchor} ref={historyAnchor}>
@@ -406,8 +403,8 @@ export default function DeepAgentStudio({
             <button
               type="button"
               className={styles.iconButton}
-              aria-label="导演设置"
-              data-tooltip="导演全局设置"
+              aria-label="DoDo Agent 设置"
+              data-tooltip="DoDo Agent 全局设置"
               onClick={() => openDialog('connection')}
             >
               <StudioIcon name="settings" size={16} />
@@ -429,8 +426,8 @@ export default function DeepAgentStudio({
               <button
                 type="button"
                 className={styles.iconButton}
-                aria-label="收起导演"
-                data-tooltip="收起导演"
+                aria-label="收起 DoDo Agent"
+                data-tooltip="收起 DoDo Agent"
                 onClick={() => {
                   setDialog(null)
                   setHistory(false)
@@ -442,7 +439,10 @@ export default function DeepAgentStudio({
             )}
           </div>
         </header>
-        <div className={styles.statusRow} hidden={!current && state.connected && !loading}>
+        <div
+          className={styles.statusRow}
+          hidden={state.connected && !loading && (!current || run?.status === 'complete')}
+        >
           <span>
             {run ? <DoudouMascot state={mascotState} compact /> : <i />}
             {status}
@@ -484,6 +484,7 @@ export default function DeepAgentStudio({
             <>
               <div className={styles.conversation}>
                 <Conversation
+                  active={running && !run.stop}
                   events={run.events}
                   canvas={run.canvas}
                   onDocument={(id) => {
@@ -603,7 +604,7 @@ export default function DeepAgentStudio({
           ) : (
             <section className={styles.welcome}>
               <DoudouMascot />
-              <h1>让帧智汇导演辅助你的无限创意</h1>
+              <h1>让 DoDo Agent 辅助你的无限创意</h1>
               <div className={styles.starters}>
                 <button type="button" onClick={() => openDialog('skills')}>
                   <StudioIcon name="welcome_skill" size={16} />
@@ -710,11 +711,11 @@ export default function DeepAgentStudio({
               void upload([...e.dataTransfer.files])
             }}
           >
-            <div className={styles.chips}>
-              {image && <span>图片 · {modelName(image)}</span>}
-              {video && <span>视频 · {modelName(video)}</span>}
-              {currentSkill && <span>Skill · {currentSkill.description || currentSkill.name}</span>}
-            </div>
+            {currentSkill && (
+              <div className={styles.chips}>
+                <span>Skill · {currentSkill.description || currentSkill.name}</span>
+              </div>
+            )}
             {!!attachments.length && (
               <div className={styles.attachments}>
                 {attachments.map((item, index) => (
@@ -723,7 +724,7 @@ export default function DeepAgentStudio({
                     <span>
                       {item.name}
                       <small>
-                        {item.error || (item.type === 'prompt' ? `已读取 ${item.characters} 字` : '参考图片已就绪')}
+                        {item.error || (item.type === 'prompt' ? `已读取 ${item.characters} 字` : '参考素材已就绪')}
                       </small>
                     </span>
                     <button
@@ -761,7 +762,8 @@ export default function DeepAgentStudio({
                   aria-label="上传图片或剧本"
                   data-tooltip="添加附件"
                   disabled={!state.connected || disabled || unfinished}
-                  onClick={() => files.current?.click()}
+                  aria-expanded={dialog === 'attachments'}
+                  onClick={() => openDialog('attachments')}
                 >
                   <StudioIcon name="plus" size={16} />
                 </button>
@@ -866,8 +868,44 @@ export default function DeepAgentStudio({
           hidden
           onChange={(e) => void upload([...(e.target.files || [])])}
         />
+        {dialog === 'attachments' && (
+          <Popover anchor={composerAnchor.current} title="添加附件" onClose={() => setDialog(null)}>
+            <div className={styles.optionList}>
+              <button
+                type="button"
+                onClick={() => {
+                  setDialog(null)
+                  files.current?.click()
+                }}
+              >
+                本地上传
+              </button>
+              <button type="button" disabled={attachments.length >= 8} onClick={() => setDialog('assets')}>
+                从素材库选择
+              </button>
+            </div>
+          </Popover>
+        )}
+        {dialog === 'assets' && (
+          <StudioAssetPicker
+            api={api}
+            remaining={8 - attachments.length}
+            onClose={() => setDialog(null)}
+            onSelect={(items) => {
+              setAttachments((old) => [
+                ...new Map(
+                  [...old, ...items].map((item) => [
+                    item.asset_id ? `asset:${item.asset_id}` : item.id || item.name,
+                    item,
+                  ]),
+                ).values(),
+              ])
+              setDialog(null)
+            }}
+          />
+        )}
         {dialog === 'connection' && (
-          <Dialog error={studio.error} title="导演全局设置" onClose={() => setDialog(null)}>
+          <Dialog error={studio.error} title="DoDo Agent 全局设置" onClose={() => setDialog(null)}>
             <p className={styles.settingsNotice}>对话按实际用量消耗积分，图片与视频生成单独计算。</p>
             <label className={styles.settingRow}>
               <span>
@@ -887,7 +925,7 @@ export default function DeepAgentStudio({
               {state.connected
                 ? `当前已连接工作空间 #${state.workspace_id}`
                 : business
-                  ? '请先登录业务系统；画布导演会复用当前账号和空间权限。'
+                  ? '请先登录业务系统；DoDo Agent 会复用当前账号和空间权限。'
                   : '使用业务账号登录，并授权可使用的工作空间。'}
             </p>
             <p className={styles.muted}>生成按实际用量结算。你可以随时停止后续步骤，已提交任务会保留。</p>
@@ -1091,7 +1129,7 @@ export default function DeepAgentStudio({
                 onSave={saveDocument}
               />
             ) : (
-              <p className={styles.muted}>导演保存的计划、角色参考和分镜会出现在这里。</p>
+              <p className={styles.muted}>DoDo Agent 保存的计划、角色参考和分镜会出现在这里。</p>
             )}
             {run?.canvas && (
               <button
