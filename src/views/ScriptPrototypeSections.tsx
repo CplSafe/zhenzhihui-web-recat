@@ -453,26 +453,6 @@ export function JoinPreview({ user }: { user: any }) {
             <button className="si-primary" type="submit" disabled={saving || !creator?.agreement_version}>
               {joined ? '保存修改' : '提交入驻信息'}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setProfile({
-                  真实姓名: '林知夏',
-                  身份类型: '在校学生',
-                  '学校 / 机构': '兖州职业技术学院',
-                  '年级 / 专业': '大三 · 广播电视编导',
-                  所在城市: '山东 · 济宁',
-                  联系手机: '13800006621',
-                  联系邮箱: 'linzhixia@example.com',
-                  '微信 / QQ': 'linzhixia_21',
-                  [genreKey]: 'CEO豪门、大女主复仇',
-                })
-                setGenreQuery('')
-                setGenreOpen(false)
-              }}
-            >
-              一键填入示例
-            </button>
             <button type="button" onClick={() => navigate('/script-ideas')}>
               取消
             </button>

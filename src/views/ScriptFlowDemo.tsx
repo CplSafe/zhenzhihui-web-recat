@@ -624,41 +624,6 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
                     {demo.status === 'pending' ? '提交' : '重新提交'}
                     {demo.stage === 0 ? '创意' : demo.stage === 3 ? '终稿' : stages[demo.stage]}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const sample = [
-                        {
-                          剧名: '血月禁域：双王血契',
-                          题材: '狼人/Alpha/Luna',
-                          剧情简介: '血月舞会上的一滴血，让她发现自己隐藏的身世。',
-                          第一集剧本剧情: '场景 1-1｜时间：夜｜地点：血月舞会休息室',
-                          '人物、身份、性格': 'Lena｜女主角｜24 岁｜温和敏锐',
-                        },
-                        {
-                          英文剧名: 'Blood Moon: Bound to Two Kings',
-                          中文完整版剧情简介: '她在血月舞会上发现了自己隐藏的身世，并最终夺回选择权。',
-                          核心卖点: '双王禁忌关系、隐藏血脉与女性成长。',
-                          人物小传: 'Lena｜女主角\nKael｜狼人王\nLucien｜吸血鬼王',
-                          分集大纲与付费卡点: '第 1 集：血月舞会；第 9 集：付费卡点。',
-                        },
-                        {
-                          分幕大纲: '第一幕：天才现世\n第二幕：对立与合作\n第三幕：共御外敌',
-                          世界观与核心规则: '表世界与隐匿规则、能力边界与代价。',
-                        },
-                        {
-                          本次修改说明: '已按评审意见补充细节并更新终稿。',
-                          '我确认本剧本为原创，并同意平台用于后续制作评估': '已确认',
-                        },
-                      ] as Record<string, string>[]
-                      const data = demo.data.map((item) => ({ ...item }))
-                      data[demo.stage] = { ...data[demo.stage], ...sample[demo.stage] }
-                      save({ ...demo, data })
-                      setError('示例文字已填入，请自行选择附件。')
-                    }}
-                  >
-                    一键填入示例
-                  </button>
                   <button type="button" onClick={() => navigate('/script-ideas/list')}>
                     取消
                   </button>
