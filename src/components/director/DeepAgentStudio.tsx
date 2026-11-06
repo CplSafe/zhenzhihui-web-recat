@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
+  ArrowDown,
+  Check,
   ArrowUp,
   Box,
   ChevronDown,
@@ -15,10 +17,9 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
-  Unplug,
   X,
 } from 'lucide-react'
-import { Approval, Dialog, DocumentEditor, EventCard, Results } from './StudioCards'
+import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results } from './StudioCards'
 import { defaultModel, StudioHTTPError } from './studio'
 import type { Data, StudioAttachment, StudioDocument } from './studio'
 import { useStudio } from './useStudio'
@@ -53,7 +54,9 @@ export default function DeepAgentStudio({
   const [image, setImage] = useState<number>(),
     [video, setVideo] = useState<number>(),
     [skill, setSkill] = useState('')
-  const [dialog, setDialog] = useState<'models' | 'skills' | 'mode' | 'connection' | 'documents' | null>(null)
+  const [dialog, setDialog] = useState<'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'context' | null>(
+    null,
+  )
   const [modelTab, setModelTab] = useState<'image' | 'video'>('image'),
     [query, setQuery] = useState('')
   const [history, setHistory] = useState(false),
@@ -65,6 +68,9 @@ export default function DeepAgentStudio({
   const [actionBusy, setActionBusy] = useState(false),
     [uncertain, setUncertain] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState<string>('')
+  const [showBottom, setShowBottom] = useState(false)
+  const composerAnchor = useRef<HTMLDivElement>(null)
+  const historyAnchor = useRef<HTMLDivElement>(null)
   const uploadLock = useRef(false)
   const scroll = useRef<HTMLDivElement>(null)
   const followUpdates = useRef(true)
@@ -107,6 +113,22 @@ export default function DeepAgentStudio({
     }
   }, [run?.canvas, onCanvasChange])
 
+  useEffect(() => {
+    if (!history) return
+    const close = (event: PointerEvent) => {
+      if (!historyAnchor.current?.contains(event.target as Node)) setHistory(false)
+    }
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setHistory(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', key)
+    }
+  }, [history])
+
   const runCursor = run?.cursor
   useEffect(() => {
     if (runCursor != null && !results && followUpdates.current && scroll.current)
@@ -135,6 +157,7 @@ export default function DeepAgentStudio({
   function newConversation() {
     if (actionLock.current || uploading) return
     followUpdates.current = true
+    setShowBottom(false)
     studio.setCurrent(null)
     setMessage('')
     setAttachments([])
@@ -272,6 +295,16 @@ export default function DeepAgentStudio({
     return model?.display_name || model?.model || (id ? `模型 #${id}` : '选择模型')
   }
   const currentSkill = catalog.skills.find((s) => s.name === skill)
+  const latestUsage = [...(run?.events || [])]
+    .reverse()
+    .find(
+      (event) =>
+        event.kind === 'cost' &&
+        event.data?.tool === 'model.generate_text' &&
+        Number.isFinite(event.data?.usage?.input_tokens) &&
+        event.data?.usage?.input_tokens >= 0,
+    )?.data?.usage
+
   const activeBatch = run?.batches?.find((b) => b.id === run.active_batch)
   const batchHasRunning = Object.values(activeBatch?.nodes || {}).some((node) =>
     ['running', 'submitting'].includes(node.status),
@@ -286,21 +319,21 @@ export default function DeepAgentStudio({
     }[run?.status || ''] || (loading ? '正在连接' : state.connected ? '已连接' : '未连接工作空间')
   function openDialog(value: typeof dialog) {
     setQuery('')
-    setDialog(value)
+    setDialog((previous) => (previous === value ? null : value))
   }
 
   return (
     <StudioMediaContext.Provider value={mediaService}>
       <section className={`${styles.studio} ${className}`} aria-label="帧智汇导演">
         <header className={styles.header}>
-          <div className={styles.historyAnchor}>
+          <div className={styles.historyAnchor} ref={historyAnchor}>
             <button
               type="button"
               className={styles.titleButton}
               aria-expanded={history}
               onClick={() => setHistory(!history)}
             >
-              {current ? '创作对话' : '新对话'}
+              <span>{current ? run?.title || '创作对话' : '新对话'}</span>
               <ChevronDown size={18} />
             </button>
             {history && (
@@ -313,6 +346,8 @@ export default function DeepAgentStudio({
                     aria-current={current === item.id ? 'true' : undefined}
                     disabled={actionBusy || uploading}
                     onClick={() => {
+                      followUpdates.current = true
+                      setShowBottom(false)
                       studio.setCurrent(item.id)
                       setHistory(false)
                       setUncertain(false)
@@ -363,7 +398,7 @@ export default function DeepAgentStudio({
               disabled={actionBusy || uploading}
               onClick={newConversation}
             >
-              <CirclePlus size={20} />
+              <CirclePlus size={16} />
             </button>
             <button
               type="button"
@@ -372,15 +407,16 @@ export default function DeepAgentStudio({
               disabled={!run}
               onClick={() => openDialog('documents')}
             >
-              <FileText size={20} />
+              <FileText size={16} />
             </button>
             <button
               type="button"
               className={styles.iconButton}
-              aria-label="连接设置"
+              aria-label="导演设置"
+              title="导演设置与连接"
               onClick={() => openDialog('connection')}
             >
-              <Unplug size={20} />
+              <SlidersHorizontal size={16} />
             </button>
             <button
               type="button"
@@ -392,33 +428,31 @@ export default function DeepAgentStudio({
                 setResults(!results)
               }}
             >
-              <LayoutPanelLeft size={20} />
+              <LayoutPanelLeft size={16} />
             </button>
             {onCollapse && (
-              <button type="button" className={styles.iconButton} aria-label="收起导演" onClick={onCollapse}>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label="收起导演"
+                onClick={() => {
+                  setDialog(null)
+                  setHistory(false)
+                  onCollapse()
+                }}
+              >
                 −
               </button>
             )}
           </div>
         </header>
-        <div className={styles.statusRow}>
+        <div className={styles.statusRow} hidden={!current && state.connected && !loading}>
           <span>
             <i />
             {status}
           </span>
           <span>{state.workspace_id ? `工作空间 #${state.workspace_id}` : ''}</span>
         </div>
-        {run?.billing && (
-          <div
-            className={styles.billing}
-            title={`推理 ${run.billing.by_kind?.text ?? '未知'} · 图片 ${run.billing.by_kind?.image ?? '未知'} · 视频 ${run.billing.by_kind?.video ?? '未知'}`}
-          >
-            本轮已结算 {run.billing.settled_credits} 积分
-            {Number(run.billing.pending_tasks) > 0
-              ? ` · ${run.billing.pending_tasks} 项待结算（已预留 ${run.billing.reserved_credits}）`
-              : ''}
-          </div>
-        )}
         {mismatch && (
           <div role="alert" className={styles.alert}>
             当前 MCP 授权空间与页面不同。请在连接设置中重新授权，避免写入其他画布。
@@ -443,6 +477,7 @@ export default function DeepAgentStudio({
           onScroll={(e) => {
             const box = e.currentTarget
             followUpdates.current = box.scrollHeight - box.scrollTop - box.clientHeight < 100
+            setShowBottom(!followUpdates.current)
           }}
         >
           {results ? (
@@ -452,14 +487,27 @@ export default function DeepAgentStudio({
           ) : run ? (
             <>
               <div className={styles.conversation}>
-                {run.events.map((event) => (
-                  <EventCard key={event.id} event={event} canvas={run.canvas} />
-                ))}
+                <Conversation
+                  events={run.events}
+                  canvas={run.canvas}
+                  onDocument={(id) => {
+                    setSelectedDocument(id)
+                    setDialog('documents')
+                  }}
+                />
               </div>
               {!!run.batches?.length && (
                 <section className={styles.batches} aria-label="制作任务">
                   {run.batches.map((batch) => (
-                    <details key={batch.id} open={batch.id === run.active_batch}>
+                    <details
+                      key={batch.id}
+                      open={
+                        batch.id === run.active_batch &&
+                        !batch.cancelled &&
+                        ['running', 'waiting', 'paused', 'error'].includes(run.status) &&
+                        Object.values(batch.nodes).some((node) => !['succeeded', 'cancelled'].includes(node.status))
+                      }
+                    >
                       <summary>
                         <List size={16} />
                         制作批次 · {Object.values(batch.nodes).filter((n) => n.status === 'succeeded').length}/
@@ -534,6 +582,21 @@ export default function DeepAgentStudio({
                   )}
                 </div>
               )}
+              {run?.billing && (
+                <details
+                  className={styles.billing}
+                  title={`推理 ${run.billing.by_kind?.text ?? '未知'} · 图片 ${run.billing.by_kind?.image ?? '未知'} · 视频 ${run.billing.by_kind?.video ?? '未知'}`}
+                >
+                  <summary>本次共消耗 {run.billing.settled_credits} 积分</summary>
+                  <p>
+                    推理 {run.billing.by_kind?.text ?? '未知'} · 图片 {run.billing.by_kind?.image ?? '未知'} · 视频{' '}
+                    {run.billing.by_kind?.video ?? '未知'}
+                  </p>
+                  {Number(run.billing.pending_tasks) > 0
+                    ? ` · ${run.billing.pending_tasks} 项待结算（已预留 ${run.billing.reserved_credits}）`
+                    : ''}
+                </details>
+              )}
             </>
           ) : (
             <section className={styles.welcome}>
@@ -584,7 +647,21 @@ export default function DeepAgentStudio({
             </section>
           )}
         </div>
-        <div className={styles.composerArea}>
+        <div className={styles.composerArea} ref={composerAnchor}>
+          {showBottom && run && !results && (
+            <button
+              type="button"
+              className={styles.scrollBottom}
+              aria-label="回到底部"
+              onClick={() => {
+                followUpdates.current = true
+                if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight
+                setShowBottom(false)
+              }}
+            >
+              <ArrowDown size={18} />
+            </button>
+          )}
           {!run && (
             <div className={styles.quickPrompts}>
               {['剧本原创', '剧本改编', '导演执导'].map((label) => (
@@ -679,6 +756,8 @@ export default function DeepAgentStudio({
                 <button
                   type="button"
                   aria-label="模型"
+                  title="选择模型"
+                  aria-expanded={dialog === 'models'}
                   disabled={disabled || unfinished}
                   onClick={() => openDialog('models')}
                 >
@@ -688,17 +767,46 @@ export default function DeepAgentStudio({
                 <button
                   type="button"
                   aria-label="Skill"
+                  title="选择 Skill"
+                  aria-expanded={dialog === 'skills'}
                   disabled={disabled || unfinished}
                   onClick={() => openDialog('skills')}
                 >
                   <Sparkles size={20} />
                   <span>Skill</span>
                 </button>
-                <button type="button" disabled={disabled || unfinished} onClick={() => openDialog('mode')}>
+                <button
+                  type="button"
+                  title={mode === 'auto' ? '自动生成' : '手动确认'}
+                  aria-label={mode === 'auto' ? '自动生成' : '手动确认'}
+                  aria-expanded={dialog === 'mode'}
+                  disabled={disabled || unfinished}
+                  onClick={() => openDialog('mode')}
+                >
                   {mode === 'auto' ? <Diamond size={20} /> : <Hand size={20} />}
                   <span>{mode === 'auto' ? '自动生成' : '手动确认'}</span>
                 </button>
               </div>
+              <button
+                type="button"
+                className={styles.contextButton}
+                aria-label="上下文用量"
+                title={latestUsage ? `上次输入 ${latestUsage.input_tokens} tokens` : '上下文用量未提供'}
+                aria-expanded={dialog === 'context'}
+                onClick={() => openDialog('context')}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <circle
+                    cx="8"
+                    cy="8"
+                    r="5.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeDasharray="2 2"
+                  />
+                </svg>
+              </button>
               {run && ['running', 'waiting'].includes(run.status) ? (
                 <button
                   type="button"
@@ -742,7 +850,22 @@ export default function DeepAgentStudio({
           onChange={(e) => void upload([...(e.target.files || [])])}
         />
         {dialog === 'connection' && (
-          <Dialog error={studio.error} title="连接工作空间" onClose={() => setDialog(null)}>
+          <Dialog error={studio.error} title="导演全局设置" onClose={() => setDialog(null)}>
+            <p className={styles.settingsNotice}>对话按实际用量消耗积分，图片与视频生成单独计算。</p>
+            <label className={styles.settingRow}>
+              <span>
+                <strong>自动生成图片 / 视频</strong>
+                <small>开启后无需逐次确认，直接提交生成任务</small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="自动生成图片和视频"
+                checked={mode === 'auto'}
+                disabled={disabled || unfinished}
+                onChange={(e) => setMode(e.target.checked ? 'auto' : 'manual')}
+              />
+            </label>
             <p>
               {state.connected
                 ? `当前已连接工作空间 #${state.workspace_id}`
@@ -778,9 +901,9 @@ export default function DeepAgentStudio({
           </Dialog>
         )}
         {(dialog === 'models' || dialog === 'skills') && (
-          <Dialog
-            error={studio.error}
-            title={dialog === 'models' ? '选择模型' : '选择 Skill'}
+          <Popover
+            anchor={composerAnchor.current}
+            title={dialog === 'models' ? '选择模型' : 'Skill'}
             onClose={() => setDialog(null)}
           >
             {dialog === 'models' && (
@@ -816,8 +939,18 @@ export default function DeepAgentStudio({
                         aria-pressed={(modelTab === 'image' ? image : video) === model.id}
                         onClick={() => (modelTab === 'image' ? setImage(model.id) : setVideo(model.id))}
                       >
-                        <strong>{model.display_name || model.model}</strong>
-                        <small>{model.description || model.model}</small>
+                        <span className={styles.optionIcon}>
+                          <Box size={19} />
+                        </span>
+                        <span>
+                          <strong>{model.display_name || model.model}</strong>
+                          <small>{model.description || model.model}</small>
+                        </span>
+                        {(modelTab === 'image' ? image : video) === model.id ? (
+                          <Check size={16} />
+                        ) : (
+                          <CirclePlus size={16} />
+                        )}
                       </button>
                     ))
                 : [{ name: '', description: '未选择', id: 0 }, ...catalog.skills]
@@ -833,8 +966,14 @@ export default function DeepAgentStudio({
                           setDialog(null)
                         }}
                       >
-                        <strong>{item.description || item.name}</strong>
-                        {item.name && <small>/{item.name}</small>}
+                        <span className={styles.optionIcon}>
+                          <Sparkles size={18} />
+                        </span>
+                        <span>
+                          <strong>{item.description || item.name}</strong>
+                          {item.name && <small>/{item.name}</small>}
+                        </span>
+                        {skill === item.name && <Check size={16} />}
                       </button>
                     ))}
             </div>
@@ -844,10 +983,10 @@ export default function DeepAgentStudio({
                 规划模型：{catalog.planning_model?.display_name || catalog.planning_model?.model || '等待后台配置'}
               </p>
             )}
-          </Dialog>
+          </Popover>
         )}
         {dialog === 'mode' && (
-          <Dialog error={studio.error} title="生成方式" onClose={() => setDialog(null)}>
+          <Popover anchor={composerAnchor.current} title="生成方式" onClose={() => setDialog(null)}>
             <div className={styles.optionList}>
               <button
                 type="button"
@@ -858,8 +997,12 @@ export default function DeepAgentStudio({
                   setDialog(null)
                 }}
               >
-                <strong>手动确认</strong>
-                <small>先看制作方案，每次生成前确认。</small>
+                <Hand size={18} />
+                <span>
+                  <strong>手动确认</strong>
+                  <small>先看制作方案，每次生成前确认。</small>
+                </span>
+                {mode === 'manual' && <Check size={16} />}
               </button>
               <button
                 type="button"
@@ -870,11 +1013,25 @@ export default function DeepAgentStudio({
                   setDialog(null)
                 }}
               >
-                <strong>自动生成</strong>
-                <small>按你的要求连续执行并计费，可随时停止。必要的信息仍会向你询问。</small>
+                <Diamond size={18} />
+                <span>
+                  <strong>自动生成</strong>
+                  <small>按你的要求连续执行并计费，可随时停止。必要的信息仍会向你询问。</small>
+                </span>
+                {mode === 'auto' && <Check size={16} />}
               </button>
             </div>
-          </Dialog>
+          </Popover>
+        )}
+        {dialog === 'context' && (
+          <Popover anchor={composerAnchor.current} title="上下文用量" onClose={() => setDialog(null)}>
+            <div className={styles.contextInfo}>
+              <p>{latestUsage ? `上次输入 ${latestUsage.input_tokens.toLocaleString()} tokens` : '上下文用量未提供'}</p>
+              <p>模型上下文总容量：未提供</p>
+              <p>自动摘要：未启用</p>
+              <small>输入用量来自最近一次推理的实际回执，不代表剩余上下文比例。</small>
+            </div>
+          </Popover>
         )}
         {dialog === 'documents' && (
           <Dialog error={studio.error} title="制作文档" onClose={() => setDialog(null)}>

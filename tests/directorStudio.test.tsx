@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from './mocks/server'
 import DeepAgentStudio from '@/components/director/DeepAgentStudio'
-import { DocumentEditor, Markdown, EventCard } from '@/components/director/StudioCards'
+import DirectorStudioView from '@/views/DirectorStudioView'
+import { DocumentEditor, Markdown, EventCard, Conversation } from '@/components/director/StudioCards'
 import { Media, StudioMediaContext } from '@/components/director/StudioMedia'
 import { applyStudioFrame, createStudioAPI, defaultModel, mediaURLs } from '@/components/director/studio'
 import type { StudioRun, StudioDocument } from '@/components/director/studio'
@@ -383,5 +384,199 @@ describe('Media and activity recovery', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: '刷新素材链接' }))
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('Director conversation parity', () => {
+  it('opens real document previews from the conversation and offers the current Markdown download', async () => {
+    const doc = { id: 'board', title: '第一集分镜', kind: 'storyboard', revision: 4, body: '# 分镜正文\n真实制作资料' }
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(
+          snapshot({
+            documents: [doc],
+            events: [{ id: 'document-board', kind: 'document', text: '已保存', data: doc }],
+          }),
+        ),
+      ),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    fireEvent.click(screen.getByRole('button', { name: /第一集分镜.*制作文档/ }))
+    expect(await screen.findByRole('heading', { name: '分镜正文' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '下载文档' })).toHaveAttribute('download', '第一集分镜.md')
+    expect(decodeURIComponent(screen.getByRole('link', { name: '下载文档' }).getAttribute('href') || '')).toContain(
+      '真实制作资料',
+    )
+    expect(screen.getByRole('button', { name: '编辑文档' })).toBeInTheDocument()
+  })
+  it('closes composer popovers on Escape or outside click without clearing the draft or starting work', async () => {
+    render(<DeepAgentStudio />)
+    await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+    fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '尚未发送的创意' } })
+    fireEvent.click(screen.getByRole('button', { name: '模型', exact: true }))
+    expect(screen.getByRole('dialog', { name: '选择模型' })).not.toHaveAttribute('aria-modal', 'true')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '选择模型' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('尚未发送的创意')
+    fireEvent.click(screen.getByRole('button', { name: 'Skill', exact: true }))
+    expect(screen.getByRole('dialog', { name: 'Skill' })).toBeInTheDocument()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: 'Skill' })).not.toBeInTheDocument()
+    expect(Socket.instances).toHaveLength(0)
+  })
+  it('copies assistant prose only on request and renders no invented reasoning', async () => {
+    const copy = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
+    render(<EventCard event={{ id: 'answer', kind: 'assistant', text: '已保留全部成功素材。' }} />)
+    expect(copy).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '复制消息' }))
+    await screen.findByRole('button', { name: '已复制' })
+    expect(copy).toHaveBeenCalledWith('已保留全部成功素材。')
+    expect(screen.queryByText('思考过程')).not.toBeInTheDocument()
+  })
+  it.each([
+    ['complete', 'succeeded', false, false],
+    ['paused', 'failed', false, true],
+    ['running', 'running', false, true],
+    ['paused', 'running', true, false],
+  ] as const)(
+    'keeps %s/%s batch visibility truthful and the total after task details',
+    async (status, nodeStatus, cancelled, expanded) => {
+      server.use(
+        http.get('*/agent-studio/api/runs/run1', () =>
+          HttpResponse.json(
+            snapshot({
+              status,
+              active_batch: 'batch1',
+              billing: { settled_credits: '12.000', by_kind: { text: 12, image: 0, video: 0 } },
+              batches: [
+                {
+                  id: 'batch1',
+                  revision: 1,
+                  cancelled,
+                  nodes: { node1: { id: 'node1', title: '首个镜头', status: nodeStatus } },
+                },
+              ],
+            }),
+          ),
+        ),
+      )
+      render(<DeepAgentStudio />)
+      await openHistory()
+      const batch = screen.getByText(/制作批次/).closest('details')!
+      expect(batch.open).toBe(expanded)
+      const total = screen.getByText('本次共消耗 12.000 积分')
+      expect(batch.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    },
+  )
+  it('renders actual historical decision receipts without inventing missing questions or misclassifying resume', () => {
+    render(
+      <Conversation
+        onDocument={() => {}}
+        events={[
+          { id: 'reply', kind: 'user', text: '使用原剧本对白', data: { decision: 'reply', tool: 'ask_user' } },
+          { id: 'approve', kind: 'user', text: '确认这三个镜头', data: { decision: 'approve' } },
+          { id: 'reject', kind: 'user', text: '这次取消', data: { decision: 'reject' } },
+          { id: 'resume', kind: 'user', text: '继续查询已有任务', data: { decision: 'resume' } },
+        ]}
+      />,
+    )
+    expect(screen.getByText('已回答')).toBeInTheDocument()
+    expect(screen.getByText('已确认制作')).toBeInTheDocument()
+    expect(screen.getByText('已拒绝制作')).toBeInTheDocument()
+    expect(screen.getByText('使用原剧本对白')).toBeInTheDocument()
+    expect(screen.queryByRole('fieldset')).not.toBeInTheDocument()
+    const resumed = screen.getByText('继续查询已有任务').closest('article')
+    expect(resumed?.className).toContain('userMessage')
+    expect(resumed?.textContent).not.toContain('已回答')
+  })
+  it('collapses and restores the standalone director without discarding the draft or open conversation', async () => {
+    render(<DirectorStudioView />)
+    await openHistory()
+    fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '保留这一段草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: '收起导演' }))
+    expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '创作要求' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打开导演' }))
+    expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('保留这一段草稿')
+    expect(screen.getByRole('button', { name: '第一集测试' })).toBeInTheDocument()
+    expect(Socket.instances).toHaveLength(1)
+  })
+  it('groups adjacent tool receipts while keeping generated media and messages visible', () => {
+    render(
+      <Conversation
+        onDocument={() => {}}
+        events={[
+          { id: 'a', kind: 'tool', text: '读取模型参数', data: { status: 'succeeded' } },
+          { id: 'b', kind: 'tool', text: '加载制作工具', data: { status: 'succeeded' } },
+          { id: 'c', kind: 'assistant', text: '素材准备完成。' },
+          {
+            id: 'image',
+            kind: 'tool',
+            text: '生成图片',
+            data: {
+              status: 'succeeded',
+              assets: [{ id: 12, download_url: 'https://media.test/result.png' }],
+            },
+          },
+        ]}
+      />,
+    )
+    expect(screen.getByText('已执行 2 个工具')).toBeInTheDocument()
+    expect(screen.getByText('素材准备完成。')).toBeVisible()
+    expect(screen.getByRole('img', { name: '生成素材' })).toBeVisible()
+  })
+  it('shows unavailable context honestly and uses only reported input usage without inventing a percentage', async () => {
+    render(<DeepAgentStudio />)
+    await waitFor(() => expect(screen.getByText('图片 · Nano Banana Pro (Google)')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
+    expect(screen.getByText('上下文用量未提供')).toBeInTheDocument()
+    expect(screen.getByText('模型上下文总容量：未提供')).toBeInTheDocument()
+    expect(screen.getByText('自动摘要：未启用')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(
+          snapshot({
+            events: [
+              {
+                id: 'usage',
+                kind: 'cost',
+                text: '思考与编剧',
+                data: {
+                  tool: 'model.generate_text',
+                  status: 'succeeded',
+                  usage: { input_tokens: 12345, output_tokens: 500 },
+                },
+              },
+            ],
+          }),
+        ),
+      ),
+    )
+    await openHistory()
+    fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
+    expect(screen.getByText('上次输入 12,345 tokens')).toBeInTheDocument()
+    expect(screen.queryByText(/剩余.*%/)).not.toBeInTheDocument()
+  })
+  it('replaces cumulative billing updates without adding the same charge twice', async () => {
+    render(<DeepAgentStudio />)
+    await openHistory()
+    act(() => {
+      for (const cursor of [8, 9])
+        Socket.instances[0].emit({
+          event: 'update',
+          cursor,
+          data: {
+            run_id: 'run1',
+            type: 'ACTIVITY_SNAPSHOT',
+            data: { settled_credits: '1326.000', by_kind: { video: '1326.000', image: '0', text: '0' } },
+          },
+        })
+    })
+    expect(screen.getAllByText('本次共消耗 1326.000 积分')).toHaveLength(1)
+    expect(screen.queryByText(/2652/)).not.toBeInTheDocument()
   })
 })

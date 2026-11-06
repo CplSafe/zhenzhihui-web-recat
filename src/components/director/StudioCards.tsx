@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronRight, FileText, LoaderCircle, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, Download, FileText, LoaderCircle, X } from 'lucide-react'
 import { isSettled } from './studio'
 import { Media } from './StudioMedia'
 import type { Data, StudioDocument, StudioEvent, StudioRun } from './studio'
@@ -74,16 +75,157 @@ export function Dialog({
     </dialog>
   )
 }
+/** Non-modal composer popover; outside/Escape dismissal preserves the draft. */
+export function Popover({
+  title,
+  anchor,
+  onClose,
+  children,
+}: {
+  title: string
+  anchor: HTMLElement | null
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ left: 12, top: 12 })
+  useLayoutEffect(() => {
+    const place = () => {
+      const rect = anchor?.getBoundingClientRect()
+      const box = ref.current
+      if (!rect || !box) return
+      setPosition({
+        left: Math.max(12, Math.min(rect.left - 16, window.innerWidth - box.offsetWidth - 12)),
+        top: Math.max(12, rect.top - box.offsetHeight - 10),
+      })
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [anchor, children])
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    ref.current?.querySelector<HTMLElement>('input,button')?.focus()
+    const outside = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node) && !anchor?.contains(event.target as Node)) onClose()
+    }
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', key)
+      previous?.focus()
+    }
+    // The lifetime is one opening. Callbacks only close the popover.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return createPortal(
+    <div ref={ref} role="dialog" aria-label={title} className={styles.popover} style={position}>
+      <header>
+        <h2>{title}</h2>
+        <button type="button" aria-label="关闭选择" onClick={onClose}>
+          <X size={16} />
+        </button>
+      </header>
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
+function CopyMessage({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false),
+    [failed, setFailed] = useState(false)
+  return (
+    <div className={styles.messageActions}>
+      <button
+        type="button"
+        aria-label={copied ? '已复制' : '复制消息'}
+        title={copied ? '已复制' : '复制'}
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(text)
+            setCopied(true)
+            setFailed(false)
+          } catch {
+            setFailed(true)
+          }
+        }}
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
+      {failed && <span role="status">复制失败，请选择文字复制。</span>}
+    </div>
+  )
+}
+
 const taskNames: Record<string, string> = {
   'model.generate_text': '思考与编剧',
   'model.generate_image': '生成图片',
   'model.generate_video': '生成视频',
 }
-export function EventCard({ event, canvas }: { event: StudioEvent; canvas?: Data | null }) {
+export function EventCard({
+  event,
+  canvas,
+  onDocument,
+}: {
+  event: StudioEvent
+  canvas?: Data | null
+  onDocument?: (id: string) => void
+}) {
   const data = event.data || {},
     settled = isSettled(event),
     failed = ['failed', 'cancelled', 'canceled', 'payment_failed'].includes(data.status)
-  if (['document', 'canvas', 'node', 'batch'].includes(event.kind)) return null
+  const decisionLabel =
+    event.kind === 'user'
+      ? data.decision === 'reply' && data.tool === 'ask_user'
+        ? '已回答'
+        : data.decision === 'approve'
+          ? '已确认制作'
+          : data.decision === 'reject'
+            ? '已拒绝制作'
+            : null
+      : null
+  if (decisionLabel)
+    return (
+      <article className={`${styles.event} ${styles.answeredCard}`}>
+        <div className={styles.artifactStatus}>
+          {data.decision === 'reject' ? <X size={14} /> : <Check size={14} />}
+          {decisionLabel}
+        </div>
+        <Markdown>{event.text}</Markdown>
+        <CopyMessage text={event.text} />
+      </article>
+    )
+  if (event.kind === 'document' && data.id)
+    return (
+      <article className={styles.event}>
+        <div className={styles.artifactStatus}>
+          <FileText size={14} />
+          创作文本已保存
+        </div>
+        <button
+          type="button"
+          className={styles.documentCard}
+          disabled={!onDocument}
+          onClick={() => onDocument?.(data.id)}
+        >
+          <FileText size={20} />
+          <span>
+            {data.title || '制作文档'}
+            <small>制作文档 · 版本 {data.revision}</small>
+          </span>
+          <ChevronRight size={16} />
+        </button>
+      </article>
+    )
+  if (['canvas', 'node', 'batch'].includes(event.kind)) return null
   if (['cost', 'tool', 'merge'].includes(event.kind) || (event.kind === 'progress' && data.status))
     return (
       <article className={styles.event}>
@@ -116,27 +258,76 @@ export function EventCard({ event, canvas }: { event: StudioEvent; canvas?: Data
             {data.task_id && <p>任务 #{data.task_id}</p>}
           </div>
         </details>
-        {(data.assets || data.asset) && <Media canvas={canvas} data={{ assets: data.assets, asset: data.asset }} />}
+        {(data.assets || data.asset) && (
+          <>
+            {settled && (
+              <div className={styles.artifactStatus}>
+                {event.kind === 'merge'
+                  ? '成片已合成'
+                  : data.tool === 'model.generate_video'
+                    ? '视频已生成'
+                    : data.tool === 'model.generate_image'
+                      ? '图片已生成'
+                      : '素材已生成'}
+              </div>
+            )}
+            <Media canvas={canvas} data={{ assets: data.assets, asset: data.asset }} />
+          </>
+        )}
       </article>
     )
   return (
     <article
       className={`${styles.event} ${event.kind === 'user' ? styles.userMessage : event.kind === 'error' ? styles.errorMessage : styles.assistantMessage}`}
     >
-      <small>
-        {event.kind === 'user'
-          ? '你'
-          : event.kind === 'assistant'
-            ? '帧智汇导演'
-            : event.kind === 'attachment'
-              ? '已添加附件'
-              : '执行提示'}
-      </small>
       <Markdown>{event.text}</Markdown>
       {event.data && event.kind !== 'inspection' && <Media canvas={canvas} data={event.data} />}
+      {['user', 'assistant'].includes(event.kind) && <CopyMessage text={event.text} />}
     </article>
   )
 }
+/** Group only adjacent tool receipts. Never regroup across messages or hide media results. */
+export function Conversation({
+  events,
+  canvas,
+  onDocument,
+}: {
+  events: StudioEvent[]
+  canvas?: Data | null
+  onDocument: (id: string) => void
+}) {
+  const groups: StudioEvent[][] = []
+  let tools: StudioEvent[] = []
+  for (const event of events) {
+    if (event.kind === 'tool' && !event.data?.assets && !event.data?.asset) tools.push(event)
+    else {
+      if (tools.length) groups.push(tools)
+      tools = []
+      groups.push([event])
+    }
+  }
+  if (tools.length) groups.push(tools)
+  return (
+    <>
+      {groups.map((group) =>
+        group.length > 1 ? (
+          <details className={styles.toolGroup} key={group[0].id}>
+            <summary>
+              <ChevronRight size={14} />
+              已执行 {group.length} 个工具
+            </summary>
+            {group.map((event) => (
+              <EventCard key={event.id} event={event} canvas={canvas} onDocument={onDocument} />
+            ))}
+          </details>
+        ) : (
+          <EventCard key={group[0].id} event={group[0]} canvas={canvas} onDocument={onDocument} />
+        ),
+      )}
+    </>
+  )
+}
+
 export function Results({ run }: { run: StudioRun | null }) {
   const events = run?.events || []
   const images = events.filter(
@@ -244,6 +435,7 @@ export function Approval({
                   aria-label={choice.content || '其他想法'}
                   placeholder={choice.content}
                   maxLength={2000}
+                  value={answers[page] || ''}
                   onChange={(e) => setAnswers((old) => ({ ...old, [page]: e.target.value }))}
                 />
               ) : (
@@ -311,7 +503,16 @@ export function DocumentEditor({
       <h3>
         <FileText size={18} /> {document.title}
       </h3>
-      <p className={styles.muted}>版本 {document.revision}</p>
+      <div className={styles.documentMeta}>
+        <p className={styles.muted}>版本 {document.revision}</p>
+        <a
+          download={`${document.title.replace(/[\\/:*?"<>|]/g, '_')}.md`}
+          href={`data:text/markdown;charset=utf-8,${encodeURIComponent(document.body)}`}
+        >
+          <Download size={14} />
+          下载文档
+        </a>
+      </div>
       {editing && editing.revision !== document.revision && (
         <div role="status" className={styles.alert}>
           文档已更新为版本 {document.revision}。当前草稿仍基于版本 {editing.revision}，不会覆盖新版本。
