@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { loadNotifications } from '@/components/layout/NotificationBell'
+import { loadNotifications, loadScriptApprovalNotifications } from '@/components/layout/NotificationBell'
 import { server } from '../mocks/server'
 
 describe('loadNotifications 通知推导', () => {
@@ -97,5 +97,57 @@ describe('loadNotifications 通知推导', () => {
       http.get('/api/v1/market/me/applications', () => HttpResponse.json({ code: 1 }, { status: 500 })),
     )
     await expect(loadNotifications()).rejects.toThrow()
+  })
+})
+
+describe('剧本审核通过通知', () => {
+  it('后端重复返回同一分页时停止，避免无休止加载', async () => {
+    let calls = 0
+    server.use(
+      http.get('/api/v1/student-applications', () => {
+        calls++
+        return HttpResponse.json({ code: 0, data: { items: [{ id: 1 }], total: 100 } })
+      }),
+    )
+    await expect(loadScriptApprovalNotifications()).rejects.toThrow('分页未向前推进')
+    expect(calls).toBe(2)
+  })
+  it('读取各页并只生成真实通过记录，包含备注、阶段和秒级时间', async () => {
+    server.use(
+      http.get('/api/v1/student-applications', ({ request }) => {
+        const offset = Number(new URL(request.url).searchParams.get('offset'))
+        return HttpResponse.json({ code: 0, data: { items: offset === 0 ? [{ id: 1 }] : [{ id: 2 }], total: 2 } })
+      }),
+      http.get('/api/v1/student-applications/:id', ({ params }) =>
+        HttpResponse.json({
+          code: 0,
+          data: {
+            application: { id: Number(params.id), title: `作品${params.id}` },
+            progress_available: true,
+            workflow: {
+              reviews:
+                params.id === '1'
+                  ? [
+                      {
+                        status: 2,
+                        version: 1,
+                        stage: 'creative',
+                        task_id: 't1',
+                        reason: '修改开头',
+                        finished_at: 1700000000,
+                      },
+                      { status: 3, version: 2, stage: 'card', reason: '未通过', finished_at: 1700000010 },
+                    ]
+                  : [{ status: 2, version: 2, stage: 'script', task_id: 't2', finished_at: 1700000020 }],
+            },
+          },
+        }),
+      ),
+    )
+    const notices = await loadScriptApprovalNotifications()
+    expect(notices).toHaveLength(2)
+    expect(notices[0]).toMatchObject({ href: '/script-ideas/1', ts: 1700000000000 })
+    expect(notices[0].text).toContain('审核备注：修改开头')
+    expect(notices[1].text).toContain('暂无审核备注')
   })
 })

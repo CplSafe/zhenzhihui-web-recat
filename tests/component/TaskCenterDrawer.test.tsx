@@ -20,6 +20,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 vi.mock('@/api/business', () => ({
   getAssetDownloadUrl: mocks.getAssetDownloadUrl,
+  requestBusinessJson: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   humanizeProviderErrorText: () => '',
 }))
 
@@ -56,6 +57,7 @@ vi.mock('@/components/common/VideoPreviewModal', () => ({
 
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import { useTaskCenterStore } from '@/stores/taskCenter'
+import { useRefineDemoStore } from '@/stores/refineDemo'
 import { useUiStore } from '@/stores/ui'
 import styles from '@/components/task/TaskCenterDrawer.module.less'
 
@@ -122,6 +124,7 @@ beforeEach(() => {
   mocks.workspace.type = 'personal'
   mocks.workspace.user = { id: 9 }
   localStorage.clear()
+  useRefineDemoStore.setState({ tasks: [], openRequest: 0 })
   Object.entries(mocks).forEach(([, value]) => {
     if (typeof value === 'function' && 'mockReset' in value) value.mockReset()
   })
@@ -134,6 +137,33 @@ beforeEach(() => {
 })
 
 describe('TaskCenterDrawer isolation and reconciliation', () => {
+  it('在爆款成片中同时显示普通任务和当前账号的精制任务，不显示独立精制页签', async () => {
+    seed(task({ status: 'succeeded', title: '普通成片任务', locallyInitiated: true }))
+    useRefineDemoStore.setState({
+      tasks: [
+        {
+          id: 'refine-1',
+          ownerId: 9,
+          workspaceId: 7,
+          description: '精制成片任务',
+          script: '不使用脚本',
+          duration: 30,
+          ratio: '16:9',
+          resolution: '1080P',
+          credits: 1125,
+          materialCount: 0,
+          createdAt: Date.now(),
+          dueAt: Date.now(),
+          status: '精修中',
+          revision: 0,
+        },
+      ],
+    })
+    render(<TaskCenterDrawer scope="smart" />)
+    expect(screen.queryByRole('tab', { name: '精制任务' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /精制成片任务/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '普通成片任务，已生成，打开项目' })).toBeInTheDocument()
+  })
   it('shows up to four lines of a hot-copy task prompt on hover', async () => {
     const user = userEvent.setup()
     const prompt = '第一行\n第二行\n第三行\n第四行\n第五行不应显示'
@@ -329,7 +359,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     await user.click(screen.getByRole('tab', { name: '正在生成' }))
     await user.click(await screen.findByText('仍在生成的爆款任务'))
 
-    expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy/11')
+    expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy/11', { state: { hotCopyEdit: true } })
     expect(screen.queryByRole('dialog', { name: '视频预览' })).not.toBeInTheDocument()
   })
 
@@ -474,7 +504,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     newWorkspace.resolve([
       project(81, [historyVideo({ id: 801, projectId: 81, title: '新空间历史', videoAssetId: 801 })]),
     ])
-    expect(await screen.findByText('新空间历史')).toBeInTheDocument()
+    expect(await screen.findByText('项目 81 · 视频 1')).toBeInTheDocument()
 
     oldWorkspace.resolve([
       project(71, [historyVideo({ id: 701, projectId: 71, title: '旧空间历史', videoAssetId: 701 })]),
@@ -484,8 +514,8 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByText('新空间历史')).toBeInTheDocument()
-    expect(screen.queryByText('旧空间历史')).not.toBeInTheDocument()
+    expect(screen.getByText('项目 81 · 视频 1')).toBeInTheDocument()
+    expect(screen.queryByText('项目 71 · 视频 1')).not.toBeInTheDocument()
   })
 
   it('deduplicates historical results already represented by a live completed task', async () => {
@@ -801,16 +831,16 @@ describe('TaskCenterDrawer team-space member filter', () => {
 
     render(<TaskCenterDrawer scope="smart" />)
 
-    expect(await screen.findByText('我的视频')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '同事的视频由其他成员生成，不能删除' })).toBeDisabled()
+    expect(await screen.findByText('项目 11 · 视频 1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '项目 12 · 视频 1由其他成员生成，不能删除' })).toBeDisabled()
 
-    await user.click(screen.getByRole('button', { name: '删除我的视频' }))
+    await user.click(screen.getByRole('button', { name: '删除项目 11 · 视频 1' }))
 
     await waitFor(() =>
       expect(mocks.deleteProjectVideo).toHaveBeenCalledWith({ projectId: 11, workspaceId: 7, videoId: '501' }),
     )
-    await waitFor(() => expect(screen.queryByText('我的视频')).not.toBeInTheDocument())
-    expect(screen.getByText('同事的视频')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('项目 11 · 视频 1')).not.toBeInTheDocument())
+    expect(screen.getByText('项目 12 · 视频 1')).toBeInTheDocument()
   })
 
   it('shows teammates’ generated videos with a creator label and lets 只看我的 follow the backend mine set', async () => {
@@ -820,27 +850,27 @@ describe('TaskCenterDrawer team-space member filter', () => {
     render(<TaskCenterDrawer scope="smart" />)
 
     // 三条都展示;同事做的标注创作者,自己的不标
-    expect(await screen.findByText('我的视频')).toBeInTheDocument()
-    const teammateCard = screen.getByRole('button', { name: /同事的视频，同事乙 生成/ })
+    expect(await screen.findByText('项目 11 · 视频 1')).toBeInTheDocument()
+    const teammateCard = screen.getByRole('button', { name: /项目 12 · 视频 1，同事乙 生成/ })
     expect(teammateCard).toHaveTextContent('同事乙')
-    expect(screen.getByRole('button', { name: /^我的视频，已生成/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^项目 11 · 视频 1，已生成/ })).toBeInTheDocument()
     expect(mocks.listAllCreativeProjects).toHaveBeenCalledWith(expect.objectContaining({ mine: true }))
 
     // 「我（2）」按 mine 集合算:协作项目 13 归属乙,但后端判为我的
     expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('全部成员')
     await user.click(screen.getByRole('button', { name: '只看我的' }))
-    expect(screen.getByText('我的视频')).toBeInTheDocument()
-    expect(screen.getByText('协作项目视频')).toBeInTheDocument()
-    expect(screen.queryByText('同事的视频')).not.toBeInTheDocument()
+    expect(screen.getByText('项目 11 · 视频 1')).toBeInTheDocument()
+    expect(screen.getByText('项目 13 · 视频 1')).toBeInTheDocument()
+    expect(screen.queryByText('项目 12 · 视频 1')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('我（2）')
     expect(localStorage.getItem('zzh.taskCenter.ownerFilter.7')).toBe('9')
 
     // 成员下拉:选同事乙只剩他创作的两条
     await user.click(screen.getByRole('button', { name: '按成员筛选' }))
     await user.click(await screen.findByRole('option', { name: '同事乙（2）' }))
-    expect(screen.getByText('同事的视频')).toBeInTheDocument()
-    expect(screen.getByText('协作项目视频')).toBeInTheDocument()
-    expect(screen.queryByText('我的视频')).not.toBeInTheDocument()
+    expect(screen.getByText('项目 12 · 视频 1')).toBeInTheDocument()
+    expect(screen.getByText('项目 13 · 视频 1')).toBeInTheDocument()
+    expect(screen.queryByText('项目 11 · 视频 1')).not.toBeInTheDocument()
   })
 
   it('carries the member filter over to project management when opening 查看全部视频', async () => {
@@ -862,7 +892,7 @@ describe('TaskCenterDrawer team-space member filter', () => {
     await user.click(screen.getByRole('button', { name: '只看我的' }))
     // 21 条本地 + 2 条 mine 历史 = 23 条我的,截 20 条;同事的那条被筛掉不计入
     await waitFor(() => expect(screen.getAllByRole('button', { name: /打开项目|播放视频/ })).toHaveLength(20))
-    expect(screen.queryByText('同事的视频')).not.toBeInTheDocument()
+    expect(screen.queryByText('项目 12 · 视频 1')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '前往项目管理查看全部视频' })).toHaveAttribute(
       'title',
       '还有 3 条视频，请前往项目管理查看',
@@ -893,11 +923,11 @@ describe('TaskCenterDrawer team-space member filter', () => {
     )
 
     render(<TaskCenterDrawer scope="smart" />)
-    expect(await screen.findByText('同事的视频')).toBeInTheDocument()
+    expect(await screen.findByText('项目 12 · 视频 1')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '只看我的' }))
-    expect(screen.getByText('我的视频')).toBeInTheDocument()
-    expect(screen.queryByText('同事的视频')).not.toBeInTheDocument()
+    expect(screen.getByText('项目 11 · 视频 1')).toBeInTheDocument()
+    expect(screen.queryByText('项目 12 · 视频 1')).not.toBeInTheDocument()
   })
 
   it('counts a locally initiated task as mine even before its project lands in the mine set', async () => {
@@ -947,8 +977,8 @@ describe('TaskCenterDrawer team-space member filter', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('暂无任务'))
 
     await user.click(screen.getByRole('tab', { name: '爆款成片' }))
-    expect(await screen.findByText('同事的视频')).toBeInTheDocument()
-    expect(screen.queryByText('我的视频')).not.toBeInTheDocument()
+    expect(await screen.findByText('项目 12 · 视频 1')).toBeInTheDocument()
+    expect(screen.queryByText('项目 11 · 视频 1')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('同事乙（2）')
     await user.click(screen.getByRole('button', { name: '只看我的' }))
     await user.click(screen.getByRole('button', { name: '只看我的' }))
@@ -974,7 +1004,7 @@ describe('TaskCenterDrawer team-space member filter', () => {
     )
 
     render(<TaskCenterDrawer scope="smart" />)
-    expect(await screen.findByText('同事的视频')).toBeInTheDocument()
+    expect(await screen.findByText('项目 12 · 视频 1')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '只看我的' }))
     expect(screen.getByRole('status')).toHaveTextContent('该成员暂无视频')

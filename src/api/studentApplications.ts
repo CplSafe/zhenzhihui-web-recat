@@ -112,10 +112,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const listApplications = (
   offset: number,
   filters: { q?: string; stage?: string; review_status?: string; genre?: string } = {},
+  signal?: AbortSignal,
 ) => {
   const query = new URLSearchParams({ limit: '20', offset: String(offset) })
   for (const [key, value] of Object.entries(filters)) if (value?.trim()) query.set(key, value.trim())
-  return request<{ items: Application[]; total: number; stats?: Record<string, number> }>(`?${query}`)
+  return request<{ items: Application[]; total: number; stats?: Record<string, number> }>(`?${query}`, { signal })
 }
 export type CreatorProfile = {
   real_name: string

@@ -91,9 +91,14 @@ describe('canvas storyboard input validation', () => {
     ).toContain('最多支持 2 张参考图片')
   })
 
-  it('明确拒绝视频或时间线输入，并指导用户改为截图图片', () => {
-    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'video', assetId: 12 }] })).toContain('暂不支持视频输入')
-    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'timeline', assetId: 13 }] })).toContain('截取画面')
+  it('视频和时间线按模型视频输入上限校验', () => {
+    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'video', assetId: 12 }], maxVideoRefs: 1 })).toBeNull()
+    expect(validateCanvasTextInputs({ sourceRefs: [{ kind: 'timeline', assetId: 13 }], maxVideoRefs: 0 })).toContain(
+      '不支持视频输入',
+    )
+    expect(
+      validateCanvasTextInputs({ sourceRefs: [{ kind: 'video' }, { kind: 'timeline' }], maxVideoRefs: 1 }),
+    ).toContain('最多支持 1 条参考视频')
   })
 })
 
@@ -485,5 +490,32 @@ describe('canvas video reference duration limit', () => {
     const base = { operationCode: 'video.generate', videoMode: 'full-ref' as const, sourceRefs: [videoRef] }
     expect(validateCanvasVideoInputs({ ...base, maxVideoRefSec: 15, videoRefTotalSec: 15 })).toBeNull()
     expect(validateCanvasVideoInputs({ ...base, maxVideoRefSec: 15, videoRefTotalSec: 0 })).toBeNull()
+  })
+})
+
+describe('model-specific video reference limits', () => {
+  it('allows the declared number of video references and reports excess without truncating', () => {
+    const refs = [1, 2, 3].map((assetId) => ({ kind: 'video', assetId }))
+    expect(validateCanvasVideoInputs({ operationCode: 'video.generate', sourceRefs: refs, maxVideoRefs: 3 })).toBeNull()
+    expect(validateCanvasVideoInputs({ operationCode: 'video.generate', sourceRefs: refs, maxVideoRefs: 2 })).toContain(
+      '最多支持 2 条参考视频',
+    )
+    expect(buildCanvasInputAssets(refs, 'video.generate')).toHaveLength(3)
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        sourceRefs: refs,
+        maxVideoRefs: 3,
+        selfVideoAssetId: 4,
+      }),
+    ).toContain('最多支持 3 条参考视频')
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        sourceRefs: refs,
+        maxVideoRefs: 3,
+        selfVideoAssetId: 1,
+      }),
+    ).toBeNull()
   })
 })

@@ -1,13 +1,14 @@
 /**
  * 顶栏通知铃铛（设计稿「通知」下拉）。
  *
- * 后端暂无独立通知接口，通知项由需求市场状态推导：
- * 我发布的需求已完成/被接单、我的接单申请被接受/拒绝。
- * 已读水位（时间戳）按用户存 localStorage，打开面板即视为全部已读。
+ * 后端暂无独立通知接口，通知项由需求市场状态与剧本审核记录推导。
+ * 已读通知按用户存入 localStorage，点击通知或全部已读时更新。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listDemandApplications, listMyApplications, listMyDemands, formatDemandDate } from '@/api/market'
+import { getApplication, listApplications, type Application } from '@/api/studentApplications'
+import { withRequestTimeout } from '@/api/requestTimeout'
 import './NotificationBell.css'
 
 export interface NotificationItem {
@@ -25,6 +26,7 @@ const READ_STORAGE_PREFIX = 'zzh-market-notify-read:v2:'
 
 /** 「收到新申请」轮询的需求条数上限，避免铃铛为长列表打出请求风暴。 */
 const RECEIVED_APPLICATION_DEMAND_LIMIT = 10
+const NOTIFICATION_LOAD_TIMEOUT_MS = 12_000
 
 function tsOf(value: string): number {
   const parsed = new Date(value).getTime()
@@ -113,6 +115,60 @@ export async function loadNotifications(signal?: AbortSignal): Promise<Notificat
   return items.sort((a, b) => b.ts - a.ts).slice(0, 20)
 }
 
+/** 审核意见仅由服务端真实的通过记录生成；按申请分页并限制详情并发。 */
+export async function loadScriptApprovalNotifications(signal?: AbortSignal): Promise<NotificationItem[]> {
+  const applications: Application[] = []
+  const seenIds = new Set<number>()
+  let offset = 0
+  while (true) {
+    const page = await listApplications(offset, {}, signal)
+    if (page.items.length && page.items.every((item) => seenIds.has(item.id))) {
+      throw new Error('剧本申请分页未向前推进')
+    }
+    page.items.forEach((item) => seenIds.add(item.id))
+    applications.push(...page.items)
+    offset += page.items.length
+    if (!page.items.length || offset >= page.total) break
+  }
+  const items: NotificationItem[] = []
+  const stages: Record<string, string> = {
+    creative: '创意',
+    draft: '一卡',
+    card: '一卡',
+    script: '剧本',
+    revision: '完善剧本',
+    final: '终稿',
+  }
+  for (let start = 0; start < applications.length; start += 5) {
+    const details = await Promise.all(
+      applications.slice(start, start + 5).map((item) => getApplication(String(item.id), signal)),
+    )
+    for (const detail of details) {
+      if (!detail.progress_available || !detail.application?.id) continue
+      const app = detail.application
+      for (const review of detail.workflow?.reviews || []) {
+        if (review.status !== 2) continue
+        const stage =
+          review.stage || detail.workflow?.versions?.find((version) => version.version === review.version)?.stage || ''
+        const rawTime = Number(review.finished_at || 0)
+        const ts = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1e12 ? rawTime * 1000 : rawTime) : 0
+        const title = app.title || String(app.data?.title || '') || `申请 #${app.id}`
+        const reason = review.reason?.trim()
+        items.push({
+          key: `script-approved-${app.id}-${review.version ?? ''}-${review.task_id || ''}-${review.node_key || ''}-${ts}`,
+          title: '剧本创意审核通过',
+          text: `「${title}」${stages[stage] || '申请'}审核通过${reason ? `；审核备注：${reason}` : '；暂无审核备注'}`,
+          tone: 'success',
+          href: `/script-ideas/${encodeURIComponent(String(app.id))}`,
+          ts,
+          dateLabel: ts ? formatDemandDate(new Date(ts).toISOString()) : '',
+        })
+      }
+    }
+  }
+  return [...new Map(items.map((item) => [item.key, item])).values()]
+}
+
 interface NotificationBellProps {
   /** 已读水位按用户隔离 */
   userKey: string
@@ -122,10 +178,13 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<NotificationItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [marketLoading, setMarketLoading] = useState(false)
+  const [scriptLoading, setScriptLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
+  const [scriptLoadError, setScriptLoadError] = useState(false)
   const [readKeys, setReadKeys] = useState<Set<string>>(() => new Set())
   const boxRef = useRef<HTMLDivElement>(null)
+  const refreshSequence = useRef(0)
   const storageKey = `${READ_STORAGE_PREFIX}${userKey || 'anon'}`
 
   useEffect(() => {
@@ -138,21 +197,41 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
   }, [storageKey])
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true)
+    const sequence = ++refreshSequence.current
+    setMarketLoading(true)
+    setScriptLoading(true)
     setLoadError(false)
-    try {
-      const loaded = await loadNotifications(signal)
-      if (!signal?.aborted) setItems(loaded)
-    } catch (error: any) {
-      if (!signal?.aborted && error?.name !== 'AbortError') setLoadError(true)
-    } finally {
-      if (!signal?.aborted) setLoading(false)
+    setScriptLoadError(false)
+    const valid = () => !signal?.aborted && sequence === refreshSequence.current
+    const loadSource = async (script: boolean) => {
+      try {
+        const loaded = await withRequestTimeout(
+          (requestSignal) =>
+            script ? loadScriptApprovalNotifications(requestSignal) : loadNotifications(requestSignal),
+          { signal, timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS },
+        )
+        if (!valid()) return
+        setItems((previous) =>
+          [...previous.filter((item) => item.key.startsWith('script-approved-') !== script), ...loaded]
+            .sort((a, b) => b.ts - a.ts)
+            .slice(0, 20),
+        )
+      } catch {
+        if (valid()) (script ? setScriptLoadError : setLoadError)(true)
+      } finally {
+        if (valid()) (script ? setScriptLoading : setMarketLoading)(false)
+      }
     }
+    await Promise.all([loadSource(false), loadSource(true)])
   }, [])
 
   // 挂载后延迟拉一次（避免抢首屏请求），打开面板时再刷新。
   useEffect(() => {
     const controller = new AbortController()
+    const sequenceRef = refreshSequence
+    setItems([])
+    setLoadError(false)
+    setScriptLoadError(false)
     const timer = window.setTimeout(() => {
       void refresh(controller.signal)
     }, 1500)
@@ -160,6 +239,7 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
       if (document.visibilityState === 'visible') void refresh(controller.signal)
     }, 60_000)
     return () => {
+      sequenceRef.current++
       window.clearTimeout(timer)
       window.clearInterval(pollTimer)
       controller.abort()
@@ -245,13 +325,13 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
               </button>
             )}
           </div>
-          {loading && !items.length ? (
+          {marketLoading && scriptLoading && !items.length ? (
             <div className="notify__skeleton" aria-label="正在加载通知">
               <i />
               <i />
               <i />
             </div>
-          ) : loadError ? (
+          ) : loadError && scriptLoadError && !items.length ? (
             <div className="notify__empty notify__empty--error">
               <strong>通知加载失败</strong>
               <span>没有把请求失败误判为暂无通知</span>
@@ -260,25 +340,51 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
               </button>
             </div>
           ) : items.length ? (
-            <div className="notify__list">
-              {items.map((item) => (
-                <button
-                  type="button"
-                  className={`notify__item notify__item--${item.tone}${!readKeys.has(item.key) ? ' is-unread' : ''}`}
-                  key={item.key}
-                  onClick={() => openNotification(item)}
-                >
-                  <span className="notify__item-icon" aria-hidden="true">
-                    {item.tone === 'success' ? '✓' : item.tone === 'warning' ? '!' : 'i'}
-                  </span>
-                  <span className="notify__item-content">
-                    <strong>{item.title}</strong>
-                    <span>{item.text}</span>
-                    {item.dateLabel && <time>{item.dateLabel}</time>}
-                  </span>
-                  {!readKeys.has(item.key) && <span className="notify__item-dot" aria-hidden="true" />}
-                </button>
-              ))}
+            <>
+              {(marketLoading || scriptLoading) && (
+                <div className="notify__partial-error" role="status">
+                  {marketLoading ? '需求消息' : '剧本消息'}加载中…
+                </div>
+              )}
+              {(loadError || scriptLoadError) && (
+                <div className="notify__partial-error" role="status">
+                  {loadError ? '需求消息加载失败' : '剧本消息加载失败'}，
+                  <button type="button" onClick={() => void refresh()}>
+                    重新加载
+                  </button>
+                </div>
+              )}
+              <div className="notify__list">
+                {items.map((item) => (
+                  <button
+                    type="button"
+                    className={`notify__item notify__item--${item.tone}${!readKeys.has(item.key) ? ' is-unread' : ''}`}
+                    key={item.key}
+                    onClick={() => openNotification(item)}
+                  >
+                    <span className="notify__item-icon" aria-hidden="true">
+                      {item.tone === 'success' ? '✓' : item.tone === 'warning' ? '!' : 'i'}
+                    </span>
+                    <span className="notify__item-content">
+                      <strong>{item.title}</strong>
+                      <span>{item.text}</span>
+                      {item.dateLabel && <time>{item.dateLabel}</time>}
+                    </span>
+                    {!readKeys.has(item.key) && <span className="notify__item-dot" aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : loadError || scriptLoadError ? (
+            <div className="notify__empty notify__empty--error">
+              <strong>{loadError ? '需求消息加载失败' : '剧本消息加载失败'}</strong>
+              <button type="button" onClick={() => void refresh()}>
+                重新加载
+              </button>
+            </div>
+          ) : marketLoading || scriptLoading ? (
+            <div className="notify__empty" role="status">
+              <strong>{marketLoading ? '需求消息' : '剧本消息'}加载中…</strong>
             </div>
           ) : (
             <div className="notify__empty">

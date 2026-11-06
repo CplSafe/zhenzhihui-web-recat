@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+declare const __APP_BUILD_VERSION__: string
+
 /** 项目自定义的 Vite 构建时环境变量类型。 */
 interface ImportMetaEnv {
   readonly ZZH_DEV_PROXY_CONFIGURED: boolean

@@ -130,6 +130,7 @@
   width: 30px;
   height: 30px;
   place-items: center;
+  padding: 0;
   border: 1px solid #e5ebe8;
   border-radius: 8px;
   background: rgb(255 255 255 / 94%);
@@ -151,6 +152,15 @@
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+.permissionHint {
+  padding: 8px 10px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+:global(.canvas-view) .permissionHint {
+  color: #c5cbd3;
 }
 .projectMenu button {
   padding: 8px 10px;

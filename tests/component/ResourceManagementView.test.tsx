@@ -217,7 +217,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     expect(screen.getByRole('button', { name: '删除上传产品视频' })).toBeInTheDocument()
   })
 
-  it('routes an image to 智能成片 / 爆款复制 as a reference and to 漫剧制作 as carried material', async () => {
+  it('routes an image to 智能成片 / 爆款复制 as a reference and to 无限画布 as carried material', async () => {
     mocks.listAssets.mockResolvedValue({ items: [imageAsset(431, '主体图', '/subject.png')] })
 
     render(<ResourceManagementView />)
@@ -242,9 +242,9 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
       },
     })
 
-    // 漫剧制作走列表页：/canvas 是列表而不是编辑器，素材由列表页透传给用户选中/新建的画布。
+    // 无限画布走列表页：/canvas 是列表而不是编辑器，素材由列表页透传给用户选中/新建的画布。
     await openMenu()
-    fireEvent.click(screen.getByRole('menuitem', { name: '漫剧制作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '无限画布' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/canvas', {
       state: {
         carryMaterial: {

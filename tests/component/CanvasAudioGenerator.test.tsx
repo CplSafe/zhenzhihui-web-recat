@@ -27,6 +27,7 @@ vi.mock('@/stores/workspaceSession', () => ({
   useWorkspaceSessionStore: (selector: any) => selector({ authSession: { user: { id: 'test-user' } } }),
 }))
 vi.mock('@xyflow/react', () => ({
+  useStore: (selector: any) => selector({ edges: mocks.edges(), nodes: mocks.nodes() }),
   useReactFlow: () => ({
     updateNodeData: mocks.update,
     getEdges: mocks.edges,
@@ -785,6 +786,40 @@ describe('音频生成任务提交', () => {
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
     expect(mocks.estimate.mock.calls[0][0].inputAssets).toEqual([{ asset_id: 82, role: 'reference_audio' }])
     expect(mocks.submit.mock.calls[0][0].inputAssets).toEqual(mocks.estimate.mock.calls[0][0].inputAssets)
+  })
+  it('连接的图片与音频使用后端角色，预估和提交素材一致', async () => {
+    mocks.list.mockResolvedValue([
+      {
+        ...model,
+        input_constraints: {
+          'audio.tts': {
+            roles: [
+              { role: 'image', min_count: 0, max_count: 1 },
+              { role: 'reference_audio', min_count: 0, max_count: 3 },
+            ],
+          },
+        },
+      },
+    ])
+    const image = { id: 'image', type: 'image', data: { assetId: 83, assetWorkspaceId: 21 } }
+    const audio = { id: 'sample', type: 'audio', data: { assetId: 82, assetWorkspaceId: 21 } }
+    mocks.edges.mockReturnValue([
+      { id: 'e1', source: 'image', target: 'a' },
+      { id: 'e2', source: 'sample', target: 'a' },
+    ])
+    mocks.nodes.mockReturnValue([image, audio])
+    mocks.node.mockImplementation((id) => [image, audio].find((node) => node.id === id))
+    render(<CanvasAudioGenerator nodeId="a" data={{}} workspaceId={21} />)
+    await choose()
+    fireEvent.click(screen.getByRole('button', { name: '制作音频' }))
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
+    const expected = [
+      { asset_id: 83, role: 'image' },
+      { asset_id: 82, role: 'reference_audio' },
+    ]
+    expect(mocks.estimate).toHaveBeenCalledWith(expect.objectContaining({ inputAssets: expected }))
+    expect(mocks.submit.mock.calls[0][0].inputAssets).toEqual(expected)
+    expect(mocks.findActive).toHaveBeenCalledWith(21, [83], 'image')
   })
   it('缺少必需参考音频时不预估也不提交', async () => {
     mocks.list.mockResolvedValue([

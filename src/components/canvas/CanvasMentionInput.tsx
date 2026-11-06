@@ -61,6 +61,24 @@ export function setSelection(root: HTMLElement, start: number, end: number) {
   selection?.addRange(range)
 }
 
+/** Keep only the editor scrolled to the caret after controlled DOM replacement. */
+function revealCaret(root: HTMLElement) {
+  const selection = window.getSelection()
+  if (document.activeElement !== root || !selection?.rangeCount || !root.contains(selection.focusNode)) return
+  const range = selection.getRangeAt(0).cloneRange()
+  range.collapse(false)
+  let caret = range.getBoundingClientRect()
+  if (!caret.height && selectionOffsets(root)[1] === readMentionInput(root).length) {
+    caret = root.querySelector('[data-caret-end]')?.getBoundingClientRect() || caret
+  }
+  if (!caret.height) return
+  const bounds = root.getBoundingClientRect()
+  const scale = root.offsetHeight ? bounds.height / root.offsetHeight : 1
+  if (!scale) return
+  if (caret.bottom > bounds.bottom) root.scrollTop += (caret.bottom - bounds.bottom) / scale
+  else if (caret.top < bounds.top) root.scrollTop -= (bounds.top - caret.top) / scale
+}
+
 const CanvasMentionInput = forwardRef<
   CanvasMentionInputHandle,
   {
@@ -88,7 +106,10 @@ const CanvasMentionInput = forwardRef<
   useImperativeHandle(forwardedRef, () => ({
     focus: () => rootRef.current?.focus(),
     setSelectionRange: (start, end) => {
-      if (rootRef.current) setSelection(rootRef.current, start, end)
+      if (rootRef.current) {
+        setSelection(rootRef.current, start, end)
+        revealCaret(rootRef.current)
+      }
     },
     get selectionStart() {
       return rootRef.current ? selectionOffsets(rootRef.current)[0] : 0
@@ -107,6 +128,7 @@ const CanvasMentionInput = forwardRef<
       if (history.current.length > 100) history.current.shift()
       redo.current = []
     }
+    const shouldRevealCaret = pendingSelection.current !== null
     const selection = pendingSelection.current || (focused ? selectionOffsets(root) : null)
     pendingSelection.current = null
     const fragment = document.createDocumentFragment()
@@ -149,11 +171,23 @@ const CanvasMentionInput = forwardRef<
     const end = document.createElement('br')
     end.dataset.caretEnd = 'true'
     fragment.append(end)
-    root.replaceChildren(fragment)
+    // Native typing has already updated the editor. Keep its nodes (and the
+    // browser's caret/scroll position) when the rendered content is unchanged.
+    const meaningful = (nodes: NodeListOf<ChildNode>) =>
+      Array.from(nodes).filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent !== '')
+    const current = meaningful(root.childNodes)
+    const next = meaningful(fragment.childNodes)
+    const unchanged = current.length === next.length && current.every((node, index) => node.isEqualNode(next[index]))
+    if (!unchanged) {
+      const scrollTop = root.scrollTop
+      root.replaceChildren(fragment)
+      if (focused && selection) setSelection(root, ...selection)
+      root.scrollTop = scrollTop
+    }
+    if (focused && shouldRevealCaret) revealCaret(root)
     root.dataset.value = props.value
     root.dataset.empty = String(props.value.length === 0)
     lastValue.current = props.value
-    if (focused && selection) setSelection(root, ...selection)
   }, [props.value, props.mentions, compositionVersion])
 
   const emit = (value: string, caret: number, record = true) => {

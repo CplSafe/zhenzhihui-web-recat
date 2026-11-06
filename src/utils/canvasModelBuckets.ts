@@ -40,7 +40,10 @@ function dedupeByVersionId(models: readonly GenerationModelOption[]): Generation
     const versionId = Number(model?.modelVersionId || 0)
     const existing = byVersion.get(versionId)
     if (!existing) {
-      byVersion.set(versionId, model)
+      byVersion.set(versionId, {
+        ...model,
+        sourcesByOperation: Object.fromEntries(model.operationCodes.map((code) => [code, model.source])),
+      })
       continue
     }
     // 同一个模型版本会按 operation_code 被目录拆成多条记录。不能简单丢弃
@@ -49,10 +52,24 @@ function dedupeByVersionId(models: readonly GenerationModelOption[]): Generation
     byVersion.set(versionId, {
       ...existing,
       operationCodes: Array.from(new Set([...(existing.operationCodes || []), ...(model.operationCodes || [])])),
+      sourcesByOperation: {
+        ...existing.sourcesByOperation,
+        ...Object.fromEntries(model.operationCodes.map((code) => [code, model.source])),
+      },
       unavailableReason: existing.unavailableReason || model.unavailableReason,
     })
   }
   return Array.from(byVersion.values())
+}
+
+/** 根据本次操作读取对应模型元数据，兼容尚未分桶的模型。 */
+export function resolveCanvasModelForOperation(
+  model: GenerationModelOption,
+  operationCode: string,
+): GenerationModelOption {
+  const source =
+    model.sourcesByOperation?.[operationCode as keyof NonNullable<GenerationModelOption['sourcesByOperation']>]
+  return source ? { ...model, source } : model
 }
 
 /** 把目录分组投影为画布面板需要的三份模型列表。 */

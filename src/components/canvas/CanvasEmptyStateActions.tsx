@@ -215,7 +215,7 @@ export default function CanvasEmptyStateActions() {
       <section className={styles.recent} aria-label="最近的漫剧项目">
         <div className={styles.recentHeader}>
           <h2>最近的项目</h2>
-          <button type="button" onClick={() => navigate('/canvas')}>
+          <button type="button" onClick={() => navigate('/projects?flow=canvas')}>
             查看更多
           </button>
         </div>
@@ -282,11 +282,17 @@ export default function CanvasEmptyStateActions() {
                       setOpenMenuId((id) => (id === item.id ? 0 : item.id))
                     }}
                   >
-                    ⋯
+                    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                      <circle cx="4" cy="10" r="1.4" fill="currentColor" />
+                      <circle cx="10" cy="10" r="1.4" fill="currentColor" />
+                      <circle cx="16" cy="10" r="1.4" fill="currentColor" />
+                    </svg>
                   </button>
                   {openMenuId === item.id && (
                     <span className={styles.projectMenu} onClick={(event) => event.stopPropagation()}>
-                      {(!item.userId || !currentUserId || item.userId === currentUserId) && (
+                      {item.userId && currentUserId && item.userId !== currentUserId ? (
+                        <span className={styles.permissionHint}>仅创建者可重命名或删除此画布</span>
+                      ) : (
                         <button
                           type="button"
                           onClick={() => {

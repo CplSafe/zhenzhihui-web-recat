@@ -59,6 +59,11 @@ for (const width of [1440, 390]) {
       const body = route.request().postDataJSON()
       expect(complete).toBe(true)
       expect(body.data.attachments[0].file_id).toBe(55)
+      expect(body.data).toMatchObject({
+        applicant_name: '测试用户',
+        applicant_school: '测试学校',
+        applicant_phone: '13800000000',
+      })
       expect(body.data.synopsis).toBe('故事简介')
       expect(body.data.title).toBe('示例剧')
       expect(Object.keys(body)).toEqual(['data'])
@@ -78,11 +83,9 @@ for (const width of [1440, 390]) {
       }),
     )
     await page.goto('/script-ideas/new')
-    await page.getByLabel('姓名').fill('测试用户')
-    await page.getByLabel('学校 / 机构').fill('测试学校')
-    await page.getByLabel('联系电话').fill('13800000000')
     await page.getByLabel('剧名').fill('示例剧')
-    await page.getByLabel('题材').fill('悬疑')
+    await page.getByRole('combobox', { name: '题材' }).fill('悬疑')
+    await page.getByRole('combobox', { name: '题材' }).press('Enter')
     await page.getByLabel('故事创意').fill('故事简介')
     await page.getByRole('button', { name: '提交创意', exact: true }).click()
     await expect(page.getByText('请选择剧本文档附件。')).toBeVisible()

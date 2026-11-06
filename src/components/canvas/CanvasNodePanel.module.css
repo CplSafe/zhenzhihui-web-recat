@@ -1,6 +1,6 @@
 .panel {
   position: relative;
-  width: 580px;
+  width: 630px;
   max-width: 90vw;
   min-height: 206px;
   background: var(--canvas-surface, #262626);
@@ -436,10 +436,11 @@
   box-sizing: border-box;
   border: none;
   outline: none;
-  /* 允许用户纵向拖拽放大；配合下方「放大」按钮一键拉高（反馈 #5：提示词框放不大） */
-  resize: vertical;
+  resize: none;
   /* 滚动条常驻占位：避免文字刚超高时滚动条突然出现、整段文字换行抖一下（高亮层 right 由 JS 同步） */
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--canvas-text-muted, #7a8496) transparent;
   font-size: 14px;
   line-height: 22px;
   color: var(--canvas-text, #e5e7eb);
@@ -447,10 +448,32 @@
   font-family: 'PingFang SC', sans-serif;
 }
 
+.textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.textarea::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--canvas-text-muted, #7a8496);
+}
+
+@media (max-width: 600px) {
+  .textarea:not(.textareaExpanded) {
+    max-height: 88px;
+  }
+}
+
 /* 放大态：长提示词（多提示词短剧）需要更大的编辑区 */
 .textareaExpanded {
-  min-height: 220px;
-  max-height: 50vh;
+  min-height: min(45vh, 380px);
+  max-height: 60vh;
+  padding: 16px;
+  background: var(--canvas-surface-raised, #202433);
+  border-radius: 8px;
 }
 
 .expandBtn {
@@ -597,7 +620,7 @@
   color: #7a8496;
   -webkit-text-fill-color: #9a9a9a;
 }
-/* 可点击的参考缩略图：点它把 @图片N/@视频N 插进提示词 */
+/* 缩略图预览素材，标签插入引用。 */
 .refThumbClickable {
   cursor: pointer;
 }
@@ -619,7 +642,17 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  pointer-events: none;
+  border: 0;
+  cursor: pointer;
+}
+.refPreview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .realPersonBadge {
@@ -1719,4 +1752,245 @@
 .generateBtn:disabled {
   background: #41485a;
   color: #9ca3af;
+}
+
+.referenceLimits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.promptModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 68%);
+}
+
+.promptModal {
+  display: flex;
+  flex-direction: column;
+  width: min(780px, 100%);
+  height: min(650px, calc(100dvh - 40px));
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 16px;
+  background: #242424;
+  color: #ededed;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+}
+
+.promptModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 20px 24px 16px;
+}
+.promptModalHeader h2 {
+  margin: 0;
+  color: inherit;
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.promptModalHeader button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #a4a4a4;
+  font-size: 23px;
+  line-height: 1;
+  cursor: pointer;
+}
+.promptModalHeader button:hover {
+  background: #393939;
+  color: #fff;
+}
+
+.promptModalReferenceSection {
+  flex: none;
+  padding: 0 24px 16px;
+}
+.promptModalSectionLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #d3d3d3;
+  font-size: 12px;
+  font-weight: 600;
+}
+.promptModalSectionLabel span + span {
+  color: #8c8c8c;
+  font-weight: 400;
+}
+.promptModalReferences {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 98px;
+  overflow-y: auto;
+}
+.promptModalRef {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 180px;
+  height: 36px;
+  padding: 3px 10px 3px 3px;
+  color: #ededed;
+  background: #333;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.promptModalRef:hover {
+  background: #404040;
+  border-color: rgb(255 255 255 / 24%);
+}
+.promptModalRef :is(img, video, svg) {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.promptModalRef span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.promptModalReferences .refAddBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.promptModalEditor {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 24px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 10px;
+  background: #1b1b1b;
+}
+.promptModalEditor:focus-within {
+  border-color: rgb(0 229 190 / 48%);
+}
+.promptModalEditor .promptWrap {
+  height: 100%;
+}
+.promptModalEditor .textareaExpanded {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  padding: 16px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.promptModalEditor .richPrompt[data-empty='true']::before {
+  top: 16px;
+  left: 16px;
+  right: 16px;
+}
+
+.promptModalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding: 16px 24px 20px;
+}
+.promptModalTools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.promptModalTools .polishBtn,
+.promptModalTools .micBtn {
+  height: 34px;
+  border-color: rgb(255 255 255 / 12%);
+  background: #303030;
+  color: #d4d4d4;
+  font-weight: 500;
+}
+.promptModalTools .polishBtn:hover:not(:disabled),
+.promptModalTools .micBtn:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+.promptModalDone {
+  flex: none;
+  min-width: 80px;
+  height: 36px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 8px;
+  background: #5767e5;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.promptModalDone:hover {
+  background: #6878ed;
+}
+
+@media (max-width: 600px) {
+  .promptModalBackdrop {
+    padding: 12px;
+  }
+  .promptModal {
+    height: min(620px, calc(100dvh - 24px));
+    border-radius: 12px;
+  }
+  .promptModalHeader {
+    padding: 16px 16px 12px;
+  }
+  .promptModalReferenceSection {
+    padding: 0 16px 12px;
+  }
+  .promptModalSectionLabel span + span {
+    display: none;
+  }
+  .promptModalEditor {
+    margin: 0 16px;
+  }
+  .promptModalFooter {
+    align-items: flex-end;
+    padding: 12px 16px 16px;
+  }
+  .promptModalTools {
+    gap: 6px;
+  }
+  .promptModalTools .polishBtn {
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .promptModalDone {
+    min-width: 64px;
+    padding: 0 14px;
+  }
 }

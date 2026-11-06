@@ -8,20 +8,20 @@ describe('canvas selection add source matrix', () => {
     expect(isCanvasSelectionAddAllowed('script', ['text', 'text'])).toBe(false)
   })
 
-  it('rejects text for audio and audio for video generation', () => {
+  it('rejects text for audio and allows audio inputs to video', () => {
     expect(isCanvasSelectionAddAllowed('audio', ['text', 'text'])).toBe(false)
-    expect(isCanvasSelectionAddAllowed('video', ['audio', 'audio'])).toBe(false)
+    expect(isCanvasSelectionAddAllowed('video', ['audio', 'audio'])).toBe(true)
   })
 
-  it('allows text and image sources for text nodes but blocks video or timeline sources', () => {
+  it('allows video and timeline context for text nodes', () => {
     expect(isCanvasSelectionAddAllowed('text', ['text', 'image'])).toBe(true)
-    expect(isCanvasSelectionAddAllowed('text', ['image', 'video'])).toBe(false)
-    expect(isCanvasSelectionAddAllowed('text', ['text', 'timeline'])).toBe(false)
-    expect(getCanvasSelectionAddUnsupportedSources('text', ['image', 'video'])).toEqual(['video'])
+    expect(isCanvasSelectionAddAllowed('text', ['image', 'video'])).toBe(true)
+    expect(isCanvasSelectionAddAllowed('text', ['text', 'timeline'])).toBe(true)
+    expect(getCanvasSelectionAddUnsupportedSources('text', ['image', 'video'])).toEqual([])
   })
 
   it('requires every source to be supported and keeps images out of video-only timelines', () => {
-    expect(isCanvasSelectionAddAllowed('video', ['image', 'audio'])).toBe(false)
+    expect(isCanvasSelectionAddAllowed('video', ['image', 'audio'])).toBe(true)
     expect(isCanvasSelectionAddAllowed('timeline', ['image', 'video'])).toBe(false)
     expect(getCanvasSelectionAddUnsupportedSources('timeline', ['image', 'video'])).toEqual(['image'])
   })

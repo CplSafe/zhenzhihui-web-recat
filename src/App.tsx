@@ -7,6 +7,7 @@ import { Outlet, useLocation, useMatches, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
+import AppVersionNotice from './components/common/AppVersionNotice'
 import { useSafeWorkspaceSwitch } from './composables/useSafeWorkspaceSwitch'
 import { useGuideStore } from './stores/guide'
 import { useUiStore } from './stores/ui'
@@ -252,6 +253,7 @@ export function AppShell() {
 
       <AppToast />
       <AppConfirmDialog />
+      <AppVersionNotice />
       {/* 帮助中心悬浮球:登录后所有业务页都显示(含 requiresAuth:false 的 /smart、/hot-copy),登录/开屏页不显示。
           用 hasChecked 而非 !isCheckingSession —— 后台续期/再校验时不跟着闪、也不被卸载。 */}
       {isAuthenticated && hasChecked && location.pathname !== '/login' && location.pathname !== '/welcome' && (

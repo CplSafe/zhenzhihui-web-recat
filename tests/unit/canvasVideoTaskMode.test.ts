@@ -47,13 +47,18 @@ describe('applyVideoTaskModeParams', () => {
     expect(params).toEqual({ mode: 'edit', duration: 5 })
   })
 
-  it('reports the total source video length rounded up for billing', () => {
+  it('reports the exact source length using the declared schema field', () => {
     expect(
       applyVideoTaskModeParams(
         { mode: 'edit', duration: 5 },
-        { modeFieldName: 'mode', hasVideoInput: true, sourceVideoSeconds: 7.2 },
+        {
+          modeFieldName: 'mode',
+          sourceDurationFieldName: 'sourceVideoDuration',
+          hasVideoInput: true,
+          sourceVideoSeconds: 7.2,
+        },
       ),
-    ).toEqual({ mode: 'edit', source_video_duration: 8 })
+    ).toEqual({ mode: 'edit', sourceVideoDuration: 7.2 })
   })
 
   it.each(['edit', 'extend'])('removes fixed ratio and duration aliases for %s without mutating input', (mode) => {
@@ -68,8 +73,22 @@ describe('applyVideoTaskModeParams', () => {
     }
     expect(
       applyVideoTaskModeParams(params, { modeFieldName: 'mode', hasVideoInput: true, sourceVideoSeconds: 8 }),
-    ).toEqual({ mode, resolution: '720p', source_video_duration: 8 })
+    ).toEqual({ mode, resolution: '720p' })
     expect(params.duration).toBe(5)
+  })
+
+  it.each(['edit', 'extend'])('keeps schema-required duration for %s while omitting the fixed ratio', (mode) => {
+    expect(
+      applyVideoTaskModeParams(
+        { mode, duration: 15, duration_seconds: 10, ratio: '9:16' },
+        {
+          modeFieldName: 'mode',
+          requiredDurationFieldNames: ['duration'],
+          hasVideoInput: true,
+          sourceVideoSeconds: 15,
+        },
+      ),
+    ).toEqual({ mode, duration: 15 })
   })
 
   it('keeps explicit output ratio and duration for generation with a reference video', () => {
@@ -78,7 +97,7 @@ describe('applyVideoTaskModeParams', () => {
         { mode: 'generate', ratio: '21:9', duration: 5 },
         { modeFieldName: 'mode', hasVideoInput: true, sourceVideoSeconds: 8 },
       ),
-    ).toEqual({ mode: 'generate', ratio: '21:9', duration: 5, source_video_duration: 8 })
+    ).toEqual({ mode: 'generate', ratio: '21:9', duration: 5 })
   })
 
   it('omits the source length while it is still unknown', () => {
@@ -96,6 +115,15 @@ describe('applyVideoTaskModeParams', () => {
       applyVideoTaskModeParams(params, { modeFieldName: undefined, hasVideoInput: true, sourceVideoSeconds: 9 }),
     ).toBe(params)
   })
+
+  it('reports declared source duration for models without a task mode field', () => {
+    expect(
+      applyVideoTaskModeParams(
+        {},
+        { sourceDurationFieldName: 'source_video_duration', hasVideoInput: true, sourceVideoSeconds: 7.2 },
+      ),
+    ).toEqual({ source_video_duration: 7.2 })
+  })
 })
 
 describe('resolveSelfVideoAssetId', () => {
@@ -110,6 +138,24 @@ describe('resolveSelfVideoAssetId', () => {
 
   it('regenerates from scratch with a new model in generate mode', () => {
     expect(resolveSelfVideoAssetId({ isEditingVideo: false, followSourceVideo: false, assetId: 7 })).toBe(0)
+  })
+
+  it('does not silently add the previous result when references are connected', () => {
+    expect(
+      resolveSelfVideoAssetId({ isEditingVideo: true, followSourceVideo: false, assetId: 7, hasConnectedMedia: true }),
+    ).toBe(0)
+    expect(
+      resolveSelfVideoAssetId({ isEditingVideo: true, followSourceVideo: true, assetId: 7, hasConnectedMedia: true }),
+    ).toBe(7)
+    expect(
+      resolveSelfVideoAssetId({
+        isEditingVideo: true,
+        followSourceVideo: true,
+        assetId: 7,
+        hasConnectedMedia: true,
+        hasConnectedVideo: true,
+      }),
+    ).toBe(0)
   })
 
   it('never sends a video that has no asset id', () => {

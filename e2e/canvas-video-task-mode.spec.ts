@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
-for (const mode of ['generate', 'edit'] as const) {
-  test(`参考视频按${mode}提交，编辑时移除固定比例与时长`, async ({ page }, testInfo) => {
+for (const mode of ['generate', 'edit', 'extend'] as const) {
+  test(`参考视频按${mode}预估和提交，编辑与延长保留必填时长`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     const api = await installStrictAuthenticatedApp(page)
     const errors: string[] = []
@@ -24,7 +24,7 @@ for (const mode of ['generate', 'edit'] as const) {
           items: [
             {
               id: 42,
-              display_name: 'Seedance 2.0',
+              display_name: 'Seedance 2.5',
               capability: 'video',
               operation_codes: ['video.generate'],
               params_schema: {
@@ -35,7 +35,7 @@ for (const mode of ['generate', 'edit'] as const) {
                     options: ['generate', 'edit', 'extend'],
                     default: 'generate',
                   },
-                  { name: 'duration', display_name: '时长', options: [5, 10], default: 5 },
+                  { name: 'duration', display_name: '时长', required: true, options: [5, 10], default: 5 },
                   { name: 'ratio', display_name: '比例', options: ['16:9', '21:9'], default: '21:9' },
                   { name: 'generate_audio', display_name: '自动生成背景音', type: 'bool', default: false },
                 ],
@@ -87,8 +87,18 @@ for (const mode of ['generate', 'edit'] as const) {
       }),
     )
     const submissions: Record<string, any>[] = []
-    await page.route('**/api/v1/ai/tasks/estimate-cost', (route) =>
-      route.fulfill({ json: { estimated_cost: 10, balance: 9000, can_afford: true } }),
+    const estimates: Record<string, any>[] = []
+    await page.route('**/api/v1/ai/tasks/estimate-cost', (route) => {
+      const body = route.request().postDataJSON()
+      estimates.push(body)
+      return route.fulfill(
+        [5, 10].includes(body.params?.duration)
+          ? { json: { estimated_cost: 10, balance: 9000, can_afford: true } }
+          : { status: 400, json: { code_string: 'INVALID_MODEL_PARAMS', message: '模型参数无效' } },
+      )
+    })
+    await page.route('**/api/v1/assets/601/seedance-moderation**', (route) =>
+      route.fulfill({ json: { data: { status: 'active' } } }),
     )
     await page.route('**/api/v1/ai/tasks', async (route) => {
       submissions.push(route.request().postDataJSON())
@@ -121,19 +131,25 @@ for (const mode of ['generate', 'edit'] as const) {
     await expect(panel.locator('button[title*="比例时长跟随原视频"]')).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('edit-option-retained.png') })
     if (mode === 'generate') await menu.getByRole('button', { name: '生成', exact: true }).click()
+    if (mode === 'extend') await menu.getByRole('button', { name: '延长', exact: true }).click()
     await menu.getByRole('button', { name: '关闭生成参数' }).click()
     await expect(send).toBeEnabled()
     await expect(panel.getByText('预计消耗：10 积分', { exact: true })).toBeVisible()
+    expect(estimates.at(-1)).toMatchObject({
+      operation_code: 'video.generate',
+      params: { mode, duration: 5 },
+      input_assets: [{ asset_id: 601, role: 'video' }],
+    })
     await page.screenshot({ path: testInfo.outputPath('keyword-generation-enabled.png') })
     await send.click()
-    const costDialog = page.getByRole('alertdialog', { name: '确认生成费用' })
+    const costDialog = page.getByRole('alertdialog', { name: '确认制作费用' })
     await expect(costDialog).toContainText('预计消耗 10 积分')
     expect(submissions).toHaveLength(0)
     await page.screenshot({ path: testInfo.outputPath('yuan-cost-confirmation.png') })
     await page.setViewportSize({ width: 390, height: 844 })
-    await expect(costDialog.getByRole('button', { name: '继续生成' })).toBeVisible()
+    await expect(costDialog.getByRole('button', { name: '继续制作' })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('yuan-cost-confirmation-narrow.png') })
-    await costDialog.getByRole('button', { name: '继续生成' }).click()
+    await costDialog.getByRole('button', { name: '继续制作' }).click()
     await page.setViewportSize({ width: 1440, height: 1000 })
     await expect.poll(() => submissions.length).toBe(1)
     expect(submissions[0]).toMatchObject({
@@ -141,9 +157,10 @@ for (const mode of ['generate', 'edit'] as const) {
       operation_code: 'video.generate',
       params: { mode, generate_audio: false },
     })
-    if (mode === 'edit') {
+    expect(submissions[0].params).toEqual(estimates.at(-1)?.params)
+    if (mode !== 'generate') {
       expect(submissions[0].params).not.toHaveProperty('ratio')
-      expect(submissions[0].params).not.toHaveProperty('duration')
+      expect(submissions[0].params.duration).toBe(5)
     } else {
       expect(submissions[0].params).toMatchObject({ ratio: '21:9', duration: 5 })
     }

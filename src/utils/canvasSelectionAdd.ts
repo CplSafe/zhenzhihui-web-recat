@@ -7,11 +7,11 @@
 export type CanvasSelectionAddTarget = 'text' | 'image' | 'video' | 'timeline' | 'audio' | 'audio-editor' | 'script'
 
 const SELECTION_ADD_SOURCE_KINDS: Record<CanvasSelectionAddTarget, readonly string[]> = {
-  // 分镜文本可汇总文字和图片上下文，但不接收视频/时间线输入。
-  text: ['text', 'image'],
+  // 新节点保留来源，所选模型在生成前校验媒体能力。
+  text: ['text', 'image', 'video', 'timeline'],
   image: ['text', 'image'],
-  // B7：音频仅作为视频生成的独立输入支持，不在多选「+」矩阵内开放。
-  video: ['text', 'image', 'video', 'timeline'],
+  // 新节点先保留所有来源，所选模型的素材类型与数量在节点面板中校验。
+  video: ['text', 'image', 'video', 'timeline', 'audio'],
   // 图片片段尚未纳入 TimelineClip（它要求可裁切的视频 asset 和时长），暂不开放混选剪辑。
   timeline: ['video', 'timeline'],
   // B4/B6：只放开报告确认的视频来源；文本不能作为音频素材引用。

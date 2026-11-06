@@ -171,7 +171,12 @@ test('列表使用服务端筛选、统计和审核状态', async ({ page }) => 
   })
   await page.goto('/script-ideas/list')
   await expect(page.getByText('示例剧')).toBeVisible()
-  await expect(page.getByText('一卡 · A')).toBeVisible()
+  await expect(page.getByRole('button', { name: /示例剧/ }).getByText('一卡', { exact: true })).toBeVisible()
+  await expect(page.getByText('一卡 · A')).toHaveCount(0)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('button', { name: /示例剧/ }).getByText('一卡', { exact: true })).toBeVisible()
+  await expect(page.getByText('一卡 · A')).toHaveCount(0)
+  await page.setViewportSize({ width: 1280, height: 720 })
   await expect(page.locator('.si-list-summary')).toContainText('8')
   await page.getByLabel('全部阶段').selectOption('card')
   await page.getByLabel('全部状态').selectOption('needs_changes')
@@ -323,15 +328,20 @@ test('一卡评级历史和制剧人分配只读展示', async ({ page }) => {
               remark: '已分配',
             },
             versions: [],
-            reviews: [],
+            reviews: [
+              { status: 2, stage: 'draft', version: 2, finished_at: 1793760200000 },
+              { status: 5, stage: 'draft', version: 1, finished_at: 1793760100000 },
+              { status: 2, stage: 'creative', version: 3, finished_at: 1793760000000 },
+            ],
           },
         },
       },
     }),
   )
   await page.goto('/script-ideas/94')
-  await expect(page.getByRole('heading', { name: '一卡评级与制作安排' })).toBeVisible()
-  await expect(page.getByText('版本 2 · 评级 S')).toBeVisible()
-  await expect(page.getByText('制剧人：制剧人甲')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '一卡评级与制作安排' })).toHaveCount(0)
+  await expect(page.getByText('通过 · 版本 2', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('退回 · 版本 1', { exact: false })).toBeVisible()
+  await expect(page.getByText('通过 · 版本 3', { exact: false })).toBeVisible()
   await expect(page.getByRole('button', { name: /分配/ })).toHaveCount(0)
 })

@@ -241,17 +241,6 @@ export function JoinPreview({ user }: { user: any }) {
               返回剧本创意首页
             </button>
           </div>
-          <button
-            type="button"
-            className="si-join-edit-link"
-            onClick={() => {
-              setJoined(true)
-              setAgreed(false)
-              setSaved(false)
-            }}
-          >
-            修改入驻信息
-          </button>
         </div>
       </section>
     )
@@ -327,9 +316,7 @@ export function JoinPreview({ user }: { user: any }) {
           <div className="si-form-head">
             <div>
               <h2>{joined ? '修改入驻信息' : '创作者入驻'}</h2>
-              <span>账号级动作，只需一次，不计入「我的创意」。</span>
             </div>
-            <span className="si-join-save-state">资料提交后保存到服务端</span>
           </div>
           <div className="si-form-section">
             <h3>当前登录账号</h3>
@@ -347,7 +334,6 @@ export function JoinPreview({ user }: { user: any }) {
           </div>
           <div className="si-form-section">
             <h3>个人必要信息</h3>
-            <p>填写一次创作者资料，之后可随时修改。</p>
             <div className="si-fields">
               {joinFields.map(([label, placeholder]) => {
                 const required = ['真实姓名', '身份类型', '学校 / 机构', '联系手机', '联系邮箱', genreKey].includes(
@@ -508,10 +494,6 @@ export function JoinPreview({ user }: { user: any }) {
               </p>
             ))}
           </section>
-          <section className="si-card si-side-card">
-            <h3>关于信息同步</h3>
-            <p>入驻资料按账号保存；同步完成后可提交创意。</p>
-          </section>
         </aside>
       </div>
     </>
@@ -534,7 +516,7 @@ export function StagePreview({ stage }: { stage: string }) {
         <p>了解本阶段的填写内容与规范。</p>
       </header>
       <div className="si-unavailable" role="status">
-        当前页面为原型字段预览。实际提交入口由申请详情中的真实待办开放，暂不支持独立字段和附件。
+        请在申请详情的待办中提交内容，暂不支持单独提交字段和附件。
       </div>
       <section className="si-card si-form">
         <div className="si-form-head">

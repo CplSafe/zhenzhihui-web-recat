@@ -5,6 +5,13 @@ for (const width of [1440, 390]) {
   test(`流程完成后展示最终剧本字段 ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/script-files/11/download', (route) =>
+      route.fulfill({
+        contentType: 'text/plain',
+        headers: { 'content-disposition': 'attachment; filename="final.txt"' },
+        body: '最终剧本内容',
+      }),
+    )
     await page.route('**/api/v1/script-creators/me', (route) =>
       route.fulfill({ json: { code: 0, data: { profile: null, originality_version: 'v1', workflow_synced: true } } }),
     )
@@ -83,8 +90,66 @@ for (const width of [1440, 390]) {
       'href',
       '/api/v1/script-files/11/download',
     )
+    const attachmentRow = details.locator('.si-readonly-body').filter({ hasText: '附件' })
+    await expect(attachmentRow).toHaveCount(1)
+    await expect(attachmentRow.getByRole('link', { name: '最终剧本.txt' })).toBeVisible()
+    await expect(details.getByText('下载附件', { exact: true })).toHaveCount(0)
+    const downloadPromise = page.waitForEvent('download')
+    await attachmentRow.getByRole('link', { name: '最终剧本.txt' }).click()
+    expect((await downloadPromise).url()).toContain('/api/v1/script-files/11/download')
     await page.screenshot({ path: testInfo.outputPath('finished-details.png') })
     await page.reload()
     await expect(details).toContainText('最终分幕大纲')
   })
 }
+
+test('审核中的创意附件从附件行下载', async ({ page }, testInfo) => {
+  await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/script-creators/me', (route) =>
+    route.fulfill({ json: { code: 0, data: { profile: null, originality_version: 'v1', workflow_synced: true } } }),
+  )
+  await page.route('**/api/v1/student-applications/97', (route) =>
+    route.fulfill({
+      json: {
+        code: 0,
+        data: {
+          application: { id: 97, state: 'submitted', title: '测试创意', creative: '故事' },
+          progress_available: true,
+          workflow: {
+            status: 1,
+            flow_version: 5,
+            structured: true,
+            current_stage: 'creative',
+            stage: 'waiting_review',
+            current_task: null,
+            versions: [
+              {
+                version: 1,
+                stage: 'creative',
+                task_id: 'creative',
+                content: '',
+                submitted_at: 1,
+                data: { title: '测试创意', attachments: [{ file_id: 12, file_name: '创意.docx' }] },
+              },
+            ],
+            reviews: [],
+          },
+        },
+      },
+    }),
+  )
+  await page.route('**/api/v1/script-files/12/download', (route) =>
+    route.fulfill({ headers: { 'content-disposition': 'attachment; filename="idea.docx"' }, body: 'idea' }),
+  )
+  await page.goto('/script-ideas/97')
+  await expect(page.getByRole('heading', { name: '审核中' })).toBeVisible()
+  const details = page.locator('.si-readonly')
+  const attachmentRow = details.locator('.si-readonly-body').filter({ hasText: '附件' })
+  await expect(attachmentRow).toHaveCount(1)
+  await expect(details.getByText('下载附件', { exact: true })).toHaveCount(0)
+  const downloadPromise = page.waitForEvent('download')
+  await attachmentRow.getByRole('link', { name: '创意.docx' }).click()
+  expect((await downloadPromise).url()).toContain('/api/v1/script-files/12/download')
+  await attachmentRow.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('review-attachment.png') })
+})

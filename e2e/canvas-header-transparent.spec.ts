@@ -14,7 +14,7 @@ for (const width of [1440, 390]) {
       }),
     )
     await page.goto('/canvas/142')
-    const back = page.getByRole('button', { name: '返回漫剧制作' })
+    const back = page.getByRole('button', { name: '返回无限画布' })
     const saved = page.locator('.canvas-save-status .creative-draft-save')
     await expect(saved).toHaveText('已保存到云端')
     if (width < 760) await page.getByRole('button', { name: '画布操作' }).click()

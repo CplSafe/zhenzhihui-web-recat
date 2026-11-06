@@ -34,7 +34,7 @@ export type WorkspaceSwitchResetPath = '/smart' | '/real-person-video' | '/hot-c
  * - 智能成片 / 真人成片项目页(同一个 SmartCreateView)会钉住项目所属空间,团队↔团队切换可原地保留;
  *   跨个人/团队边界或本就在空白入口时才重置。
  * - 爆款复制不钉空间,一律重置。
- * - 漫剧制作 /canvas/:id 的增量同步直接用全局 workspaceId,画布又按空间隔离:
+ * - 无限画布 /canvas/:id 的增量同步直接用全局 workspaceId,画布又按空间隔离:
  *   留在原画布会把后续改动 PUT 到「新空间 + 旧画布 id」被后端拒绝(云端静默失联),
  *   所以任何切换都先卸载(卸载时会用旧空间 flush 一次),再落到新空间的画布列表。
  */

@@ -22,6 +22,8 @@ export default defineConfig({
       // First gate the shared modules that protect the bugs fixed in this batch.
       // Expand this list as each additional business flow receives regression tests.
       include: [
+        'src/utils/parseSubmittedIdea.ts',
+        'src/utils/refineDelivery.ts',
         'src/utils/modelAvailability.ts',
         'src/utils/seedanceModeration.ts',
         'src/utils/canvasImageInfo.ts',
@@ -121,6 +123,7 @@ export default defineConfig({
         'src/components/smart/MarketingBreakdown/MarketingBreakdown.tsx',
         'src/components/task/TaskCenterCoordinator.tsx',
         'src/components/task/TaskCenterDrawer.tsx',
+        'src/components/layout/NotificationBell.tsx',
         'src/views/ProjectVideoDetailView.tsx',
       ],
       thresholds: {
