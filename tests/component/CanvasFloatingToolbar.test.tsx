@@ -20,6 +20,7 @@ it('从添加菜单手动创建音频编辑节点并关闭菜单', async () => {
       onOpenHistory={vi.fn()}
     />,
   )
+  expect(screen.queryByRole('button', { name: /DoDo Agent/ })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '添加节点' }))
   expect(await screen.findByRole('menuitem', { name: /音频节点/ })).toBeInTheDocument()
   await user.click(screen.getByRole('menuitem', { name: /音频编辑/ }))

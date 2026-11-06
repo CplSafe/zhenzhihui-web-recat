@@ -2664,9 +2664,11 @@ function CanvasInner() {
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  // 本次发布暂不开放画布 Agent；保留独立调试页，下一版本统一恢复入口与挂载。
+  const showCanvasDirector = false
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
-  const directorOpen = openDirectorBinding === directorBindingKey
+  const directorOpen = showCanvasDirector && openDirectorBinding === directorBindingKey
   const requestDirectorSyncRef = useRef<() => void>(() => {})
   const onDirectorCanvasChange = useCallback(
     (snapshot: Record<string, any>) => {
@@ -11043,7 +11045,7 @@ function CanvasInner() {
             {interactionHint.text}
           </div>
         )}
-        {currentUserId && workspaceId > 0 && canvasId > 0 && (
+        {showCanvasDirector && currentUserId && workspaceId > 0 && canvasId > 0 && (
           <CanvasDirectorDock
             key={directorBindingKey}
             workspaceId={workspaceId}
@@ -11187,7 +11189,7 @@ function CanvasInner() {
               onOpenHelp={() => setShortcutsOpen(true)}
               directorOpen={directorOpen}
               onToggleDirector={
-                currentUserId && workspaceId > 0 && canvasId > 0
+                showCanvasDirector && currentUserId && workspaceId > 0 && canvasId > 0
                   ? () =>
                       setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
                   : undefined
