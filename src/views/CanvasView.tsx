@@ -1,3 +1,5 @@
+import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
+import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
 import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
 import { useCanvasKeyboardPriority } from '@/composables/useCanvasKeyboardPriority'
@@ -2641,6 +2643,10 @@ function CanvasInner() {
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  const requestDirectorSyncRef = useRef<() => void>(() => {})
+  const onDirectorCanvasChange = useCallback((snapshot: Record<string, any>) => {
+    if (snapshot.id === canvasId && Number.isSafeInteger(snapshot.revision)) requestDirectorSyncRef.current()
+  }, [canvasId])
   // 模型目录：来自 /api/v1/ai/models
   const {
     groups,
@@ -5389,7 +5395,6 @@ function CanvasInner() {
   // 本地存在未保存变更时暂缓应用远端，先让保存队列完成，避免覆盖用户正在编辑的内容。
   useEffect(() => {
     let disposed = false
-    let timer = 0
     // 连续拉到空增量的轮次：画布闲置时逐步拉长间隔，一有变化立刻回到基础频率。
     // 上限刻意压在 10 秒（而不是 30 秒）：这条循环同时承担多人协作的变更合并，
     // 退避过久会让「别人改了我这边多久能看到」变得难以接受。
@@ -5398,7 +5403,7 @@ function CanvasInner() {
     const MAX_IDLE_DELAY = 10000
     const nextIdleDelay = () => Math.min(MAX_IDLE_DELAY, BASE_DELAY * Math.pow(1.5, Math.min(idleRounds, 4)))
     const schedule = (delay = nextIdleDelay()) => {
-      if (!disposed) timer = window.setTimeout(pullRemoteChanges, delay)
+      if (!disposed) loop.schedule(delay)
     }
     const pullRemoteChanges = async () => {
       const canvasId = canvasIdRef.current
@@ -5499,6 +5504,8 @@ function CanvasInner() {
       }
       schedule()
     }
+    const loop = createCanvasPullLoop(pullRemoteChanges)
+    requestDirectorSyncRef.current = loop.wake
     schedule(1500)
     const onOnline = () => {
       setCloudStatus('loading')
@@ -5512,22 +5519,22 @@ function CanvasInner() {
     const onVisible = () => {
       if (document.hidden) return
       idleRounds = 0
-      window.clearTimeout(timer)
-      schedule(0)
+      loop.wake()
     }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     return () => {
       disposed = true
-      window.clearTimeout(timer)
+      loop.dispose()
+      if (requestDirectorSyncRef.current === loop.wake) requestDirectorSyncRef.current = () => {}
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
     // 不依赖 saveStatus：它每次编辑都会三态翻转，进依赖数组会让整个循环反复重建、
     // 每次都从最短间隔重新起步（编辑越频繁轮询越密）。循环内改用 saveStatusRef 读取。
-  }, [pushCanvasMutations, setEdges, setNodes, workspaceId])
+  }, [pushCanvasMutations, setEdges, setNodes, workspaceId, canvasId])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -10977,6 +10984,14 @@ function CanvasInner() {
           <div key={interactionHint.id} className="canvas-interaction-hint" role="status" aria-live="polite">
             {interactionHint.text}
           </div>
+        )}
+        {currentUserId && workspaceId > 0 && canvasId > 0 && (
+          <CanvasDirectorDock
+            key={`${currentUserId}:${workspaceId}:${canvasId}`}
+            workspaceId={workspaceId}
+            canvasId={canvasId}
+            onCanvasChange={onDirectorCanvasChange}
+          />
         )}
         <CanvasNavigationStatus
           saveStatus={saveStatus}

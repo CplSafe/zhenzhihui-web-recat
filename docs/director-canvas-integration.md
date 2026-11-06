@@ -148,9 +148,9 @@ Agent 已在后端将制作文档、任务、图片和视频写入绑定画布�
 uv run agent-studio/run.py --mcp-url https://zzh-dev.zhongdahengrui.com --port 8090 --frontend-origin http://127.0.0.1:8080
 ```
 
-上面命令在**后端仓库**运行。前端仓库现有 Vite 已代理 `/agent-studio` 到8090并启用 WebSocket，保持 Host/Origin，不要为了连通而移除校验。前端运行后访问 `http://127.0.0.1:8080/director`。没有 workspace/canvas 参数的独立 `/director` 仍通过设置连接 OAuth。嵌入画布时先在业务站登录；浏览器业务 Cookie 必须可发送到同源 `/agent-studio`，由代理转发给 Agent。Agent 的 `--mcp-url` 必须指向签发该业务会话的后端环境。本地前端连测试后端时，在本地业务登录页登录获得本地域 Cookie，仅在测试域登录不会把 Cookie 自动带给 localhost。不能把账号密码或 MCP token 写进组件配置。
+上面命令在**后端仓库**运行。前端仓库现有 Vite 已代理 `/agent-studio` 到8090并启用 WebSocket，保持 Host/Origin，不要为了连通而移除校验。前端运行后访问 `http://127.0.0.1:8080/director`。实际画布 `/canvas/:id` 已挂载 `CanvasDirectorDock`，右下角“AI 导演”按需加载；收起保留草稿，切换账号/空间/画布重建实例。Agent 的 revision 通知触发现有完整增量同步，保留保存队列、冲突合并和本地未提交编辑；不直接使用聊天投影覆盖节点。没有 workspace/canvas 参数的独立 `/director` 仍通过设置连接 OAuth。嵌入画布时先在业务站登录；浏览器业务 Cookie 必须可发送到同源 `/agent-studio`，由代理转发给 Agent。Agent 的 `--mcp-url` 必须指向签发该业务会话的后端环境。本地前端连测试后端时，在本地业务登录页登录获得本地域 Cookie，仅在测试域登录不会把 Cookie 自动带给 localhost。不能把账号密码或 MCP token 写进组件配置。
 
-推送前端 `dev` 只交付组件代码，不会自动部署 Python Agent 服务。当前 Studio 是仅允许本地 origin 的单进程测试服务，不能直接用 Nginx 公开冒充生产多租户服务。线上接入需先落实服务部署、持久存储、认证会话、正确外部 OAuth 回调地址和可信 origin；反代还须支持 `/agent-studio` 的 HTTP 与 WebSocket Upgrade、保留 Origin、合理超时，并与后端 mount 一致。不得移除 Host/Origin/CSRF/权限校验来绕过部署问题。
+推送前端 `dev` 只交付组件代码，不会自动部署 Python Agent 服务。当前 Studio 是单进程测试服务，支持显式指定的 HTTPS origin，并始终仅监听 loopback；不能直接公开 8090 端口或宣称支持生产水平扩容。线上接入需先落实服务部署、持久存储、认证会话、正确外部 OAuth 回调地址和可信 origin；反代还须支持 `/agent-studio` 的 HTTP 与 WebSocket Upgrade、保留 Origin、合理超时，并与后端 mount 一致。不得移除 Host/Origin/CSRF/权限校验来绕过部署问题。
 
 ## 6. 站内业务登录衔接
 
@@ -178,3 +178,5 @@ Agent 每次请求/长连接周期检查都将当前业务登录交给固定 MCP
 - 移动窄屏和短窗口不遮挡发送、审批与四个空态入口；弹层不触发画布拖动。
 
 组件回归测试：`tests/directorStudio.test.tsx`。本次实测使用已有会话和媒体，不重新付费生成。独立预览页与嵌入模式共用同一组件；原 `/agent` 功能保持独立。
+
+pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入口 `/director`。线上代理必须保持业务 Cookie、Host/Origin 与 `/agent-studio` 路径，普通请求128KiB、附件10MiB。HTTPS下Studio Cookie为Secure且限定mount路径。测试服务单进程、状态独立持久化，不复制本地账号token。

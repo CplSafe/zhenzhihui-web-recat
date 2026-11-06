@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw'
 import { server } from './mocks/server'
 import { resetSharedSessionRefreshForTests } from '@/api/sessionRefresh'
 import DeepAgentStudio from '@/components/director/DeepAgentStudio'
+import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
 import DirectorStudioView from '@/views/DirectorStudioView'
 import { DocumentEditor, Markdown, EventCard, Conversation, Approval } from '@/components/director/StudioCards'
 import { Media, StudioMediaContext } from '@/components/director/StudioMedia'
@@ -76,6 +77,34 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it('canvas dock opens with business identity and collapse retains the draft without triggering canvas input', async () => {
+    const canvasKey = vi.fn(),
+      seen = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/state', ({ request }) => {
+        seen(request.headers.get('X-Agent-Auth'), request.headers.get('X-Agent-Canvas-Id'))
+        return HttpResponse.json({ connected: true, workspace_id: 54, runs: [] })
+      }),
+    )
+    render(
+      <div onKeyDown={canvasKey}>
+        <CanvasDirectorDock workspaceId={54} canvasId={40} />
+      </div>,
+    )
+    expect(seen).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'AI 导演' }))
+    await screen.findByText('图片 · Nano Banana Pro (Google)')
+    expect(seen).toHaveBeenCalledWith('business', '40')
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '保留草稿' } })
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    expect(canvasKey).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '收起导演' }))
+    fireEvent.click(screen.getByRole('button', { name: 'AI 导演' }))
+    expect(screen.getByRole('textbox')).toHaveValue('保留草稿')
+    expect(seen).toHaveBeenCalledTimes(1)
+  })
+
   it.each([65_000, 0])(
     'limits rapid auth reconnects but permits normal long-lived renewals (interval %d)',
     async (interval) => {
