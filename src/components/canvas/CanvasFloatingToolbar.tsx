@@ -18,6 +18,7 @@ import {
 } from '@/utils/canvasKeyboard'
 import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasFloatingToolbar.module.css'
+import doudouLogo from '@/assets/logo/doudou.png'
 
 interface CanvasFloatingToolbarProps {
   shortcuts?: CanvasShortcutBindings
@@ -37,6 +38,8 @@ interface CanvasFloatingToolbarProps {
   onOpenHistory: () => void
   /** 打开抽屉前播放的收起动画标记 */
   leaving?: boolean
+  onToggleDirector?: () => void
+  directorOpen?: boolean
 }
 
 function CanvasFloatingToolbar({
@@ -52,6 +55,8 @@ function CanvasFloatingToolbar({
   onOpenHistory,
   onOpenHelp,
   leaving = false,
+  onToggleDirector,
+  directorOpen = false,
 }: CanvasFloatingToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [addSink, setAddSink] = useState(false)
@@ -439,6 +444,19 @@ function CanvasFloatingToolbar({
         {renderGlyph(<HistoryIcon />, 6)}
         <span className={styles.toolLabel}>历史</span>
       </button>
+      {onToggleDirector && (
+        <button
+          type="button"
+          className={`${styles.toolBtn} ${styles.directorButton}`}
+          onClick={onToggleDirector}
+          aria-label={directorOpen ? '收起豆豆导演' : '打开豆豆导演'}
+          aria-expanded={directorOpen}
+          title={directorOpen ? '收起豆豆导演' : '和豆豆一起创作'}
+        >
+          {renderGlyph(<img src={doudouLogo} alt="" width={34} height={38} draggable={false} />, 7)}
+          <span className={styles.toolLabel}>豆豆导演</span>
+        </button>
+      )}
     </div>
   )
 }

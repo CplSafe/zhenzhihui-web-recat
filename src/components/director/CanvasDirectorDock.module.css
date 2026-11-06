@@ -12,21 +12,6 @@
 .dock > [hidden] {
   display: none;
 }
-.launcher {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  border: 1px solid #484848;
-  border-radius: 24px;
-  padding: 12px 18px;
-  background: #202020;
-  color: #eee;
-  cursor: pointer;
-}
-.launcher:hover {
-  background: #303030;
-}
 .loading {
   padding: 24px;
   border-radius: 20px;

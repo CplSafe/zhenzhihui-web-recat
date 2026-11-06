@@ -2643,6 +2643,9 @@ function CanvasInner() {
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
+  const directorOpen = openDirectorBinding === directorBindingKey
   const requestDirectorSyncRef = useRef<() => void>(() => {})
   const onDirectorCanvasChange = useCallback((snapshot: Record<string, any>) => {
     if (snapshot.id === canvasId && Number.isSafeInteger(snapshot.revision)) requestDirectorSyncRef.current()
@@ -10987,10 +10990,12 @@ function CanvasInner() {
         )}
         {currentUserId && workspaceId > 0 && canvasId > 0 && (
           <CanvasDirectorDock
-            key={`${currentUserId}:${workspaceId}:${canvasId}`}
+            key={directorBindingKey}
             workspaceId={workspaceId}
             canvasId={canvasId}
             onCanvasChange={onDirectorCanvasChange}
+            opened={directorOpen}
+            onCollapse={() => setOpenDirectorBinding(null)}
           />
         )}
         <CanvasNavigationStatus
@@ -11089,6 +11094,10 @@ function CanvasInner() {
             onOpenAssets={() => openDrawerPanel('assets')}
             onOpenHistory={() => openDrawerPanel('history')}
             onOpenHelp={() => setShortcutsOpen(true)}
+            directorOpen={directorOpen}
+            onToggleDirector={currentUserId && workspaceId > 0 && canvasId > 0
+              ? () => setOpenDirectorBinding((current) => current === directorBindingKey ? null : directorBindingKey)
+              : undefined}
           />
         )}
 

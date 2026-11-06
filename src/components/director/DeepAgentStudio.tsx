@@ -6,7 +6,8 @@ import type { Data, StudioAttachment, StudioDocument } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
-import directorMascot from '../../assets/logo/director-mascot.png'
+import { DoudouMascot } from './DoudouMascot'
+import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
 
 export interface DeepAgentStudioProps {
@@ -295,9 +296,13 @@ export default function DeepAgentStudio({
   const batchHasRunning = Object.values(activeBatch?.nodes || {}).some((node) =>
     ['running', 'submitting'].includes(node.status),
   )
+  const mascotState = useMemo(
+    () => doudouState(run, !!studio.streamState && studio.streamState !== '实时更新'),
+    [run, studio.streamState],
+  )
   const status =
     {
-      running: run?.stop ? '正在停止后续步骤' : '正在创作',
+      running: run?.stop ? '正在停止后续步骤' : doudouLabels[mascotState],
       waiting: '等待你确认',
       complete: '本轮完成',
       paused: '已暂停',
@@ -439,7 +444,7 @@ export default function DeepAgentStudio({
         </header>
         <div className={styles.statusRow} hidden={!current && state.connected && !loading}>
           <span>
-            <i />
+            {run ? <DoudouMascot state={mascotState} compact /> : <i />}
             {status}
           </span>
           <span>{state.workspace_id ? `工作空间 #${state.workspace_id}` : ''}</span>
@@ -597,9 +602,7 @@ export default function DeepAgentStudio({
             </>
           ) : (
             <section className={styles.welcome}>
-              <div className={styles.mascot} aria-hidden="true">
-                <img src={directorMascot} alt="" width={88} height={88} draggable={false} />
-              </div>
+              <DoudouMascot />
               <h1>让帧智汇导演辅助你的无限创意</h1>
               <div className={styles.starters}>
                 <button type="button" onClick={() => openDialog('skills')}>

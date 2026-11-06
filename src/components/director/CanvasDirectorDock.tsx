@@ -1,5 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
-import { MessageCircle } from 'lucide-react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { DeepAgentStudioProps } from './DeepAgentStudio'
 import styles from './CanvasDirectorDock.module.css'
 
@@ -10,9 +9,14 @@ export default function CanvasDirectorDock({
   workspaceId,
   canvasId,
   onCanvasChange,
-}: Required<Pick<DeepAgentStudioProps, 'workspaceId' | 'canvasId'>> & Pick<DeepAgentStudioProps, 'onCanvasChange'>) {
-  const [opened, setOpened] = useState(false)
-  const [mounted, setMounted] = useState(false)
+  opened,
+  onCollapse,
+}: Required<Pick<DeepAgentStudioProps, 'workspaceId' | 'canvasId' | 'onCollapse'>> &
+  Pick<DeepAgentStudioProps, 'onCanvasChange'> & { opened: boolean }) {
+  const [mounted, setMounted] = useState(opened)
+  useEffect(() => {
+    if (opened) setMounted(true)
+  }, [opened])
   return (
     <div
       className={`${styles.dock} canvas-director-area nodrag nopan nowheel`}
@@ -30,23 +34,10 @@ export default function CanvasDirectorDock({
               canvasId={canvasId}
               authMode="business"
               onCanvasChange={onCanvasChange}
-              onCollapse={() => setOpened(false)}
+              onCollapse={onCollapse}
             />
           </Suspense>
         </div>
-      )}
-      {!opened && (
-        <button
-          type="button"
-          className={styles.launcher}
-          onClick={() => {
-            setMounted(true)
-            setOpened(true)
-          }}
-        >
-          <MessageCircle size={18} aria-hidden="true" />
-          AI 导演
-        </button>
       )}
     </div>
   )

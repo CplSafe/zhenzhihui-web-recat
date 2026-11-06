@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
@@ -5,6 +6,7 @@ import { server } from './mocks/server'
 import { resetSharedSessionRefreshForTests } from '@/api/sessionRefresh'
 import DeepAgentStudio from '@/components/director/DeepAgentStudio'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
+import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import DirectorStudioView from '@/views/DirectorStudioView'
 import { DocumentEditor, Markdown, EventCard, Conversation, Approval } from '@/components/director/StudioCards'
 import { Media, StudioMediaContext } from '@/components/director/StudioMedia'
@@ -86,13 +88,31 @@ describe('Studio transport', () => {
         return HttpResponse.json({ connected: true, workspace_id: 54, runs: [] })
       }),
     )
-    render(
-      <div onKeyDown={canvasKey}>
-        <CanvasDirectorDock workspaceId={54} canvasId={40} />
-      </div>,
-    )
+    function CanvasHost() {
+      const [opened, setOpened] = useState(false)
+      return (
+        <div onKeyDown={canvasKey}>
+          <CanvasFloatingToolbar
+            onAddNode={() => {}}
+            onAddLocalImage={() => {}}
+            panModeEnabled={false}
+            onPanModeToggle={() => {}}
+            dragEnabled
+            onDragToggle={() => {}}
+            onOpenSearch={() => {}}
+            onOpenAssets={() => {}}
+            onOpenHistory={() => {}}
+            onOpenHelp={() => {}}
+            directorOpen={opened}
+            onToggleDirector={() => setOpened(!opened)}
+          />
+          <CanvasDirectorDock workspaceId={54} canvasId={40} opened={opened} onCollapse={() => setOpened(false)} />
+        </div>
+      )
+    }
+    render(<CanvasHost />)
     expect(seen).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'AI 导演' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
     await screen.findByText('图片 · Nano Banana Pro (Google)')
     expect(seen).toHaveBeenCalledWith('business', '40')
     const input = screen.getByRole('textbox')
@@ -100,9 +120,14 @@ describe('Studio transport', () => {
     fireEvent.keyDown(input, { key: 'Backspace' })
     expect(canvasKey).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '收起导演' }))
-    fireEvent.click(screen.getByRole('button', { name: 'AI 导演' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
     expect(screen.getByRole('textbox')).toHaveValue('保留草稿')
     expect(seen).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: '收起豆豆导演' })).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '收起豆豆导演' }))
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打开豆豆导演' }))
+    expect(screen.getByRole('textbox')).toHaveValue('保留草稿')
   })
 
   it.each([65_000, 0])(
@@ -364,6 +389,42 @@ describe('Director interactions', () => {
       message: '用户确认继续',
       arguments: { batch_id: 'batch-1' },
     })
+  })
+  it('updates Doudou from live task receipts and does not confuse UI errors with disconnection', async () => {
+    server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running' }))))
+    render(<DeepAgentStudio />)
+    await openHistory()
+    const socket = Socket.instances[0]
+    act(() => socket.onopen?.())
+    expect(await screen.findByRole('button', { name: /豆豆正在思考/ })).toBeInTheDocument()
+    act(() =>
+      socket.emit({
+        event: 'update',
+        cursor: 8,
+        data: {
+          run_id: 'run1',
+          type: 'TASK_UPDATED',
+          data: {
+            id: 'image',
+            kind: 'cost',
+            text: '生成中',
+            data: { task_id: 10, status: 'running', tool: 'model.generate_image' },
+          },
+        },
+      }),
+    )
+    expect(screen.getByRole('button', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
+    server.use(
+      http.get('*/agent-studio/api/state', () => HttpResponse.json({ error: '历史读取失败' }, { status: 500 })),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /第一集测试/ }))
+    fireEvent.click(screen.getByRole('button', { name: '刷新历史' }))
+    await screen.findByText('历史读取失败')
+    expect(screen.getByRole('button', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
+    act(() => socket.emit({ event: 'snapshot', cursor: 9, data: snapshot({ cursor: 9, status: 'waiting' }) }))
+    expect(screen.getByRole('button', { name: /豆豆在等你确认/ })).toBeInTheDocument()
+    act(() => socket.emit({ event: 'snapshot', cursor: 10, data: snapshot({ cursor: 10, status: 'complete' }) }))
+    expect(screen.getByRole('button', { name: /豆豆已完成本轮创作/ })).toBeInTheDocument()
   })
   it('reconnect updates keep one task card and canvas callback; switching closes the socket', async () => {
     const onCanvasChange = vi.fn()

@@ -1,0 +1,252 @@
+.mascot.mascot {
+  display: block;
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+  padding: 0;
+  margin: 0 0 12px;
+  border: 0;
+  background: transparent;
+  border-radius: 16px;
+  cursor: pointer;
+}
+.mascot.mascot:hover {
+  background: transparent;
+}
+.mascot:focus-visible {
+  outline: 2px solid #a6ca8c;
+  outline-offset: 3px;
+}
+.mascot.compact {
+  width: 36px;
+  height: 36px;
+  margin: 0;
+}
+.character {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 85%;
+  animation: breathe 4.8s ease-in-out infinite;
+}
+.body,
+.face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+.face {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  fill: #497326;
+  pointer-events: none;
+}
+.eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blink 7.3s ease-in-out infinite;
+}
+.eye circle {
+  fill: #eff4dc;
+  opacity: 0.7;
+}
+.gaze {
+  transition: transform 0.45s ease;
+}
+.smile,
+.neutral {
+  fill: none;
+  stroke: #497326;
+  stroke-width: 48;
+  stroke-linecap: round;
+}
+.neutral {
+  display: none;
+}
+.brow {
+  opacity: 0;
+  fill: none;
+  stroke: #497326;
+  stroke-width: 16;
+  stroke-linecap: round;
+}
+.mascot[data-state='idle'] .gaze {
+  animation: glance 12s ease-in-out infinite;
+}
+.mascot[data-state='idle'] .smile {
+  transform-origin: 615px 690px;
+  animation: grin 9.7s ease-in-out infinite;
+}
+.mascot[data-animated='true']:hover .gaze {
+  animation: none;
+  transform: translateY(-22px);
+}
+.mascot[data-animated='true']:hover .eye:last-child {
+  animation: wink 650ms ease-in-out;
+}
+.mascot[data-state='thinking'] .brow {
+  opacity: 1;
+}
+.sparks {
+  opacity: 0;
+  fill: none;
+  stroke: #b8d990;
+  stroke-width: 16;
+  stroke-linecap: round;
+}
+.mascot[data-state='thinking'] .character {
+  animation: ponder 5s ease-in-out infinite;
+}
+.mascot[data-state='thinking'] .gaze {
+  transform: translate(20px, -28px);
+}
+.mascot[data-state='thinking'] .smile {
+  transform-origin: 615px 680px;
+  transform: scale(0.7);
+}
+.mascot[data-state='generating'] .character {
+  animation: create 2.6s ease-in-out infinite;
+}
+.mascot[data-state='generating'] .sparks {
+  animation: sparkle 2.6s ease-in-out infinite;
+}
+.mascot[data-state='waiting'] .character {
+  animation-duration: 6s;
+}
+.mascot[data-state='waiting'] .gaze {
+  transform: translateY(-12px);
+}
+.mascot[data-state='complete'] .character {
+  animation:
+    celebrate 0.9s ease-in-out 2,
+    breathe 4.8s 1.8s ease-in-out infinite;
+}
+.mascot:is([data-state='paused'], [data-state='error'], [data-state='offline']) .character {
+  animation: none;
+}
+.mascot:is([data-state='paused'], [data-state='error'], [data-state='offline']) .smile {
+  display: none;
+}
+.mascot:is([data-state='paused'], [data-state='error'], [data-state='offline']) .neutral {
+  display: block;
+}
+.mascot[data-animated='false'] :is(.character, .eye, .sparks, .gaze, .smile) {
+  animation-play-state: paused;
+}
+@keyframes glance {
+  0%,
+  20%,
+  43%,
+  70%,
+  100% {
+    transform: translate(0, 0);
+  }
+  26%,
+  35% {
+    transform: translate(-28px, -10px);
+  }
+  77%,
+  86% {
+    transform: translate(24px, -18px);
+  }
+}
+@keyframes grin {
+  0%,
+  65%,
+  100% {
+    transform: scale(1);
+  }
+  76%,
+  87% {
+    transform: scale(1.12, 0.85);
+  }
+}
+@keyframes wink {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  35%,
+  65% {
+    transform: scaleY(0.08);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-3px) scale(1.015, 1.025);
+  }
+}
+@keyframes blink {
+  0%,
+  42%,
+  46%,
+  76%,
+  80%,
+  100% {
+    transform: scaleY(1);
+  }
+  44%,
+  78% {
+    transform: scaleY(0.06);
+  }
+}
+@keyframes ponder {
+  0%,
+  100% {
+    transform: rotate(0) translateY(0);
+  }
+  45%,
+  65% {
+    transform: rotate(-7deg) translateY(-2px);
+  }
+}
+@keyframes create {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(2deg);
+  }
+}
+@keyframes sparkle {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+@keyframes celebrate {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(-5px) rotate(4deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot *,
+  .mascot .character {
+    animation: none !important;
+    transition: none;
+  }
+  .mascot[data-state='generating'] .sparks {
+    opacity: 0.7;
+  }
+}
+@media (max-width: 600px), (max-height: 700px) {
+  .mascot:not(.compact) {
+    width: 80px;
+    height: 80px;
+  }
+}

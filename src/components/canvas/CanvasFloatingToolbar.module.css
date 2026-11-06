@@ -84,6 +84,21 @@
   background: transparent;
   color: var(--canvas-brand, #00e5be);
 }
+.directorButton {
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.directorButton img {
+  display: block;
+  object-fit: contain;
+}
+.directorButton[aria-expanded='true'] {
+  background: rgb(143 182 109 / 16%);
+}
+.directorButton:focus-visible {
+  outline: 2px solid #a6ca8c;
+  outline-offset: 2px;
+}
 
 /* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
 .toolBtn:active {
