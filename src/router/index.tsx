@@ -22,7 +22,7 @@ import AgentChatView from '@/views/AgentChatView'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
-import { MANUAL_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
+import { PROMO_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -336,7 +336,7 @@ export const router = createBrowserRouter([
       { path: 'smart/:id?', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
       {
         path: 'promo',
-        element: MANUAL_DELIVERY_ENABLED ? lazyPage(<PromoCreateView />) : <Navigate to={APP_HOME_PATH} replace />,
+        element: PROMO_DELIVERY_ENABLED ? lazyPage(<PromoCreateView />) : <Navigate to={APP_HOME_PATH} replace />,
       },
       {
         path: 'real-person-video/:id?',

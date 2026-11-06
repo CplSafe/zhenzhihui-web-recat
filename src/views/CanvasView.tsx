@@ -11,6 +11,7 @@ import { imageGenerationInfo, canvasImageDetails } from '@/utils/canvasImageInfo
 import { listCanvasTools } from '@/api/canvasTools'
 import { availableCanvasImageTools } from '@/utils/canvasTools'
 import CanvasNodeFailure from '@/components/canvas/CanvasNodeFailure'
+import CanvasFailureDetails from '@/components/canvas/CanvasFailureDetails'
 import { hasActiveVideoUpscale } from '@/utils/canvasUpscale'
 import {
   snapshotVideoAudio,
@@ -2337,39 +2338,51 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
-      {(taskFailed || (connectionError && !taskRunning)) && (
-        <CanvasNodeFailure
-          zoom={canvasZoom}
-          title={
-            connectionError
-              ? '连接异常'
-              : (data.videoAudioComposition as VideoAudioComposition | undefined)?.failed
-                ? '配音合成失败'
-                : data.operationCode === 'video.upscale'
-                  ? '上次超分失败'
-                  : '生成失败'
-          }
-          failedAt={
-            connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
-          }
-          reason={connectionError || (data as any)?.taskFailure?.message || taskError}
-          requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
-          detailsData={data}
-        >
+      {taskFailed && kind === 'video' && mediaUrl && !connectionError ? (
+        <div className="canvas-video-previous-failure nodrag nopan" role="alert">
+          <span>上次任务失败，视频已保留</span>
+          <CanvasFailureDetails data={data} />
           {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
-            <button
-              type="button"
-              className="canvas-node-voice-retry nodrag nopan"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                onRetryAudioComposition?.(id)
-              }}
-            >
+            <button type="button" onClick={() => onRetryAudioComposition?.(id)}>
               重试配音合成
             </button>
           )}
-        </CanvasNodeFailure>
+        </div>
+      ) : (
+        (taskFailed || (connectionError && !taskRunning)) && (
+          <CanvasNodeFailure
+            zoom={canvasZoom}
+            title={
+              connectionError
+                ? '连接异常'
+                : (data.videoAudioComposition as VideoAudioComposition | undefined)?.failed
+                  ? '配音合成失败'
+                  : data.operationCode === 'video.upscale'
+                    ? '上次超分失败'
+                    : '生成失败'
+            }
+            failedAt={
+              connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
+            }
+            reason={connectionError || (data as any)?.taskFailure?.message || taskError}
+            requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
+            detailsData={data}
+          >
+            {(data.videoAudioComposition as VideoAudioComposition | undefined)?.failed && (
+              <button
+                type="button"
+                className="canvas-node-voice-retry nodrag nopan"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRetryAudioComposition?.(id)
+                }}
+              >
+                重试配音合成
+              </button>
+            )}
+          </CanvasNodeFailure>
+        )
       )}
 
       {uploadingLocalFile && (
@@ -2390,55 +2403,63 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           </CanvasNodeStatus>
         )}
 
-      {taskRunning && !uploadingLocalFile && (
-        <CanvasNodeStatus zoom={canvasZoom} label={taskPresentation.title}>
-          {imagePreviews?.[id] && (
-            <img
-              src={imagePreviews[id]}
-              alt="生成预览"
-              style={{ maxWidth: '100%', maxHeight: '60%', objectFit: 'contain' }}
-            />
-          )}
-          <span className="canvas-node-generation-spinner" aria-hidden="true" />
-          <strong>{taskPresentation.title}</strong>
-          <span
-            className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
-            role={videoEstimatedProgress !== null ? 'progressbar' : undefined}
-            aria-label={videoEstimatedProgress !== null ? '视频生成预计进度' : undefined}
-            aria-valuemin={videoEstimatedProgress !== null ? 0 : undefined}
-            aria-valuemax={videoEstimatedProgress !== null ? 100 : undefined}
-            aria-valuenow={videoEstimatedProgress ?? undefined}
-            aria-hidden={videoEstimatedProgress === null ? 'true' : undefined}
-          >
-            <span
-              className="canvas-node-generation-progress__fill"
-              style={
-                videoEstimatedProgress !== null
-                  ? { width: `${videoEstimatedProgress}%` }
-                  : taskPresentation.progress
-                    ? { width: `${Math.round(taskPresentation.progress)}%` }
-                    : undefined
-              }
-            />
-          </span>
-          {videoEstimatedProgress !== null ? (
-            <span className="canvas-node-generation-estimate" aria-hidden="true">
-              预计进度 {videoEstimatedProgress.toFixed(2)}%
-            </span>
-          ) : null}
-          <span className="canvas-node-generation-detail">
-            {videoEstimatedProgress !== null && taskPresentation.detail.endsWith('%')
-              ? '模型处理中'
-              : taskPresentation.detail}
-          </span>
-          {taskElapsedLabel ? (
-            // 读屏只在状态文案变化时播报，每秒跳动的计时不进 live region
-            <span className="canvas-node-generation-elapsed" aria-hidden="true">
-              已用时 {taskElapsedLabel}
-            </span>
-          ) : null}
-        </CanvasNodeStatus>
+      {taskStatus === 'status_query_failed' && kind === 'video' && mediaUrl && !uploadingLocalFile && (
+        <div className="canvas-video-previous-failure nodrag nopan" role="status">
+          <span>任务状态查询异常，继续自动重试；当前展示已有视频，本次结果待确认</span>
+        </div>
       )}
+
+      {taskRunning &&
+        !uploadingLocalFile &&
+        !(taskStatus === 'status_query_failed' && kind === 'video' && mediaUrl) && (
+          <CanvasNodeStatus zoom={canvasZoom} label={taskPresentation.title}>
+            {imagePreviews?.[id] && (
+              <img
+                src={imagePreviews[id]}
+                alt="生成预览"
+                style={{ maxWidth: '100%', maxHeight: '60%', objectFit: 'contain' }}
+              />
+            )}
+            <span className="canvas-node-generation-spinner" aria-hidden="true" />
+            <strong>{taskPresentation.title}</strong>
+            <span
+              className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
+              role={videoEstimatedProgress !== null ? 'progressbar' : undefined}
+              aria-label={videoEstimatedProgress !== null ? '视频生成预计进度' : undefined}
+              aria-valuemin={videoEstimatedProgress !== null ? 0 : undefined}
+              aria-valuemax={videoEstimatedProgress !== null ? 100 : undefined}
+              aria-valuenow={videoEstimatedProgress ?? undefined}
+              aria-hidden={videoEstimatedProgress === null ? 'true' : undefined}
+            >
+              <span
+                className="canvas-node-generation-progress__fill"
+                style={
+                  videoEstimatedProgress !== null
+                    ? { width: `${videoEstimatedProgress}%` }
+                    : taskPresentation.progress
+                      ? { width: `${Math.round(taskPresentation.progress)}%` }
+                      : undefined
+                }
+              />
+            </span>
+            {videoEstimatedProgress !== null ? (
+              <span className="canvas-node-generation-estimate" aria-hidden="true">
+                预计进度 {videoEstimatedProgress.toFixed(2)}%
+              </span>
+            ) : null}
+            <span className="canvas-node-generation-detail">
+              {videoEstimatedProgress !== null && taskPresentation.detail.endsWith('%')
+                ? '模型处理中'
+                : taskPresentation.detail}
+            </span>
+            {taskElapsedLabel ? (
+              // 读屏只在状态文案变化时播报，每秒跳动的计时不进 live region
+              <span className="canvas-node-generation-elapsed" aria-hidden="true">
+                已用时 {taskElapsedLabel}
+              </span>
+            ) : null}
+          </CanvasNodeStatus>
+        )}
 
       {videoDetailsOpen && kind === 'video' && (
         <Suspense fallback={null}>
@@ -2647,9 +2668,12 @@ function CanvasInner() {
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
   const directorOpen = openDirectorBinding === directorBindingKey
   const requestDirectorSyncRef = useRef<() => void>(() => {})
-  const onDirectorCanvasChange = useCallback((snapshot: Record<string, any>) => {
-    if (snapshot.id === canvasId && Number.isSafeInteger(snapshot.revision)) requestDirectorSyncRef.current()
-  }, [canvasId])
+  const onDirectorCanvasChange = useCallback(
+    (snapshot: Record<string, any>) => {
+      if (snapshot.id === canvasId && Number.isSafeInteger(snapshot.revision)) requestDirectorSyncRef.current()
+    },
+    [canvasId],
+  )
   // 模型目录：来自 /api/v1/ai/models
   const {
     groups,
@@ -7743,6 +7767,7 @@ function CanvasInner() {
                         .filter((id) => !prevHistory.some((entry) => entry.assetId === id))
                         .map((id) => ({
                           assetId: id,
+                          taskId,
                           kind: kind === 'video' ? 'video' : 'image',
                           createdAt: new Date().toISOString(),
                           prompt: String(node.data.prompt || '') || undefined,
@@ -11070,7 +11095,8 @@ function CanvasInner() {
 
         <CanvasBottomBar
           overview={
-            nodes.length > 0 && minimapVisible && (
+            nodes.length > 0 &&
+            minimapVisible && (
               <MiniMap
                 className="canvas-minimap"
                 position="bottom-left"
@@ -11121,7 +11147,8 @@ function CanvasInner() {
               directorOpen={directorOpen}
               onToggleDirector={
                 currentUserId && workspaceId > 0 && canvasId > 0
-                  ? () => setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
+                  ? () =>
+                      setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
                   : undefined
               }
             />

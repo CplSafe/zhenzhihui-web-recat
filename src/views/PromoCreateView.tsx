@@ -823,5 +823,5 @@ export default function PromoCreateView() {
   const workspaceId = useWorkspaceId()
   const user = useCurrentUser() as { id?: number; user_id?: number } | null
   const key = `${user?.id || user?.user_id || 0}-${workspaceId || 0}`
-  return params.get('task')?.startsWith('promo-') ? <PromoDemoView /> : <PromoRealView key={key} />
+  return params.has('task') ? <PromoDemoView /> : <PromoRealView key={key} />
 }

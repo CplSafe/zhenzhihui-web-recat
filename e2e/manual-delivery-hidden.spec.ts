@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 390]) {
-  test(`暂时隐藏宣传片和 T+1 精制交付 ${width}px`, async ({ page }, testInfo) => {
+  test(`暂时隐藏 T+1 和 T+5 全流程 ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await installStrictAuthenticatedApp(page, { preserveStorage: true })
     await page.addInitScript((workspaceId) => {
@@ -50,17 +50,57 @@ for (const width of [1440, 390]) {
         JSON.stringify({ text: '保留的草稿', refineSelected: true, refineScreen: 'order' }),
       )
     }, WORKSPACE_ID)
+    await page.route('**/api/v1/promo/config', (route) =>
+      route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            enabled: true,
+            entry_name: '定制宣传片',
+            duration_options_seconds: [180],
+            ratio_options: ['16:9'],
+            resolution_options: ['1080P'],
+            allowed_mime: ['image/png'],
+            max_file_bytes: 10000,
+            max_files: 10,
+            max_total_bytes: 50000,
+            footage_min_count: 1,
+            authorization_text: '素材授权声明',
+            acknowledgement_text: '制作须知',
+            authorization_version: 'v1',
+          },
+        },
+      }),
+    )
+    await page.route('**/api/v1/ai/models**', (route) => {
+      if (new URL(route.request().url()).searchParams.get('capability') !== 'video') return route.fallback()
+      return route.fulfill({
+        json: {
+          code: 0,
+          data: [
+            {
+              id: 77,
+              provider: 'manual-video',
+              enabled: true,
+              display_name: '人工制作',
+              operation_codes: ['video.t1'],
+              params_schema: { fields: [{ name: 'duration', type: 'integer', default: 30 }] },
+            },
+          ],
+        },
+      })
+    })
     await page.goto('/promo?task=promo-old')
     await expect(page).toHaveURL(/\/hot-copy$/)
     await expect(page.getByRole('button', { name: '定制宣传片' })).toHaveCount(0)
     await page.goto('/smart?manualTask=123')
     await expect(page.getByRole('textbox', { name: '创作需求' })).toBeVisible()
-    await expect(page.locator('[data-refine-demo]')).toHaveCount(0)
     const settings = page.getByRole('button', { name: '生成设置' })
     if (await settings.isVisible()) await settings.click()
     await page.getByRole('button', { name: /生成模型/ }).click()
     await expect(page.getByText(/精制交付|T\+1/)).toHaveCount(0)
-    await page.screenshot({ path: testInfo.outputPath(`smart-${width}.png`) })
+    await expect(page.locator('[data-refine-demo]')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath(`t1-entry-${width}.png`) })
     await page.goto('/smart?refineDemo=old-refine')
     await expect(page.getByRole('textbox', { name: '创作需求' })).toBeVisible()
     await expect(page.locator('[data-refine-demo]')).toHaveCount(0)

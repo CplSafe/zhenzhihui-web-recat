@@ -214,6 +214,7 @@ export async function uploadScriptFile(file: File, key: string): Promise<ScriptA
         pageOrigin: globalThis.location?.origin || '',
         allowAnyHttp: import.meta.env.DEV,
         allowedHostPatterns: [
+          'https://s3oss-yy.youliangads.com',
           /\.aliyuncs\.com$/i,
           /\.myqcloud\.com$/i,
           /\.amazonaws\.com$/i,

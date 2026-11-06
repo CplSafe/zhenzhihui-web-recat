@@ -4,33 +4,54 @@ import { getDemoDueAt } from '../src/utils/refineDelivery'
 
 async function start(page: Page, testInfo: TestInfo) {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
-  await page.addInitScript(() => window.localStorage.setItem('zzh_guide_seen_smart_u7', '1'))
-  await page.goto('/smart')
-  await page.getByRole('textbox', { name: '创作需求' }).fill('演示精制视频需求')
-  await page.getByLabel('选择上传图片').setInputFiles({
-    name: '素材.svg',
-    mimeType: 'image/svg+xml',
-    buffer: Buffer.from(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="teal"/></svg>',
-    ),
-  })
-  await expect(page.getByRole('button', { name: '查看参考素材' })).toBeVisible()
-  const settings = page.getByRole('button', { name: '生成设置' })
-  if (await settings.isVisible()) await settings.click()
-  await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('button', { name: /精制交付 · T\+1/ }).click()
-  await page.getByRole('button', { name: '去制作' }).click()
-  await expect(page.getByText(/演示模式：订单/)).toBeVisible()
-  await page.getByRole('button', { name: '查看订单' }).click()
-  await page.screenshot({ path: testInfo.outputPath('order.png'), animations: 'disabled' })
-  await page.getByRole('button', { name: '提交精制任务（T+1）' }).click()
-  const dialog = page.getByRole('dialog', { name: '确认提交精制任务？' })
-  await expect(dialog).toContainText('1,125 积分')
-  await expect(dialog).toContainText('明天 18:00 前')
-  await dialog.getByRole('button', { name: '确认提交' }).click()
+  await page.route('**/api/v1/assets/1/download**', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="teal"/></svg>',
+    }),
+  )
+  const createdAt = Date.now()
+  await page.addInitScript(
+    ({ createdAt, dueAt }) => {
+      window.localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+      if (!window.localStorage.getItem('zzh_refine_demo_v1'))
+        window.localStorage.setItem(
+          'zzh_refine_demo_v1',
+          JSON.stringify({
+            version: 2,
+            state: {
+              tasks: [
+                {
+                  id: 'historical-refine',
+                  ownerId: 7,
+                  workspaceId: 21,
+                  description: '演示精制视频需求',
+                  script: '不使用脚本',
+                  duration: 30,
+                  ratio: '16:9',
+                  resolution: '1080p',
+                  credits: 1125,
+                  materialCount: 1,
+                  materials: [{ kind: 'asset', assetId: 1 }],
+                  createdAt,
+                  dueAt,
+                  status: '精修中',
+                  revision: 0,
+                },
+              ],
+            },
+          }),
+        )
+    },
+    { createdAt, dueAt: getDemoDueAt(createdAt) },
+  )
+  await page.goto('/smart?refineDemo=historical-refine')
+  await expect(page.getByRole('heading', { name: '任务已提交，明天来验收成片' })).toBeVisible()
+  await page.getByRole('button', { name: '查看我的精制任务' }).click()
+  await page.screenshot({ path: testInfo.outputPath('historical-task.png'), animations: 'disabled' })
 }
 
-test('精制任务提交、筛选、刷新恢复、交付和修改', async ({ page }, testInfo) => {
+test('历史精制演示任务筛选、刷新恢复、交付和修改', async ({ page }, testInfo) => {
   await start(page, testInfo)
   const drawer = page.getByRole('complementary', { name: '任务管理', exact: true })
   await expect(drawer.getByRole('tab', { name: '爆款成片' })).toHaveAttribute('aria-selected', 'true')

@@ -57,6 +57,7 @@ import {
   resolveSelfVideoAssetId,
 } from '@/utils/canvasVideoTaskMode'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
+import { getCreativeVideoModelKind } from '@/utils/creativeVideoModelKind'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { resolveModelVideoInputSupport, VIDEO_INPUT_UNSUPPORTED_REASON } from '@/utils/modelVideoInputSupport'
@@ -1488,6 +1489,9 @@ export default function CanvasNodePanel({
   // 但用户选了编辑 / 延长就是要改这条视频 —— 下方 selfVideoAssetId 会据此把它带上。
   const taskModeVideoAvailable =
     kind === 'video' && (sourceRefs.some((ref) => isCanvasVideoSourceKind(ref.kind)) || hasSelfVideo)
+  const seedance20 = Boolean(
+    kind === 'video' && selectedModel?.source && getCreativeVideoModelKind(selectedModel.source) === 'seedance-2.0',
+  )
 
   // 选中模型的 params_schema.fields（视频菜单动态渲染来源）。
   // 没有素材输入时剔除「跟随素材」的比例档位（adaptive/auto）：模型无从推断画幅，官方 API 直接 400。
@@ -1499,13 +1503,16 @@ export default function CanvasNodePanel({
   const schemaFields = useMemo(() => {
     // 任务类型（编辑 / 延长）离不开视频：没接视频时不展示，也不下发。
     const fields = parseParamsSchema(selectedModel)
-      .filter((field) => !isHiddenParamField(field, kind) && (taskModeVideoAvailable || !isVideoTaskModeField(field)))
+      .filter(
+        (field) =>
+          !isHiddenParamField(field, kind) && ((taskModeVideoAvailable && !seedance20) || !isVideoTaskModeField(field)),
+      )
       .map((field) => (kind === 'video' && isAudioField(field) ? { ...field, displayName: '生成声音' } : field))
     if (hasMediaInput) return fields
     return fields.map((field) =>
       isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
     )
-  }, [selectedModel, hasMediaInput, taskModeVideoAvailable, kind])
+  }, [selectedModel, hasMediaInput, taskModeVideoAvailable, seedance20, kind])
 
   // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
@@ -1649,6 +1656,7 @@ export default function CanvasNodePanel({
     const sourceDurationFieldName = parseParamsSchema(selectedModel).find(
       (field) => normalizeParamKey(field.name) === 'sourcevideoduration',
     )?.name
+    if (seedance20 && taskModeFieldName && hasVideoInput) params[taskModeFieldName] = 'generate'
     return applyVideoTaskModeParams(params, {
       modeFieldName: taskModeFieldName,
       sourceDurationFieldName,
@@ -1666,6 +1674,7 @@ export default function CanvasNodePanel({
     selectedModel,
     schemaFields,
     taskModeFieldName,
+    seedance20,
     hasVideoInput,
     sourceVideoSeconds,
   ])

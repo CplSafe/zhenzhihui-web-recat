@@ -21,6 +21,34 @@ const config = {
   authorization_version: 'v1',
 }
 
+for (const width of [1440, 390]) {
+  test(`宣传片收起的任务入口在可视区域居中 ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 })
+    await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/promo/config', (route) =>
+      route.fulfill({ json: { code: 0, data: { ...config, enabled: false } } }),
+    )
+    await page.goto('/promo')
+    await expect(page.getByRole('heading', { name: '定制宣传片' })).toBeVisible()
+    const rail = page.getByRole('button', { name: '展开任务管理' })
+    const expectCentered = async () => {
+      const button = await rail.boundingBox()
+      const banner = await page.getByRole('banner').boundingBox()
+      expect(button).not.toBeNull()
+      expect(banner).not.toBeNull()
+      expect(Math.abs(button!.y + button!.height / 2 - (banner!.y + banner!.height + 844) / 2)).toBeLessThan(2)
+    }
+    await expectCentered()
+    await page.screenshot({ path: testInfo.outputPath(`promo-task-rail-${width}.png`), animations: 'disabled' })
+    await rail.click()
+    await expect(
+      page.getByRole(width <= 900 ? 'dialog' : 'complementary', { name: '任务管理', exact: true }),
+    ).toBeVisible()
+    await page.getByRole('button', { name: '收起任务管理' }).click()
+    await expectCentered()
+  })
+}
+
 test('宣传片素材完成后报价，下单失败后使用原请求重试', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   const bodies: string[] = []
@@ -220,3 +248,33 @@ test('刷新后恢复宣传片需求及素材，授权需要重新确认', async
     animations: 'disabled',
   })
 })
+
+for (const enabled of [true, false]) {
+  test(`上传会话恢复失败可重试并保留草稿，服务${enabled ? '开放' : '关闭'}`, async ({ page }, testInfo) => {
+    await installStrictAuthenticatedApp(page, { preserveStorage: true })
+    await page.addInitScript(() => {
+      localStorage.setItem('zzh.promo.intake.7.21', 'saved-intake')
+      localStorage.setItem('zzh.promo.draft.7.21', JSON.stringify({ company: '草稿公司', brief: '草稿需求' }))
+    })
+    await page.route('**/api/v1/promo/config', (route) =>
+      route.fulfill({ json: { code: 0, data: { ...config, enabled } } }),
+    )
+    let attempts = 0
+    await page.route('**/api/v1/promo/intakes/saved-intake', (route) => {
+      attempts += 1
+      if (attempts === 1) return route.fulfill({ status: 500, json: { code: 500, message: '暂时无法恢复' } })
+      return route.fulfill({ json: { code: 0, data: { intake: {}, materials: [] } } })
+    })
+    await page.goto('/promo')
+    await expect(page.getByRole('alert')).toContainText('上次上传会话恢复失败')
+    if (enabled) await expect(page.getByRole('button', { name: '下一步：上传素材 →' })).toHaveCount(0)
+    else await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath(`restore-error-${enabled}.png`), animations: 'disabled' })
+    await page.getByRole('button', { name: '重试恢复' }).click()
+    await expect(page.getByText('上次上传会话恢复失败', { exact: false })).toHaveCount(0)
+    expect(attempts).toBe(2)
+    expect(await page.evaluate(() => localStorage.getItem('zzh.promo.intake.7.21'))).toBe('saved-intake')
+    if (enabled) await expect(page.getByLabel('单位 / 公司名称')).toHaveValue('草稿公司')
+    else await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
+  })
+}
