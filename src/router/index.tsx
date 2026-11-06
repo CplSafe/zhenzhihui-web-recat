@@ -83,6 +83,7 @@ const LoginView = lazy(() => import('../views/LoginView'))
 /** 供需商单（IP / 需求市场）路由组件。 */
 const MarketView = lazy(routeImporters.market)
 const ScriptIdeasView = lazy(() => import('../views/ScriptIdeasView'))
+const ScriptLegalDocumentView = lazy(() => import('../views/ScriptLegalDocumentView'))
 /** 模板库路由组件。 */
 const TemplatesView = lazy(routeImporters.templates)
 /** 智能成片创作路由组件。 */
@@ -320,6 +321,16 @@ export const router = createBrowserRouter([
       { path: 'market', element: lazyPage(<MarketView />), handle: { requiresAuth: false } },
       { path: 'script-ideas', element: lazyPage(<ScriptIdeasView />), handle: { requiresAuth: false } },
       { path: 'script-ideas/join', element: lazyPage(<ScriptIdeasView />) },
+      {
+        path: 'script-ideas/creator-agreement',
+        element: lazyPage(<ScriptLegalDocumentView document="agreement" />),
+        handle: { requiresAuth: false },
+      },
+      {
+        path: 'script-ideas/originality-statement',
+        element: lazyPage(<ScriptLegalDocumentView document="originality" />),
+        handle: { requiresAuth: false },
+      },
       { path: 'script-ideas/stage/:stage', element: lazyPage(<ScriptIdeasView />), handle: { requiresAuth: false } },
       { path: 'script-ideas/new', element: lazyPage(<ScriptIdeasView />) },
       { path: 'script-ideas/list', element: lazyPage(<ScriptIdeasView />) },

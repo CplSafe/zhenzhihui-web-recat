@@ -1738,7 +1738,15 @@ export default function ScriptIdeasView() {
                                         }}
                                       />
                                       <span>
-                                        我确认本剧本为原创，并同意平台用于后续制作评估 <em>*</em>
+                                        我确认本剧本为原创，已阅读
+                                        <a
+                                          href="/script-ideas/originality-statement"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          《原创说明》
+                                        </a>
+                                        并同意平台用于后续制作评估 <em>*</em>
                                       </span>
                                     </label>
                                   </div>
@@ -1794,7 +1802,8 @@ export default function ScriptIdeasView() {
                                             className={index >= 7 ? 'si-card-field-wide' : undefined}
                                           >
                                             <span>
-                                              {field} {props.required && <em>*</em>}
+                                              {field}
+                                              {(index === 3 || index === 4) && '（秒）'} {props.required && <em>*</em>}
                                               {index === 6 && '（多个集数用逗号分隔）'}
                                             </span>
                                             {index >= 7 ? (
@@ -1803,7 +1812,15 @@ export default function ScriptIdeasView() {
                                               <input
                                                 {...props}
                                                 type={index >= 2 && index !== 6 ? 'number' : 'text'}
-                                                min={index >= 2 && index !== 6 ? 1 : undefined}
+                                                min={
+                                                  index === 3 || index === 4
+                                                    ? 10
+                                                    : index >= 2 && index !== 6
+                                                      ? 1
+                                                      : undefined
+                                                }
+                                                max={index === 3 || index === 4 ? 600 : undefined}
+                                                step={index >= 2 && index !== 6 ? 1 : undefined}
                                               />
                                             )}
                                             {fieldError && (
@@ -1827,7 +1844,15 @@ export default function ScriptIdeasView() {
                                           }}
                                         />
                                         <span>
-                                          我确认本剧本为原创，并同意平台用于后续制作评估 <em>*</em>
+                                          我确认本剧本为原创，已阅读
+                                          <a
+                                            href="/script-ideas/originality-statement"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                          >
+                                            《原创说明》
+                                          </a>
+                                          并同意平台用于后续制作评估 <em>*</em>
                                         </span>
                                       </label>
                                     )}

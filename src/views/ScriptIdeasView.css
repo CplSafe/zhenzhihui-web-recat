@@ -635,6 +635,14 @@
   margin-top: 18px;
   font-size: 13px;
 }
+.si-agreement-section {
+  margin-bottom: 24px;
+}
+.si-form .si-agreement a,
+.si-form .si-original-check a {
+  color: #1769ca;
+  text-decoration: underline;
+}
 .si-form .si-agreement input,
 .si-prototype-fields input[type='checkbox'] {
   width: auto;
