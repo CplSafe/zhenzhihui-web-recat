@@ -42,6 +42,11 @@ class ResizeObserverMock {
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
+// jsdom has no layout engine; selection-based editors still need the Range API.
+if (!Range.prototype.getBoundingClientRect) {
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect() })
+}
+
 // jsdom does not implement canvas. Returning a harmless null context matches
 // browsers where a context is unavailable without emitting noisy errors.
 Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {

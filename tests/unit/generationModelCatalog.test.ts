@@ -393,7 +393,7 @@ describe('generation model catalog', () => {
     expect(isGenerationModelCatalogReadyForMode(states, 'image')).toBe(true)
 
     // video.edit 不在视频模式的必选集合里：智能成片的修改已改走视频生视频，
-    // 该 operation 只服务于漫剧制作/爆款复制，它不可用不该拦住智能成片开工。
+    // 该 operation 只服务于无限画布/爆款复制，它不可用不该拦住智能成片开工。
     states['video.edit'] = {
       operationCode: 'video.edit',
       status: 'empty',

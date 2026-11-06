@@ -34,7 +34,7 @@ const TUTORIALS: Record<TutorialVideo['key'], Omit<TutorialVideo, 'src' | 'key' 
     summary: '上传爆款视频 → 上传替换素材 → 选模型 → 去制作 → 查看成片',
   },
   canvas: {
-    title: '漫剧制作 · 操作手册',
+    title: '无限画布 · 操作手册',
     summary: '新建画布 → 文本/图片/视频节点 → @引用 → 截帧 → 框选 → 剪辑时间线',
   },
 }

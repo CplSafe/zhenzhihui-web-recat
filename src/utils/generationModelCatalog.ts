@@ -34,7 +34,7 @@ export type ImageGenerationOperationCode = Extract<
  *
  * 视频模式不含 video.edit：智能成片的「确认修改」已改走视频生视频
  * （video.generate + role:'video' 的源视频输入），不再单独选一个视频修改模型。
- * GENERATION_OPERATION_CODES 仍保留 video.edit —— 漫剧制作与爆款复制还在用它。
+ * GENERATION_OPERATION_CODES 仍保留 video.edit —— 无限画布与爆款复制还在用它。
  *
  * 也不含 image.*：「准备素材」「镜头编排」两步移除后，智能成片全程不再生成任何图片
  * （用户上传的素材直接作为参考图提交给视频模型），再要求用户选两个图片模型
@@ -99,6 +99,8 @@ export interface GenerationModelOption {
   operationCodes: GenerationOperationCode[]
   /** 保留一份原始记录，供后续读取后端参数 schema、供应商等扩展信息。 */
   source: BackendGenerationModel
+  /** 画布合并模型时保留各操作的独立目录记录。 */
+  sourcesByOperation?: Partial<Record<GenerationOperationCode, BackendGenerationModel>>
   /** 后端参数配置不合法时保留记录用于展示诊断，但禁止选择和提交。 */
   unavailableReason?: string
 }

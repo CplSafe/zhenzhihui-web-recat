@@ -70,23 +70,36 @@ function openCreativeParams() {
 
 /**
  * 弹层里每个参数是一排分段控件（与 AI 创作台同一套 UI）：
- * 比例/分辨率/数量是 button，时长档位是 radiogroup 里的 radio。
+ * 比例/分辨率/数量是 button，时长通过滑块键盘逐档选择。
  */
 async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, value: string) {
   if (!screen.queryByRole('dialog', { name: '创作参数' })) await user.click(openCreativeParams())
   const panel = within(await screen.findByRole('dialog', { name: '创作参数' }))
-  const target = panel.queryByRole('button', { name: value }) || panel.getByRole('radio', { name: value })
-  await user.click(target)
+  const target = panel.queryByRole('button', { name: value })
+  if (target) await user.click(target)
+  else {
+    const slider = panel.getByRole('slider', { name: '视频时长' })
+    slider.focus()
+    await user.keyboard('{End}{Home}')
+    for (let i = 0; i < 100 && slider.getAttribute('aria-valuetext') !== value; i++) await user.keyboard('{ArrowRight}')
+    expect(slider).toHaveAttribute('aria-valuetext', value)
+  }
   await user.keyboard('{Escape}')
 }
 
 /** 读取时长档位条当前列出的秒数。 */
 async function readDurationOptions(user: ReturnType<typeof userEvent.setup>) {
   if (!screen.queryByRole('dialog', { name: '创作参数' })) await user.click(openCreativeParams())
-  const group = screen.getByRole('radiogroup', { name: '视频时长' })
-  const options = within(group)
-    .getAllByRole('radio')
-    .map((radio) => radio.textContent?.trim())
+  const slider = screen.getByRole('slider', { name: '视频时长' })
+  slider.focus()
+  await user.keyboard('{Home}')
+  const options: string[] = []
+  for (let i = 0; i < 100; i++) {
+    const label = slider.getAttribute('aria-valuetext') || ''
+    if (options.includes(label)) break
+    options.push(label)
+    await user.keyboard('{ArrowRight}')
+  }
   await user.keyboard('{Escape}')
   return options
 }
@@ -363,6 +376,30 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       '14s',
       '15s',
     ])
+  })
+
+  it('从即时模型选择超过 30 秒时切换精制并显示测评视频', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{ text: '长视频需求' }}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [{ key: 'video.generate', label: '视频生成模型', models: [{ id: 701, name: '即时模型' }] }],
+          },
+        ]}
+      />,
+    )
+    await pickModel(user, '即时模型')
+    await user.click(screen.getByRole('button', { name: '45秒' }))
+    expect(screen.getByRole('button', { name: /生成模型，精制交付/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /创作参数/ })).toHaveTextContent('45s')
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: '选择爆款脚本' }))
+    expect(screen.getByRole('option', { name: '测评视频' })).toBeInTheDocument()
   })
 
   it('switches to image mode and supports restored image-mode sessions', async () => {

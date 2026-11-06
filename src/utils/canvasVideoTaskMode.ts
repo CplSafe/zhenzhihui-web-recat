@@ -2,7 +2,8 @@
  * 视频任务类型（Seedance 的 params.mode）：生成 / 编辑 / 延长。
  *
  * 上游按提示词语义自行判断是否为编辑 / 延长，判成后只接受「比例、时长跟随原视频」，
- * 带具体值会直接报错。所以由用户显式选择任务类型，后端据此改写请求。
+ * 上游不接受固定比例；后端模型 schema 仍可能要求 duration，需保留必填值供后端校验，
+ * 由后端根据任务类型处理上游请求。
  * 只有接入了视频素材时才有意义；没有视频时不下发 mode，后端按「生成」处理。
  */
 
@@ -33,39 +34,50 @@ export function formatVideoTaskModeLabel(mode: unknown): string {
 /**
  * 按是否接入视频收口 params：
  * - 没有视频：去掉 mode，后端按「生成」处理；
- * - 有视频：上报原视频总时长（整秒向上取整）。含视频任务按「原视频 + 出片」秒数计费，
+ * - 有视频且模型声明源时长字段时，上报读到的实际时长。含视频任务按「原视频 + 出片」秒数计费，
  *   不上报时后端只能按上限预冻，报价会虚高。
- * 不修改入参；模型没有任务类型字段时原样返回。
+ * 编辑/延长保留 schema 要求的时长字段以通过后端校验，出片仍由服务端跟随原视频。
+ * 不修改入参；没有相关字段时原样返回。
  */
 export function applyVideoTaskModeParams(
   params: Record<string, unknown>,
-  args: { modeFieldName?: string; hasVideoInput: boolean; sourceVideoSeconds: number },
+  args: {
+    modeFieldName?: string
+    sourceDurationFieldName?: string
+    requiredDurationFieldNames?: readonly string[]
+    hasVideoInput: boolean
+    sourceVideoSeconds: number
+  },
 ): Record<string, unknown> {
-  if (!args.modeFieldName) return params
+  if (!args.modeFieldName && !args.sourceDurationFieldName) return params
   const next = { ...params }
   if (!args.hasVideoInput) {
-    delete next[args.modeFieldName]
+    if (args.modeFieldName) delete next[args.modeFieldName]
     return next
   }
-  if (isFollowSourceVideoMode(next[args.modeFieldName])) {
+  if (args.modeFieldName && isFollowSourceVideoMode(next[args.modeFieldName])) {
     for (const name of Object.keys(next)) {
+      const key = name.replace(/[^a-z0-9]/gi, '').toLowerCase()
       if (
-        ['ratio', 'aspectratio', 'duration', 'durationsec', 'durationseconds'].includes(
-          name.replace(/[^a-z0-9]/gi, '').toLowerCase(),
-        )
+        ['ratio', 'aspectratio'].includes(key) ||
+        (['duration', 'durationsec', 'durationseconds'].includes(key) &&
+          !args.requiredDurationFieldNames?.includes(name))
       ) {
         delete next[name]
       }
     }
   }
-  if (args.sourceVideoSeconds > 0) next.source_video_duration = Math.ceil(args.sourceVideoSeconds)
+  if (args.sourceDurationFieldName && args.sourceVideoSeconds > 0) {
+    next[args.sourceDurationFieldName] = args.sourceVideoSeconds
+  }
   return next
 }
 
 /**
  * 节点自己那条视频是否作为输入下发，返回其 asset_id（0 = 不下发）。
  *
- * - 改片（isEditingVideo）：下发。
+ * - 没有连接其他素材的改片（isEditingVideo）：下发。
+ * - 已连接视频时只使用连入的视频，避免把旧结果也作为第二条视频。
  * - 换过模型的节点是「用新模型重新生成」，从头生成，默认不带自身视频；
  *   但选了编辑 / 延长就是要改这条视频，必须带上，否则任务类型可选却没有源视频。
  */
@@ -73,7 +85,9 @@ export function resolveSelfVideoAssetId(args: {
   isEditingVideo: boolean
   followSourceVideo: boolean
   assetId: number
+  hasConnectedMedia?: boolean
+  hasConnectedVideo?: boolean
 }): number {
-  if (!(args.assetId > 0)) return 0
-  return args.isEditingVideo || args.followSourceVideo ? args.assetId : 0
+  if (!(args.assetId > 0) || args.hasConnectedVideo) return 0
+  return args.followSourceVideo || (args.isEditingVideo && !args.hasConnectedMedia) ? args.assetId : 0
 }

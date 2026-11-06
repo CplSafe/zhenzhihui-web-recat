@@ -233,7 +233,12 @@ for (const width of [1440, 390]) {
                   submitted_at: 1793840000000,
                 },
               ],
-              reviews: [{ status: 2, stage: 'creative', version: 1, finished_at: 1793840000001 }],
+              reviews: [
+                { status: 2, version: 1, finished_at: 1793840000001 },
+                { status: 5, stage: 'draft', version: 2, finished_at: 1793840000000 },
+                { status: 2, stage: 'script', version: 3, finished_at: 1793839999999 },
+                { status: 2, version: 99, finished_at: 1793839999998 },
+              ],
             },
           },
         },
@@ -241,6 +246,11 @@ for (const width of [1440, 390]) {
     )
     await page.goto('/script-ideas/43')
     await expect(page.getByRole('heading', { name: '本阶段已通过' })).toBeVisible()
+    const reviewHistory = page.locator('.si-timeline')
+    await expect(reviewHistory).toContainText('通过 · 版本 1 · 创意')
+    await expect(reviewHistory).toContainText('退回 · 版本 2 · 一卡')
+    await expect(reviewHistory).toContainText('通过 · 版本 3 · 剧本')
+    await expect(reviewHistory).toContainText('通过 · 版本 99')
     await expect(page.locator('.si-progress [aria-current=step]')).toContainText('提交创意')
     await expect(page.locator('.si-readonly')).toContainText('血月禁域')
     await expect(page.getByRole('heading', { name: '填写一卡' })).toHaveCount(0)

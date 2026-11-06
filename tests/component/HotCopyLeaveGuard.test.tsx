@@ -16,7 +16,7 @@ function setup(dirty = true, allowNavigation?: (nextLocation: Location) => boole
     return (
       <>
         <input aria-label="文案" value={text} onChange={(e) => setText(e.target.value)} />
-        <Link to="/canvas">漫剧制作</Link>
+        <Link to="/canvas">无限画布</Link>
         <Link to="/hot-copy/303" state={{ bindProjectId: 303 }}>
           绑定当前项目
         </Link>
@@ -38,11 +38,11 @@ function setup(dirty = true, allowNavigation?: (nextLocation: Location) => boole
 it('取消离开保持输入，确认离开后才清理并跳转', async () => {
   confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
   const { discard, user } = setup()
-  await user.click(screen.getByRole('link', { name: '漫剧制作' }))
+  await user.click(screen.getByRole('link', { name: '无限画布' }))
   await waitFor(() => expect(confirm).toHaveBeenCalledWith('离开后数据将不保存，是否确认离开？', expect.any(Object)))
   expect(screen.getByRole('textbox')).toHaveValue('尚未提交的文案')
   expect(discard).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('link', { name: '漫剧制作' }))
+  await user.click(screen.getByRole('link', { name: '无限画布' }))
   expect(await screen.findByRole('heading', { name: '画布列表' })).toBeInTheDocument()
   expect(discard).toHaveBeenCalledTimes(1)
 })
@@ -50,7 +50,7 @@ it('取消离开保持输入，确认离开后才清理并跳转', async () => {
 it('空白入口直接离开，不弹确认', async () => {
   confirm.mockClear()
   const { user } = setup(false)
-  await user.click(screen.getByRole('link', { name: '漫剧制作' }))
+  await user.click(screen.getByRole('link', { name: '无限画布' }))
   expect(await screen.findByRole('heading', { name: '画布列表' })).toBeInTheDocument()
   expect(confirm).not.toHaveBeenCalled()
 })
@@ -72,7 +72,7 @@ it('只放行调用方认可的内部绑定，其他离开仍需确认且不提�
     true,
     (next) => next.pathname === '/hot-copy/303' && next.state?.bindProjectId === 303,
   )
-  await user.click(screen.getByRole('link', { name: '漫剧制作' }))
+  await user.click(screen.getByRole('link', { name: '无限画布' }))
   await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
   expect(screen.getByRole('textbox')).toHaveValue('尚未提交的文案')
   await user.click(screen.getByRole('link', { name: '绑定当前项目' }))

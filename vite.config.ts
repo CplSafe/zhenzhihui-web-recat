@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ProxyOptions } from 'vite'
 import type { IncomingMessage } from 'node:http'
 import { resolveProxyTarget } from './src/build/proxyTarget'
@@ -9,6 +10,7 @@ import { rewriteBusinessAuthCallback } from './src/build/authCallbackProxy'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  const buildVersion = randomUUID()
   // Proxy destinations are Node-only configuration. Prefer the unprefixed
   // names; legacy VITE_* aliases remain accepted so existing local env files
   // keep working without exposing those values to browser code.
@@ -48,8 +50,24 @@ export default defineConfig(({ mode }) => {
   )
 
   return {
-    plugins: [react()],
+    plugins: [
+      // Babel otherwise switches to this same compact output automatically at
+      // 500 KB and emits a warning for every oversized development module.
+      react({ babel: { generatorOpts: { compact: true } } }),
+      {
+        name: 'app-version-manifest',
+        apply: 'build',
+        generateBundle() {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'app-version.json',
+            source: JSON.stringify({ version: buildVersion }),
+          })
+        },
+      },
+    ],
     define: {
+      __APP_BUILD_VERSION__: JSON.stringify(buildVersion),
       'import.meta.env.ZZH_DEV_PROXY_CONFIGURED': JSON.stringify(mode === 'test' || Boolean(businessOrigin)),
     },
     build: {
@@ -110,6 +128,15 @@ export default defineConfig(({ mode }) => {
       // Watching them can create tens of thousands of filesystem watchers on Windows.
       watch: { ignored: ['**/.codex/**'] },
       proxy: {
+        // Preserve Host and Origin: Studio validates the explicitly allowed
+        // frontend origin for HTTP and WebSocket instead of bypassing CSRF.
+        '/agent-studio': {
+          target: 'http://127.0.0.1:8090',
+          changeOrigin: false,
+          ws: true,
+          timeout: 660_000,
+          proxyTimeout: 660_000,
+        },
         '/api': createBusinessProxy(businessTarget),
         '/auth': {
           ...createBusinessProxy(businessTarget),

@@ -6,8 +6,9 @@
  * 于是模型列表恒为空、显示「暂无可用的视频修改模型」，视频生视频整条路走不通。
  */
 import { describe, expect, it } from 'vitest'
-import { buildCanvasModelBuckets } from '@/utils/canvasModelBuckets'
+import { buildCanvasModelBuckets, resolveCanvasModelForOperation } from '@/utils/canvasModelBuckets'
 import { buildGenerationModelGroups } from '@/utils/generationModelCatalog'
+import { buildModelRestrictionSummary, getModelReferenceImageLimit } from '@/utils/modelRestrictions'
 
 /** 造一条最小可用的后端模型记录。 */
 function model(id: number, displayName: string, operationCodes: string[]) {
@@ -114,6 +115,29 @@ describe('buildCanvasModelBuckets', () => {
     expect(imageModels[0].operationCodes).toEqual(
       expect.arrayContaining(['image.text_to_image', 'image.image_to_image']),
     )
+  })
+
+  it.each([3, 10, 14])('图生图使用自身操作的参考图上限 %i', (max) => {
+    const groups = buildGenerationModelGroups([
+      {
+        ...model(8, '图片模型', ['image.text_to_image']),
+        capability: 'image',
+        input_constraints: { 'image.text_to_image': { roles: [] } },
+      },
+      {
+        ...model(8, '图片模型', ['image.image_to_image']),
+        capability: 'image',
+        input_constraints: {
+          'image.image_to_image': { roles: [{ role: 'reference_image', min_count: 1, max_count: max }] },
+        },
+      },
+    ])
+    const image = buildCanvasModelBuckets(groups).image[0]
+    const edit = resolveCanvasModelForOperation(image, 'image.image_to_image')
+    expect(getModelReferenceImageLimit(buildModelRestrictionSummary(edit.source).constraints)).toBe(max)
+    expect(resolveCanvasModelForOperation(image, 'image.text_to_image').source.operation_codes).toEqual([
+      'image.text_to_image',
+    ])
   })
 
   it('空目录返回三个空桶而不是抛错', () => {

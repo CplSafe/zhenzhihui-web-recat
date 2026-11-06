@@ -1,5 +1,5 @@
 /**
- * 漫剧制作 · 节点分组的纯逻辑层
+ * 无限画布 · 节点分组的纯逻辑层
  *
  * 分组用 data.groupId 标记成员，而不是 React Flow 原生的 parentId。
  * 原因是 parentId / extent 都是节点的顶层字段，不在本项目的持久化白名单里

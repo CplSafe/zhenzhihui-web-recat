@@ -18,7 +18,7 @@ import type { HotCopyEntryPayload, HotCopyProduct } from '@/components/hotcopy/H
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import HotCopyTemplateGallery from '@/components/hotcopy/HotCopyShowcase/HotCopyTemplateGallery'
 import type { TemplateItem } from '@/api/templates'
-import { isGuideSeen, openGuide } from '@/stores/guide'
+import { isGuideSeen, openGuide, useGuideStore } from '@/stores/guide'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import {
   awaitHotVideoResult,
@@ -75,7 +75,7 @@ import {
 } from '@/utils/creativeProjectTitlePersistence'
 import { resolveCreativeProjectId as resolveProjectId } from '@/utils/projectAssetAccess'
 import { useLatestCallback } from '@/composables/useLatestCallback'
-import { useHotCopyLeaveGuard } from '@/composables/useHotCopyLeaveGuard'
+import UnsavedEntryLeaveGuard from '@/components/common/UnsavedEntryLeaveGuard'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { createProjectNameFallback, generateProjectName, validateProjectName } from '@/api/aiPolish'
 import {
@@ -935,19 +935,18 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     } as any
   })
   const [basePrompt, setBasePrompt] = useState('')
-  useHotCopyLeaveGuard(
+  const entryHasUnsavedInput =
     !started &&
-      Boolean(
-        entryInitial?.text?.trim() ||
-        entryInitial?.videoPreview ||
-        entryInitial?.libraryVideo?.assetId ||
-        entryInitial?.products?.length,
-      ),
-    () => {
-      const ws = Number(workspaceId || 0)
-      if (ws && !loadHotCopyDraft(ws)) clearHotCopyDraft(ws)
-    },
-  )
+    Boolean(
+      entryInitial?.text?.trim() ||
+      entryInitial?.videoPreview ||
+      entryInitial?.libraryVideo?.assetId ||
+      entryInitial?.products?.length,
+    )
+  const discardUnsavedEntry = () => {
+    const ws = Number(workspaceId || 0)
+    if (ws && !loadHotCopyDraft(ws)) clearHotCopyDraft(ws)
+  }
 
   // replicate 输入:源视频 + 替换素材(asset_id)
   const [sourceVideo, setSourceVideo] = useState<{ assetId: number; url: string }>({ assetId: 0, url: '' })
@@ -4747,6 +4746,15 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     return () => window.clearTimeout(timer)
   }, [started, isAuthenticated, currentUser?.id])
 
+  // 引导属于爆款复制入口；切换页面时关闭未完成的覆盖层，避免挡住目标页。
+  useEffect(
+    () => () => {
+      const guide = useGuideStore.getState()
+      if (guide.activeKey === 'home') guide.close()
+    },
+    [],
+  )
+
   // 入口提交「做同款/生成视频」→ 需登录(免登录可进页面/上传,但生成需登录)
   const handleStart = (payload: HotCopyEntryPayload) => {
     // 档位取自本次提交所选的 replicate 模型，与入口下拉同源：
@@ -5297,6 +5305,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
 
   return (
     <div className="smart">
+      <UnsavedEntryLeaveGuard dirty={entryHasUnsavedInput} discard={discardUnsavedEntry} />
       <AppSidebar
         activeKey="hot-copy"
         onNavigate={onNavigate}

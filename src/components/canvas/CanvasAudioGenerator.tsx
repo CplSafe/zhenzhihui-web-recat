@@ -2,7 +2,7 @@ import ViewportFloatingPanel from './ViewportFloatingPanel'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import { useMentionNavigation } from '@/composables/useMentionNavigation'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
-import { useReactFlow } from '@xyflow/react'
+import { useReactFlow, useStore } from '@xyflow/react'
 import {
   createAiTask,
   estimateAiTaskCost,
@@ -87,6 +87,16 @@ export default function CanvasAudioGenerator({
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const { updateNodeData, getEdges, getNode, getNodes } = useReactFlow()
+  const linkedMediaFingerprint = useStore((state) =>
+    JSON.stringify(
+      state.edges
+        .filter((edge) => edge.target === nodeId)
+        .map((edge) => {
+          const node = state.nodes.find((item) => item.id === edge.source)
+          return [edge.id, node?.data?.kind || node?.type, node?.data?.assetId, node?.data?.assetWorkspaceId]
+        }),
+    ),
+  )
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const userId = useWorkspaceSessionStore((state) => {
@@ -678,6 +688,16 @@ export default function CanvasAudioGenerator({
     // 任务身份或可恢复性改变时接管/停止轮询，进度回写不重复启动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.taskId, workspaceId, nodeId, retry, recoverableTask])
+  const audioReferenceIds = (current: any[]) =>
+    new Set([
+      ...current.map((item) => Number(item.assetId)).filter((id) => id > 0),
+      ...getEdges()
+        .filter((edge) => edge.target === nodeId)
+        .map((edge) => getNode(edge.source))
+        .filter((node) => (node?.data?.kind || node?.type) === 'audio')
+        .map((node) => Number(node?.data?.assetId))
+        .filter((id) => id > 0),
+    ])
   const uploadReference = async (file?: File, saveSample = false): Promise<boolean> => {
     if (!file || uploadingReference || running) return false
     if (saveSample && !selectedAudioConstraint && !clone) {
@@ -704,7 +724,7 @@ export default function CanvasAudioGenerator({
     }
     const storedBeforeUpload = getNode(nodeId)?.data?.audioReferences
     const beforeUpload = Array.isArray(storedBeforeUpload) ? storedBeforeUpload : references
-    if (selectedAudioConstraint && beforeUpload.length >= selectedAudioConstraint.maxCount) {
+    if (selectedAudioConstraint && audioReferenceIds(beforeUpload).size >= selectedAudioConstraint.maxCount) {
       showToast(`当前模型最多支持 ${selectedAudioConstraint.maxCount} 段参考音频`, 'error')
       return false
     }
@@ -745,7 +765,8 @@ export default function CanvasAudioGenerator({
       const stored = getNode(nodeId)?.data?.audioReferences
       const current = Array.isArray(stored) ? stored : references
       if (current.some((item: any) => Number(item.assetId) === assetId)) return true
-      if (selectedAudioConstraint && current.length >= selectedAudioConstraint.maxCount)
+      const ids = audioReferenceIds(current)
+      if (selectedAudioConstraint && !ids.has(assetId) && ids.size >= selectedAudioConstraint.maxCount)
         throw new Error(`当前模型最多支持 ${selectedAudioConstraint.maxCount} 段参考音频`)
       updateNodeData(nodeId, { audioReferences: [...current, { assetId, workspaceId, title }] })
       return true
@@ -777,7 +798,8 @@ export default function CanvasAudioGenerator({
       showToast('这段音频已在参考列表中', 'info')
       return
     }
-    if (selectedAudioConstraint && current.length >= selectedAudioConstraint.maxCount) {
+    const ids = audioReferenceIds(current)
+    if (selectedAudioConstraint && !ids.has(copied.assetId) && ids.size >= selectedAudioConstraint.maxCount) {
       showToast(`当前模型最多支持 ${selectedAudioConstraint.maxCount} 段参考音频`, 'error')
       return
     }
@@ -787,7 +809,8 @@ export default function CanvasAudioGenerator({
     const assetId = Number(node.data?.assetId)
     const stored = getNode(nodeId)?.data?.audioReferences
     const current = Array.isArray(stored) ? stored : references
-    if (selectedAudioConstraint && current.length >= selectedAudioConstraint.maxCount) {
+    const ids = audioReferenceIds(current)
+    if (selectedAudioConstraint && !ids.has(assetId) && ids.size >= selectedAudioConstraint.maxCount) {
       showToast(`当前模型最多支持 ${selectedAudioConstraint.maxCount} 段参考音频`, 'error')
       return
     }
@@ -852,6 +875,20 @@ export default function CanvasAudioGenerator({
       }
     }
     const audioConstraint = selectedAudioConstraint
+    const imageConstraint = getModelInputConstraints(selected.model, selected.operationCode).roles.find((role) =>
+      ['image', 'reference_image'].includes(role.role),
+    )
+    const linkedImages = getEdges()
+      .filter((edge) => edge.target === nodeId)
+      .map((edge) => getNode(edge.source))
+      .filter((node) => (node?.data?.kind || node?.type) === 'image')
+    if (linkedImages.some((node) => Number(node?.data?.assetWorkspaceId || workspaceId) !== workspaceId))
+      throw new Error('参考图片必须属于当前工作空间')
+    if (linkedImages.some((node) => !(Number(node?.data?.assetId) > 0))) throw new Error('请等待参考图片上传或生成完成')
+    const imageIds = [...new Set(linkedImages.map((node) => Number(node?.data?.assetId)).filter((id) => id > 0))]
+    if (imageIds.length && !imageConstraint) throw new Error('当前模型不支持参考图片，请断开参考连线或更换模型')
+    if (imageConstraint && (imageIds.length < imageConstraint.minCount || imageIds.length > imageConstraint.maxCount))
+      throw new Error(`当前模型需要 ${imageConstraint.minCount}～${imageConstraint.maxCount} 张参考图片`)
     const linkedAudio = getEdges()
       .filter((edge) => edge.target === nodeId)
       .map((edge) => getNode(edge.source))
@@ -877,14 +914,24 @@ export default function CanvasAudioGenerator({
       (referenceIds.length < audioConstraint.minCount || referenceIds.length > audioConstraint.maxCount)
     )
       throw new Error(`当前模型需要 ${audioConstraint.minCount}～${audioConstraint.maxCount} 段参考音频`)
-    const inputAssets = referenceIds.map((assetId) => ({ asset_id: assetId, role: audioConstraint?.role || 'audio' }))
-    if (clone && !serverVoiceId && !inputAssets.length) throw new Error('音色克隆需要先上传本人或已获授权的声音样本')
+    const inputAssets = [
+      ...imageIds.map((assetId) => ({ asset_id: assetId, role: imageConstraint?.role || 'image' })),
+      ...referenceIds.map((assetId) => ({ asset_id: assetId, role: audioConstraint?.role || 'audio' })),
+    ]
+    if (clone && !serverVoiceId && !referenceIds.length) throw new Error('音色克隆需要先上传本人或已获授权的声音样本')
     if (referenceIds.length) {
       const activeReferences = await findActiveWorkspaceAssetIds(workspaceId, referenceIds, 'audio').catch(() => {
         throw new Error('暂时无法核验参考音频，请稍后重试')
       })
       const missing = referenceIds.find((id) => !activeReferences.has(id))
       if (missing) throw new Error(`参考音频（素材 ID ${missing}）已不可用，请重新选择当前团队的音频素材`)
+    }
+    if (imageIds.length) {
+      const activeImages = await findActiveWorkspaceAssetIds(workspaceId, imageIds, 'image').catch(() => {
+        throw new Error('暂时无法核验参考图片，请稍后重试')
+      })
+      const missing = imageIds.find((id) => !activeImages.has(id))
+      if (missing) throw new Error(`参考图片（素材 ID ${missing}）已不可用，请重新选择当前团队的图片素材`)
     }
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const modelVersionId = getBackendGenerationModelVersionId(selected.model)
@@ -936,6 +983,7 @@ export default function CanvasAudioGenerator({
     modelKey,
     linkedText,
     data.audioReferences,
+    linkedMediaFingerprint,
     workspaceId,
     models,
     running,
@@ -1060,7 +1108,7 @@ export default function CanvasAudioGenerator({
           disabled={
             running ||
             uploadingReference ||
-            Boolean(selectedAudioConstraint && references.length >= selectedAudioConstraint.maxCount)
+            Boolean(selectedAudioConstraint && audioReferenceIds(references).size >= selectedAudioConstraint.maxCount)
           }
           onClick={() => referenceInput.current?.click()}
         >

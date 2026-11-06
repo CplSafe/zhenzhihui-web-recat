@@ -127,6 +127,20 @@
   padding: 8px;
 }
 
+.notify__partial-error {
+  padding: 10px 18px;
+  color: #a44848;
+  font-size: 12px;
+}
+
+.notify__partial-error button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #087c65;
+  cursor: pointer;
+}
+
 .notify__item {
   position: relative;
   display: grid;

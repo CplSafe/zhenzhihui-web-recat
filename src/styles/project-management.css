@@ -1070,6 +1070,8 @@
 }
 /* 「只看我的」快捷筛选:高频动作不藏进下拉,激活态绿色实心 */
 .pm2-mine-chip {
+  flex-shrink: 0;
+  white-space: nowrap;
   height: 32px;
   padding: 0 14px;
   border: 1px solid #d5dae3;
@@ -1270,8 +1272,9 @@
 }
 .pm2-filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 28px;
+  gap: 12px 20px;
   margin-bottom: 22px;
   font-size: 14px;
   color: #5b6072;
@@ -1283,6 +1286,8 @@
 /* 创作流程分段筛选：与项目视频列表页的流程 tab 同款视觉 */
 .pm2-flow-tabs {
   display: flex;
+  max-width: 100%;
+  overflow-x: auto;
   align-items: center;
   gap: 4px;
   padding: 3px;
@@ -1319,11 +1324,15 @@
 }
 .pm2-filter {
   display: inline-flex;
+  flex-shrink: 0;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
 }
 .pm2-sort {
   display: inline-flex;
+  flex-shrink: 0;
+  white-space: nowrap;
   align-items: center;
   gap: 5px;
   border: 0;

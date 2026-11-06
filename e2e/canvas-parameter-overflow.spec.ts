@@ -149,7 +149,7 @@ for (const kind of ['image', 'video']) {
       await page.keyboard.press('Escape')
       await expect(menu).toBeHidden()
       if (kind !== 'text') {
-        const prompt = editor.locator('textarea').first()
+        const prompt = editor.getByRole('textbox')
         await prompt.fill('')
         await prompt.pressSequentially('@')
         const references = page.getByRole('listbox', { name: '选择要 @ 的参考素材' })

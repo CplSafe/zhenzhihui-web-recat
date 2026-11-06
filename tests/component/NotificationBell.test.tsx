@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -8,6 +8,7 @@ import { server } from '../mocks/server'
 
 function installFactNotifications() {
   server.use(
+    http.get('/api/v1/student-applications', () => HttpResponse.json({ code: 0, data: { items: [], total: 0 } })),
     http.get('/api/v1/market/me/demands', () =>
       HttpResponse.json({
         code: 0,
@@ -35,6 +36,7 @@ function renderBell() {
       <Routes>
         <Route path="*" element={<NotificationBell userKey="fact-user" />} />
         <Route path="/demand/:id" element={<h1>需求事实详情</h1>} />
+        <Route path="/script-ideas/:id" element={<h1>剧本申请详情</h1>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -74,6 +76,7 @@ describe('NotificationBell 通知事实与已读行为', () => {
     server.use(
       http.get('/api/v1/market/me/demands', () => HttpResponse.json({ code: 1 }, { status: 500 })),
       http.get('/api/v1/market/me/applications', () => HttpResponse.json({ code: 1 }, { status: 500 })),
+      http.get('/api/v1/student-applications', () => HttpResponse.json({ code: 1 }, { status: 500 })),
     )
     const user = userEvent.setup()
     renderBell()
@@ -84,4 +87,87 @@ describe('NotificationBell 通知事实与已读行为', () => {
     expect(screen.queryByText('暂无通知')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新加载' })).toBeInTheDocument()
   })
+
+  it('显示审核通过的备注，点击通知进入对应申请并标记已读', async () => {
+    server.use(
+      http.get('/api/v1/student-applications', () =>
+        HttpResponse.json({ code: 0, data: { items: [{ id: 46 }], total: 1 } }),
+      ),
+      http.get('/api/v1/student-applications/46', () =>
+        HttpResponse.json({
+          code: 0,
+          data: {
+            application: { id: 46, title: '测试剧' },
+            progress_available: true,
+            workflow: {
+              reviews: [
+                {
+                  status: 2,
+                  stage: 'script',
+                  version: 2,
+                  task_id: 'review-1',
+                  reason: '请完善第九集',
+                  finished_at: 1700000000,
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: '通知' }))
+    const notice = await screen.findByRole('button', { name: /剧本创意审核通过.*请完善第九集/ })
+    expect(notice).toHaveTextContent('测试剧')
+    await user.click(notice)
+    expect(await screen.findByRole('heading', { name: '剧本申请详情' })).toBeInTheDocument()
+    expect(window.localStorage.getItem('zzh-market-notify-read:v2:fact-user')).toContain(
+      'script-approved-46-2-review-1',
+    )
+  })
+
+  it('剧本接口失败时仍展示需求市场通知并提示重试', async () => {
+    server.use(http.get('/api/v1/student-applications', () => HttpResponse.json({ code: 1 }, { status: 500 })))
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: '通知' }))
+    expect(await screen.findByRole('button', { name: /需求已完成/ })).toBeInTheDocument()
+    expect(screen.getByText(/剧本消息加载失败/)).toBeInTheDocument()
+  })
+
+  it('剧本接口迟迟未完成时先显示已返回的需求通知', async () => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      http.get('/api/v1/student-applications', async () => {
+        await pending
+        return HttpResponse.json({ code: 0, data: { items: [], total: 0 } })
+      }),
+    )
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: '通知' }))
+    expect(await screen.findByRole('button', { name: /需求已完成/ })).toBeInTheDocument()
+    expect(screen.getByText('剧本消息加载中…')).toBeInTheDocument()
+    release()
+    await waitFor(() => expect(screen.queryByText('剧本消息加载中…')).not.toBeInTheDocument())
+  })
+
+  it('剧本请求超时后显示失败与重试，已返回的需求通知仍可用', async () => {
+    server.use(
+      http.get('/api/v1/student-applications', async () => {
+        await new Promise(() => {})
+        return HttpResponse.json({ code: 0, data: { items: [], total: 0 } })
+      }),
+    )
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: '通知' }))
+    expect(await screen.findByRole('button', { name: /需求已完成/ })).toBeInTheDocument()
+    expect(await screen.findByText(/剧本消息加载失败/, {}, { timeout: 15_000 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新加载' })).toBeEnabled()
+  }, 20_000)
 })

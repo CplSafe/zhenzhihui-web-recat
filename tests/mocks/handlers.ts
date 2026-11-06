@@ -19,6 +19,7 @@ const assetDownload = http.get('/api/v1/assets/:assetId/download', () =>
  */
 const emptyPage = () => HttpResponse.json({ code: 0, data: { items: [], total: 0, limit: 100, offset: 0 } })
 const marketAndCommunityFallbacks = [
+  http.get('/api/v1/student-applications', emptyPage),
   http.get('/api/v1/market/me/demands', emptyPage),
   http.get('/api/v1/market/me/applications', emptyPage),
   http.get('/api/v1/market/demands', emptyPage),

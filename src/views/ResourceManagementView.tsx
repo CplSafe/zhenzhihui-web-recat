@@ -1539,7 +1539,7 @@ export default function ResourceManagementView() {
    * 各流程能接的素材类型不同，按类型给出可行去向而不是一律列全：
    * - 智能成片 / 爆款复制的替换素材只收图片（carryImages）；
    * - 爆款复制的原视频只收视频（carryVideo，即已有的「做同款」）；
-   * - 漫剧制作图片和视频都能落成节点。
+   * - 无限画布图片和视频都能落成节点。
    */
   const createTargetsForCard = (card: any) => {
     const assetId = Number(card.assetId || 0) || 0
@@ -1567,7 +1567,7 @@ export default function ResourceManagementView() {
     }
     targets.push({
       key: 'canvas',
-      label: '漫剧制作',
+      label: '无限画布',
       onSelect: () =>
         navigate('/canvas', {
           state: { carryMaterial: { ...carry, type: card.mediaKind, name: String(card.title || '') } },

@@ -1,3 +1,4 @@
+import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
 import { useCanvasKeyboardPriority } from '@/composables/useCanvasKeyboardPriority'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
@@ -39,9 +40,9 @@ import {
   formatCanvasShortcut,
 } from '@/utils/canvasKeyboard'
 /**
- * 漫剧制作（/canvas/:id）
+ * 无限画布（/canvas/:id）
  *
- * 页面职责：提供漫剧制作，通过节点+连线方式组织 AI 生成管线。
+ * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
  */
 import {
   createContext,
@@ -168,7 +169,7 @@ import {
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
-import { buildCanvasModelBuckets } from '@/utils/canvasModelBuckets'
+import { buildCanvasModelBuckets, resolveCanvasModelForOperation } from '@/utils/canvasModelBuckets'
 import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
 import { findFreeNodePosition } from '@/utils/canvasNodePlacement'
 import { resolveCanvasConnectDropTarget, type CanvasNodeScreenRect } from '@/utils/canvasConnectDrop'
@@ -180,12 +181,17 @@ import {
   extractTaskText,
   getAiTask,
   getAiTaskId,
+  listAiModels,
   getSeedanceModeration,
   submitSeedanceModeration,
   BusinessApiError,
   normalizeAiTaskStatus,
   uploadAssetFile,
 } from '@/api/business'
+import {
+  getBackendGenerationModelVersionId,
+  unwrapGenerationModelCatalogResponse,
+} from '@/utils/generationModelCatalog'
 import { polishText } from '@/api/aiPolish'
 import { generationPolishContext } from '@/api/entryPromptPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
@@ -799,9 +805,9 @@ const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string 
 const SELECTION_ADD_MENU_ITEMS = [
   { type: 'text', label: '文本制作', desc: '' },
   { type: 'image', label: '图片制作', desc: '' },
-  { type: 'video', label: '制作', desc: '' },
+  { type: 'video', label: '视频制作', desc: '' },
   { type: 'timeline', label: '智能剪辑', desc: '' },
-  { type: 'audio', label: '音频', desc: '' },
+  { type: 'audio', label: '音频制作', desc: '' },
   { type: 'script', label: '脚本制作', desc: '' },
 ]
 
@@ -874,10 +880,10 @@ const allowedSourceKinds: Record<string, string[]> = {
   // 文本连到视频后作为提示词拼接；图片/视频/时间线作为生成素材。
   video: ['text', 'image', 'video', 'timeline', 'audio'],
   image: ['text', 'image'],
-  text: ['text', 'image'],
+  text: ['text', 'image', 'video', 'timeline'],
   // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
   timeline: ['video', 'timeline', 'audio'],
-  audio: ['text', 'audio'],
+  audio: ['text', 'audio', 'image'],
   'audio-editor': ['audio'],
 }
 
@@ -2329,7 +2335,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
-      {(taskFailed || connectionError) && (
+      {(taskFailed || (connectionError && !taskRunning)) && (
         <CanvasNodeFailure
           zoom={canvasZoom}
           title={
@@ -2492,7 +2498,7 @@ const nodeTypes: NodeTypes = {
   audio: CanvasNode,
 }
 
-/** 漫剧制作入口页（提供 ReactFlowProvider 上下文） */
+/** 无限画布入口页（提供 ReactFlowProvider 上下文） */
 export default function CanvasView() {
   return (
     <ReactFlowProvider>
@@ -2511,7 +2517,8 @@ function CanvasInner() {
   const navigate = useNavigate()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const { fitView, screenToFlowPosition, setViewport, zoomIn, zoomOut, zoomTo, deleteElements } = useReactFlow()
+  const { fitView, screenToFlowPosition, setViewport, setCenter, zoomIn, zoomOut, zoomTo, deleteElements } =
+    useReactFlow()
   const { getState: getCanvasStoreState } = useStoreApi()
   /** 节点搜索面板是否展开 */
   const [searchOpen, setSearchOpen] = useState(false)
@@ -2570,6 +2577,25 @@ function CanvasInner() {
   // 正在截帧上传的视频节点 id；同一时刻只允许一个，避免连点建出一堆重复图片节点
   const [capturingNodeId, setCapturingNodeId] = useState('')
   const workspaceId = useWorkspaceId()
+  const hasAudioNodes = nodes.some(
+    (node) => (node.data?.kind || node.type) === 'audio' && node.data?.audioRole !== 'editor',
+  )
+  const audioModelCatalogRef = useRef<{ workspaceId: number; models: any[] } | null>(null)
+  useEffect(() => {
+    audioModelCatalogRef.current = null
+    if (!workspaceId || !hasAudioNodes) return
+    const controller = new AbortController()
+    void listAiModels({ workspaceId, capability: 'audio', plan: '', signal: controller.signal })
+      .then((payload: any) => {
+        if (!controller.signal.aborted)
+          audioModelCatalogRef.current = {
+            workspaceId: Number(workspaceId),
+            models: unwrapGenerationModelCatalogResponse(payload),
+          }
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [workspaceId, hasAudioNodes])
   const walletCredits = useWalletCredits()
   const loadSubscriptionLabel = useWorkspaceSessionStore((state) => state.loadSubscriptionLabel)
   // 画布不挂载负责加载钱包的 AppTopbar，直接进入或刷新时需自行加载。
@@ -2631,10 +2657,17 @@ function CanvasInner() {
    * 它是 displayNodes 这个 memo 的依赖，一变就会让整张图重新 map 一遍。
    */
   const modelConstraintsByVersionRef = useRef(new Map<number, GenerationModelConstraints>())
+  const resolvedModelByNodeRef = useRef(new Map<string, number>())
+  const modelSourcesByVersionRef = useRef(new Map<number, unknown>())
+  const handleResolvedModel = useCallback((nodeId: string, modelVersionId: number | undefined) => {
+    if (modelVersionId) resolvedModelByNodeRef.current.set(nodeId, modelVersionId)
+    else resolvedModelByNodeRef.current.delete(nodeId)
+  }, [])
   // 把模型名共享给节点：节点在 React Flow 内部，拿不到这里的目录，放大预览要显示模型名。
   useEffect(() => {
     const next: Record<number, string> = {}
     const constraints = new Map<number, GenerationModelConstraints>()
+    const sources = new Map<number, unknown>()
     for (const list of [canvasModels.text, canvasModels.image, canvasModels.video]) {
       for (const model of list) {
         const versionId = Number(model.modelVersionId || 0)
@@ -2642,13 +2675,39 @@ function CanvasInner() {
         if (model.displayName) next[versionId] = model.displayName
         // 约束在这里解析一次并缓存：buildModelRestrictionSummary 要遍历整份 params schema，
         // 不该放在每次连线校验里重算。
-        constraints.set(versionId, buildModelRestrictionSummary(model.source).constraints)
+        const operation =
+          list === canvasModels.image
+            ? 'image.image_to_image'
+            : list === canvasModels.video
+              ? 'video.generate'
+              : 'responses.multimodal'
+        const resolved = resolveCanvasModelForOperation(model, operation)
+        constraints.set(versionId, buildModelRestrictionSummary(resolved.source).constraints)
+        sources.set(versionId, resolved.source)
       }
     }
     canvasModelNameByVersion = next
     modelConstraintsByVersionRef.current = constraints
+    modelSourcesByVersionRef.current = sources
   }, [canvasModels])
-  const [addMenu, setAddMenu] = useState<{ x: number; y: number; sourceId: string; sourceIds?: string[] } | null>(null)
+  const [addMenu, setAddMenu] = useState<{
+    x: number
+    y: number
+    sourceId: string
+    sourceIds?: string[]
+    dropPosition?: { x: number; y: number }
+  } | null>(null)
+  const selectionDragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    sourceIds: string[]
+    moved: boolean
+  } | null>(null)
+  const suppressSelectionClickRef = useRef(false)
+  const [selectionDragLine, setSelectionDragLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
+    null,
+  )
   // 节点两侧的“+”表示继续当前流程：点击后打开下一步节点类型菜单，
   // 选中类型后复用 handleMenuSelect 自动创建节点并连接当前节点。
   // dragEnabled：节点拖拽开关（nodesDraggable），关闭即「锁定节点」，只能平移画布。
@@ -2734,6 +2793,7 @@ function CanvasInner() {
   const canvasRootRef = useRef<HTMLDivElement>(null)
   const keyboardPriority = useCanvasKeyboardPriority(canvasRootRef, preferences.shortcuts)
   const nodePointerSelectionRef = useRef<{ id: string; selectedIds: string[] } | null>(null)
+  const pointerStartedInPanelRef = useRef(false)
   const shortcutsBlockedRef = useRef(false)
   const [canvasKeyboardActive, setCanvasKeyboardActive] = useState(false)
   const [spaceHeld, setSpaceHeld] = useState(false)
@@ -3135,8 +3195,7 @@ function CanvasInner() {
       : Math.min(panelSize.width || 640, (canvasViewportWidth || window.innerWidth) - 24)
     const halfWidth = panelWidth / 2
     const below = bottomY + (isVideoUpscale ? 16 : NODE_PANEL_GAP)
-    // 编辑面板始终放在节点下方；空间不足时由下方的画布平移逻辑腾出空间，
-    // 不再翻到节点上方，避免遮挡节点本身。
+    // 始终放在节点下方；空间不足时由画布平移逻辑腾出空间。
     const viewportWidth = canvasViewportWidth || window.innerWidth
     // 只在面板超出视口时夹取到边界；空间足够时始终严格居中在选中节点下方。
     const minCenterX = Math.min(halfWidth + NODE_PANEL_GAP, viewportWidth / 2)
@@ -3146,7 +3205,6 @@ function CanvasInner() {
       left,
       top: below,
     }
-    // 面板固定显示在节点下方，不为避开其它节点横向偏移。
   }, [selectedNodeScreenRect, selectedNodeVisible, selectedNode?.operationCode, panelSize.width, canvasViewportWidth])
 
   /**
@@ -3208,7 +3266,18 @@ function CanvasInner() {
       nextX += safeCenter - center
     }
     // 靠近屏幕顶部的节点下移，保留操作条和标题的完整空间，避免夹取后贴住图片。
-    const topSafe = 144
+    const topSafe = window.innerWidth <= 600 ? 100 : 144
+    const availableNodeHeight = window.innerHeight - topSafe - NODE_PANEL_GAP * 2 - height
+    if (selectedNode.kind !== 'audio' && nodeHeight * tz > availableNodeHeight && availableNodeHeight > 0) {
+      const zoom = Math.min(tz, availableNodeHeight / nodeHeight)
+      const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
+      const centerX = (node.position.x + nodeWidth / 2) * tz + tx
+      setViewport(
+        { x: centerX - (node.position.x + nodeWidth / 2) * zoom, y: topSafe - node.position.y * zoom, zoom },
+        { duration: 200 },
+      )
+      return
+    }
     if (topY < topSafe) {
       setViewport({ x: nextX, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
       return
@@ -3406,19 +3475,39 @@ function CanvasInner() {
   const resolveTargetRefLimit = useCallback((targetNode: Node | undefined): number => {
     const targetKind = (targetNode?.data?.kind as string) || 'text'
     if (targetKind === 'timeline') return MAX_TIMELINE_CLIPS
-    if (targetKind === 'video' && (targetNode?.data?.videoMode as string) === 'first-last') return FIRST_LAST_REF_SLOTS
-    return (
+    const limit =
       getModelReferenceImageLimit(
-        modelConstraintsByVersionRef.current.get(Number(targetNode?.data?.modelVersionId || 0)),
+        modelConstraintsByVersionRef.current.get(
+          Number(targetNode?.data?.modelVersionId || resolvedModelByNodeRef.current.get(targetNode?.id || '') || 0),
+        ),
       ) ?? DEFAULT_MAX_REFS
+    return targetKind === 'video' && targetNode?.data?.videoMode === 'first-last'
+      ? Math.min(FIRST_LAST_REF_SLOTS, limit)
+      : limit
+  }, [])
+
+  const resolveTargetVideoLimit = useCallback((targetNode: Node | undefined): number => {
+    const versionId = Number(
+      targetNode?.data?.modelVersionId || resolvedModelByNodeRef.current.get(targetNode?.id || '') || 0,
     )
+    const source = modelSourcesByVersionRef.current.get(versionId)
+    const roles = getModelInputConstraints(source, 'video.generate').roles
+    return roles.length ? (roles.find((role) => role.role === 'video')?.maxCount ?? 0) : 1
+  }, [])
+
+  const resolveTargetAudioLimit = useCallback((targetNode: Node | undefined): number => {
+    const versionId = Number(
+      targetNode?.data?.modelVersionId || resolvedModelByNodeRef.current.get(targetNode?.id || '') || 0,
+    )
+    const roles = getModelInputConstraints(modelSourcesByVersionRef.current.get(versionId), 'video.generate').roles
+    return roles.find((role) => /audio/i.test(role.role))?.maxCount ?? 0
   }, [])
 
   /** Count incoming media connections as slots, even when multiple nodes point to the same asset ID. */
   const countIncomingMediaConnections = useCallback(
     (
       targetId: string,
-      kind: 'image' | 'video',
+      kind: 'image' | 'video' | 'audio',
       additionalEdges: Array<Pick<Edge, 'source' | 'target' | 'data'>> = [],
     ) => {
       const nodesById = new Map(latestRef.current.nodes.map((node) => [node.id, node]))
@@ -3426,7 +3515,7 @@ function CanvasInner() {
         if (edge.target !== targetId || isCanvasProvenanceEdge(edge)) return false
         const source = nodesById.get(edge.source)
         const sourceKind = String(source?.data?.kind || source?.type || '')
-        return kind === 'image' ? sourceKind === 'image' : sourceKind === 'video' || sourceKind === 'timeline'
+        return kind === 'video' ? sourceKind === 'video' || sourceKind === 'timeline' : sourceKind === kind
       }).length
     },
     [],
@@ -3450,13 +3539,18 @@ function CanvasInner() {
         refs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length,
         countIncomingMediaConnections(targetId, 'video'),
       )
+      const audioCount = Math.max(
+        refs.filter((ref) => ref.kind === 'audio').length,
+        countIncomingMediaConnections(targetId, 'audio'),
+      )
       const limit = resolveTargetRefLimit(targetNode)
       if (targetKind === 'timeline') return Math.max(0, limit - videoCount)
       if (targetKind !== 'image' && targetKind !== 'video') return 0
-      const videoRoom = targetKind === 'video' && videoCount === 0 ? 1 : 0
-      return Math.max(0, limit - imageCount) + videoRoom
+      const videoRoom = targetKind === 'video' ? Math.max(0, resolveTargetVideoLimit(targetNode) - videoCount) : 0
+      const audioRoom = targetKind === 'video' ? Math.max(0, resolveTargetAudioLimit(targetNode) - audioCount) : 0
+      return Math.max(0, limit - imageCount) + videoRoom + audioRoom
     },
-    [countIncomingMediaConnections, resolveTargetRefLimit],
+    [countIncomingMediaConnections, resolveTargetRefLimit, resolveTargetVideoLimit, resolveTargetAudioLimit],
   )
 
   const validateConnection = useCallback(
@@ -3471,9 +3565,6 @@ function CanvasInner() {
       const targetNode = latestRef.current.nodes.find((n) => n.id === targetId)
       const targetKind = (targetNode?.data?.kind as string) || 'text'
       const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
-      if (targetKind === 'text' && (sourceKind === 'video' || sourceKind === 'timeline')) {
-        return '文本/分镜节点暂不支持视频输入。请先从视频截取画面并连接图片节点。'
-      }
       if (targetNode?.data?.audioRole === 'editor') {
         if (sourceKind !== 'audio') return '音频编辑节点只能连接音频来源'
         if (latestRef.current.edges.some((edge) => edge.target === targetId)) return '音频编辑节点只能连接一个音频来源'
@@ -3503,6 +3594,7 @@ function CanvasInner() {
       if (foreignRef) return '参考素材属于其他团队，请从当前团队素材库重新选择'
       const imageRefCount = prospectiveRefs.filter((ref) => ref.kind === 'image').length
       const videoRefCount = prospectiveRefs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
+      const audioRefCount = prospectiveRefs.filter((ref) => ref.kind === 'audio').length
       const sourceNode = latestRef.current.nodes.find((node) => node.id === sourceId)
       const sourceIsImage = String(sourceNode?.data?.kind || sourceNode?.type || '') === 'image'
       const sourceIsVideo = ['video', 'timeline'].includes(String(sourceNode?.data?.kind || sourceNode?.type || ''))
@@ -3514,15 +3606,83 @@ function CanvasInner() {
       if ((targetKind === 'image' || targetKind === 'video') && Math.max(imageRefCount, directImageCount) > maxRefs) {
         return `当前模型最多连接 ${maxRefs} 条图片参考线（最多 ${maxRefs} 张参考图片）`
       }
-      if (targetKind === 'video' && Math.max(videoRefCount, directVideoCount) > 1) {
-        return '视频生成只能连接一条源视频；多条视频请先汇入视频剪辑节点合成'
+      if (targetKind === 'text') {
+        const modelId = Number(targetNode?.data?.modelVersionId || resolvedModelByNodeRef.current.get(targetId) || 0)
+        const imageLimit = getModelReferenceImageLimit(modelConstraintsByVersionRef.current.get(modelId))
+        if (imageLimit !== undefined && Math.max(imageRefCount, directImageCount) > imageLimit)
+          return `当前模型最多连接 ${imageLimit} 条图片参考线`
+        if (sourceIsVideo && modelId) {
+          const model = modelSourcesByVersionRef.current.get(modelId)
+          const limit =
+            getModelInputConstraints(model, 'responses.multimodal').roles.find((role) => role.role === 'video')
+              ?.maxCount || 0
+          if (Math.max(videoRefCount, directVideoCount) > limit)
+            return limit ? `当前模型最多支持 ${limit} 条参考视频` : '当前模型不支持参考视频，请切换模型'
+        }
+      }
+      if (
+        targetKind === 'audio' &&
+        targetNode?.data?.audioRole !== 'editor' &&
+        (sourceKind === 'image' || sourceKind === 'audio')
+      ) {
+        const modelId = Number(targetNode?.data?.modelVersionId || 0)
+        const operation = String(targetNode?.data?.operationCode || '')
+        if (modelId && operation) {
+          const catalog = audioModelCatalogRef.current
+          if (!catalog || catalog.workspaceId !== Number(workspaceId)) return '正在获取音频模型限制，请稍后重试'
+          const model = catalog.models.find((item) => Number(getBackendGenerationModelVersionId(item)) === modelId)
+          if (!model) return '无法确认音频模型限制，请重新选择模型'
+          const role = getModelInputConstraints(model, operation).roles.find((item) =>
+            sourceKind === 'audio' ? /audio/i.test(item.role) : ['image', 'reference_image'].includes(item.role),
+          )
+          const ids = new Set<string>()
+          for (const edge of [...currentEdges, { source: sourceId, target: targetId }]) {
+            if (edge.target !== targetId) continue
+            const node = latestRef.current.nodes.find((item) => item.id === edge.source)
+            if ((node?.data?.kind || node?.type) !== sourceKind) continue
+            const id = Number(node?.data?.assetId || 0)
+            ids.add(id > 0 ? `asset:${id}` : `node:${edge.source}`)
+          }
+          if (sourceKind === 'audio') {
+            for (const ref of Array.isArray(targetNode.data.audioReferences) ? targetNode.data.audioReferences : []) {
+              if (Number(ref.assetId) > 0) ids.add(`asset:${Number(ref.assetId)}`)
+            }
+          }
+          const limit = role?.maxCount || 0
+          if (ids.size > limit)
+            return limit
+              ? `当前模型最多支持 ${limit} 条参考${sourceKind === 'audio' ? '音频' : '图片'}`
+              : `当前模型不支持参考${sourceKind === 'audio' ? '音频' : '图片'}，请切换模型`
+        }
+      }
+      if (targetKind === 'video' && Math.max(videoRefCount, directVideoCount) > resolveTargetVideoLimit(targetNode)) {
+        const limit = resolveTargetVideoLimit(targetNode)
+        return limit
+          ? `当前模型最多支持 ${limit} 条参考视频，请移除多余连线或切换模型`
+          : '当前模型不支持参考视频，请切换模型'
+      }
+      if (targetKind === 'video') {
+        const directAudioCount =
+          countIncomingMediaConnections(targetId, 'audio', additionalEdges) + Number(sourceKind === 'audio')
+        const limit = resolveTargetAudioLimit(targetNode)
+        if (Math.max(audioRefCount, directAudioCount) > limit)
+          return limit
+            ? `当前模型最多支持 ${limit} 条参考音频，请移除多余连线或切换模型`
+            : '当前模型不支持参考音频，请切换模型'
       }
       if (targetKind === 'timeline' && Math.max(videoRefCount, directVideoCount) > maxRefs)
         return `时间线最多连接 ${maxRefs} 条视频参考线`
       return null
     },
     // allowedSourceKinds 现在真的是模块常量，不必再进依赖数组，也不再需要 exhaustive-deps 豁免
-    [hasEdgeBetween, workspaceId, resolveTargetRefLimit, countIncomingMediaConnections],
+    [
+      hasEdgeBetween,
+      workspaceId,
+      resolveTargetRefLimit,
+      resolveTargetVideoLimit,
+      resolveTargetAudioLimit,
+      countIncomingMediaConnections,
+    ],
   )
 
   useEffect(() => {
@@ -4270,8 +4430,13 @@ function CanvasInner() {
       if (sourceIds.length < 2) return true
       const plannedEdges: Edge[] = []
       const eligible: string[] = []
+      const reasons = new Set<string>()
       for (const sourceId of sourceIds) {
-        if (validateConnection(sourceId, targetId, plannedEdges)) continue
+        const reason = validateConnection(sourceId, targetId, plannedEdges)
+        if (reason) {
+          reasons.add(reason)
+          continue
+        }
         eligible.push(sourceId)
         const usedSlots = new Set(
           [...latestRef.current.edges, ...plannedEdges]
@@ -4291,7 +4456,7 @@ function CanvasInner() {
       if (!eligible.length) return true
       return Boolean(
         await requestConfirm(
-          `最多新增 ${eligible.length} 条直接连线${skipped ? `，${skipped} 个来源已因规则、重复或容量限制跳过` : ''}。视频来源的上游音频也会一并连接。确认继续？`,
+          `最多新增 ${eligible.length} 条直接连线${skipped ? `，${skipped} 个来源无法连接：${[...reasons].join('；')}` : ''}。视频来源的上游音频也会一并连接。确认继续？`,
           { title: '批量连接预览', confirmLabel: `连接 ${eligible.length} 条`, cancelLabel: '取消' },
         ),
       )
@@ -4547,12 +4712,6 @@ function CanvasInner() {
         return { sources, reason: '部分所选节点已删除或隐藏，请重新选择' }
       if (type === 'script') return { sources, reason: '脚本生成尚未开放，请使用文本生成' }
       const sourceKinds = sources.map((node) => String(node.data?.kind || node.type || 'text'))
-      if (type === 'text' && sourceKinds.some((kind) => kind === 'video' || kind === 'timeline')) {
-        return {
-          sources,
-          reason: '文本/分镜节点只接收文字和图片，不支持视频输入。请移除视频节点，或先截取画面后作为图片连接。',
-        }
-      }
       if (!isCanvasSelectionAddAllowed(type, sourceKinds)) {
         const unsupported = getCanvasSelectionAddUnsupportedSources(type, sourceKinds)
         if (!unsupported.length) {
@@ -4569,8 +4728,7 @@ function CanvasInner() {
       const imageCount = sources.filter((node) => node.data?.kind === 'image').length
       const videoCount = sources.filter((node) => ['video', 'timeline'].includes(String(node.data?.kind))).length
       const limit = resolveTargetRefLimit({ id: 'new-target', position: { x: 0, y: 0 }, data: { kind: type } })
-      if ((type === 'image' || type === 'video') && imageCount > limit) reason = `最多支持 ${limit} 张参考图片`
-      if (type === 'video' && videoCount > 1) reason = '多条视频请先汇入视频剪辑节点合成'
+      if (type === 'image' && imageCount > limit) reason = `最多支持 ${limit} 张参考图片`
       if (type === 'timeline' && videoCount > limit) reason = `时间线最多支持 ${limit} 个视频片段`
       if (type === 'audio-editor' && sources.length > 1) reason = '音频编辑节点只能连接一个音频来源'
       if (
@@ -4617,7 +4775,9 @@ function CanvasInner() {
         const top = Math.min(...rects.map((rect) => rect.y))
         const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
         position = findFreeNodePosition({
-          anchor: { x: right + 100, y: (top + bottom - nodeH) / 2 },
+          anchor: addMenu.dropPosition
+            ? { x: addMenu.dropPosition.x - nodeW / 2, y: addMenu.dropPosition.y - nodeH / 2 }
+            : { x: right + 100, y: (top + bottom - nodeH) / 2 },
           size: { width: nodeW, height: nodeH },
           occupied: latestRef.current.nodes
             .filter((node) => !node.hidden)
@@ -4675,12 +4835,23 @@ function CanvasInner() {
           showToast(`已连接 ${created.length}/${addMenu.sourceIds.length} 个所选节点`, 'success')
           // 选区靠右时新节点可能在屏幕外，创建后让整条新链路进入视野。
           window.setTimeout(() => {
-            void fitView({
-              nodes: [...addMenu.sourceIds, newNodeId].map((id) => ({ id })),
-              padding: 0.2,
-              duration: 200,
-              maxZoom: transform[2],
-            })
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                if (window.innerWidth <= 600) {
+                  void setCenter(position.x + nodeW / 2, position.y + nodeH / 2, {
+                    zoom: Math.min(transform[2], 0.7),
+                    duration: 0,
+                  })
+                  return
+                }
+                void fitView({
+                  nodes: [...addMenu.sourceIds, newNodeId].map((id) => ({ id })),
+                  padding: 0.2,
+                  duration: 200,
+                  maxZoom: transform[2],
+                })
+              }),
+            )
           }, 0)
         }
       }
@@ -4698,6 +4869,7 @@ function CanvasInner() {
       resolveConnectSources,
       resolveAddMenuInputs,
       fitView,
+      setCenter,
     ],
   )
 
@@ -5521,13 +5693,24 @@ function CanvasInner() {
         targetKind === 'video'
           ? Math.max(
               0,
-              1 -
+              resolveTargetVideoLimit(target) -
                 Math.max(
                   existingRefs.filter((r) => r.kind === 'video' || r.kind === 'timeline').length,
                   countIncomingMediaConnections(pending.targetId, 'video'),
                 ),
             )
           : Number.POSITIVE_INFINITY
+      let audioRoom =
+        targetKind === 'video'
+          ? Math.max(
+              0,
+              resolveTargetAudioLimit(target) -
+                Math.max(
+                  existingRefs.filter((ref) => ref.kind === 'audio').length,
+                  countIncomingMediaConnections(pending.targetId, 'audio'),
+                ),
+            )
+          : 0
       const accepted: Array<{ material: (typeof materials)[number]; sourceKind: string }> = []
       let rejectedKind = 0
       let rejectedLimit = 0
@@ -5549,6 +5732,12 @@ function CanvasInner() {
             continue
           }
           videoRoom -= 1
+        } else if (sourceKind === 'audio') {
+          if (audioRoom <= 0) {
+            rejectedLimit += 1
+            continue
+          }
+          audioRoom -= 1
         }
         accepted.push({ material, sourceKind })
       }
@@ -5678,6 +5867,8 @@ function CanvasInner() {
       setSaveStatus,
       getSourceRefs,
       resolveTargetRefLimit,
+      resolveTargetVideoLimit,
+      resolveTargetAudioLimit,
       countIncomingMediaConnections,
     ],
   )
@@ -6296,9 +6487,13 @@ function CanvasInner() {
           const imageRole = getModelInputConstraints(model?.source, generate.operationCode).roles.find((role) =>
             ['image', 'reference_image'].includes(role.role),
           )
+          const videoRole = getModelInputConstraints(model?.source, generate.operationCode).roles.find(
+            (role) => role.role === 'video',
+          )
           const inputError = validateCanvasTextInputs({
             sourceRefs: generate.sourceRefs || [],
             maxImageRefs: imageRole?.maxCount,
+            maxVideoRefs: videoRole?.maxCount,
           })
           if (inputError) {
             showToast(inputError, 'error')
@@ -6339,18 +6534,25 @@ function CanvasInner() {
             }).running)
         )
           return
-        const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
+        const selectedSubmitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
           (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
         )
+        const submitModel =
+          selectedSubmitModel && resolveCanvasModelForOperation(selectedSubmitModel, generate.operationCode)
         const submitMaxImageRefs =
           getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
         if (generate.kind === 'video' && generate.operationCode !== 'video.upscale') {
+          const submitInputRoles = getModelInputConstraints(submitModel?.source, generate.operationCode).roles
           const videoValidationArgs = {
             operationCode: generate.operationCode,
             videoMode: generate.videoMode,
             sourceRefs: generate.sourceRefs || [],
             workspaceId,
             maxImageRefs: submitMaxImageRefs,
+            maxVideoRefs: submitInputRoles.length
+              ? (submitInputRoles.find((role) => role.role === 'video')?.maxCount ?? 0)
+              : 1,
+            selfVideoAssetId: generate.selfVideoAssetId,
             maxAudioRefs:
               getModelInputConstraints(submitModel?.source, generate.operationCode).roles.find((role) =>
                 /audio/i.test(role.role),
@@ -8236,10 +8438,12 @@ function CanvasInner() {
 
   // 图片放大预览：弹窗在视图层（要拿整张画布的图片列表做画廊导航），记住当前查看的节点 id 即可。
   const [imagePreviewNodeId, setImagePreviewNodeId] = useState('')
+  const [imagePreviewTargetId, setImagePreviewTargetId] = useState('')
   const imagePreviewIsOpen = Boolean(imagePreviewNodeId)
   const resolvePreviewImageInfo = useMemo(createCanvasImageMetadataResolver, [workspaceId, imagePreviewIsOpen])
   const openImagePreview = useCallback((nodeId: string, assetId?: number) => {
     const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+    setImagePreviewTargetId('')
     setImagePreviewNodeId(assetId && assetId !== Number(node?.data.assetId) ? `${nodeId}:image:${assetId}` : nodeId)
   }, [])
 
@@ -8250,9 +8454,12 @@ function CanvasInner() {
   const imagePreviewItems = useMemo<CanvasImagePreviewItem[]>(() => {
     if (!imagePreviewNodeId) return []
     const items: CanvasImagePreviewItem[] = []
+    const connectedIds = imagePreviewTargetId
+      ? new Set(edges.filter((edge) => edge.target === imagePreviewTargetId).map((edge) => edge.source))
+      : null
     for (const node of nodes) {
       const data = node.data as Record<string, unknown> | undefined
-      if (data?.kind !== 'image') continue
+      if (data?.kind !== 'image' || (connectedIds && !connectedIds.has(node.id))) continue
       // 与节点自身展示同一套地址规则：正式地址缺失时用上传中的本地预览地址兜底
       const url = resolveNodeMediaUrl(data, workspaceId) || String(data?.previewUrl || '')
       if (!url) continue
@@ -8285,7 +8492,7 @@ function CanvasInner() {
       }
     }
     return items
-  }, [imagePreviewNodeId, nodes, workspaceId])
+  }, [imagePreviewNodeId, imagePreviewTargetId, nodes, edges, workspaceId])
 
   /**
    * 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。
@@ -10736,6 +10943,7 @@ function CanvasInner() {
         }}
         onPointerDownCapture={(event) => {
           const target = event.target as HTMLElement
+          pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area'))
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
           nodePointerSelectionRef.current = nodeId
             ? {
@@ -11164,6 +11372,7 @@ function CanvasInner() {
               })
             }}
             onPaneClick={() => {
+              if (pointerStartedInPanelRef.current) return
               if (!isPickingRef) setEditingGroup('')
               if (isPickingRef) {
                 // 参考选择模式下点击空白不退出：只能通过「退出」按钮退出
@@ -11539,6 +11748,24 @@ function CanvasInner() {
           />
         )}
 
+        {selectionDragLine && (
+          <svg className="canvas-selection-drag-line" aria-hidden="true">
+            <path
+              className="react-flow__connection-path"
+              d={
+                getBezierPath({
+                  sourceX: selectionDragLine.x1,
+                  sourceY: selectionDragLine.y1,
+                  sourcePosition: Position.Right,
+                  targetX: selectionDragLine.x2,
+                  targetY: selectionDragLine.y2,
+                  targetPosition: Position.Left,
+                })[0]
+              }
+              style={{ strokeWidth: transform[2] }}
+            />
+          </svg>
+        )}
         {selectionFrame && !canvasModalOpen && !imageTool && !isPickingRef && (
           <div
             className={`canvas-selection-frame${selectionIsGroup ? ' is-group-selection' : ''}`}
@@ -11551,6 +11778,14 @@ function CanvasInner() {
               title="从所选节点创建下游节点"
               aria-expanded={Boolean(addMenu?.sourceIds)}
               onPointerMove={(event) => {
+                const drag = selectionDragRef.current
+                if (drag && drag.pointerId === event.pointerId) {
+                  if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 6) drag.moved = true
+                  if (drag.moved) {
+                    setSelectionDragLine({ x1: drag.startX, y1: drag.startY, x2: event.clientX, y2: event.clientY })
+                    return
+                  }
+                }
                 if (
                   event.pointerType !== 'mouse' ||
                   addMenu?.sourceIds ||
@@ -11569,9 +11804,70 @@ function CanvasInner() {
                 event.currentTarget.style.removeProperty('--magnet-x')
                 event.currentTarget.style.removeProperty('--magnet-y')
               }}
-              onPointerDown={(event) => event.stopPropagation()}
+              onPointerDown={(event) => {
+                event.stopPropagation()
+                if (event.button !== 0) return
+                suppressSelectionClickRef.current = false
+                selectionDragRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  sourceIds: [...selectedNodeIds],
+                  moved: false,
+                }
+                event.currentTarget.setPointerCapture(event.pointerId)
+              }}
+              onPointerCancel={() => {
+                selectionDragRef.current = null
+                setSelectionDragLine(null)
+              }}
+              onPointerUp={(event) => {
+                const drag = selectionDragRef.current
+                selectionDragRef.current = null
+                setSelectionDragLine(null)
+                if (!drag || drag.pointerId !== event.pointerId || !drag.moved) return
+                suppressSelectionClickRef.current = true
+                const x = event.clientX
+                const y = event.clientY
+                const rects = latestRef.current.nodes
+                  .filter((node) => !node.hidden && !drag.sourceIds.includes(node.id))
+                  .flatMap((node) => {
+                    const rect = document.querySelector(`[data-id="${node.id}"]`)?.getBoundingClientRect()
+                    return rect
+                      ? [{ nodeId: node.id, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }]
+                      : []
+                  })
+                const hit = resolveCanvasConnectDropTarget({
+                  point: { x, y },
+                  sourceId: drag.sourceIds[0],
+                  rects,
+                  zoom: transform[2],
+                })
+                if (hit) {
+                  void (async () => {
+                    if (!(await confirmBatchConnection(drag.sourceIds, hit.nodeId))) return
+                    const count = connectSourcesToTarget(drag.sourceIds, hit.nodeId)
+                    if (count) showToast(`已把 ${count} 个节点连到目标`, 'success')
+                    else
+                      showToast(validateConnection(drag.sourceIds[0], hit.nodeId) || '这些节点无法连到该目标', 'error')
+                  })()
+                } else {
+                  setContextMenu(null)
+                  setAddMenu({
+                    x: Math.max(170, Math.min(x, window.innerWidth - 170)),
+                    y: Math.max(16, Math.min(y, window.innerHeight - 520)),
+                    sourceId: drag.sourceIds[0],
+                    sourceIds: drag.sourceIds,
+                    dropPosition: screenToFlowPosition({ x, y }),
+                  })
+                }
+              }}
               onClick={(event) => {
                 event.stopPropagation()
+                if (suppressSelectionClickRef.current) {
+                  suppressSelectionClickRef.current = false
+                  return
+                }
                 if (addMenu?.sourceIds) {
                   setAddMenu(null)
                   return
@@ -11769,56 +12065,14 @@ function CanvasInner() {
           >
             {contextMenu.nodeId && (
               <>
-                {/* 创建副本：带子选项列表（需求 recvw1s5he1Vzy），两项始终都给，没有上游时两者结果相同 */}
-                <div
-                  className={`canvas-context-menu__submenu-host${
-                    contextMenu.x > window.innerWidth - CONTEXT_MENU_WIDTH * 2 ? ' is-flipped' : ''
-                  }`}
-                >
-                  <button type="button" className="canvas-context-menu__item" aria-haspopup="menu">
-                    <span className="canvas-context-menu__icon">
-                      <svg
-                        viewBox="0 0 24 24"
-                        width="16"
-                        height="16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                      >
-                        <rect x="9" y="9" width="11" height="11" rx="2" />
-                        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                      </svg>
-                    </span>
-                    创建副本
-                    <span className="canvas-context-menu__kbd" aria-hidden="true">
-                      ›
-                    </span>
-                  </button>
-                  <div className="canvas-context-menu canvas-context-menu__submenu" role="menu">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="canvas-context-menu__item"
-                      onClick={() => duplicateNode(contextMenu.nodeId!)}
-                    >
-                      只含当前节点
-                      <span className="canvas-context-menu__kbd">
-                        {formatCanvasShortcut(preferences.shortcuts.duplicate)}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="canvas-context-menu__item"
-                      onClick={() => {
-                        setContextMenu(null)
-                        duplicateWithUpstream(contextMenu.nodeId!)
-                      }}
-                    >
-                      包含之前所有节点
-                    </button>
-                  </div>
-                </div>
+                <CanvasDuplicateMenu
+                  shortcut={formatCanvasShortcut(preferences.shortcuts.duplicate)}
+                  onDuplicate={() => duplicateNode(contextMenu.nodeId!)}
+                  onDuplicateWithUpstream={() => {
+                    setContextMenu(null)
+                    duplicateWithUpstream(contextMenu.nodeId!)
+                  }}
+                />
                 <button
                   type="button"
                   className="canvas-context-menu__item"
@@ -12173,6 +12427,7 @@ function CanvasInner() {
                       setLibraryInitialTab('real_person')
                       openDrawerPanel('assets')
                     }}
+                    promptEditorSuspended={Boolean(isPickingRef || drawerPanel || imagePreviewNodeId)}
                     onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
                     onPickRefFromLibrary={(slotIndex) => {
                       if (!selectedNode) return
@@ -12204,12 +12459,20 @@ function CanvasInner() {
                         : undefined
                     }
                     onPreviewMentionRef={(ref) => {
+                      if (
+                        !latestRef.current.edges.some(
+                          (edge) =>
+                            edge.id === ref.edgeId && edge.source === ref.sourceId && edge.target === selectedNode.id,
+                        )
+                      )
+                        return
                       if (ref.kind === 'video') {
                         nodePreviewRef.current.get(ref.sourceId)?.()
                         return
                       }
                       if (latestRef.current.nodes.some((item) => item.id === ref.sourceId)) {
                         openImagePreview(ref.sourceId)
+                        setImagePreviewTargetId(selectedNode.id)
                       }
                     }}
                     resultHistory={selectedNodeHistory}
@@ -12217,6 +12480,7 @@ function CanvasInner() {
                     onRatioChange={handleRatioChange}
                     onVideoModeChange={handleVideoModeChange}
                     onModelChange={handleModelChange}
+                    onResolvedModel={handleResolvedModel}
                     onGenerate={handleNodeGenerate}
                     onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
                       if (requiresSeedanceModeration) {

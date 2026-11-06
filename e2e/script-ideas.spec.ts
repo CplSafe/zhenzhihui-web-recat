@@ -1,54 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
 
-test('各阶段驳回后可编辑本机草稿，但没有待办时不可重新提交', async ({ page }, testInfo) => {
-  const api = await installStrictAuthenticatedApp(page, { preserveStorage: true })
-  let stage = 'creative'
-  let version = 1
-  let restored = false
-  await page.route('**/api/v1/student-applications/30', (route) =>
-    route.fulfill({
-      json: {
-        code: 0,
-        data: {
-          application: { id: 30, state: 'submitted', creative: '原始创意' },
-          progress_available: true,
-          workflow: {
-            status: restored ? 1 : 3,
-            stage: restored ? stage : 'finished',
-            current_task: restored ? { task_id: 'new-task', stage, content: '被驳回的正文' } : null,
-            versions: [{ version, stage, content: '被驳回的正文', task_id: 'old', submitted_at: 1793760000000 }],
-            reviews: [{ status: restored ? 5 : 3, version, reason: '请修改剧情', finished_at: 1793760200000 }],
-          },
-        },
-      },
-    }),
-  )
-  for (const [value, title] of [
-    ['creative', '创意'],
-    ['draft', '一卡初稿'],
-    ['revision', '完善剧本'],
-  ]) {
-    stage = value
-    await page.goto('/script-ideas/30')
-    await expect(page.getByRole('heading', { name: `修改被驳回的${title}` })).toBeVisible()
-    await expect(page.getByLabel('修改内容')).toHaveValue('被驳回的正文')
-    await expect(page.getByRole('button', { name: '重新提交（暂不可用）' })).toBeDisabled()
-    await page.getByLabel('修改内容').fill(`修改后的${title}`)
-    await page.reload()
-    await expect(page.getByLabel('修改内容')).toHaveValue(`修改后的${title}`)
-    version++
-  }
-  await page.screenshot({ path: testInfo.outputPath('rejected-edit.png'), fullPage: true })
-  version--
-  restored = true
-  await page.reload()
-  await page.getByRole('button', { name: '使用本机修改内容' }).click()
-  await expect(page.getByLabel('正文')).toHaveValue('修改后的完善剧本')
-  await expect(page.getByRole('button', { name: '提交完善剧本' })).toBeEnabled()
-  expectNoUnexpectedApi(api)
-})
-
 test('详情自动更新审核意见并保留未提交正文', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.clock.install()
@@ -187,7 +139,7 @@ test('剧本创意从提交到待办和历史，重试保持幂等快照', async
   await page.getByRole('button', { name: '刷新进度' }).click()
   await expect(page.getByRole('heading', { name: '待提交', exact: true })).toBeVisible()
   await expect(page.locator('.si-progress [aria-current=step]')).toContainText('一卡初稿')
-  await expect(page.getByText('节点配置暂不可用')).toBeVisible()
+  await expect(page.getByText('节点配置暂不可用')).toHaveCount(0)
   await expect(page.getByLabel('正文')).toHaveValue('')
   expect(requests).toHaveLength(0)
   await page.getByLabel('正文').fill('一卡完整正文')
@@ -272,6 +224,7 @@ test('剧本创意首页在窄屏正常显示', async ({ page }, testInfo) => {
   await expect(page.getByRole('heading', { name: '剧本创意' })).toBeVisible()
   await expect(page.getByRole('button', { name: '查看入驻' })).toBeVisible()
   await expect(page.getByRole('button', { name: '新建创意' })).toBeVisible()
+  await expect(page.getByText('不同阶段，交不同的内容')).toHaveCount(0)
   expect(await page.locator('.home__content').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
     true,
   )
@@ -285,7 +238,11 @@ test('返回按钮遵循浏览历史并支持无历史回首页', async ({ page 
   await expect(page.getByRole('heading', { name: '剧本表单预览' })).toBeVisible()
   await page.getByRole('button', { name: '← 返回', exact: true }).click()
   await expect(page).toHaveURL(/\/script-ideas$/)
-  await page.getByRole('button', { name: '查看完善剧本' }).click()
+  await expect(page.getByText('不同阶段，交不同的内容')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '查看填写规范' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '查看完善剧本' })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('script-home.png') })
+  await page.goto('/script-ideas/stage/final')
   await expect(page.getByRole('heading', { name: '完善剧本表单预览' })).toBeVisible()
   await expect(page.getByText('想对评审说的话')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('stage-back.png') })

@@ -1,0 +1,222 @@
+import { expect, test } from '@playwright/test'
+import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
+
+const config = {
+  enabled: true,
+  entry_name: '定制宣传片',
+  duration_options_seconds: [180],
+  ratio_options: ['16:9'],
+  resolution_options: ['1080P'],
+  allowed_mime: ['image/png'],
+  max_file_bytes: 10000,
+  max_files: 10,
+  max_total_bytes: 50000,
+  footage_min_count: 1,
+  offline_fallback: true,
+  price_show: true,
+  manual_quote_required: false,
+  service_tel: '10000',
+  authorization_text: '素材授权声明',
+  acknowledgement_text: '制作须知',
+  authorization_version: 'v1',
+}
+
+test('宣传片素材完成后报价，下单失败后使用原请求重试', async ({ page }, testInfo) => {
+  await installStrictAuthenticatedApp(page, { preserveStorage: true })
+  const bodies: string[] = []
+  let uploaded = false
+  let orderStatus = 'pending'
+  let reworkRequests = 0
+  await page.route('**/api/v1/promo/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const method = route.request().method()
+    let data: unknown = {}
+    if (path.endsWith('/config')) data = config
+    else if (path.endsWith('/intakes') && method === 'POST') data = { token: 'intake-1' }
+    else if (path.endsWith('/uploads'))
+      data = {
+        material: {
+          id: 5,
+          role: 'footage',
+          status: 'pending',
+          name: '素材.png',
+          size_bytes: 3,
+          mime_type: 'image/png',
+        },
+        url: 'https://bucket.aliyuncs.com/upload',
+        form_fields: { key: 'sample' },
+        expires_at: '2027-01-01',
+      }
+    else if (path.endsWith('/materials/5/complete')) {
+      expect(uploaded).toBe(true)
+      data = { id: 5, role: 'footage', status: 'active', name: '素材.png', size_bytes: 3, mime_type: 'image/png' }
+    } else if (path.endsWith('/quote'))
+      data = { base_cost: 100, service_cost: 50, total_cost: 150, config_hash: 'hash1', promised_date: '2026-11-10' }
+    else if (path.endsWith('/orders') && method === 'POST') {
+      bodies.push(route.request().postData() || '')
+      if (bodies.length === 1) {
+        await route.fulfill({ status: 402, json: { code: 402, message: '余额不足' } })
+        return
+      }
+      if (bodies.length === 2) {
+        await route.fulfill({ status: 503, json: { code: 503, message: '暂不可用' } })
+        return
+      }
+      data = { id: 31, task_id: 32 }
+    } else if (path.endsWith('/orders/31/rework')) {
+      expect(route.request().postDataJSON()).toEqual({ text: '调整片尾' })
+      reworkRequests += 1
+      orderStatus = 'reworking'
+    } else if (path.endsWith('/materials/42/download')) {
+      data = { download_url: '/tutorials/smart-create.mp4' }
+    } else if (path.endsWith('/orders/31'))
+      data = {
+        order: {
+          id: 31,
+          workspace_id: 21,
+          task_id: 32,
+          status: orderStatus,
+          billing_status: orderStatus === 'pending' ? 'frozen' : 'settled',
+          is_overdue: false,
+          first_delivered_at: orderStatus === 'pending' ? null : '2026-11-04T00:00:00+08:00',
+          delivered_material_id: orderStatus === 'delivered' ? 42 : null,
+          can_rework: orderStatus === 'delivered',
+          rework_status: orderStatus === 'reworking' ? 'requested' : null,
+          promised_date: '2026-11-10',
+        },
+        materials: [],
+      }
+    else return route.fallback()
+    await route.fulfill({ json: { code: 0, data } })
+  })
+  await page.route('https://bucket.aliyuncs.com/upload', async (route) => {
+    uploaded = true
+    await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } })
+  })
+  await page.goto('/promo')
+  await expect(page.getByRole('button', { name: '提交需求，进入制作排期' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('promo-intro.png'), fullPage: true, animations: 'disabled' })
+  await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
+  await page.getByLabel('单位 / 公司名称').fill('测试公司')
+  await page.getByLabel('联系人', { exact: true }).fill('李先生')
+  await page.getByLabel('联系电话').fill('13800000000')
+  await page.getByLabel('制作需求', { exact: true }).fill('介绍产品')
+  await page.screenshot({ path: testInfo.outputPath('promo-form.png'), fullPage: true, animations: 'disabled' })
+  await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  await page
+    .getByLabel('上传实拍素材')
+    .setInputFiles({ name: '素材.png', mimeType: 'image/png', buffer: Buffer.from('abc') })
+  await expect(page.getByText(/素材.png · 已就绪/)).toBeVisible()
+  await page.getByLabel('素材授权声明').check()
+  await page.getByLabel('制作须知').check()
+  await page.screenshot({ path: testInfo.outputPath('promo-materials.png'), fullPage: true, animations: 'disabled' })
+  await page.getByRole('button', { name: '下一步：确认并提交' }).click()
+  await expect(page.getByText('150 积分', { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('promo-quote.png'), fullPage: true, animations: 'disabled' })
+  await page.getByRole('button', { name: '提交宣传片任务（T+5）' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认提交' }).click()
+  await expect(page.getByRole('alert')).toContainText('余额不足')
+  await expect(page.getByRole('button', { name: '重试原请求' })).toHaveCount(0)
+  await page.getByRole('button', { name: '提交宣传片任务（T+5）' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认提交' }).click()
+  await expect(page.getByRole('button', { name: '重试原请求' })).toBeVisible()
+  await page.getByRole('button', { name: '重试原请求' }).click()
+  await expect(page.getByRole('heading', { name: '宣传片订单 #31' })).toBeVisible()
+  expect(bodies).toHaveLength(3)
+  expect(bodies[1]).toBe(bodies[2])
+  expect(JSON.parse(bodies[0]).idempotency_key).not.toBe(JSON.parse(bodies[1]).idempotency_key)
+  expect(JSON.parse(bodies[1])).toMatchObject({
+    intake_token: 'intake-1',
+    config_hash: 'hash1',
+    authorized: true,
+    acknowledged: true,
+    authorization_version: 'v1',
+  })
+  await expect(page.getByText('团队制作中', { exact: true })).toBeVisible()
+  orderStatus = 'delivered'
+  await page.getByRole('button', { name: '刷新状态' }).click()
+  await expect(page.getByLabel('宣传片成片')).toBeVisible()
+  await expect(page.getByRole('link', { name: '下载视频' })).toBeVisible()
+  await page.getByLabel('宣传片成片').evaluate((element) => (element as HTMLVideoElement).play())
+  await expect
+    .poll(() => page.getByLabel('宣传片成片').evaluate((element) => (element as HTMLVideoElement).currentTime))
+    .toBeGreaterThan(0)
+  await page.screenshot({ path: testInfo.outputPath('promo-delivered.png'), fullPage: true, animations: 'disabled' })
+  await page.getByLabel('修改意见').fill('调整片尾')
+  await page.getByRole('button', { name: '申请免费修改' }).click()
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: /确\s*认/ })
+    .click()
+  await expect(page.getByText('待受理')).toBeVisible()
+  expect(reworkRequests).toBe(1)
+})
+
+test('服务关闭时仍可查看历史订单', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/promo/config', (route) =>
+    route.fulfill({ json: { code: 0, data: { ...config, enabled: false } } }),
+  )
+  await page.route('**/api/v1/promo/orders**', (route) =>
+    route.fulfill({ json: { code: 0, data: { items: [], total: 0, limit: 20, offset: 0, has_unfinished: false } } }),
+  )
+  await page.goto('/promo')
+  await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '提交需求，进入制作排期' })).toHaveCount(0)
+  await page.getByRole('button', { name: '查看我的订单' }).click()
+  await expect(page.getByText('暂无宣传片订单。')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('窄屏可填写宣传片需求并进入素材步骤', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/promo/config', (route) => route.fulfill({ json: { code: 0, data: config } }))
+  await page.route('**/api/v1/promo/intakes', (route) =>
+    route.fulfill({ json: { code: 0, data: { token: 'mobile-intake' } } }),
+  )
+  await page.goto('/promo')
+  await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
+  await page.getByLabel('单位 / 公司名称').fill('公司')
+  await page.getByLabel('联系人', { exact: true }).fill('联系人')
+  await page.getByLabel('联系电话').fill('13800000000')
+  await page.getByLabel('制作需求', { exact: true }).fill('制作需求')
+  await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  await expect(page.getByRole('heading', { name: '上传素材' })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({
+    path: testInfo.outputPath('promo-materials-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+})
+
+test('刷新后恢复宣传片需求及素材，授权需要重新确认', async ({ page }, testInfo) => {
+  await installStrictAuthenticatedApp(page, { preserveStorage: true })
+  await page.route('**/api/v1/promo/config', (route) => route.fulfill({ json: { code: 0, data: config } }))
+  await page.route('**/api/v1/promo/intakes**', (route) => {
+    const data =
+      route.request().method() === 'POST'
+        ? { token: 'draft-intake' }
+        : { materials: [{ id: 5, role: 'footage', status: 'active', name: '素材.png' }] }
+    return route.fulfill({ json: { code: 0, data } })
+  })
+  await page.goto('/promo')
+  await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
+  await page.getByLabel('单位 / 公司名称').fill('恢复测试公司')
+  await page.getByLabel('联系人', { exact: true }).fill('张先生')
+  await page.getByLabel('联系电话').fill('13800000000')
+  await page.getByLabel('制作需求', { exact: true }).fill('恢复制作需求')
+  await page.reload()
+  await expect(page.getByLabel('单位 / 公司名称')).toHaveValue('恢复测试公司')
+  await expect(page.getByRole('textbox', { name: '制作需求' })).toHaveValue('恢复制作需求')
+  await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  await expect(page.getByText(/素材.png · 已就绪/)).toBeVisible()
+  await expect(page.getByLabel('素材授权声明')).not.toBeChecked()
+  await page.screenshot({
+    path: testInfo.outputPath('promo-draft-restored.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+})

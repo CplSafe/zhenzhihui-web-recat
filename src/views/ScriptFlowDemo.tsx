@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { ScriptGenreSelect } from './ScriptGenreSelect'
 
 const stages = ['提交创意', '一卡', '剧本', '完善剧本']
 const descriptions = ['说清楚你想写什么故事', '把创意扩成标准一卡', '补齐可生产的完整剧本', '按评审意见修订并提交终稿']
@@ -188,24 +189,7 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
       <header className="si-heading">
         {isNew && <h1>提交新创意</h1>}
         <p>本页面仅在当前浏览器模拟流程，不创建真实申请；附件只记录文件名，不上传或保存文件内容。</p>
-        <button
-          type="button"
-          onClick={() =>
-            navigate('/script-ideas/new', {
-              state: {
-                fromDemo: {
-                  applicant: demo.applicant ?? profile['真实姓名'] ?? '',
-                  school: demo.school ?? profile['学校 / 机构'] ?? '',
-                  title: demo.data[0]['剧名'] || '',
-                  genre: demo.data[0]['题材'] || '',
-                  synopsis: demo.data[0]['剧情简介'] || '',
-                  ep1Plot: demo.data[0]['第一集剧本剧情'] || '',
-                  characters: demo.data[0]['人物、身份、性格'] || '',
-                },
-              },
-            })
-          }
-        >
+        <button type="button" onClick={() => navigate('/script-ideas/new')}>
           填写真实申请
         </button>
       </header>
@@ -436,6 +420,11 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
                         {f.name === '单集最短时长' ? '单集时长' : f.name} {f.required && <em>*</em>}
                         {locked ? (
                           <p className="si-preserve">{values[f.name] || '—'}</p>
+                        ) : f.name === '题材' && demo.stage === 0 ? (
+                          <ScriptGenreSelect
+                            value={values[f.name] || ''}
+                            onChange={(value) => setValue(f.name, value)}
+                          />
                         ) : f.type === 'textarea' ? (
                           <textarea
                             value={values[f.name] || ''}

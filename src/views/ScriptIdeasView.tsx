@@ -26,6 +26,7 @@ import {
 } from '@/api/studentApplications'
 import { JoinPreview, StagePreview } from './ScriptPrototypeSections'
 import { ScriptFlowDemo } from './ScriptFlowDemo'
+import { ScriptGenreSelect } from './ScriptGenreSelect'
 import { parseSubmittedIdea } from '@/utils/parseSubmittedIdea'
 import {
   cardFields,
@@ -188,29 +189,6 @@ function writeSnapshot(key: string, value: Snapshot | null) {
   else localStorage.removeItem(key)
 }
 
-function ApprovalPreview() {
-  return (
-    <section className="si-approval">
-      <h3>审批流程</h3>
-      <p>提交后的审核结果可在详情中查看。</p>
-      <div className="si-approval-box">
-        <div className="si-approval-head">
-          <strong>审批流程</strong>
-          <span>节点配置暂不可用</span>
-        </div>
-        <div className="si-approval-nodes">
-          {[1, 2, 3, 4].map((node) => (
-            <span key={node}>
-              <b>{node}</b>节点待获取
-            </span>
-          ))}
-        </div>
-        <small>流程以服务端返回的实际待办和审核结果为准。</small>
-      </div>
-    </section>
-  )
-}
-
 export default function ScriptIdeasView() {
   const navigate = useNavigate(),
     location = useLocation(),
@@ -259,24 +237,13 @@ export default function ScriptIdeasView() {
   }, [owner, isHome, isNew, id])
   const formInitialized = useRef('')
   useEffect(() => {
-    if (!isNew || (!creator && !creatorError) || formInitialized.current === location.key) return
+    if (!isNew || formInitialized.current === location.key) return
     formInitialized.current = location.key
-    const profile = creator?.profile
-    const fromDemo = location.state?.fromDemo
-    setForm({
-      name: fromDemo?.applicant || profile?.real_name || '',
-      phone: profile?.phone || '',
-      school: fromDemo?.school || profile?.school || '',
-      creative: fromDemo?.synopsis || '',
-    })
-    if (fromDemo)
-      setIdeaFields({
-        title: fromDemo.title || '',
-        genre: fromDemo.genre || '',
-        ep1Plot: fromDemo.ep1Plot || '',
-        characters: fromDemo.characters || '',
-      })
-  }, [owner, isNew, location.key, location.state?.fromDemo, creator, creatorError])
+    setForm({ name: '', phone: '', school: '', creative: '' })
+    setIdeaFields({ title: '', genre: '', ep1Plot: '', characters: '' })
+    setIdeaValidationAttempted(false)
+    setFiles([])
+  }, [isNew, location.key])
   const [ideaFields, setIdeaFields] = useState({ title: '', genre: '', ep1Plot: '', characters: '' })
   const [ideaValidationAttempted, setIdeaValidationAttempted] = useState(false)
   const [files, setFiles] = useState<File[]>([])
@@ -304,7 +271,6 @@ export default function ScriptIdeasView() {
   const [revisionDescription, setRevisionDescription] = useState('')
   const [revisionOriginal, setRevisionOriginal] = useState(false)
   const [rejectedDraft, setRejectedDraft] = useState('')
-  const [draftSaveError, setDraftSaveError] = useState(false)
   const [hasRejectedDraft, setHasRejectedDraft] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef(''),
@@ -860,6 +826,13 @@ export default function ScriptIdeasView() {
     detail?.workflow?.status === 1,
   )
   const reviews = [...(detail?.workflow?.reviews || [])].sort((a, b) => (b.finished_at || 0) - (a.finished_at || 0))
+  const visibleReviews = reviews.filter((review) => {
+    const stage =
+      review.stage || detail?.workflow?.versions?.find((version) => version.version === review.version)?.stage
+    const isGradedVersion =
+      review.version != null && detail?.workflow?.card_grades?.some((grade) => grade.version === review.version)
+    return !(review.status === 2 && (isCard(stage) || (!stage && isGradedVersion)))
+  })
   const latestReview = reviews[0]
   const rejection = reviews.find((review) => review.status === 3 || review.status === 5)
   const showRejection = detail?.workflow?.review_status
@@ -871,7 +844,6 @@ export default function ScriptIdeasView() {
     detail?.progress_available && latestReview && [3, 5].includes(latestReview.status)
       ? detail.workflow?.versions?.find((version) => version.version === latestReview.version)
       : undefined
-  const editableRejectedVersion = !canEdit ? rejectedVersion : undefined
   const rejectedDraftKey =
     owner && id && rejectedVersion
       ? `zzh.student-application.rejected-draft.v1.${owner}.${id}.${rejectedVersion.version}`
@@ -887,10 +859,8 @@ export default function ScriptIdeasView() {
       const saved = localStorage.getItem(rejectedDraftKey)
       setRejectedDraft(saved ?? rejectedInitialContent)
       setHasRejectedDraft(saved !== null)
-      setDraftSaveError(false)
     } catch {
       setRejectedDraft(rejectedInitialContent)
-      setDraftSaveError(true)
     }
   }, [rejectedDraftKey, rejectedInitialContent])
   // 审核中没有待办时，以最新提交版本确定正在审核的阶段；没有版本时保持未知。
@@ -982,18 +952,20 @@ export default function ScriptIdeasView() {
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
         <div className="home__content" ref={contentRef}>
           <main className={`si-page${id ? ' si-review-detail' : ''}`}>
-            <div className="si-back-bar">
-              <button
-                type="button"
-                className="si-back-button"
-                onClick={() => {
-                  if (typeof window.history.state?.idx === 'number' && window.history.state.idx > 0) navigate(-1)
-                  else navigate('/script-ideas', { replace: true })
-                }}
-              >
-                ← 返回
-              </button>
-            </div>
+            {!isHome && (
+              <div className="si-back-bar">
+                <button
+                  type="button"
+                  className="si-back-button"
+                  onClick={() => {
+                    if (typeof window.history.state?.idx === 'number' && window.history.state.idx > 0) navigate(-1)
+                    else navigate('/script-ideas', { replace: true })
+                  }}
+                >
+                  ← 返回
+                </button>
+              </div>
+            )}
             {isHome ? (
               <>
                 <header className="si-heading si-heading-row">
@@ -1001,17 +973,7 @@ export default function ScriptIdeasView() {
                     <h1>剧本创意</h1>
                     <p>把你的故事交给我们。每条创意的进度、意见和提交内容都在这里。</p>
                   </div>
-                  <span className="si-home-tag">创意征集中</span>
                 </header>
-                {!joinedProfile && (
-                  <div className="si-notice">
-                    <span>ⓘ</span>
-                    <div>
-                      <strong>第一次使用？先填写申请人信息。</strong>{' '}
-                      提交创意时登记姓名、电话和学校，即可发起独立审批流程。
-                    </div>
-                  </div>
-                )}
                 <div className="si-entries">
                   <section className="si-card">
                     <div className="si-entry-top">
@@ -1031,7 +993,9 @@ export default function ScriptIdeasView() {
                     </div>
                     <h2>我的创意</h2>
                     <p>查看所有已提交创意的进度、审核意见与提交内容。</p>
-                    <button onClick={() => open('/script-ideas/list')}>查看列表</button>
+                    <button disabled={!joinedProfile} onClick={() => open('/script-ideas/list')}>
+                      查看列表
+                    </button>
                   </section>
                   <section className="si-card si-primary-card">
                     <div className="si-entry-top">
@@ -1040,39 +1004,10 @@ export default function ScriptIdeasView() {
                     </div>
                     <h2>提交创意</h2>
                     <p>每条创意生成一条独立审批流程，随时可提交新的。</p>
-                    <button className="si-primary" onClick={() => open('/script-ideas/new')}>
+                    <button className="si-primary" disabled={!joinedProfile} onClick={() => open('/script-ideas/new')}>
                       新建创意
                     </button>
                   </section>
-                </div>
-                <h2 className="si-section-title">不同阶段，交不同的内容</h2>
-                <div className="si-features">
-                  {[
-                    ['创意', '写清主角、困境、冲突和故事钩子，提交你的故事构想。'],
-                    ['一卡', '完善剧情简介、核心卖点、人物小传、分集大纲与付费卡点。'],
-                    ['剧本', '根据审核意见修改并提交完整正文，继续推进后续制作。'],
-                  ].map(([a, b]) => (
-                    <section className="si-card" key={a}>
-                      <span className="si-kicker">{a}</span>
-                      <h3>{a === '一卡' ? '提交一卡' : a === '剧本' ? '完善剧本' : '提交创意'}</h3>
-                      <p>{b}</p>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          a === '创意'
-                            ? open('/script-ideas/new')
-                            : navigate(`/script-ideas/stage/${a === '一卡' ? 'card' : 'script'}`)
-                        }
-                      >
-                        查看填写规范
-                      </button>
-                      {a === '剧本' && (
-                        <button type="button" onClick={() => navigate('/script-ideas/stage/final')}>
-                          查看完善剧本
-                        </button>
-                      )}
-                    </section>
-                  ))}
                 </div>
               </>
             ) : isJoin ? (
@@ -1113,18 +1048,6 @@ export default function ScriptIdeasView() {
                   </div>
                 )}
                 {isNew && (
-                  <div className="si-unavailable" role="note">
-                    按原型体验四阶段流程：
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/script-ideas/stage/demo?new=${crypto.randomUUID()}`)}
-                    >
-                      新建本机演示创意
-                    </button>
-                    。此处下方为现有真实申请入口。
-                  </div>
-                )}
-                {isNew && (
                   <form
                     className="si-card si-form"
                     onSubmit={(e) => {
@@ -1134,7 +1057,6 @@ export default function ScriptIdeasView() {
                   >
                     <div className="si-form-head">
                       <h2>填写提交创意</h2>
-                      <span>把故事讲明白，提交完整文本。</span>
                     </div>
                     <div className="si-form-section">
                       <h3>填写规范</h3>
@@ -1149,19 +1071,21 @@ export default function ScriptIdeasView() {
                         <a href="/script-idea-templates/创意提交模板.docx" download>
                           ↓ 下载模板：创意提交模板.docx
                         </a>
-                        <span> 附件将在提交时上传并关联申请；从本机演示转入时请重新选择文件。</span>
                       </div>
                     </div>
                     <div className="si-form-section">
                       <h3>申请人信息</h3>
-                      <p>请填写真实信息，以便联系和审核。</p>
+                      <p>请填写申请人的真实信息，以便联系和审核。</p>
+                      <button type="button" onClick={() => open('/script-ideas/join')}>
+                        查看 / 修改入驻信息
+                      </button>
                       <div className="si-fields">
                         {(['name', 'school', 'phone'] as const).map((k) => (
                           <label key={k}>
                             {{ name: '姓名', phone: '联系电话', school: '学校 / 机构' }[k]} <em>*</em>
                             <input
                               value={form[k]}
-                              onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                              onChange={(event) => setForm({ ...form, [k]: event.target.value })}
                               disabled={!!pending}
                               required
                             />
@@ -1175,22 +1099,35 @@ export default function ScriptIdeasView() {
                         {(['title', 'genre'] as const).map((k) => (
                           <label key={k}>
                             {{ title: '剧名', genre: '题材' }[k]} <em>*</em>
-                            <input
-                              id={`si-${k}-input`}
-                              value={ideaFields[k]}
-                              onChange={(e) => {
-                                setIdeaFields({ ...ideaFields, [k]: e.target.value })
-                                setError((previous) => (previous.startsWith('请填写') ? '' : previous))
-                              }}
-                              onInvalid={() => setIdeaValidationAttempted(true)}
-                              disabled={!!pending}
-                              required
-                              aria-invalid={ideaValidationAttempted && !ideaFields[k].trim() ? true : undefined}
-                              aria-describedby={
-                                ideaValidationAttempted && !ideaFields[k].trim() ? `si-${k}-error` : undefined
-                              }
-                              placeholder={k === 'title' ? '例如：血月禁域：双王血契' : '输入题材'}
-                            />
+                            {k === 'genre' ? (
+                              <ScriptGenreSelect
+                                id="si-genre-input"
+                                value={ideaFields.genre}
+                                disabled={!!pending}
+                                invalid={ideaValidationAttempted && !ideaFields.genre.trim()}
+                                onChange={(value) => {
+                                  setIdeaFields({ ...ideaFields, genre: value })
+                                  setError((previous) => (previous.startsWith('请填写') ? '' : previous))
+                                }}
+                              />
+                            ) : (
+                              <input
+                                id={`si-${k}-input`}
+                                value={ideaFields[k]}
+                                onChange={(e) => {
+                                  setIdeaFields({ ...ideaFields, [k]: e.target.value })
+                                  setError((previous) => (previous.startsWith('请填写') ? '' : previous))
+                                }}
+                                onInvalid={() => setIdeaValidationAttempted(true)}
+                                disabled={!!pending}
+                                required
+                                aria-invalid={ideaValidationAttempted && !ideaFields[k].trim() ? true : undefined}
+                                aria-describedby={
+                                  ideaValidationAttempted && !ideaFields[k].trim() ? `si-${k}-error` : undefined
+                                }
+                                placeholder="例如：血月禁域：双王血契"
+                              />
+                            )}
                             {ideaValidationAttempted && !ideaFields[k].trim() && (
                               <span className="si-field-error" id={`si-${k}-error`}>
                                 请填写{k === 'title' ? '剧名' : '题材'}
@@ -1277,7 +1214,6 @@ export default function ScriptIdeasView() {
                         ))}
                       </div>
                     </div>
-                    <ApprovalPreview />
                     {pending ? (
                       <div className="si-pending">
                         上一次提交结果尚未确认。请先查看我的创意，再用原内容重试。
@@ -1413,10 +1349,7 @@ export default function ScriptIdeasView() {
                               <small>{formatTime(item.created_at)}</small>
                             </span>
                             <span>{item.genre || '—'}</span>
-                            <span>
-                              {stageLabel[item.current_stage || ''] || item.current_stage || '—'}
-                              {item.card_grade ? ` · ${item.card_grade}` : ''}
-                            </span>
+                            <span>{stageLabel[item.current_stage || ''] || item.current_stage || '—'}</span>
                             <span className="si-badge">
                               {serverStatus[item.review_status || ''] || stateLabel[item.state] || '状态待确认'}
                             </span>
@@ -1504,9 +1437,7 @@ export default function ScriptIdeasView() {
                               <p>
                                 {canEdit
                                   ? '请根据意见修改正文后主动提交。'
-                                  : editableRejectedVersion
-                                    ? null
-                                    : '当前没有可提交的待办，如需继续请联系管理员。'}
+                                  : '当前没有可提交的待办，如需继续请联系管理员。'}
                               </p>
                             )}
                             {(showCreativeApproved || showCardApproved || showScriptApproved) && (
@@ -1567,7 +1498,6 @@ export default function ScriptIdeasView() {
                                     <b aria-label={done ? '已通过' : undefined}>{done ? '✓' : i + 1}</b>
                                     <span>
                                       {x}
-                                      {i === 1 && detail.workflow?.card_grade ? ` · ${detail.workflow.card_grade}` : ''}
                                       {currentStep === i ? ' · 当前' : ''}
                                       <small>
                                         {i === 2 && isRevision(currentStage)
@@ -1584,47 +1514,6 @@ export default function ScriptIdeasView() {
                             </div>
                           </aside>
                           <div>
-                            {editableRejectedVersion && (
-                              <section className="si-card si-form si-rejected-editor">
-                                <div className="si-form-head">
-                                  <h2>修改被驳回的{stageLabel[editableRejectedVersion.stage] || '提交内容'}</h2>
-                                  <span>版本 {editableRejectedVersion.version}</span>
-                                </div>
-                                <div className="si-form-section">
-                                  <p>可根据审核意见修改正文，内容仅暂存在当前账号的本机浏览器，不会自动提交。</p>
-                                  <label>
-                                    修改内容
-                                    <textarea
-                                      rows={12}
-                                      value={rejectedDraft}
-                                      onChange={(event) => {
-                                        const value = event.target.value
-                                        setRejectedDraft(value)
-                                        try {
-                                          if (!rejectedDraftKey) throw new Error('missing account')
-                                          localStorage.setItem(rejectedDraftKey, value)
-                                          setHasRejectedDraft(true)
-                                          setDraftSaveError(false)
-                                        } catch {
-                                          setDraftSaveError(true)
-                                        }
-                                      }}
-                                    />
-                                  </label>
-                                  {draftSaveError && <p role="alert">本机保存失败，请复制内容后再离开页面。</p>}
-                                </div>
-                                <div className="si-form-foot">
-                                  <button
-                                    type="button"
-                                    className="si-primary"
-                                    disabled
-                                    title="后端尚未提供重新提交的待办"
-                                  >
-                                    重新提交（暂不可用）
-                                  </button>
-                                </div>
-                              </section>
-                            )}
                             {taskChanged && (
                               <div className="si-card si-task-changed" role="alert">
                                 <strong>当前待办已变化，未提交的正文已保留。</strong>
@@ -1730,7 +1619,9 @@ export default function ScriptIdeasView() {
                                     <h3>创意修改</h3>
                                     {(['name', 'school', 'phone'] as const).map((key) => (
                                       <label key={key}>
-                                        {{ name: '申请人', school: '学校 / 机构', phone: '联系电话' }[key]} <em>*</em>
+                                        <span>
+                                          {{ name: '申请人', school: '学校 / 机构', phone: '联系电话' }[key]} <em>*</em>
+                                        </span>
                                         <input
                                           required
                                           value={form[key]}
@@ -1744,20 +1635,35 @@ export default function ScriptIdeasView() {
                                     ))}
                                     {(['title', 'genre'] as const).map((key) => (
                                       <label key={key}>
-                                        {key === 'title' ? '剧名' : '题材'} <em>*</em>
-                                        <input
-                                          required
-                                          value={ideaFields[key]}
-                                          disabled={busy || !!pending}
-                                          onChange={(event) => {
-                                            dirtyRef.current = true
-                                            setIdeaFields({ ...ideaFields, [key]: event.target.value })
-                                          }}
-                                        />
+                                        <span>
+                                          {key === 'title' ? '剧名' : '题材'} <em>*</em>
+                                        </span>
+                                        {key === 'genre' ? (
+                                          <ScriptGenreSelect
+                                            value={ideaFields.genre}
+                                            disabled={busy || !!pending}
+                                            onChange={(value) => {
+                                              dirtyRef.current = true
+                                              setIdeaFields({ ...ideaFields, genre: value })
+                                            }}
+                                          />
+                                        ) : (
+                                          <input
+                                            required
+                                            value={ideaFields[key]}
+                                            disabled={busy || !!pending}
+                                            onChange={(event) => {
+                                              dirtyRef.current = true
+                                              setIdeaFields({ ...ideaFields, [key]: event.target.value })
+                                            }}
+                                          />
+                                        )}
                                       </label>
                                     ))}
                                     <label>
-                                      故事创意 <em>*</em>
+                                      <span>
+                                        故事创意 <em>*</em>
+                                      </span>
                                       <textarea
                                         required
                                         value={form.creative}
@@ -2055,7 +1961,6 @@ export default function ScriptIdeasView() {
                                         ))}
                                   </div>
                                 )}
-                                <ApprovalPreview />
                                 {submitError && (
                                   <div className="si-error si-submit-error" role="alert">
                                     {submitError}
@@ -2129,6 +2034,21 @@ export default function ScriptIdeasView() {
                                     Array.isArray(attachments) && attachments.length
                                       ? attachments.map((file) => file.file_name).join('、')
                                       : '当前申请未提供附件信息'
+                                  const attachmentContent =
+                                    Array.isArray(attachments) && attachments.length
+                                      ? attachments.map((file, index) => (
+                                          <span key={`${file.file_id}-${index}`}>
+                                            {index > 0 && '、'}
+                                            {file.file_id > 0 ? (
+                                              <a href={`/api/v1/script-files/${file.file_id}/download`} download>
+                                                {file.file_name || `文件 ${file.file_id}`}
+                                              </a>
+                                            ) : (
+                                              file.file_name || '未知文件'
+                                            )}
+                                          </span>
+                                        ))
+                                      : attachmentNames
                                   const creativeData =
                                     latestSubmittedVersion?.stage === 'creative'
                                       ? latestSubmittedVersion.data || detail.application.data
@@ -2161,6 +2081,7 @@ export default function ScriptIdeasView() {
                                                   `${stageLabel[cardVersion.stage] || '提交'}正文`,
                                                   readableStageContent(original) || '暂无内容',
                                                 ],
+                                                ['附件', attachmentNames],
                                               ]
                                     : structuredRows('creative', creativeData)
                                       ? [...structuredRows('creative', creativeData)!, ['附件', attachmentNames]]
@@ -2233,35 +2154,18 @@ export default function ScriptIdeasView() {
                                           </label>
                                           <label>
                                             剧本文档附件
-                                            <span className="si-approved-attachment">{attachmentNames}</span>
+                                            <span className="si-approved-attachment">{attachmentContent}</span>
                                           </label>
                                         </div>
                                       ) : (
                                         rows.map(([label, value]) => (
                                           <div className="si-readonly-body" key={label}>
                                             <span>{label}</span>
-                                            <p className="si-preserve">{value}</p>
+                                            <p className="si-preserve">
+                                              {label.endsWith('附件') ? attachmentContent : value}
+                                            </p>
                                           </div>
                                         ))
-                                      )}
-                                      {Array.isArray(attachments) && attachments.length > 0 && (
-                                        <div className="si-readonly-body">
-                                          <span>下载附件</span>
-                                          <p>
-                                            {attachments.map(
-                                              (file) =>
-                                                file.file_id > 0 && (
-                                                  <a
-                                                    key={file.file_id}
-                                                    href={`/api/v1/script-files/${file.file_id}/download`}
-                                                    download
-                                                  >
-                                                    {file.file_name || `文件 ${file.file_id}`}
-                                                  </a>
-                                                ),
-                                            )}
-                                          </p>
-                                        </div>
                                       )}
                                       {parsed && (
                                         <details className="si-original-content">
@@ -2296,40 +2200,10 @@ export default function ScriptIdeasView() {
                                 存在结果未确认的提交，请刷新进度或联系管理员核对。
                               </div>
                             )}
-                            {detail.workflow?.card_grades?.length ||
-                            detail.workflow?.production_assignment?.producer_name ? (
-                              <section className="si-card si-content si-timeline">
-                                <h2>一卡评级与制作安排</h2>
-                                {detail.workflow?.card_grades?.map((grade, index) => (
-                                  <article className="si-history" key={`${grade.version}-${index}`}>
-                                    <strong>
-                                      版本 {grade.version} · 评级 {grade.grade}
-                                    </strong>
-                                    <p>
-                                      {grade.reviewer_name || '—'} · {formatTime(grade.reviewed_at)}
-                                    </p>
-                                  </article>
-                                ))}
-                                {detail.workflow?.production_assignment?.producer_name && (
-                                  <article className="si-history">
-                                    <strong>制剧人：{detail.workflow.production_assignment.producer_name}</strong>
-                                    <p>
-                                      {detail.workflow.production_assignment.director_name
-                                        ? `导演：${detail.workflow.production_assignment.director_name} · `
-                                        : ''}
-                                      {formatTime(detail.workflow.production_assignment.assigned_at)}
-                                    </p>
-                                    {detail.workflow.production_assignment.remark && (
-                                      <p>{detail.workflow.production_assignment.remark}</p>
-                                    )}
-                                  </article>
-                                )}
-                              </section>
-                            ) : null}
                             <section className="si-card si-content si-timeline">
                               <h2>审批记录</h2>
-                              {detail.workflow?.reviews?.length ? (
-                                reviews.map((v, i) => (
+                              {visibleReviews.length ? (
+                                visibleReviews.map((v, i) => (
                                   <article
                                     className={`si-history${v.status === 3 || v.status === 5 ? ' is-rejected' : ''}`}
                                     key={`${v.task_id || ''}-${v.version || ''}-${i}`}
@@ -2337,6 +2211,13 @@ export default function ScriptIdeasView() {
                                     <strong>
                                       {reviewLabel[v.status] || '审核结果'}{' '}
                                       {v.version != null ? `· 版本 ${v.version}` : ''}
+                                      {(() => {
+                                        const stage =
+                                          v.stage ||
+                                          detail.workflow?.versions?.find((version) => version.version === v.version)
+                                            ?.stage
+                                        return stage && stageLabel[stage] ? ` · ${stageLabel[stage]}` : ''
+                                      })()}
                                     </strong>
                                     <small>{formatTime(v.finished_at)}</small>
                                     <p className="si-preserve">

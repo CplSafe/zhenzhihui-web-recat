@@ -180,9 +180,15 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
   zoom: var(--canvas-ui-scale, 1);
   /* 锚点至少让出左侧 128px；同时预留面板内边距与右侧操作空间。 */
   max-width: calc((100vw - 200px) / var(--canvas-ui-scale, 1));
-  max-height: calc((100dvh - 160px) / var(--canvas-ui-scale, 1));
+  max-height: min(60dvh, calc((100dvh - 160px) / var(--canvas-ui-scale, 1)));
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-width: none;
   overscroll-behavior: contain;
+}
+
+.canvas-view .canvas-panel-area > *::-webkit-scrollbar {
+  display: none;
 }
 
 .canvas-view .canvas-audio-panel {
@@ -928,6 +934,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: var(--canvas-surface);
 }
 
+.canvas-default-node:is(.is-image, .is-video) {
+  border-radius: 10px;
+}
+
 /* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
 .react-flow__node.selected {
   outline: #cbd5d9 solid 1.5px !important;
@@ -973,6 +983,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
     0px 4px 10px rgba(0, 0, 0, 0.12),
     0px 14px 18px rgba(0, 0, 0, 0.1),
     0px 26px 20px rgba(0, 0, 0, 0.06);
+}
+
+/* 选中轮廓绘制在 React Flow 外层，内容不能单独上移。 */
+.react-flow__node.selected .canvas-default-node:hover {
+  transform: none;
 }
 
 /* 正在拖动的节点抬得更高，和底下那层拉开距离，一眼看出哪个跟着手走 */
@@ -2009,19 +2024,13 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-context-menu.canvas-context-menu__submenu {
-  position: absolute;
-  top: -6px;
-  left: calc(100% + 4px);
-  display: none;
-  min-width: 168px;
+  position: fixed;
+  width: 190px;
+  min-width: 0;
+  z-index: 1451;
 }
 
-.canvas-context-menu__submenu-host.is-flipped > .canvas-context-menu__submenu {
-  left: auto;
-  right: calc(100% + 4px);
-}
-
-/* 悬停时与父项之间的 4px 空隙会让指针「掉出」菜单：用一条透明桥接住 */
+/* Bridge the gap so the pointer can move between the parent and the portaled submenu. */
 .canvas-context-menu__submenu::before {
   content: '';
   position: absolute;
@@ -2030,15 +2039,9 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   left: -8px;
   width: 8px;
 }
-
-.canvas-context-menu__submenu-host.is-flipped > .canvas-context-menu__submenu::before {
+.canvas-context-menu__submenu.is-flipped::before {
   left: auto;
   right: -8px;
-}
-
-.canvas-context-menu__submenu-host:hover > .canvas-context-menu__submenu,
-.canvas-context-menu__submenu-host:focus-within > .canvas-context-menu__submenu {
-  display: flex;
 }
 
 /* 粘贴二选一：点外面任意处关闭 */
@@ -2198,7 +2201,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   background: var(--canvas-surface);
   border: 1px solid var(--canvas-border);
 }
-.canvas-default-node.is-image .canvas-node-body {
+.canvas-default-node:is(.is-image, .is-video) .canvas-node-body {
   padding: 0;
   border-radius: 10px;
 }
@@ -3172,4 +3175,43 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 }
 .canvas-view :is(button, input, textarea, select):focus-visible {
   outline-color: var(--canvas-border-active, #cbd5d9);
+}
+
+.canvas-selection-drag-line {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1002;
+  pointer-events: none;
+}
+.canvas-selection-drag-line .react-flow__connection-path {
+  stroke: var(--xy-connectionline-stroke, #b1b1b7);
+}
+.canvas-selection-frame__add {
+  touch-action: none;
+}
+
+/* 窄屏保持面板在节点下方，同时限制其宽度。 */
+@media (max-width: 600px) {
+  .canvas-panel-area.is-anchored {
+    left: 50% !important;
+    width: calc(100vw - 24px);
+  }
+  .canvas-view .canvas-panel-area > * {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    max-height: min(60dvh, 520px);
+    scrollbar-width: thin;
+    scrollbar-color: var(--canvas-text-muted, #7a8496) transparent;
+  }
+  .canvas-view .canvas-panel-area > *::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .canvas-view .canvas-panel-area > *::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--canvas-text-muted, #7a8496);
+  }
 }

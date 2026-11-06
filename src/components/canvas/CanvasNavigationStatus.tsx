@@ -12,7 +12,7 @@ interface Props {
 export default function CanvasNavigationStatus({ saveStatus, cloudStatus, cloudMessage, onBack }: Props) {
   return (
     <div className="canvas-navigation nodrag nopan nowheel" aria-label="画布导航">
-      <button type="button" className="canvas-back-btn" onClick={onBack} title="返回漫剧制作" aria-label="返回漫剧制作">
+      <button type="button" className="canvas-back-btn" onClick={onBack} title="返回无限画布" aria-label="返回无限画布">
         <svg
           width="20"
           height="20"

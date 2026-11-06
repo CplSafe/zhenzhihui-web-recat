@@ -47,6 +47,44 @@ function renderPanel(imageModels: any[], node: any = imageNodeWithReference(), e
 }
 
 describe('CanvasNodePanel unified real-person material entry', () => {
+  it('多模态分镜的视频在预估和提交中使用相同素材', async () => {
+    const onGenerate = vi.fn()
+    renderPanel(
+      [],
+      {
+        id: 'text',
+        kind: 'text',
+        prompt: '分析视频',
+        sourceRefs: [{ kind: 'video', sourceId: 'v', edgeId: 'e', assetId: 88, slotIndex: 0 }],
+      },
+      {
+        models: {
+          text: [
+            {
+              modelVersionId: 21,
+              displayName: '多模态',
+              operationCodes: ['responses.multimodal'],
+              source: {
+                input_constraints: {
+                  'responses.multimodal': { roles: [{ role: 'video', min_count: 0, max_count: 1 }] },
+                },
+              },
+            },
+          ],
+          image: [],
+          video: [],
+        },
+        onGenerate,
+      },
+    )
+    await waitFor(() =>
+      expect(estimateAiTaskCost).toHaveBeenCalledWith(
+        expect.objectContaining({ inputAssets: [{ asset_id: 88, role: 'video' }] }),
+      ),
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: '生成分镜' }))
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ inputAssets: [{ asset_id: 88, role: 'video' }] }))
+  })
   it('预估失败时显示失败状态并提供具体原因', async () => {
     vi.mocked(estimateAiTaskCost).mockRejectedValueOnce(new Error('模型参数无效，请检查参数后重试。'))
     renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
@@ -156,8 +194,8 @@ describe('CanvasNodePanel model catalog recovery', () => {
     )
     expect(screen.getByRole('alert')).toHaveTextContent('视频模型请求超时')
     expect(screen.getByRole('alert')).toHaveTextContent('req-123')
-    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '生成' })).toHaveAttribute('title', '模型加载失败，请重新加载')
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作' })).toHaveAttribute('title', '模型加载失败，请重新加载')
     await userEvent.setup().click(screen.getByRole('button', { name: '重新加载' }))
     expect(onReloadModels).toHaveBeenCalledOnce()
   })
@@ -169,10 +207,10 @@ describe('CanvasNodePanel model catalog recovery', () => {
       { id: 'v', kind: 'video', prompt: '测试', sourceRefs: [] },
       { modelOperationStates: states, modelsLoading: true, onReloadModels: vi.fn() },
     )
-    expect(screen.getByRole('status')).toHaveTextContent('正在加载模型目录')
+    expect(screen.getByText('正在加载模型目录…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '加载中…' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '生成' })).toHaveAttribute('title', '正在加载模型…')
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作' })).toHaveAttribute('title', '正在加载模型…')
   })
 })
 
@@ -190,6 +228,36 @@ function modelWithFields(fields: any[]) {
 const IMAGE_OPERATIONS = ['image.text_to_image', 'image.image_to_image']
 
 describe('CanvasNodePanel 素材预检', () => {
+  it('先完成积分预估和费用确认，再进行 Seedance 素材审查；取消时不审查', async () => {
+    const user = userEvent.setup()
+    const onPreflightAssets = vi.fn().mockResolvedValue(null)
+    const onGenerate = vi.fn()
+    const confirm = vi.spyOn(uiStore, 'requestConfirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    renderPanel(
+      [],
+      { id: 'video', kind: 'video', prompt: '测试视频', sourceRefs: imageNodeWithReference().sourceRefs },
+      {
+        models: {
+          text: [],
+          image: [],
+          video: [{ modelVersionId: 41, displayName: 'Seedance 2.5', operationCodes: ['video.generate'] }],
+        },
+        onPreflightAssets,
+        onGenerate,
+      },
+    )
+    const button = screen.getByTitle('正在预估积分…')
+    expect(button).toBeDisabled()
+    expect(onPreflightAssets).not.toHaveBeenCalled()
+    await screen.findByText('预计消耗：10 积分', {}, { timeout: 2000 })
+    await user.click(button)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(onPreflightAssets).not.toHaveBeenCalled()
+    await user.click(button)
+    await waitFor(() => expect(onGenerate).toHaveBeenCalledOnce())
+    expect(confirm.mock.invocationCallOrder[1]).toBeLessThan(onPreflightAssets.mock.invocationCallOrder[0])
+  })
+
   it('参考素材不可用时不提交生成，并给出具体素材提示', async () => {
     const user = userEvent.setup()
     const onGenerate = vi.fn()
@@ -200,10 +268,12 @@ describe('CanvasNodePanel 素材预检', () => {
       { onGenerate, onPreflightAssets },
     )
 
-    await user.click(screen.getByTitle('发送生成'))
-    expect(onPreflightAssets).toHaveBeenCalledWith(imageNodeWithReference().sourceRefs, [
-      { asset_id: 77, role: 'reference_image' },
-    ])
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
+    expect(onPreflightAssets).toHaveBeenCalledWith(
+      imageNodeWithReference().sourceRefs,
+      [{ asset_id: 77, role: 'reference_image' }],
+      false,
+    )
     expect(onGenerate).not.toHaveBeenCalled()
   })
 })
@@ -243,7 +313,7 @@ describe.each([
       { onGenerate },
     )
     const inputAssets = [{ asset_id: 77, role: 'reference_image' }]
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledWith(
       expect.objectContaining({
         operationCode: 'image.image_to_image',
@@ -314,8 +384,8 @@ describe('CanvasNodePanel 模型选择器', () => {
 
     const cost = await screen.findByText('预计消耗：10 积分')
     expect(cost.closest('button')).toBeNull()
-    expect(screen.getByRole('button', { name: '生成' })).toBeEnabled()
-    expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
+    expect(screen.getByRole('button', { name: '制作' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ })).toHaveTextContent('制作')
   })
 
   it('图片节点没有描述时不提交，避免参考素材被当成空请求发送', () => {
@@ -327,7 +397,7 @@ describe('CanvasNodePanel 模型选择器', () => {
     )
 
     expect(screen.getByRole('alert')).toHaveTextContent('请输入图片描述后再生成')
-    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
     expect(onGenerate).not.toHaveBeenCalled()
   })
 
@@ -459,7 +529,7 @@ describe('CanvasNodePanel 模型选择器', () => {
         prompt: expect.stringContaining('用户需求：\n五秒咖啡广告'),
       }),
     )
-    expect(screen.getByRole('textbox')).toHaveValue('五秒咖啡广告')
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('五秒咖啡广告')
     expect(screen.queryByRole('button', { name: '脚本模型' })).not.toBeInTheDocument()
   })
 
@@ -472,7 +542,7 @@ describe('CanvasNodePanel 模型选择器', () => {
         onCreateVideoFromText,
       },
     )
-    expect(screen.getByRole('textbox')).toHaveValue('咖啡广告')
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('咖啡广告')
     expect(onCreateVideoFromText).not.toHaveBeenCalled()
     await userEvent.setup().click(screen.getByRole('button', { name: '创建视频节点' }))
     expect(onCreateVideoFromText).toHaveBeenCalledOnce()
@@ -509,15 +579,15 @@ describe('CanvasNodePanel 模型选择器', () => {
       },
     )
     const input = screen.getByRole('textbox')
-    expect(input).toHaveValue('1. 开场（时长 5）\n咖啡杯特写')
+    expect(readMentionInput(input)).toBe('1. 开场（时长 5）\n咖啡杯特写')
     await user.clear(input)
     await user.type(input, '改为咖啡豆俯拍')
-    await user.click(screen.getByRole('button', { name: '生成' }))
+    await user.click(screen.getByRole('button', { name: '制作' }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '改为咖啡豆俯拍' }))
     await user.clear(input)
-    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '用最新分镜替换提示词' }))
-    expect(input).toHaveValue('1. 开场（时长 5）\n咖啡杯特写')
+    expect(readMentionInput(input)).toBe('1. 开场（时长 5）\n咖啡杯特写')
   })
 
   it('多资产汇合时展示最终输入数量，并在模型超限时阻止生成', () => {
@@ -638,7 +708,7 @@ describe('CanvasNodePanel 视频生视频用的是视频生成模型', () => {
       { onGenerate },
     )
     expect(screen.getByRole('alert')).toHaveTextContent('请输入视频描述后再生成')
-    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
     expect(onGenerate).not.toHaveBeenCalled()
   })
 
@@ -766,7 +836,9 @@ describe('CanvasNodePanel 视频生视频用的是视频生成模型', () => {
       { onGenerate },
     )
 
-    await user.click(screen.getByTitle('发送生成'))
+    const generate = screen.getByRole('button', { name: '制作' })
+    await waitFor(() => expect(generate).toBeEnabled())
+    await user.click(generate)
     // 素材角色由 buildCanvasInputAssets 按来源类型决定（视频来源恒为 role:'video'），与 operation 无关；
     // 这里只确认面板交出去的 operation 和来源是对的
     expect(onGenerate).toHaveBeenCalledWith(
@@ -828,7 +900,7 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     expect(screen.getByText('继承文本')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '转为本节点提示词' })).toBeInTheDocument()
     // 自己的提示词仍在输入框里独立编辑
-    expect(screen.getByDisplayValue('再加一点暖光')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('再加一点暖光')
   })
 
   it('提交时按「继承文本 → 自己的提示词」顺序拼接，与界面展示同源', async () => {
@@ -839,7 +911,7 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
       inheritedTexts: [{ sourceId: 'node-text', edgeId: 'e-text', text: '一只橘猫坐在窗台上' }],
     })
 
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
 
     // 展示的那段和发出去的那段必须是同一份数据，中间不再各自去读全局 Map
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只橘猫坐在窗台上\n\n再加一点暖光' }))
@@ -854,7 +926,7 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
       { onGenerate, inheritedTexts: [{ sourceId: 'node-text', edgeId: 'e-text', text: '一只橘猫坐在窗台上' }] },
     )
 
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只橘猫坐在窗台上' }))
   })
 
@@ -873,15 +945,17 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     )
 
     // 不用再点一次「转为可编辑」：文本已经在输入框里，可以直接改
-    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
-    expect(textarea.value).toBe('一只橘猫坐在窗台上')
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLElement
+    expect(readMentionInput(textarea)).toBe('一只橘猫坐在窗台上')
     // 同时写回节点，切走再切回来 / 刷新后不会丢
     expect(onPromptChange).toHaveBeenCalledWith('一只橘猫坐在窗台上')
     // 已经进了输入框就不再单独展示，免得同一段内容在面板上出现两份
     expect(screen.queryByText(/来自文本节点/)).not.toBeInTheDocument()
 
-    await user.type(textarea, '，暖色调')
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(textarea)
+    setSelection(textarea, readMentionInput(textarea).length, readMentionInput(textarea).length)
+    await user.type(textarea, '，暖色调', { skipClick: true })
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     // 连线仍在，但这段内容不能因此被拼两遍
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只橘猫坐在窗台上，暖色调' }))
   })
@@ -895,9 +969,9 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     })
 
     // 自动填入唯一会出问题的方向就是覆盖用户已经写下的字，这里守住它
-    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
-    expect(textarea.value).toBe('再加一点暖光')
-    await user.click(screen.getByTitle('发送生成'))
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLElement
+    expect(readMentionInput(textarea)).toBe('再加一点暖光')
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只橘猫坐在窗台上\n\n再加一点暖光' }))
   })
 
@@ -938,7 +1012,7 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     })
 
     // 不展开直接提交
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: `${long}\n\n再加一点暖光` }))
   })
 
@@ -985,17 +1059,17 @@ describe('CanvasNodePanel 提示词改写', () => {
     render(<ControlledPanel />)
 
     await user.click(screen.getByRole('button', { name: '我帮你写' }))
-    expect(await screen.findByDisplayValue('暖光下的年轻男性产品特写')).toBeInTheDocument()
+    await waitFor(() => expect(readMentionInput(screen.getByRole('textbox'))).toBe('暖光下的年轻男性产品特写'))
     expect(onPromptChange).toHaveBeenLastCalledWith('暖光下的年轻男性产品特写')
     expect(screen.getByRole('button', { name: '我帮你写' })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: '我帮你写' }))
-    expect(await screen.findByDisplayValue('电影感暖光下的年轻男性产品特写')).toBeInTheDocument()
+    await waitFor(() => expect(readMentionInput(screen.getByRole('textbox'))).toBe('电影感暖光下的年轻男性产品特写'))
 
     await user.click(screen.getByRole('button', { name: '复原' }))
-    expect(screen.getByDisplayValue('暖光下的年轻男性产品特写')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('暖光下的年轻男性产品特写')
     await user.click(screen.getByRole('button', { name: '复原' }))
-    expect(screen.getByDisplayValue('保留参考图中的年轻男性主体')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('保留参考图中的年轻男性主体')
     expect(onPromptChange).toHaveBeenLastCalledWith('保留参考图中的年轻男性主体')
     expect(screen.getByRole('button', { name: '我帮你写' })).toBeEnabled()
   })
@@ -1028,16 +1102,16 @@ describe('CanvasNodePanel 提示词改写', () => {
     const { rerender } = render(polishPanel(nodeA, { onPolishText }))
 
     await user.click(screen.getByRole('button', { name: '我帮你写' }))
-    expect(await screen.findByDisplayValue('润色后的面部特写')).toBeInTheDocument()
+    await waitFor(() => expect(readMentionInput(screen.getByRole('textbox'))).toBe('润色后的面部特写'))
 
     rerender(polishPanel(nodeB, { onPolishText }))
-    expect(screen.getByDisplayValue('另一个节点')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('另一个节点')
     expect(screen.queryByRole('button', { name: '复原' })).not.toBeInTheDocument()
 
     const onPromptChangeA = vi.fn()
     rerender(polishPanel({ ...nodeA, prompt: '润色后的面部特写' }, { onPolishText, onPromptChange: onPromptChangeA }))
     await user.click(screen.getByRole('button', { name: '复原' }))
-    expect(screen.getByDisplayValue('面部特写')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('面部特写')
     expect(onPromptChangeA).toHaveBeenLastCalledWith('面部特写')
     expect(screen.queryByRole('button', { name: '复原' })).not.toBeInTheDocument()
   })
@@ -1049,12 +1123,12 @@ describe('CanvasNodePanel 提示词改写', () => {
     const { unmount } = render(polishPanel(node, { onPolishText }))
 
     await user.click(screen.getByRole('button', { name: '我帮你写' }))
-    expect(await screen.findByDisplayValue('润色后的产品镜头')).toBeInTheDocument()
+    await waitFor(() => expect(readMentionInput(screen.getByRole('textbox'))).toBe('润色后的产品镜头'))
     unmount()
 
     render(polishPanel({ ...node, prompt: '润色后的产品镜头' }, { onPolishText }))
     await user.click(screen.getByRole('button', { name: '复原' }))
-    expect(screen.getByDisplayValue('产品镜头')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('产品镜头')
   })
 
   it('润色进行中切走：结果只写回发起润色的节点，不灌进当前节点的输入框', async () => {
@@ -1073,12 +1147,12 @@ describe('CanvasNodePanel 提示词改写', () => {
 
     await waitFor(() => expect(onPromptChangeA).toHaveBeenCalledWith('润色后的水感肌肤'))
     expect(onPromptChangeB).not.toHaveBeenCalled()
-    expect(screen.getByDisplayValue('另一个节点')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('另一个节点')
     expect(screen.queryByRole('button', { name: '复原' })).not.toBeInTheDocument()
 
     rerender(polishPanel({ ...nodeA, prompt: '润色后的水感肌肤' }, { onPolishText, onPromptChange: onPromptChangeA }))
     await user.click(screen.getByRole('button', { name: '复原' }))
-    expect(screen.getByDisplayValue('水感肌肤')).toBeInTheDocument()
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe('水感肌肤')
   })
 })
 
@@ -1093,13 +1167,13 @@ describe('CanvasNodePanel 生成 / 重新生成文案', () => {
       resultUrl: '/u.png',
       assetId: 5,
     })
-    expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
-    expect(screen.queryByText('重新生成')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ })).toHaveTextContent('制作')
+    expect(screen.queryByText('重新制作')).not.toBeInTheDocument()
   })
 
   it('生成过的节点（有 taskId）显示「重新生成」', () => {
     renderPanel(imageModels, { id: 'node-generated', kind: 'image', prompt: '猫', resultUrl: '/g.png', taskId: 88 })
-    expect(screen.getByText('重新生成')).toBeInTheDocument()
+    expect(screen.getByText('重新制作')).toBeInTheDocument()
   })
 
   it('有生成历史的节点显示「重新生成」', () => {
@@ -1110,7 +1184,7 @@ describe('CanvasNodePanel 生成 / 重新生成文案', () => {
         resultHistory: [{ url: '/g.png', createdAt: 1 }],
       },
     )
-    expect(screen.getByText('重新生成')).toBeInTheDocument()
+    expect(screen.getByText('重新制作')).toBeInTheDocument()
   })
 })
 
@@ -1265,7 +1339,7 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     const user = userEvent.setup()
     const onGenerate = vi.fn()
     renderPanel(MODEL, { ...renamedRefsNode, prompt: '把 @天安门 放进 @图片2 的场景' }, { onGenerate })
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '把 @图片1 放进 @图片2 的场景' }))
   })
 
@@ -1381,6 +1455,8 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     expect(readMentionInput(textarea)).toBe('把 放进 的场景')
     await waitFor(() => expect(selectionOffsets(textarea)[0]).toBe(5))
 
+    // 等待引用删除后的光标恢复，再模拟用户移动光标。
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     // 普通文字：退格仍是一次一个字
     setSelection(textarea, 2, 2)
     await user.keyboard('{Backspace}')
@@ -1391,10 +1467,10 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     const user = userEvent.setup()
     const onPromptChange = vi.fn()
     renderPanel(MODEL, renamedRefsNode, { onPromptChange })
-    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/) as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
     await user.type(textarea, '＠')
     expect(screen.getByRole('listbox', { name: '选择要 @ 的参考素材' })).toBeInTheDocument()
-    expect(textarea.value).toBe('@')
+    expect(readMentionInput(textarea)).toBe('@')
     await user.click(screen.getByRole('option', { name: /@天安门/ }))
     expect(onPromptChange).toHaveBeenLastCalledWith('@天安门 ')
   })
@@ -1433,34 +1509,22 @@ describe('CanvasNodePanel 提示词输入框：叠层对齐、写回防抖、清
   const MODEL = [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }]
   const plainNode = { id: 'node-image', kind: 'image', prompt: '', sourceRefs: [] as any[] }
 
-  it('textarea 出现滚动条时，高亮层让出同样宽度并同步滚动位置', () => {
+  it('滚动富文本输入框时保留提示词内容', () => {
     renderPanel(MODEL, { ...plainNode, prompt: '一段很长的提示词' })
-    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
-    const highlight = textarea.previousElementSibling as HTMLElement
-    expect(highlight).toHaveAttribute('aria-hidden', 'true')
-
-    // jsdom 不排版：手动模拟「出现了 17px 纵向滚动条、已滚到 40px」
-    Object.defineProperty(textarea, 'offsetWidth', { configurable: true, value: 300 })
-    Object.defineProperty(textarea, 'clientWidth', { configurable: true, value: 283 })
-    textarea.scrollTop = 40
-    textarea.dispatchEvent(new Event('scroll', { bubbles: true }))
-
-    expect(highlight.style.right).toBe('17px')
-    expect(highlight.scrollTop).toBe(40)
-
-    // 滚动条消失后归零，两层重新按全宽换行
-    Object.defineProperty(textarea, 'clientWidth', { configurable: true, value: 300 })
-    textarea.dispatchEvent(new Event('scroll', { bubbles: true }))
-    expect(highlight.style.right).toBe('0px')
+    const editor = screen.getByRole('textbox')
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    editor.scrollTop = 40
+    editor.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(readMentionInput(editor)).toBe('一段很长的提示词')
   })
 
   it('逐字输入只在停顿后写回一次节点，本地输入框即时更新', async () => {
     const user = userEvent.setup()
     const onPromptChange = vi.fn()
     renderPanel(MODEL, plainNode, { onPromptChange })
-    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLElement
     await user.type(textarea, '一只猫')
-    expect(textarea.value).toBe('一只猫')
+    expect(readMentionInput(textarea)).toBe('一只猫')
     // 逐字不写回，停顿后只写一次、且是最终文本
     expect(onPromptChange).not.toHaveBeenCalled()
     await waitFor(() => expect(onPromptChange).toHaveBeenCalledTimes(1))
@@ -1474,7 +1538,7 @@ describe('CanvasNodePanel 提示词输入框：叠层对齐、写回防抖、清
     renderPanel(MODEL, plainNode, { onPromptChange, onGenerate })
     await user.type(screen.getByPlaceholderText(/描述你想要生成的/), '海边')
     expect(onPromptChange).not.toHaveBeenCalled()
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onPromptChange).toHaveBeenCalledWith('海边')
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '海边' }))
   })
@@ -1507,14 +1571,14 @@ describe('CanvasNodePanel 提示词输入框：叠层对齐、写回防抖、清
       { ...plainNode, sourceRefs: [{ kind: 'text', sourceId: 'node-text', edgeId: 'e-text', slotIndex: 0 }] },
       { onPromptChange, inheritedTexts: [{ sourceId: 'node-text', edgeId: 'e-text', text: '一只橘猫坐在窗台上' }] },
     )
-    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLElement
     // 选中节点时输入框为空 → 自动填一次
-    expect(textarea.value).toBe('一只橘猫坐在窗台上')
+    expect(readMentionInput(textarea)).toBe('一只橘猫坐在窗台上')
     await user.clear(textarea)
-    expect(textarea.value).toBe('')
+    expect(readMentionInput(textarea)).toBe('')
     // 以前这里会立刻被灌回「一只橘猫坐在窗台上」，用户根本清不掉
     await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(textarea.value).toBe('')
+    expect(readMentionInput(textarea)).toBe('')
     // 清空后继承文本重新在面板里单独展示，提交时仍会拼上
     expect(screen.getByText('一只橘猫坐在窗台上')).toBeInTheDocument()
   })
@@ -1543,7 +1607,7 @@ describe('GPT Image editing controls', () => {
       { onGenerate },
     )
     expect(screen.getByLabelText('上传编辑蒙版')).toBeInTheDocument()
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledWith(
       expect.objectContaining({
         params: { mask_asset_id: 88, quality: 'high' },
@@ -1568,7 +1632,7 @@ describe('GPT Image editing controls', () => {
       { onGenerate },
     )
     expect(screen.queryByLabelText('上传编辑蒙版')).not.toBeInTheDocument()
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     const submitted = onGenerate.mock.calls[0]![0]
     expect(submitted.inputAssets).toEqual([{ asset_id: 77, role: 'reference_image' }])
     expect(submitted.params).not.toHaveProperty('previous_task_id')
@@ -1616,7 +1680,7 @@ it('参数菜单及摘要使用中文，提交保留官方英文枚举值', asyn
   expect(screen.queryByRole('button', { name: '宽松过滤' })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   expect(screen.getByRole('button', { name: '高画质 · 透明 · PNG' })).toBeInTheDocument()
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate).toHaveBeenCalledWith(
     expect.objectContaining({
       params: expect.objectContaining({
@@ -1671,7 +1735,7 @@ it('隐藏图片高级参数，生成数量只提供 1、2、4 张按钮', async
   expect(within(countGroup).getByRole('button', { name: '4张' })).toHaveAttribute('aria-pressed', 'true')
   await user.click(within(countGroup).getByRole('button', { name: '2张' }))
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 2 })
 })
 
@@ -1687,7 +1751,7 @@ it('旧画布中不再支持的生成数量自动回落为 1 张', async () => {
   const countGroup = screen.getByRole('group', { name: '生成数量' })
   expect(within(countGroup).getByRole('button', { name: '1张' })).toHaveAttribute('aria-pressed', 'true')
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 1 })
 })
 
@@ -1747,7 +1811,7 @@ it.each([
   await user.click(screen.getByRole('button', { name: '无水印' }))
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   expect(screen.getByRole('button', { name: '自由生成 · 无水印' })).toBeInTheDocument()
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   expect(onGenerate.mock.calls[0]![0].params[field.name]).toBe(false)
 })
@@ -1769,7 +1833,7 @@ it('视频数量带条单位，声音选项与水印各自显示', async () => {
       models: { text: [], image: [], video: [model] },
     },
   )
-  await user.click(screen.getByRole('button', { name: /2条.*无水印/ }))
+  await user.click(screen.getByRole('button', { name: /自由生成 · 2条/ }))
   expect(screen.getByText('2条')).toBeInTheDocument()
   expect(screen.getByRole('slider', { name: '生成数量' })).toHaveValue('2')
   expect(screen.getByText('生成声音')).toBeInTheDocument()
@@ -1801,7 +1865,7 @@ it.each(['generate_audio', 'audio', 'with_audio', 'enable_audio'])(
       },
       { models: { text: [], image: [], video: [model] }, onGenerate, onParamsChange },
     )
-    await user.click(screen.getByTitle('发送生成'))
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate.mock.calls[0]![0].params[name]).toBe(false)
     await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(false))
     await user.click(screen.getByRole('button', { name: /自由生成.*无声音/ }))
@@ -1812,8 +1876,8 @@ it.each(['generate_audio', 'audio', 'with_audio', 'enable_audio'])(
     expect(onParamsChange).toHaveBeenLastCalledWith({ [name]: true })
     await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
     await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(true))
-    await waitFor(() => expect(screen.getByTitle('发送生成')).toBeEnabled())
-    await user.click(screen.getByTitle('发送生成'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledTimes(2)
     expect(onGenerate.mock.lastCall?.[0].params[name]).toBe(true)
     await user.click(screen.getByRole('button', { name: /自由生成.*有声音/ }))
@@ -1821,11 +1885,12 @@ it.each(['generate_audio', 'audio', 'with_audio', 'enable_audio'])(
     expect(onParamsChange).toHaveBeenLastCalledWith({ [name]: false })
     await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
     await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(false))
-    await waitFor(() => expect(screen.getByTitle('发送生成')).toBeEnabled())
-    await user.click(screen.getByTitle('发送生成'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate).toHaveBeenCalledTimes(3)
     expect(onGenerate.mock.lastCall?.[0].params[name]).toBe(false)
   },
+  15_000,
 )
 
 it('新视频节点默认有声音', async () => {
@@ -1844,7 +1909,7 @@ it('新视频节点默认有声音', async () => {
   await user.click(screen.getByRole('button', { name: /自由生成.*有声音/ }))
   expect(screen.getByRole('button', { name: '有声音' })).toHaveAttribute('aria-pressed', 'true')
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate.mock.lastCall?.[0].params.generate_audio).toBe(true)
 })
 
@@ -1903,7 +1968,7 @@ it('模型未声明声音能力时不显示声音控件，也不提交声音参�
   await user.click(screen.getByRole('button', { name: /自由生成/ }))
   expect(screen.queryByText('生成声音')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   for (const key of ['generate_audio', 'audio', 'with_audio', 'enable_audio'])
     expect(onGenerate.mock.lastCall?.[0].params).not.toHaveProperty(key)
@@ -1923,7 +1988,7 @@ it('保留 Seedream 的 size 分辨率档位', async () => {
   await user.click(screen.getByRole('button', { name: '2K' }))
   await user.click(screen.getByRole('button', { name: '4K' }))
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
-  await user.click(screen.getByTitle('发送生成'))
+  await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate.mock.calls[0]![0].params).toEqual({ size: '4K' })
 })
 
@@ -1961,6 +2026,7 @@ it('连接11秒配音时禁用短时长档位和上限不足的视频模型', as
     operationCodes: ['video.generate'],
     source: {
       params_schema: { fields: [{ name: 'duration', display_name: '时长', options, default: 5 }] },
+      input_constraints: { 'video.generate': { roles: [{ role: 'audio', max_count: 1 }] } },
     },
   })
   renderPanel(
@@ -1971,7 +2037,9 @@ it('连接11秒配音时禁用短时长档位和上限不足的视频模型', as
       prompt: '根据配音生成视频',
       videoMode: 'auto',
       params: { duration: 5 },
-      sourceRefs: [{ kind: 'audio', sourceId: 'voice', edgeId: 'voice-to-video', slotIndex: 0, audio: voice }],
+      sourceRefs: [
+        { kind: 'audio', sourceId: 'voice', edgeId: 'voice-to-video', slotIndex: 0, assetId: 91, audio: voice },
+      ],
     },
     {
       models: {
@@ -1989,11 +2057,10 @@ it('连接11秒配音时禁用短时长档位和上限不足的视频模型', as
   expect(screen.getByRole('option', { name: /最长15秒模型/ })).not.toHaveAttribute('aria-disabled', 'true')
 
   await user.click(screen.getByRole('button', { name: /自由生成 · 5秒/ }))
-  const durationOptions = screen.getByRole('listbox', { name: '时长' })
-  expect(within(durationOptions).getByRole('option', { name: '5秒' })).toBeDisabled()
-  expect(within(durationOptions).getByRole('option', { name: '10秒' })).toBeDisabled()
-  expect(within(durationOptions).getByRole('option', { name: '15秒' })).toBeEnabled()
-  const generateButton = screen.getByRole('button', { name: '生成' })
+  const durationSlider = screen.getByRole('slider', { name: '时长' })
+  expect(durationSlider).toHaveAttribute('aria-valuetext', '5秒')
+  expect(screen.getByText(/已连接的配音约 11 秒，视频时长不能短于配音时长/)).toBeInTheDocument()
+  const generateButton = screen.getByRole('button', { name: '制作' })
   expect(generateButton).toBeDisabled()
   expect(generateButton.getAttribute('title')).toContain('视频时长短于配音时长')
 })
@@ -2046,4 +2113,48 @@ it('配音超过15秒时禁用最多生成15秒的视频模型', async () => {
   expect(fifteenSecondModel).toHaveAttribute('aria-disabled', 'true')
   expect(fifteenSecondModel).toHaveTextContent('已连接的配音约 16 秒')
   expect(screen.getByRole('option', { name: /最多20秒模型/ })).not.toHaveAttribute('aria-disabled', 'true')
+})
+
+it('模型素材上限分别显示，切换模型后保留引用并说明超限原因', () => {
+  const node = {
+    id: 'video-limit',
+    kind: 'video',
+    prompt: '',
+    videoMode: 'full-ref',
+    modelVersionId: 251,
+    sourceRefs: [1, 2, 3].map((assetId, slotIndex) => ({
+      kind: 'image',
+      sourceId: `i${assetId}`,
+      edgeId: `e${assetId}`,
+      slotIndex,
+      assetId,
+    })),
+  }
+  const model = (id: number, max: number) => ({
+    modelVersionId: id,
+    displayName: `模型${id}`,
+    operationCodes: ['video.generate'],
+    source: {
+      operation_codes: ['video.generate'],
+      input_constraints: {
+        'video.generate': {
+          roles: [
+            { role: 'image', max_count: max },
+            { role: 'video', max_count: 10 },
+            { role: 'audio', max_count: 3 },
+          ],
+        },
+      },
+    },
+  })
+  const models = { text: [], image: [], video: [model(251, 30), model(252, 2)] }
+  const view = render(<CanvasNodePanel node={node as any} workspaceId={7} models={models as any} />)
+  expect(screen.getByText('图片 3/30')).toBeInTheDocument()
+  expect(screen.getByText('视频 0/10')).toBeInTheDocument()
+  expect(screen.getByText('音频 0/3')).toBeInTheDocument()
+  view.rerender(
+    <CanvasNodePanel node={{ ...node, modelVersionId: 252 } as any} workspaceId={7} models={models as any} />,
+  )
+  expect(screen.getByText('图片 3/2')).toBeInTheDocument()
+  expect(screen.getByText(/图片已添加 3 张，当前最多支持 2 张/)).toBeInTheDocument()
 })

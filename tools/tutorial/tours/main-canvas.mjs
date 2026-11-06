@@ -1,4 +1,4 @@
-/** 漫剧制作 · 功能全览一条（目标 70–90 秒）
+/** 无限画布 · 功能全览一条（目标 70–90 秒）
  *  A 新画布：工具栏 → 图片节点（提示词 / AI 润色 / 放大 / 比例）→ 拖出视频节点（@引用 / 模型参数 / 真人素材库）
  *  B 已有画布「测试」：节点操作条 → 放大预览 + 截取此帧 → 框选 → 创建剪辑时间线 → 剪辑器 → 素材库 / 历史 / 搜索 → 自动保存 / 分享
  *  生成按钮只悬停，不消耗积分。 */
@@ -7,7 +7,7 @@ const RESULT_CANVAS = process.env.TUTORIAL_CANVAS_NAME || '测试'
 
 export default {
   single: true,
-  name: '漫剧制作功能全览',
+  name: '无限画布功能全览',
   async run(t) {
     const { page, BASE } = t
     const clean = () => page.addStyleTag({ content: HIDE }).catch(() => {})
@@ -24,7 +24,7 @@ export default {
     await page.waitForSelector('button.pm2-new-btn', { timeout: 15000 })
     await clean()
     await t.wait(300)
-    await t.clip('漫剧制作')
+    await t.clip('无限画布')
     await t.say('点击「新建画布」，起名创建')
     await t.click('button.pm2-new-btn', { after: 400 })
     await t.type('input[placeholder*="画布名称"]', '教程演示', { delay: 50, after: 150 })
@@ -53,7 +53,7 @@ export default {
       .waitFor({ state: 'detached', timeout: 60000 })
       .catch(() => {})
     await t.wait(300)
-    await t.clip('漫剧制作')
+    await t.clip('无限画布')
     await t.say('长文本可以「放大」编辑；底部选模型和比例，然后生成')
     await opt(() => t.click('button[class*="expandBtn"]', { after: 900 }))
     await opt(() => t.click('button[class*="expandBtn"]', { after: 300 }))
@@ -100,7 +100,7 @@ export default {
     await clean()
     await t.wait(800)
     const play = page.locator('button.canvas-node-play-btn').first()
-    await t.clip('漫剧制作')
+    await t.clip('无限画布')
     await t.zoom(play, 2.4, 0)
     await t.say('生成结果直接显示在节点里，点击播放')
     await t.click(play, { after: 2200 })

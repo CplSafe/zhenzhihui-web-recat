@@ -21,16 +21,22 @@ export function validateCanvasGenerationPrompt(kind: string | undefined, prompt:
   return null
 }
 
-/** Responses 多模态分镜只接收图片上下文；视频须先截帧转成图片再接入。 */
+/** Responses 多模态素材按当前模型声明的角色限制校验。 */
 export function validateCanvasTextInputs(args: {
   sourceRefs: CanvasGenerationSourceRef[]
   /** 仅使用模型目录明确声明的图片上限；未声明时不臆造数量限制。 */
   maxImageRefs?: number
+  maxVideoRefs?: number
 }): string | null {
   const refs = args.sourceRefs || []
-  if (refs.some((ref) => ref.kind === 'video' || ref.kind === 'timeline')) {
-    return '文本/分镜节点暂不支持视频输入。请移除视频连线，或先从视频截取画面并连接图片节点；图片参考可以保留。'
-  }
+  const videoCount = refs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
+  const maxVideoRefs = Math.max(0, Math.floor(Number(args.maxVideoRefs) || 0))
+  if (videoCount > maxVideoRefs)
+    return maxVideoRefs
+      ? `当前分镜模型最多支持 ${maxVideoRefs} 条参考视频，请移除多余视频连线或切换模型。`
+      : '当前分镜模型不支持视频输入，请移除视频连线或切换模型。'
+  if (refs.some((ref) => isCanvasVideoSourceKind(ref.kind) && !(Number(ref.assetId) > 0)))
+    return '参考视频尚未上传完成，请稍候或重新选择素材。'
   if (refs.some((ref) => ref.kind === 'audio')) {
     return '文本/分镜节点暂不支持音频输入，请移除音频连线。'
   }
@@ -246,6 +252,8 @@ export function validateCanvasVideoInputs(args: {
    */
   minImageRefs?: number
   maxAudioRefs?: number
+  maxVideoRefs?: number
+  selfVideoAssetId?: number
   /** 模型展示名，用于把「谁要求的」说清楚 */
   modelLabel?: string
   /**
@@ -270,7 +278,8 @@ export function validateCanvasVideoInputs(args: {
   const minImageRefs = Math.max(0, Math.floor(Number(args.minImageRefs) || 0))
   const belowMinimum = (imageCount: number) =>
     `${args.modelLabel ? `${args.modelLabel} ` : '当前模型'}至少需要 ${minImageRefs} 张参考图片（已添加 ${imageCount} 张），请连接图片节点或从素材库添加`
-  if (mediaRefs.length === 0) return minImageRefs > 0 && isGenerate ? belowMinimum(0) : null
+  if (mediaRefs.length === 0 && !(Number(args.selfVideoAssetId) > 0))
+    return minImageRefs > 0 && isGenerate ? belowMinimum(0) : null
 
   const hasUsableAsset = (ref: CanvasGenerationSourceRef) =>
     Number.isSafeInteger(Number(ref.assetId)) && Number(ref.assetId) > 0
@@ -288,7 +297,7 @@ export function validateCanvasVideoInputs(args: {
   // 图片和视频之外的来源不能作为视频输入
   const audioRefs = mediaRefs.filter((ref) => ref.kind === 'audio')
   if (audioRefs.length > Number(args.maxAudioRefs || 0))
-    return '当前模型不支持这些音频参考，请切换支持音频参考的模型或移除连线'
+    return `当前模型最多支持 ${Number(args.maxAudioRefs || 0)} 条参考音频，已添加 ${audioRefs.length} 条；请移除多余音频或切换模型`
   if (mediaRefs.some((ref) => ref.kind !== 'image' && ref.kind !== 'audio' && !isCanvasVideoSourceKind(ref.kind))) {
     return '视频生成仅支持图片或视频作为参考素材，请检查连线后重试'
   }
@@ -296,12 +305,19 @@ export function validateCanvasVideoInputs(args: {
   // 视频来源即「视频生视频」：把连进来的那条视频作为源片重新生成。
   // 一次只能有一条源视频，多条无法判断以哪条为准；此时图片继续作为参考素材同时下发。
   const videoRefs = mediaRefs.filter((ref) => isCanvasVideoSourceKind(ref.kind))
-  if (videoRefs.length > 1) return '视频生视频一次只能连接一条源视频，请去掉多余的视频连线'
+  const selfVideoId = Number(args.selfVideoAssetId || 0)
+  const videoCount =
+    videoRefs.length + Number(selfVideoId > 0 && !videoRefs.some((ref) => Number(ref.assetId) === selfVideoId))
+  const maxVideoRefs = args.maxVideoRefs ?? 1
+  if (videoCount > maxVideoRefs)
+    return maxVideoRefs === 1
+      ? '视频生视频一次只能连接一条源视频，请去掉多余的视频连线'
+      : `当前模型最多支持 ${maxVideoRefs} 条参考视频，请移除多余连线或切换模型`
 
   const imageRefs = mediaRefs.filter((ref) => ref.kind === 'image')
   const maxImageRefs = Number.isFinite(Number(args.maxImageRefs)) ? Math.max(0, Number(args.maxImageRefs)) : 5
   // 带源视频时，首尾帧的槽位规则不再适用：画面时序由源视频决定，图片只是风格/主体参考
-  if (videoRefs.length === 1 || isEdit) {
+  if (videoCount > 0 || isEdit) {
     return imageRefs.length > maxImageRefs ? `视频生视频最多再附带 ${maxImageRefs} 张参考图片` : null
   }
 

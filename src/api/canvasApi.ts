@@ -1,7 +1,7 @@
 /**
- * 漫剧制作 API 客户端（/api/v1/canvases）
+ * 无限画布 API 客户端（/api/v1/canvases）
  *
- * 对应后端 Swagger「漫剧制作」模块：
+ * 对应后端 Swagger「无限画布」模块：
  * - GET/POST  /canvases                    画布列表 / 新建（revision=0 空画布）
  * - GET/PATCH/DELETE /canvases/{id}        详情 / 更新元信息 / 删除
  * - GET/PATCH /canvases/{id}/elements      增量同步 / 增量保存（revision 乐观锁）
@@ -126,7 +126,7 @@ function requirePositiveInteger(value: unknown, message: string): number {
 }
 
 /**
- * 新建漫剧制作（POST /canvases）。
+ * 新建无限画布（POST /canvases）。
  * 返回服务端创建的画布 ID；title 缺省时为空画布标题。
  */
 export async function createCanvas({
