@@ -185,9 +185,9 @@ pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入�
 
 欢迎页展示持续呼吸、眨眼的豆豆；进入会话后在状态栏展示紧凑版本。表情由现有 run 状态、批次节点和任务回执驱动，包括思考、素材生成/合并、待确认、完成、暂停、异常及实时连接中断，不解析聊天文案，不新增接口调用或计费。任务回执以时间戳判新旧，合并使用独立的 `merge_id`。
 
-点击豆豆只暂停/播放角色动画，不暂停制作任务。面板收起、离开可见区域或浏览器页面隐藏时自动暂停；系统开启减少动态效果时显示静态表情。DeepAgentStudio 宿主无需传入新的属性或管理动画定时器。画布的 CanvasDirectorDock 由 opened/onCollapse 控制显隐，CanvasFloatingToolbar 的 onToggleDirector/directorOpen 负责入口；账号、空间与画布绑定保持隔离。
+豆豆是自动播放的状态形象，没有点击暂停、悬停提示或背景框。面板收起、离开可见区域或浏览器页面隐藏时自动暂停；系统开启减少动态效果时显示静态表情。DeepAgentStudio 宿主无需传入新的属性或管理动画定时器。画布的 CanvasDirectorDock 由 opened/onCollapse 控制显隐，CanvasFloatingToolbar 的 onToggleDirector/directorOpen 负责入口；账号、空间与画布绑定保持隔离。
 
 
 ### 画布底部布局
 
-`CanvasBottomBar` 统一布局视图控制与创作工具，按实际可用宽度（包含用户界面缩放）自动分行，避免两组独立绝对定位互相覆盖。`CanvasFloatingToolbar` 的豆豆入口是工具栏旁的独立圆形按钮。左侧常驻复位、小地图、连线、吸附与缩放；界面大小、全屏、帮助、设置、统计和步进缩放在“更多视图选项”中，功能和回调保持原样。
+`CanvasBottomBar` 统一布局视图控制与创作工具，按实际可用宽度（包含用户界面缩放）自动分行，避免两组独立绝对定位互相覆盖。`CanvasFloatingToolbar` 的豆豆入口是工具栏旁的独立圆形按钮。左侧仅常驻整理画布、小地图、连线、磁吸和真实缩放百分比，顺序固定。百分比点击直接回到 100%，不增加菜单；其余入口从本区域隐藏。图标几何参考 LibTV 实际页面，整理按钮复用现有可撤销的 arrangeNodes，不触发生成或计费。

@@ -7,7 +7,7 @@
   pointer-events: none;
   container: canvas-bottom / inline-size;
 }
-.dock:has(#canvas-add-menu, #canvas-view-options) {
+.dock:has(#canvas-add-menu) {
   z-index: 1450;
 }
 .row {
@@ -33,7 +33,7 @@
   max-width: 100%;
 }
 /* Container width already reflects UI scaling, unlike viewport media queries. */
-@container canvas-bottom (max-width: 1000px) {
+@container canvas-bottom (max-width: 800px) {
   .row {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;

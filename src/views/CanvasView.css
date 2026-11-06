@@ -713,12 +713,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   stroke-width: 2px;
 }
 
-@media (max-width: 1100px) {
-  /* 中窄屏上小地图会与横向控制条争抢底部空间，隐藏后仍可用「适应视图」快速定位。 */
-  .canvas-minimap {
-    display: none !important;
-  }
-}
 
 /* 原来的独立「复位视图」按钮已并入 CanvasViewControls，样式随之移除 */
 

@@ -5,10 +5,9 @@ import type { DoudouState } from './doudouState'
 import styles from './DoudouMascot.module.css'
 
 export function DoudouMascot({ state = 'idle', compact = false }: { state?: DoudouState; compact?: boolean }) {
-  const root = useRef<HTMLButtonElement>(null)
-  const [visible, setVisible] = useState(false)
+  const root = useRef<HTMLSpanElement>(null)
+  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
   const [pageVisible, setPageVisible] = useState(!document.hidden)
-  const [paused, setPaused] = useState(false)
   useEffect(() => {
     const element = root.current
     const observer =
@@ -25,16 +24,13 @@ export function DoudouMascot({ state = 'idle', compact = false }: { state?: Doud
   }, [])
   const label = doudouLabels[state]
   return (
-    <button
+    <span
       ref={root}
-      type="button"
+      role="img"
       className={`${styles.mascot} ${compact ? styles.compact : ''}`}
       data-state={state}
-      data-animated={visible && pageVisible && !paused}
-      aria-label={`${label}，${paused ? '播放' : '暂停'}豆豆动画`}
-      aria-pressed={paused}
-      data-tooltip={`${label} · 点击${paused ? '播放' : '暂停'}动画`}
-      onClick={() => setPaused((value) => !value)}
+      data-animated={visible && pageVisible}
+      aria-label={label}
     >
       <span className={styles.character} aria-hidden="true">
         <img className={styles.body} src={body} alt="" width={96} height={96} draggable={false} />
@@ -58,6 +54,6 @@ export function DoudouMascot({ state = 'idle', compact = false }: { state?: Doud
           </g>
         </svg>
       </span>
-    </button>
+    </span>
   )
 }

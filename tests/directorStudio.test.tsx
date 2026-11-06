@@ -397,7 +397,7 @@ describe('Director interactions', () => {
     await openHistory()
     const socket = Socket.instances[0]
     act(() => socket.onopen?.())
-    expect(await screen.findByRole('button', { name: /豆豆正在思考/ })).toBeInTheDocument()
+    expect(await screen.findByRole('img', { name: /豆豆正在思考/ })).toBeInTheDocument()
     act(() =>
       socket.emit({
         event: 'update',
@@ -414,18 +414,18 @@ describe('Director interactions', () => {
         },
       }),
     )
-    expect(screen.getByRole('button', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
     server.use(
       http.get('*/agent-studio/api/state', () => HttpResponse.json({ error: '历史读取失败' }, { status: 500 })),
     )
     fireEvent.click(screen.getByRole('button', { name: /第一集测试/ }))
     fireEvent.click(screen.getByRole('button', { name: '刷新历史' }))
     await screen.findByText('历史读取失败')
-    expect(screen.getByRole('button', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
     act(() => socket.emit({ event: 'snapshot', cursor: 9, data: snapshot({ cursor: 9, status: 'waiting' }) }))
-    expect(screen.getByRole('button', { name: /豆豆在等你确认/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /豆豆在等你确认/ })).toBeInTheDocument()
     act(() => socket.emit({ event: 'snapshot', cursor: 10, data: snapshot({ cursor: 10, status: 'complete' }) }))
-    expect(screen.getByRole('button', { name: /豆豆已完成本轮创作/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /豆豆已完成本轮创作/ })).toBeInTheDocument()
   })
   it('reconnect updates keep one task card and canvas callback; switching closes the socket', async () => {
     const onCanvasChange = vi.fn()

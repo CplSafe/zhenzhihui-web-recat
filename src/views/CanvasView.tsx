@@ -2,7 +2,6 @@ import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
 import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
-import { useCanvasKeyboardPriority } from '@/composables/useCanvasKeyboardPriority'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import CanvasGettingStarted from '@/components/canvas/CanvasGettingStarted'
 import CanvasGlobalActions from '@/components/canvas/CanvasGlobalActions'
@@ -2801,7 +2800,6 @@ function CanvasInner() {
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const canvasRootRef = useRef<HTMLDivElement>(null)
-  const keyboardPriority = useCanvasKeyboardPriority(canvasRootRef, preferences.shortcuts)
   const nodePointerSelectionRef = useRef<{ id: string; selectedIds: string[] } | null>(null)
   const pointerStartedInPanelRef = useRef(false)
   const shortcutsBlockedRef = useRef(false)
@@ -10776,16 +10774,6 @@ function CanvasInner() {
     ],
   )
 
-  /** 底部读数：节点 / 连线 / 生成失败数 */
-  const canvasStats = useMemo(
-    () => ({
-      nodes: nodes.length,
-      edges: edges.length,
-      failed: nodes.filter((node) => normalizeAiTaskStatus((node.data as any)?.taskStatus) === 'failed').length,
-    }),
-    [nodes, edges],
-  )
-
   const canvasShortcutsBlocked = Boolean(
     canvasModalOpen ||
     imageTool ||
@@ -11098,17 +11086,9 @@ function CanvasInner() {
           controls={
             nodes.length > 0 && (
               <CanvasViewControls
-                keyboardPriority={keyboardPriority.enabled}
-                keyboardPriorityPending={keyboardPriority.pending}
-                onKeyboardPriorityToggle={() => void keyboardPriority.toggle()}
-                uiSize={preferences.uiSize}
-                onUiSizeChange={(uiSize) => updatePreferences({ uiSize })}
                 zoom={transform[2]}
-                onZoomIn={() => zoomIn({ duration: 160 })}
-                onZoomOut={() => zoomOut({ duration: 160 })}
-                onZoomTo={(zoom) => void zoomTo(zoom, { duration: 150 })}
+                onArrange={() => void arrangeNodes()}
                 onZoomReset={() => zoomTo(1, { duration: 160 })}
-                onFitView={() => fitView({ padding: 0.2, duration: 300, maxZoom: 1 })}
                 snapEnabled={snapEnabled}
                 onSnapToggle={() => setSnapEnabled((value) => !value)}
                 minimapVisible={minimapVisible}
@@ -11120,9 +11100,6 @@ function CanvasInner() {
                 }
                 edgesHidden={edgesHidden}
                 onEdgesToggle={() => setEdgesHidden((value) => !value)}
-                onOpenSettings={() => setSettingsOpen(true)}
-                onOpenHelp={() => setShortcutsOpen(true)}
-                stats={canvasStats}
               />
             )
           }

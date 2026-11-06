@@ -85,7 +85,7 @@ describe('Doudou reflects confirmed production state', () => {
   })
 })
 
-it('pauses offscreen, on hidden pages, by user choice, and disconnects observers on unmount', () => {
+it('animates without click controls, pauses when hidden, and cleans up observers', () => {
   let intersect: (entries: { isIntersecting: boolean }[]) => void = () => {}
   const disconnect = vi.fn()
   vi.stubGlobal(
@@ -101,7 +101,7 @@ it('pauses offscreen, on hidden pages, by user choice, and disconnects observers
   let hidden = false
   vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden)
   const view = render(<DoudouMascot state="thinking" />)
-  const mascot = screen.getByRole('button', { name: /豆豆正在思考/ })
+  const mascot = screen.getByRole('img', { name: /豆豆正在思考/ })
   expect(mascot).toHaveAttribute('data-animated', 'false')
   act(() => intersect([{ isIntersecting: true }]))
   expect(mascot).toHaveAttribute('data-animated', 'true')
@@ -115,12 +115,13 @@ it('pauses offscreen, on hidden pages, by user choice, and disconnects observers
     document.dispatchEvent(new Event('visibilitychange'))
   })
   fireEvent.click(mascot)
-  expect(mascot).toHaveAttribute('data-animated', 'false')
-  expect(mascot).toHaveAttribute('aria-pressed', 'true')
+  expect(mascot).toHaveAttribute('data-animated', 'true')
+  expect(mascot).not.toHaveAttribute('aria-pressed')
+  expect(mascot).not.toHaveAttribute('data-tooltip')
+  expect(mascot).not.toHaveAttribute('title')
+  expect(screen.queryByRole('button')).not.toBeInTheDocument()
   view.rerender(<DoudouMascot state="generating" />)
-  expect(mascot).toHaveAccessibleName('豆豆正在制作素材，播放豆豆动画')
-  expect(mascot).toHaveAttribute('data-animated', 'false')
-  fireEvent.click(mascot)
+  expect(mascot).toHaveAccessibleName('豆豆正在制作素材')
   expect(mascot).toHaveAttribute('data-animated', 'true')
   act(() => intersect([{ isIntersecting: false }]))
   expect(mascot).toHaveAttribute('data-animated', 'false')

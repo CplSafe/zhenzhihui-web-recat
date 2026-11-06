@@ -1,4 +1,4 @@
-.mascot.mascot {
+.mascot {
   display: block;
   flex: 0 0 auto;
   width: 96px;
@@ -7,15 +7,7 @@
   margin: 0 0 12px;
   border: 0;
   background: transparent;
-  border-radius: 16px;
-  cursor: pointer;
-}
-.mascot.mascot:hover {
-  background: transparent;
-}
-.mascot:focus-visible {
-  outline: 2px solid #a6ca8c;
-  outline-offset: 3px;
+  cursor: default;
 }
 .mascot.compact {
   width: 36px;
