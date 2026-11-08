@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { getManualVideoTask, listManualVideoHistory, type ManualVideoTask } from '@/api/manualVideo'
 import styles from './ManualVideoFlow.module.css'
+import DeliveryTaskCard from '@/components/task/DeliveryTaskCard'
+import cardStyles from '@/components/task/PromoTaskList.module.css'
 
 /** 混合任务列表中只展示服务端明确标识为 video.t1 的记录。 */
 export default function ManualVideoHistory({
@@ -8,11 +10,17 @@ export default function ManualVideoHistory({
   workspaceId,
   onOpen,
   includeLocal = false,
+  presentation = 'inline',
+  showEmpty = true,
+  onPresenceChange,
 }: {
   ownerId: number
   workspaceId: number
   onOpen: (id: number) => void
   includeLocal?: boolean
+  presentation?: 'inline' | 'cards'
+  showEmpty?: boolean
+  onPresenceChange?: (present: boolean) => void
 }) {
   const [tasks, setTasks] = useState<ManualVideoTask[]>([])
   const [error, setError] = useState('')
@@ -71,7 +79,59 @@ export default function ManualVideoHistory({
       })
     return () => controller.abort()
   }, [ownerId, workspaceId, attempt, includeLocal, offset])
-  if (!tasks.length && !error && !loading && !hasMore) return null
+  const present = Boolean(tasks.length || loading || error || hasMore)
+  useEffect(() => {
+    onPresenceChange?.(present)
+  }, [onPresenceChange, present])
+  if (!tasks.length && !error && !loading && !hasMore)
+    return presentation === 'cards' && showEmpty ? (
+      <div className={cardStyles.empty}>
+        暂无精制任务
+        <br />
+        提交精制任务后可在这里查看。
+      </div>
+    ) : null
+  if (presentation === 'cards')
+    return (
+      <div className={cardStyles.list}>
+        {loading && <div role="status">正在加载精制任务…</div>}
+        {error && (
+          <div role="alert">
+            {error}{' '}
+            <button type="button" onClick={() => setAttempt((v) => v + 1)}>
+              重试
+            </button>
+          </div>
+        )}
+        {tasks.map((task) => (
+          <DeliveryTaskCard
+            key={task.id}
+            title={String((task as ManualVideoTask & { prompt?: string }).prompt || `精制任务 #${task.id}`)}
+            status={
+              (
+                {
+                  awaiting_manual: '待制作',
+                  manual_processing: '制作中',
+                  succeeded: '已交付',
+                  failed: '制作失败',
+                  cancelled: '已取消',
+                } as Record<string, string>
+              )[task.status] || task.status
+            }
+            meta={`T+1 · 任务 #${task.id}`}
+            workspaceId={workspaceId}
+            manualTaskId={task.id}
+            video={task.status === 'succeeded' ? task.outputs?.find((output) => output.type === 'video') : undefined}
+            onOpen={() => onOpen(task.id)}
+          />
+        ))}
+        {hasMore && (
+          <button type="button" disabled={loading || !!error} onClick={() => setOffset((v) => v + 20)}>
+            加载更多精制任务
+          </button>
+        )}
+      </div>
+    )
   return (
     <div className={styles.knownTasks}>
       <b>历史精制任务</b>

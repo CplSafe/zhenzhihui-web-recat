@@ -32,6 +32,7 @@ export interface SmartEntryDraftStore {
   /** 按 operation_code 保存的后端模型版本选择。 */
   generationModels?: GenerationModelSelectionMap
   refineSelected?: boolean
+  refineModelId?: number
   refineScreen?: 'preparing' | 'order'
 }
 

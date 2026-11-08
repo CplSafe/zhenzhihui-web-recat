@@ -63,6 +63,8 @@ export interface CreativeParamsDropdownProps {
   /** 长成片作为精制服务选择，不改变即时模型的可用档位。 */
   refineDurations?: readonly number[]
   onSelectRefineDuration?: (seconds: number) => void
+  durationRange?: { min: number; max: number }
+  onDurationInput?: (value: string) => void
 }
 
 /** 时长未选时摘要里的占位。 */
@@ -70,10 +72,11 @@ const DURATION_PLACEHOLDER = '选择时长'
 const ratioLabel = (ratio: string) => (isInputDerivedRatioValue(ratio) ? '自适应' : ratio)
 
 /** 折叠态摘要：只列当前模式真正在用的几项。 */
-function formatSummary(value: CreativeParamsValue, options: CreativeParamsOptions): string {
+function formatSummary(value: CreativeParamsValue, options: CreativeParamsOptions, hasDurationRange = false): string {
   const parts: string[] = []
   if (options.ratios.length) parts.push(ratioLabel(value.ratio))
-  if (options.durations.length) parts.push(value.durationSec > 0 ? `${value.durationSec}s` : DURATION_PLACEHOLDER)
+  if (options.durations.length || hasDurationRange)
+    parts.push(value.durationSec > 0 ? `${value.durationSec}s` : DURATION_PLACEHOLDER)
   if (options.resolutions.length) parts.push(value.resolution)
   if (options.counts.length) parts.push(`${value.count}张`)
   // 关闭态也要出现在摘要里：背景音会实际改变成片内容，
@@ -93,6 +96,8 @@ export default function CreativeParamsDropdown({
   openSignal = 0,
   refineDurations = [],
   onSelectRefineDuration,
+  durationRange,
+  onDurationInput,
 }: CreativeParamsDropdownProps) {
   const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const adaptiveHintId = useId()
@@ -121,10 +126,10 @@ export default function CreativeParamsDropdown({
         title={blockedReason || undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label={`创作参数，当前 ${formatSummary(value, options)}`}
+        aria-label={`创作参数，当前 ${formatSummary(value, options, !!durationRange)}`}
       >
         <span aria-hidden="true">⚙</span>
-        <span className={barStyles.summary}>{formatSummary(value, options)}</span>
+        <span className={barStyles.summary}>{formatSummary(value, options, !!durationRange)}</span>
         <span className={barStyles.caret} aria-hidden="true">
           {open ? '▲' : '▼'}
         </span>
@@ -192,6 +197,23 @@ export default function CreativeParamsDropdown({
                 onChange={(durationSec) => patch({ durationSec })}
               />
             </div>
+          )}
+          {durationRange && onDurationInput && (
+            <label className={`${barStyles.field} ${styles.field}`}>
+              <span className={barStyles.label}>视频时长（秒）</span>
+              <input
+                className={styles.durationInput}
+                type="number"
+                min={durationRange.min}
+                max={durationRange.max}
+                step="1"
+                value={value.durationSec || ''}
+                onChange={(event) => onDurationInput(event.target.value)}
+              />
+              <span className={styles.ratioHint}>
+                {durationRange.min}–{durationRange.max} 秒，填写整数
+              </span>
+            </label>
           )}
           {refineDurations.length > 0 && onSelectRefineDuration && (
             <div className={`${barStyles.field} ${styles.field}`}>

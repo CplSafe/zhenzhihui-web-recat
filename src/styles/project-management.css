@@ -1213,6 +1213,7 @@
   gap: 24px;
   margin-bottom: 18px;
 }
+
 .pm2-head-title {
   margin: 0;
   font-size: 24px;
@@ -2255,4 +2256,13 @@
   font-size: 26px;
   line-height: 1;
   cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .pm2-main { padding: 20px 16px 40px; }
+  .pm2-head { flex-direction: column; gap: 16px; }
+  .pm2-head-actions { width: 100%; min-width: 0; flex-wrap: wrap; }
+  .pm2-search { flex: 1 1 180px; min-width: 0; }
+  .pm2-search-input { box-sizing: border-box; width: 100%; }
+  .pm2-card-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
 }

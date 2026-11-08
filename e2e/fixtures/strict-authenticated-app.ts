@@ -521,6 +521,12 @@ export async function installStrictAuthenticatedApp(
       await route.fulfill({ status: 404, json: { message: '高清处理服务暂未接入' } })
       return
     }
+    if (method === 'GET' && path === '/api/v1/promo/orders') {
+      await route.fulfill({
+        json: { code: 0, data: { items: [], total: 0, limit: 20, offset: 0, has_unfinished: false } },
+      })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/ai/tasks') {
       const operation = url.searchParams.get('operation_code') || ''
       const items =

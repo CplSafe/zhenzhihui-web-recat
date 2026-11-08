@@ -21,6 +21,18 @@ const config = {
   authorization_version: 'v1',
 }
 
+test('宣传片关闭时显示服务未开放，并保留订单入口', async ({ page }, testInfo) => {
+  await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/promo/config', (route) =>
+    route.fulfill({ json: { code: 0, data: { enabled: false, entry_name: '定制宣传片' } } }),
+  )
+  await page.goto('/promo')
+  await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
+  await expect(page.getByText('宣传片配置不完整，请联系客服')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '提交需求，进入制作排期' })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('promo-disabled.png'), animations: 'disabled' })
+})
+
 for (const width of [1440, 390]) {
   test(`宣传片收起的任务入口在可视区域居中 ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 })
@@ -53,6 +65,10 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   const bodies: string[] = []
   let uploaded = false
+  let releaseUpload!: () => void
+  const uploadGate = new Promise<void>((resolve) => {
+    releaseUpload = resolve
+  })
   let orderStatus = 'pending'
   let reworkRequests = 0
   await page.route('**/api/v1/promo/**', async (route) => {
@@ -118,6 +134,7 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
     await route.fulfill({ json: { code: 0, data } })
   })
   await page.route('https://bucket.aliyuncs.com/upload', async (route) => {
+    await uploadGate
     uploaded = true
     await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } })
   })
@@ -134,6 +151,9 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await page
     .getByLabel('上传实拍素材')
     .setInputFiles({ name: '素材.png', mimeType: 'image/png', buffer: Buffer.from('abc') })
+  await expect(page.getByRole('status').filter({ hasText: '正在处理素材：素材.png' })).toBeVisible()
+  await expect(page.getByText(/素材.png · 上传中/)).toBeVisible()
+  releaseUpload()
   await expect(page.getByText(/素材.png · 已就绪/)).toBeVisible()
   await page.getByLabel('素材授权声明').check()
   await page.getByLabel('制作须知').check()

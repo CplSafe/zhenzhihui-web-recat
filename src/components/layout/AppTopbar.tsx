@@ -215,7 +215,11 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
         {!tutorialLivesInPage && <TutorialButton variant="topbar" />}
         {/* 通知铃铛:需求市场相关动态(已完成/被接单/申请结果),仅登录后展示 */}
         {!isAnonymous && isAuthenticated && (
-          <NotificationBell userKey={String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || '')} />
+          <NotificationBell
+            key={`${currentUser?.id || currentUser?.user_id || currentUser?.mobile || ''}:${workspaceId || 0}`}
+            userKey={String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || '')}
+            workspaceId={Number(workspaceId || 0)}
+          />
         )}
         {/* 分享链接:仅登录后展示(未登录不可分享)。珊瑚圆角方块 + 链条图标 */}
         {!isAnonymous && (

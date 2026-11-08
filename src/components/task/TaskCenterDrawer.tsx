@@ -1152,6 +1152,11 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     activeScope === 'smart' &&
     (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId)) &&
     refineTasks.some((task) => task.ownerId === currentUserId && task.workspaceId === Number(workspaceId))
+  const [hasManualTasks, setHasManualTasks] = useState(false)
+  const showManualTasks =
+    MANUAL_DELIVERY_ENABLED &&
+    activeScope === 'smart' &&
+    (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId))
   /** 创作者展示名：任务自带（后端 creator_nickname）优先，否则按 ID 从成员列表查。 */
   const creatorLabelFor = (task: TaskCenterTask): string => {
     if (!isTeamSpace) return ''
@@ -1383,12 +1388,15 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               onPresenceChange={setHasRealPromo}
             />
           )}
-          {MANUAL_DELIVERY_ENABLED && activeScope === 'smart' && (
+          {showManualTasks && (
             <ManualVideoHistory
               key={`${currentUserId}.${workspaceId}`}
               ownerId={currentUserId}
               workspaceId={Number(workspaceId)}
               includeLocal
+              presentation="cards"
+              showEmpty={false}
+              onPresenceChange={setHasManualTasks}
               onOpen={(id) => {
                 rememberTask(currentUserId, Number(workspaceId), id)
                 navigate(`/smart?manualTask=${id}`)
@@ -1403,7 +1411,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               workspaceId={Number(workspaceId)}
             />
           ) : visibleTasks.length ? (
-            <div className={styles.taskList}>
+            <div className={cx(styles.taskList, showManualTasks && hasManualTasks && styles.taskListAfterDelivery)}>
               {displayedTasks.map((task) => {
                 const record = task as TaskRecord
                 const taskId = String(readValue(record, 'id', 'taskId', 'task_id') ?? '')
@@ -1465,7 +1473,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               })}
             </div>
           ) : (activeScope === 'generating' && (hasActivePromo || hasRealPromo)) ||
-            hasVisibleRefineTasks ? null : historyLoading && activeScope !== 'generating' ? (
+            hasVisibleRefineTasks ||
+            (showManualTasks && hasManualTasks) ? null : historyLoading && activeScope !== 'generating' ? (
             <div className={styles.empty} role="status">
               <LoadingOutlined className={styles.emptySpinner} spin aria-hidden="true" />
               <span className={styles.emptyTitle}>正在加载历史{activeScope === 'image' ? '图片' : '视频'}</span>

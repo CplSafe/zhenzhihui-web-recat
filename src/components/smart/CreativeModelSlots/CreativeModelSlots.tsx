@@ -48,7 +48,9 @@ export interface CreativeModelSlotsProps {
   /** 尚未选择过模型时的明确提示。 */
   emptyLabel?: string
   refineSelected?: boolean
-  onSelectRefine?: () => void
+  refineModels?: { id: number; name: string; logo?: string; description?: string }[]
+  refineModelId?: number
+  onSelectRefine?: (id: number) => void
 }
 
 /** 渲染模型摘要胶囊及其槽位弹层。 */
@@ -65,6 +67,8 @@ export default function CreativeModelSlots({
   onModelSelected,
   emptyLabel = '请选择视频模型',
   refineSelected = false,
+  refineModels = [],
+  refineModelId,
   onSelectRefine,
 }: CreativeModelSlotsProps) {
   const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
@@ -96,7 +100,9 @@ export default function CreativeModelSlots({
       ? [{ key: group.key, groupKey: group.key, subgroupKey: undefined, label: group.label, models: group.models }]
       : []
     const subs = (group.subgroups ?? [])
-      .filter((subgroup) => subgroup.models.length > 0)
+      .filter(
+        (subgroup) => subgroup.models.length > 0 || (subgroup.key === 'video.generate' && refineModels.length > 0),
+      )
       .map((subgroup) => ({
         key: subgroup.key,
         groupKey: group.key,
@@ -119,7 +125,7 @@ export default function CreativeModelSlots({
   )
   const chosenCount = chosenNames.filter(Boolean).length
   const summary = refineSelected
-    ? '精制交付 · T+1'
+    ? `${refineModels.find((model) => model.id === refineModelId)?.name || '精制交付'} · T+1`
     : authRequired
       ? '登录后选择模型'
       : !slots.length
@@ -173,16 +179,17 @@ export default function CreativeModelSlots({
           {slots.map((slot) => (
             <div className={`${barStyles.field} ${styles.slotSection}`} key={slot.key}>
               <span className={`${barStyles.label} ${styles.slotLabel}`}>{slot.label}</span>
-              {!slot.models.some((model) => !model.disabled) && (
-                <span role="status">
-                  <ModelAvailabilityNotice
-                    message={
-                      slot.models.find((model) => model.unavailableReason)?.unavailableReason ||
-                      `${slot.label}暂无可用模型，请刷新重试；若仍不可用，请联系平台管理员`
-                    }
-                  />
-                </span>
-              )}
+              {!slot.models.some((model) => !model.disabled) &&
+                !(slot.key === 'video.generate' && refineModels.length) && (
+                  <span role="status">
+                    <ModelAvailabilityNotice
+                      message={
+                        slot.models.find((model) => model.unavailableReason)?.unavailableReason ||
+                        `${slot.label}暂无可用模型，请刷新重试；若仍不可用，请联系平台管理员`
+                      }
+                    />
+                  </span>
+                )}
               <div
                 className={`${styles.optionList}${slot.models.filter((model) => !model.disabled).length === 1 ? ` ${styles.optionListSingle}` : ''}`}
                 role="listbox"
@@ -191,7 +198,7 @@ export default function CreativeModelSlots({
                 {slot.models
                   .filter((model) => !model.disabled)
                   .map((model) => {
-                    const active = String(model.id) === String(selected[slot.key])
+                    const active = !refineSelected && String(model.id) === String(selected[slot.key])
                     return (
                       <button
                         key={model.id}
@@ -236,24 +243,44 @@ export default function CreativeModelSlots({
                       </button>
                     )
                   })}
+                {slot.key === 'video.generate' &&
+                  onSelectRefine &&
+                  refineModels.map((model) => (
+                    <button
+                      key={`t1-${model.id}`}
+                      type="button"
+                      role="option"
+                      aria-selected={refineSelected && model.id === refineModelId}
+                      className={`${styles.option}${refineSelected && model.id === refineModelId ? ` ${styles.optionActive}` : ''}`}
+                      onClick={() => {
+                        onSelectRefine(model.id)
+                        closeAfterSelection()
+                      }}
+                    >
+                      <span
+                        className={`${styles.optionLogo}${model.logo ? '' : ` ${styles.optionLogoInitial}`}`}
+                        aria-hidden="true"
+                      >
+                        {model.logo ? (
+                          <img className={styles.logoImg} src={model.logo} alt="" />
+                        ) : (
+                          modelInitial(model.name)
+                        )}
+                      </span>
+                      <span className={styles.optionBody}>
+                        <span className={styles.optionName}>{model.name} · T+1</span>
+                        {model.description && <span className={styles.optionDesc}>{model.description}</span>}
+                      </span>
+                      {refineSelected && model.id === refineModelId && (
+                        <span className={styles.check} aria-hidden="true">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  ))}
               </div>
             </div>
           ))}
-          {onSelectRefine && (
-            <button
-              type="button"
-              className={`${styles.option}${refineSelected ? ` ${styles.optionActive}` : ''}`}
-              onClick={() => {
-                onSelectRefine()
-                closeAfterSelection()
-              }}
-            >
-              <span className={styles.optionBody}>
-                <span className={styles.optionName}>精制交付 · T+1 交付</span>
-                <span className={styles.optionDesc}>15 秒至 5 分钟 · 人工制作 · 提交前查看服务端报价</span>
-              </span>
-            </button>
-          )}
         </div>
       )}
     </div>

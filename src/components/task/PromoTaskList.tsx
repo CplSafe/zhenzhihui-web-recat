@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { getWorkspacePromoOrderIds, listPromoOrders, promoOrderBelongsToWorkspace, type PromoOrder } from '@/api/promo'
 import { promoCredits, usePromoDemoStore } from '@/stores/promoDemo'
 import styles from './PromoTaskList.module.css'
+import DeliveryTaskCard from './DeliveryTaskCard'
 
 export default function PromoTaskList({
   ownerId,
@@ -94,15 +95,11 @@ export default function PromoTaskList({
         </div>
       )}
       {real.map((order) => (
-        <button
+        <DeliveryTaskCard
           key={`order-${order.id}`}
-          className={styles.card}
-          type="button"
-          onClick={() => navigate(`/promo?order=${order.id}`)}
-        >
-          <span className={styles.title}>{order.company || `宣传片订单 #${order.id}`}</span>
-          <span className={styles.status}>
-            {order.is_overdue
+          title={order.company || `宣传片订单 #${order.id}`}
+          status={
+            order.is_overdue
               ? '制作中，顾问会主动联系你'
               : (
                   {
@@ -114,10 +111,11 @@ export default function PromoTaskList({
                     completed: '已完成',
                     cancelled: '已取消',
                   } as Record<string, string>
-                )[order.status] || order.status}
-          </span>
-          {order.promised_date && <span>承诺交付 {order.promised_date}</span>}
-        </button>
+                )[order.status] || order.status
+          }
+          meta={`T+5 · ${order.promised_date ? `承诺交付 ${order.promised_date}` : `订单 #${order.id}`}`}
+          onOpen={() => navigate(`/promo?order=${order.id}`)}
+        />
       ))}
       {offset + 20 < total && (
         <button type="button" disabled={loading || !!error} onClick={() => setOffset((value) => value + 20)}>
@@ -125,26 +123,13 @@ export default function PromoTaskList({
         </button>
       )}
       {visible.map((task) => (
-        <button
+        <DeliveryTaskCard
           key={task.id}
-          className={styles.card}
-          type="button"
-          onClick={() => navigate(`/promo?task=${encodeURIComponent(task.id)}`)}
-        >
-          <span className={styles.title}>
-            {task.scene} · {task.org}
-          </span>
-          <span className={styles.status}>{task.status} · T+5 演示</span>
-          <span>
-            {task.duration / 60} 分钟 · {promoCredits(task.duration).toLocaleString()} 积分（模拟）
-          </span>
-          <span>
-            {task.status === '待交接'
-              ? '素材收齐后确定交付日期'
-              : `承诺交付 ${new Date(task.dueAt).toLocaleDateString('zh-CN')}`}{' '}
-            · 查看详情 ›
-          </span>
-        </button>
+          title={`${task.scene} · ${task.org}（演示）`}
+          status={task.status}
+          meta={`T+5 演示 · ${task.duration / 60} 分钟 · ${promoCredits(task.duration).toLocaleString()} 积分（模拟）`}
+          onOpen={() => navigate(`/promo?task=${encodeURIComponent(task.id)}`)}
+        />
       ))}
     </div>
   )

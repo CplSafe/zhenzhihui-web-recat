@@ -18,6 +18,7 @@
  * 而不是某一个 operation 的子集。
  */
 import type { GenerationModelGroup, GenerationModelOption } from './generationModelCatalog'
+import { getManualVideoOperation } from '@/api/manualVideo'
 
 /** 画布节点类型 → 该类型可选的模型列表。 */
 export interface CanvasModelBuckets {
@@ -83,6 +84,7 @@ export function buildCanvasModelBuckets(
   return {
     text: collect(GROUP_KEYS_BY_NODE_KIND.text),
     image: collect(GROUP_KEYS_BY_NODE_KIND.image),
-    video: collect(GROUP_KEYS_BY_NODE_KIND.video),
+    // 人工交付任务有独立的状态与交付流程，不能作为画布普通视频节点运行。
+    video: collect(GROUP_KEYS_BY_NODE_KIND.video).filter((model) => !getManualVideoOperation(model.source as any)),
   }
 }
