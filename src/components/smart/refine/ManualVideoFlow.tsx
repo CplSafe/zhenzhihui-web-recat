@@ -21,6 +21,7 @@ import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
 import { getModelParamFields, getModelParamOptionValues } from '@/utils/modelSchema'
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
+import { getManualDurationSpec } from '@/utils/manualVideoParams'
 import { isDefiniteSubmissionRejection } from '@/utils/submissionRecovery'
 import ManualVideoHistory from './ManualVideoHistory'
 import styles from './RefineDemo.module.less'
@@ -37,6 +38,7 @@ interface Props {
   ownerId: number
   workspaceId: number
   taskId: number
+  modelId?: number
   description: string
   script: string
   duration: number
@@ -131,11 +133,13 @@ export default function ManualVideoFlow(props: Props) {
         if (controller.signal.aborted) return
         const item = unwrapGenerationModelCatalogResponse(response).find((value): value is Model => {
           const entry = value as Model
-          return !!entry && getManualVideoOperation(entry) !== null
+          return !!entry && getManualVideoOperation(entry) !== null && (!props.modelId || entry.id === props.modelId)
         })
         if (!item) throw new Error('当前空间暂无可用精制模型')
         const schemaFields = getModelParamFields(item)
         if (!schemaFields.some((field) => field.name === 'duration')) throw new Error('精制模型参数配置不完整')
+        const durationSpec = getManualDurationSpec(item)
+        if (!durationSpec.valid(durationSpec.fallback)) throw new Error('精制模型时长配置不完整')
         const initial: Record<string, unknown> = {}
         for (const field of schemaFields) {
           const options = getModelParamOptionValues(field)
@@ -148,9 +152,13 @@ export default function ManualVideoFlow(props: Props) {
                   ? props.resolution
                   : undefined
           const next =
-            preferred !== undefined && (!options.length || options.includes(preferred))
-              ? preferred
-              : (field.default ?? options[0])
+            field.name === 'duration'
+              ? durationSpec.valid(Number(preferred))
+                ? Number(preferred)
+                : durationSpec.fallback
+              : preferred !== undefined && (!options.length || options.includes(preferred))
+                ? preferred
+                : (field.default ?? options[0])
           if (next !== undefined) initial[field.name] = next
         }
         setModel(item)
@@ -163,7 +171,7 @@ export default function ManualVideoFlow(props: Props) {
         if (!controller.signal.aborted) setModelLoading(false)
       })
     return () => controller.abort()
-  }, [workspaceId, ownerId, taskId, props.duration, props.ratio, props.resolution, reload])
+  }, [workspaceId, ownerId, taskId, props.modelId, props.duration, props.ratio, props.resolution, reload])
 
   useEffect(() => {
     if (!taskId || !knownManualTask(ownerId, workspaceId, taskId)) return
@@ -216,8 +224,13 @@ export default function ManualVideoFlow(props: Props) {
       return
     }
     const duration = Number(values.duration)
-    if (!Number.isInteger(duration) || duration < 15 || duration > 300) {
-      setError('时长须为 15 至 300 秒的整数')
+    const durationSpec = getManualDurationSpec(model)
+    if (!durationSpec.valid(duration)) {
+      setError(
+        durationSpec.hasOptions
+          ? `请选择模型支持的时长：${durationSpec.options.join('、')} 秒`
+          : `时长须为 ${durationSpec.min} 至 ${durationSpec.max} 秒的整数`,
+      )
       return
     }
     busy.current = true
@@ -472,14 +485,32 @@ export default function ManualVideoFlow(props: Props) {
                         setSnapshot(null)
                       }
                       if (field.name === 'duration')
+                        if (getManualDurationSpec(model).hasOptions)
+                          return (
+                            <label key={field.name}>
+                              时长（秒）
+                              <select
+                                disabled={loading}
+                                value={String(values.duration ?? '')}
+                                onChange={(event) => update(Number(event.target.value))}
+                              >
+                                {getManualDurationSpec(model).options.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option} 秒
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )
+                      if (field.name === 'duration')
                         return (
                           <label key={field.name}>
                             时长（秒）
                             <input
                               type="number"
                               disabled={loading}
-                              min="15"
-                              max="300"
+                              min={getManualDurationSpec(model).min}
+                              max={getManualDurationSpec(model).max}
                               step="1"
                               value={String(values.duration ?? '')}
                               onChange={(event) => update(Number(event.target.value))}

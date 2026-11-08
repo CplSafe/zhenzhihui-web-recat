@@ -56,7 +56,7 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
   const settings = page.getByRole('button', { name: '生成设置' })
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('button', { name: /精制交付 · T\+1/ }).click()
+  await page.getByRole('option', { name: /人工制作 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
   await expect(page.getByRole('heading', { name: '核对制作需求' })).toBeVisible()
   await expect(page.getByText('准备就绪，尚未提交任务')).toBeVisible()
@@ -132,7 +132,7 @@ test('窄屏精制准备页说明下一步及本设备历史任务', async ({ pa
   const settings = page.getByRole('button', { name: '生成设置' })
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('button', { name: /精制交付 · T\+1/ }).click()
+  await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
   await expect(page.getByText('准备就绪，尚未提交任务')).toBeVisible()
   await expect(page.getByText('点击任务编号可查看之前的任务，与你当前的需求分开。')).toBeVisible()
@@ -203,6 +203,22 @@ test('已知人工任务的付费修改创建新任务，原任务不被覆盖',
 test('仅展示明确标识为 T+1 的服务端历史任务', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   await page.addInitScript(() => window.localStorage.setItem('zzh_guide_seen_smart_u7', '1'))
+  await page.route('**/api/v1/ai/models**', (route) => {
+    if (new URL(route.request().url()).searchParams.get('capability') !== 'video') return route.fallback()
+    return route.fulfill({
+      json: {
+        code: 0,
+        data: [
+          {
+            id: 77,
+            enabled: true,
+            operation_codes: ['video.t1'],
+            params_schema: { fields: [{ name: 'duration', type: 'integer', default: 30 }] },
+          },
+        ],
+      },
+    })
+  })
   let secondPageAttempts = 0
   await page.route('**/api/v1/ai/tasks**', async (route) => {
     const url = new URL(route.request().url())
@@ -248,7 +264,7 @@ test('仅展示明确标识为 T+1 的服务端历史任务', async ({ page }, t
   const settings = page.getByRole('button', { name: '生成设置' })
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('button', { name: /精制交付 · T\+1/ }).click()
+  await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
   await expect(page.getByRole('button', { name: /任务 #901/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /任务 #902/ })).toHaveCount(0)

@@ -78,6 +78,9 @@ import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { useRefineDemoStore } from '@/stores/refineDemo'
 import { usePromoDemoStore } from '@/stores/promoDemo'
 import { MANUAL_DELIVERY_ENABLED, PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import { useDeliveryProjectItems } from '@/composables/useDeliveryProjectItems'
+import { rememberTask } from '@/components/smart/refine/ManualVideoFlow'
+import DeliveryProjectCover from '@/components/task/DeliveryProjectCover'
 
 /** 成员权限尚未加载时复用的稳定空数组。 */
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
@@ -437,6 +440,7 @@ export default function ProjectManagementView() {
   const currentUser = useCurrentUser()
   const currentWorkspace = useCurrentWorkspace()
   const currentUserId = resolveUserId(currentUser)
+  const deliveryProjects = useDeliveryProjectItems(currentUserId, Number(workspaceId || 0))
   const refineTasks = useRefineDemoStore((state) => state.tasks)
   const promoTasks = usePromoDemoStore((state) => state.tasks)
 
@@ -794,19 +798,26 @@ export default function ProjectManagementView() {
       const id = Number(folder.userId || 0)
       if (id) countsByUserId.set(id, (countsByUserId.get(id) || 0) + 1)
     })
-    if (currentUserId && (ownRefineTasks.length || ownPromoTasks.length)) {
-      countsByUserId.set(
-        currentUserId,
-        (countsByUserId.get(currentUserId) || 0) + ownRefineTasks.length + ownPromoTasks.length,
-      )
+    const ownDeliveryCount =
+      ownRefineTasks.length + ownPromoTasks.length + deliveryProjects.manual.length + deliveryProjects.promo.length
+    if (currentUserId && ownDeliveryCount) {
+      countsByUserId.set(currentUserId, (countsByUserId.get(currentUserId) || 0) + ownDeliveryCount)
     }
     const mineCount = myProjectIds
       ? folders.reduce((total, folder) => total + (myProjectIds.has(Number(folder.id || 0)) ? 1 : 0), 0) +
-        ownRefineTasks.length +
-        ownPromoTasks.length
+        ownDeliveryCount
       : countsByUserId.get(currentUserId) || 0
     return buildOwnerFilterOptions({ countsByUserId, mineCount, members: effectiveWorkspaceMembers, currentUserId })
-  }, [folders, effectiveWorkspaceMembers, currentUserId, myProjectIds, ownRefineTasks, ownPromoTasks])
+  }, [
+    folders,
+    effectiveWorkspaceMembers,
+    currentUserId,
+    myProjectIds,
+    ownRefineTasks,
+    ownPromoTasks,
+    deliveryProjects.manual,
+    deliveryProjects.promo,
+  ])
 
   /**
    * 生效的成员筛选:记忆值可能已失效(成员退出团队/项目清零),
@@ -864,6 +875,31 @@ export default function ProjectManagementView() {
     return ownPromoTasks.filter((task) => !q || `${task.scene} ${task.org}`.toLowerCase().includes(q))
   }, [ownPromoTasks, flowFilter, typeFilter, modelFilter, effectiveOwnerFilter, currentUserId, query])
 
+  const canShowOwnDelivery =
+    typeFilter !== '协作项目' &&
+    !modelFilter &&
+    (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId))
+  const qDelivery = query.trim().toLowerCase()
+  const realManual = useMemo(
+    () =>
+      canShowOwnDelivery && (flowFilter === 'all' || flowFilter === 'smart')
+        ? deliveryProjects.manual.filter(
+            (task) =>
+              !qDelivery || `${(task as any).prompt || ''} 精制任务 ${task.id}`.toLowerCase().includes(qDelivery),
+          )
+        : [],
+    [canShowOwnDelivery, flowFilter, deliveryProjects.manual, qDelivery],
+  )
+  const realPromo = useMemo(
+    () =>
+      canShowOwnDelivery && (flowFilter === 'all' || flowFilter === 'promo')
+        ? deliveryProjects.promo.filter(
+            (order) => !qDelivery || `${order.company || ''} 宣传片订单 ${order.id}`.toLowerCase().includes(qDelivery),
+          )
+        : [],
+    [canShowOwnDelivery, flowFilter, deliveryProjects.promo, qDelivery],
+  )
+
   const shownCanvases = useMemo(() => {
     const q = query.trim().toLowerCase()
     const list = canvasItems.filter(
@@ -903,9 +939,19 @@ export default function ProjectManagementView() {
         updatedAt: task.deliveredAt || task.createdAt,
         task,
       })),
+      ...realManual.map((task) => ({
+        kind: 'real-manual' as const,
+        updatedAt: getProjectTimestamp(task, ['updated_at', 'created_at']),
+        task,
+      })),
+      ...realPromo.map((task) => ({
+        kind: 'real-promo' as const,
+        updatedAt: getProjectTimestamp(task, ['updated_at', 'delivered_at', 'created_at']),
+        task,
+      })),
     ].sort((a, b) => (sortDesc ? b.updatedAt - a.updatedAt : a.updatedAt - b.updatedAt))
     return items.slice((page - 1) * pageSize, page * pageSize)
-  }, [shownFolders, shownRefineTasks, shownPromoTasks, page, pageSize, sortDesc])
+  }, [shownFolders, shownRefineTasks, shownPromoTasks, realManual, realPromo, page, pageSize, sortDesc])
   const pagedCanvases = useMemo(
     () => shownCanvases.slice((page - 1) * pageSize, page * pageSize),
     [shownCanvases, page, pageSize],
@@ -944,7 +990,7 @@ export default function ProjectManagementView() {
   const isPromoTab = flowFilter === 'promo'
   const activeItemCount = isCanvasTab
     ? shownCanvases.length
-    : shownFolders.length + shownRefineTasks.length + shownPromoTasks.length
+    : shownFolders.length + shownRefineTasks.length + shownPromoTasks.length + realManual.length + realPromo.length
   const activeTotalPages = Math.max(1, Math.ceil(activeItemCount / pageSize))
 
   // 列数变化 / 项目减少导致当前页越界时,夹回最后一页
@@ -1723,11 +1769,7 @@ export default function ProjectManagementView() {
       >
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        <section
-          className="pm2-main"
-          aria-label="项目管理"
-          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 36px 56px' }}
-        >
+        <section className="pm2-main" aria-label="项目管理" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
           <>
             {/* 项目管理:头部(标题/副标题 + 搜索 + 新建)*/}
             <div className="pm2-head">
@@ -1869,20 +1911,36 @@ export default function ProjectManagementView() {
 
             {/* 项目卡片网格 */}
             <section className="pm2-section">
+              {deliveryProjects.errors.length > 0 && !isCanvasTab && (
+                <div className="pm2-hint" role="alert">
+                  {deliveryProjects.errors.join('、')}加载失败{' '}
+                  <button type="button" onClick={deliveryProjects.reload}>
+                    重试
+                  </button>
+                </div>
+              )}
               {(
                 isCanvasTab
                   ? canvasItemsLoading && !canvasItems.length
-                  : loading && !folders.length && !ownRefineTasks.length && !ownPromoTasks.length
+                  : isPromoTab
+                    ? deliveryProjects.loading && !realPromo.length && !shownPromoTasks.length
+                    : (loading || deliveryProjects.loading) &&
+                      !folders.length &&
+                      !ownRefineTasks.length &&
+                      !ownPromoTasks.length &&
+                      !realManual.length &&
+                      !realPromo.length
               ) ? (
                 <div className="pm2-hint">{isCanvasTab ? '正在加载无限画布文件…' : '正在加载项目…'}</div>
-              ) : activeItemCount === 0 ? (
+              ) : activeItemCount === 0 && deliveryProjects.errors.length && !isCanvasTab ? null : activeItemCount ===
+                0 ? (
                 <div className="pm2-hint">
                   {isCanvasTab
                     ? query
                       ? '没有匹配的无限画布文件'
                       : '还没有无限画布文件，进入无限画布后可新建画布'
                     : isPromoTab && !query && typeFilter === 'all' && !modelFilter && !effectiveOwnerFilter
-                      ? '暂无宣传片演示任务，可进入定制宣传片体验'
+                      ? '暂无宣传片订单，可进入定制宣传片'
                       : query || flowFilter !== 'all' || typeFilter !== 'all' || modelFilter || effectiveOwnerFilter
                         ? '没有匹配的项目'
                         : '还没有项目,点右上角「新建项目」开始'}
@@ -1998,7 +2056,73 @@ export default function ProjectManagementView() {
                         )
                       })
                     : pagedProjectItems.map((item) =>
-                        item.kind === 'promo' ? (
+                        item.kind === 'real-manual' || item.kind === 'real-promo' ? (
+                          (() => {
+                            const manual = item.kind === 'real-manual'
+                            const record = item.task as any
+                            const title = manual
+                              ? String(record.prompt || `精制任务 #${record.id}`)
+                              : String(record.company || `宣传片订单 #${record.id}`)
+                            const labels: Record<string, string> = {
+                              awaiting_manual: '待制作',
+                              manual_processing: '制作中',
+                              succeeded: '已交付',
+                              failed: '制作失败',
+                              cancelled: '已取消',
+                              pending: '待制作',
+                              producing: '制作中',
+                              reworking: '修改中',
+                              overdue: '已逾期',
+                              delivered: '已交付',
+                              completed: '已完成',
+                            }
+                            const open = () => {
+                              if (manual) {
+                                rememberTask(currentUserId, activeWorkspaceId, record.id)
+                                navigate(`/smart?manualTask=${record.id}`)
+                              } else navigate(`/promo?order=${record.id}`)
+                            }
+                            return (
+                              <div
+                                key={`${item.kind}-${record.id}`}
+                                className="pm2-pcard"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`打开${manual ? '精制任务' : '宣传片订单'} ${title}`}
+                                onClick={open}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    open()
+                                  }
+                                }}
+                              >
+                                <DeliveryProjectCover
+                                  kind={manual ? 'manual' : 'promo'}
+                                  task={item.task}
+                                  workspaceId={activeWorkspaceId}
+                                />
+                                <div className="pm2-pcard-body">
+                                  <div className="pm2-pcard-head">
+                                    <span className="pm2-pcard-title" title={title}>
+                                      {title}
+                                    </span>
+                                  </div>
+                                  <div className="pm2-pcard-meta">
+                                    <span className="pm2-pcard-type">{manual ? '爆款成片 · T+1' : '宣传片 · T+5'}</span>
+                                    <span className="pm2-pcard-counts">
+                                      {!manual && record.is_overdue ? '已逾期' : labels[record.status] || record.status}
+                                    </span>
+                                  </div>
+                                  <div className="pm2-pcard-foot">
+                                    <span className="pm2-pcard-avatar">{manual ? '精' : '宣'}</span>
+                                    <span className="pm2-pcard-time">{relativeUpdated(item.updatedAt)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })()
+                        ) : item.kind === 'promo' ? (
                           <div
                             key={`promo-${item.task.id}`}
                             className="pm2-pcard"

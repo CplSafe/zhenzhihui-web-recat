@@ -78,9 +78,13 @@ import styles from './SmartEntry.module.less'
 import RefineDemo from '@/components/smart/refine/RefineDemo'
 import ManualVideoFlow from '@/components/smart/refine/ManualVideoFlow'
 import { REFINE_DURATIONS, type RefineDuration } from '@/utils/refineDelivery'
+import { getManualDurationSpec, getManualParamOptions } from '@/utils/manualVideoParams'
 import { useRefineDemoStore } from '@/stores/refineDemo'
 import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import { registerUpdateDraftSaver } from '@/utils/updateDraftRegistry'
+import { getManualVideoOperation, listVideoModels, type ManualVideoModel } from '@/api/manualVideo'
+import { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
+import { readModelLogo } from '@/utils/studioModelPresentation'
 
 /** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
 export interface EntryMeta {
@@ -332,6 +336,26 @@ export default function SmartEntry({
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
   const [stored] = useState(() => (restoreSessionDraft ? loadSmartEntryDraft() : null))
   const [refineSelected, setRefineSelected] = useState(MANUAL_DELIVERY_ENABLED && Boolean(stored?.refineSelected))
+  const [refineModels, setRefineModels] = useState<ManualVideoModel[]>([])
+  const [refineModelId, setRefineModelId] = useState(stored?.refineModelId || 0)
+  useEffect(() => {
+    setRefineModels([])
+    if (!MANUAL_DELIVERY_ENABLED || !workspaceId) return
+    const controller = new AbortController()
+    void listVideoModels(Number(workspaceId), controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return
+        const models = unwrapGenerationModelCatalogResponse(response).filter(
+          (item): item is ManualVideoModel => !!item && getManualVideoOperation(item as ManualVideoModel) !== null,
+        )
+        setRefineModels(models)
+        setRefineModelId((current) => current || models[0]?.id || 0)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRefineModels([])
+      })
+    return () => controller.abort()
+  }, [workspaceId])
   const [refineDemoOpen, setRefineDemoOpen] = useState(MANUAL_DELIVERY_ENABLED && Boolean(stored?.refineScreen))
   const [refineScreen, setRefineScreen] = useState<'preparing' | 'order'>(stored?.refineScreen ?? 'preparing')
   const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
@@ -554,6 +578,7 @@ export default function SmartEntry({
       outputCount,
       generationModels,
       refineSelected: MANUAL_DELIVERY_ENABLED ? refineSelected : stored?.refineSelected,
+      refineModelId: MANUAL_DELIVERY_ENABLED ? refineModelId : stored?.refineModelId,
       refineScreen: MANUAL_DELIVERY_ENABLED ? (refineDemoOpen ? refineScreen : undefined) : stored?.refineScreen,
     })
   }
@@ -595,6 +620,7 @@ export default function SmartEntry({
     outputCount,
     generationModels,
     refineSelected,
+    refineModelId,
     refineDemoOpen,
     refineScreen,
     onDraftChange,
@@ -758,8 +784,21 @@ export default function SmartEntry({
   // 不缓存的话下游依赖它的 5 个 useMemo（时长/分辨率/比例/参考图上限/预估目标）
   // 全部失效，输入框每敲一个字都要重算一遍。
   const visibleModelGroups = useMemo(
-    () => filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations),
-    [modelGroups, requiredModelOperations],
+    () =>
+      filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations).map((group) => ({
+        ...group,
+        subgroups: group.subgroups?.map((subgroup) =>
+          subgroup.key === 'video.generate'
+            ? {
+                ...subgroup,
+                models: subgroup.models.filter(
+                  (model) => !refineModels.some((item) => String(item.id) === String(model.id)),
+                ),
+              }
+            : subgroup,
+        ),
+      })),
+    [modelGroups, requiredModelOperations, refineModels],
   )
   const soleScriptModel = useMemo(() => {
     const models = visibleModelGroups
@@ -838,17 +877,19 @@ export default function SmartEntry({
     ...(mode === 'video' && resolution ? { resolution } : {}),
   })
   // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
+  const selectedRefineModel = refineModels.find((model) => model.id === refineModelId)
+  const refineDuration = useMemo(() => getManualDurationSpec(selectedRefineModel), [selectedRefineModel])
   const durationOptions = useMemo(
     () =>
       refineSelected
-        ? [...REFINE_DURATIONS]
+        ? refineDuration.options
         : getGenerationModelDurationOptions(
             visibleModelGroups,
             generationModels,
             'video.generate',
             SMART_VIDEO_DURATIONS,
           ).filter((seconds) => mode !== 'video' || isRealPersonVariant || seconds <= 30),
-    [visibleModelGroups, generationModels, refineSelected, mode, isRealPersonVariant],
+    [visibleModelGroups, generationModels, refineSelected, refineDuration, mode, isRealPersonVariant],
   )
   const durationUnset = parseDurationSeconds(duration) === null
   //
@@ -861,13 +902,15 @@ export default function SmartEntry({
   // 分辨率档位同样跟随所选视频模型；模型未声明 resolution/size 时回落到通用档位。
   const resolutionOptions = useMemo(
     () =>
-      getGenerationModelResolutionOptions(
-        visibleModelGroups,
-        generationModels,
-        'video.generate',
-        DEFAULT_VIDEO_RESOLUTIONS,
-      ),
-    [visibleModelGroups, generationModels],
+      refineSelected
+        ? getManualParamOptions(selectedRefineModel, 'resolution')
+        : getGenerationModelResolutionOptions(
+            visibleModelGroups,
+            generationModels,
+            'video.generate',
+            DEFAULT_VIDEO_RESOLUTIONS,
+          ),
+    [visibleModelGroups, generationModels, refineSelected, selectedRefineModel],
   )
   /**
    * 分辨率与时长的差别：它一直带着默认值（720p），用户可能压根没碰过。
@@ -895,8 +938,9 @@ export default function SmartEntry({
    */
   const ratioOptions = useMemo(() => {
     if (mode !== 'video') return [...RATIO_OPTIONS]
+    if (refineSelected) return getManualParamOptions(selectedRefineModel, 'ratio')
     return getGenerationModelRatioOptions(visibleModelGroups, generationModels, 'video.generate', RATIO_OPTIONS)
-  }, [mode, visibleModelGroups, generationModels])
+  }, [mode, visibleModelGroups, generationModels, refineSelected, selectedRefineModel])
 
   /**
    * 参考图上限跟随所选模型（与时长/分辨率/比例同源）。
@@ -943,12 +987,12 @@ export default function SmartEntry({
    * 之后才有意义，先亮出来会让用户以为自己已经把背景音定下来了。
    */
   const supportsAudio = useMemo(() => {
-    if (mode !== 'video' || !resolveModel) return false
+    if (mode !== 'video' || !resolveModel || refineSelected) return false
     const modelVersionId = generationModels['video.generate']
     if (!modelVersionId) return false
     const model = resolveModel('video.generate', modelVersionId)
     return model ? modelSupportsGeneratedAudio(model) : false
-  }, [mode, resolveModel, generationModels])
+  }, [mode, resolveModel, generationModels, refineSelected])
 
   const creativeParamsOptions: CreativeParamsOptions = useMemo(
     () => ({
@@ -1197,8 +1241,8 @@ export default function SmartEntry({
         onAuthRequired?.()
         return
       }
-      if (!REFINE_DURATIONS.includes((parseDurationSeconds(duration) ?? 0) as RefineDuration)) {
-        showToast('请选择精制成片时长', 'info')
+      if (!selectedRefineModel || !refineDuration.field || !refineDuration.valid(parseDurationSeconds(duration) ?? 0)) {
+        showToast('请选择可用的精制模型和该模型支持的时长', 'info')
         return
       }
       setRefineScreen('preparing')
@@ -1298,6 +1342,7 @@ export default function SmartEntry({
         ownerId={currentUserId}
         workspaceId={Number(workspaceId)}
         taskId={manualTaskId}
+        modelId={refineModelId}
         description={cleanText}
         script={skill}
         duration={parseDurationSeconds(duration)}
@@ -1705,12 +1750,25 @@ export default function SmartEntry({
                         selected={generationModels}
                         onChange={updateGenerationModel}
                         refineSelected={refineSelected}
+                        refineModelId={refineModelId}
+                        refineModels={refineModels.map((model) => ({
+                          id: model.id,
+                          name: model.display_name || model.model || '精制交付',
+                          logo: readModelLogo(model),
+                        }))}
                         onSelectRefine={
                           MANUAL_DELIVERY_ENABLED && mode === 'video' && !isRealPersonVariant
-                            ? () => {
+                            ? (id) => {
+                                setRefineModelId(id)
                                 setRefineSelected(true)
-                                if (!REFINE_DURATIONS.includes((parseDurationSeconds(duration) ?? 0) as RefineDuration))
-                                  setDuration('30s')
+                                const model = refineModels.find((entry) => entry.id === id)
+                                const spec = getManualDurationSpec(model)
+                                if (!spec.valid(parseDurationSeconds(duration) ?? 0)) setDuration(`${spec.fallback}s`)
+                                const ratios = getManualParamOptions(model, 'ratio')
+                                const resolutions = getManualParamOptions(model, 'resolution')
+                                if (ratios.length && !matchModelParamOptionValue(ratio, ratios)) setRatio(ratios[0])
+                                if (resolutions.length && !matchModelParamOptionValue(resolution, resolutions))
+                                  setResolution(resolutions[0])
                               }
                             : undefined
                         }
@@ -1730,14 +1788,32 @@ export default function SmartEntry({
                         value={creativeParamsValue}
                         options={creativeParamsOptions}
                         onChange={applyCreativeParams}
+                        durationRange={
+                          refineSelected && selectedRefineModel && refineDuration.field && !refineDuration.hasOptions
+                            ? { min: refineDuration.min, max: refineDuration.max }
+                            : undefined
+                        }
+                        onDurationInput={(value) => setDuration(value ? `${value}s` : '')}
                         refineDurations={
-                          MANUAL_DELIVERY_ENABLED && mode === 'video' && !isRealPersonVariant && !refineSelected
-                            ? REFINE_DURATIONS.filter((seconds) => seconds > 30)
+                          MANUAL_DELIVERY_ENABLED &&
+                          mode === 'video' &&
+                          !isRealPersonVariant &&
+                          !refineSelected &&
+                          selectedRefineModel &&
+                          refineDuration.field
+                            ? (refineDuration.hasOptions ? refineDuration.options : REFINE_DURATIONS).filter(
+                                (seconds) => seconds > 30 && refineDuration.valid(seconds),
+                              )
                             : []
                         }
                         onSelectRefineDuration={(seconds) => {
                           setRefineSelected(true)
                           setDuration(`${seconds}s`)
+                          const ratios = getManualParamOptions(selectedRefineModel, 'ratio')
+                          const resolutions = getManualParamOptions(selectedRefineModel, 'resolution')
+                          if (ratios.length && !matchModelParamOptionValue(ratio, ratios)) setRatio(ratios[0])
+                          if (resolutions.length && !matchModelParamOptionValue(resolution, resolutions))
+                            setResolution(resolutions[0])
                           showToast('超过 30 秒已切换至精制交付（T+1）', 'info')
                         }}
                         /*

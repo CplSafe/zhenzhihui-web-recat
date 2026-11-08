@@ -153,9 +153,14 @@
   padding: 0 12px;
   border-bottom: 1px solid #eef1f3;
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: #cbdad5 transparent;
   &::-webkit-scrollbar {
-    display: none;
+    height: 3px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #cbdad5;
+    border-radius: 3px;
   }
 }
 
@@ -225,6 +230,10 @@
   flex-direction: column;
   gap: 8px;
   padding: 14px 18px 20px;
+}
+
+.taskListAfterDelivery {
+  padding-top: 8px;
 }
 
 .footer {

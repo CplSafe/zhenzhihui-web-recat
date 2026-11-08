@@ -9,6 +9,8 @@ import { useNavigate } from 'react-router-dom'
 import { listDemandApplications, listMyApplications, listMyDemands, formatDemandDate } from '@/api/market'
 import { getApplication, listApplications, type Application } from '@/api/studentApplications'
 import { withRequestTimeout } from '@/api/requestTimeout'
+import { loadManualDeliveryNotifications, loadPromoDeliveryNotifications } from './deliveryNotifications'
+import DeliveryNotificationDetail from './DeliveryNotificationDetail'
 import './NotificationBell.css'
 
 export interface NotificationItem {
@@ -20,6 +22,7 @@ export interface NotificationItem {
   /** 排序与未读判断用的毫秒时间戳（解析失败为 0，视为已读旧消息） */
   ts: number
   dateLabel: string
+  delivery?: { kind: 't1' | 't5'; id: number }
 }
 
 const READ_STORAGE_PREFIX = 'zzh-market-notify-read:v2:'
@@ -172,12 +175,18 @@ export async function loadScriptApprovalNotifications(signal?: AbortSignal): Pro
 interface NotificationBellProps {
   /** 已读水位按用户隔离 */
   userKey: string
+  workspaceId?: number
 }
 
-export default function NotificationBell({ userKey }: NotificationBellProps) {
+export default function NotificationBell({ userKey, workspaceId = 0 }: NotificationBellProps) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<NotificationItem[]>([])
+  const [manualItems, setManualItems] = useState<NotificationItem[]>([])
+  const [promoItems, setPromoItems] = useState<NotificationItem[]>([])
+  const [deliveryLoading, setDeliveryLoading] = useState(false)
+  const [deliveryErrors, setDeliveryErrors] = useState<string[]>([])
+  const [selectedDelivery, setSelectedDelivery] = useState<NotificationItem | null>(null)
   const [marketLoading, setMarketLoading] = useState(false)
   const [scriptLoading, setScriptLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
@@ -196,40 +205,76 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
     }
   }, [storageKey])
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    const sequence = ++refreshSequence.current
-    setMarketLoading(true)
-    setScriptLoading(true)
-    setLoadError(false)
-    setScriptLoadError(false)
-    const valid = () => !signal?.aborted && sequence === refreshSequence.current
-    const loadSource = async (script: boolean) => {
-      try {
-        const loaded = await withRequestTimeout(
-          (requestSignal) =>
-            script ? loadScriptApprovalNotifications(requestSignal) : loadNotifications(requestSignal),
-          { signal, timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS },
-        )
-        if (!valid()) return
-        setItems((previous) =>
-          [...previous.filter((item) => item.key.startsWith('script-approved-') !== script), ...loaded]
-            .sort((a, b) => b.ts - a.ts)
-            .slice(0, 20),
-        )
-      } catch {
-        if (valid()) (script ? setScriptLoadError : setLoadError)(true)
-      } finally {
-        if (valid()) (script ? setScriptLoading : setMarketLoading)(false)
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      const sequence = ++refreshSequence.current
+      setMarketLoading(true)
+      setScriptLoading(true)
+      setLoadError(false)
+      setScriptLoadError(false)
+      if (workspaceId) {
+        setDeliveryLoading(true)
+        setDeliveryErrors([])
       }
-    }
-    await Promise.all([loadSource(false), loadSource(true)])
-  }, [])
+      const valid = () => !signal?.aborted && sequence === refreshSequence.current
+      const loadSource = async (script: boolean) => {
+        try {
+          const loaded = await withRequestTimeout(
+            (requestSignal) =>
+              script ? loadScriptApprovalNotifications(requestSignal) : loadNotifications(requestSignal),
+            { signal, timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS },
+          )
+          if (!valid()) return
+          setItems((previous) =>
+            [...previous.filter((item) => item.key.startsWith('script-approved-') !== script), ...loaded]
+              .sort((a, b) => b.ts - a.ts)
+              .slice(0, 20),
+          )
+        } catch {
+          if (valid()) (script ? setScriptLoadError : setLoadError)(true)
+        } finally {
+          if (valid()) (script ? setScriptLoading : setMarketLoading)(false)
+        }
+      }
+      const loadDelivery = async () => {
+        if (!workspaceId) return
+        const results = await Promise.allSettled([
+          withRequestTimeout(
+            (requestSignal) => loadManualDeliveryNotifications(workspaceId, requestSignal, Number(userKey) || 0),
+            {
+              signal,
+              timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
+            },
+          ),
+          withRequestTimeout((requestSignal) => loadPromoDeliveryNotifications(workspaceId, requestSignal), {
+            signal,
+            timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
+          }),
+        ])
+        if (!valid()) return
+        if (results[0].status === 'fulfilled') setManualItems(results[0].value)
+        if (results[1].status === 'fulfilled') setPromoItems(results[1].value)
+        setDeliveryErrors(
+          results.flatMap((result, index) =>
+            result.status === 'rejected' ? [index === 0 ? 'T+1 任务' : 'T+5 订单'] : [],
+          ),
+        )
+        setDeliveryLoading(false)
+      }
+      await Promise.all([loadSource(false), loadSource(true), loadDelivery()])
+    },
+    [workspaceId, userKey],
+  )
 
   // 挂载后延迟拉一次（避免抢首屏请求），打开面板时再刷新。
   useEffect(() => {
     const controller = new AbortController()
     const sequenceRef = refreshSequence
     setItems([])
+    setManualItems([])
+    setPromoItems([])
+    setSelectedDelivery(null)
+    setDeliveryErrors([])
     setLoadError(false)
     setScriptLoadError(false)
     const timer = window.setTimeout(() => {
@@ -246,7 +291,14 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
     }
   }, [refresh, userKey])
 
-  const unreadCount = useMemo(() => items.filter((item) => !readKeys.has(item.key)).length, [items, readKeys])
+  const visibleItems = useMemo(
+    () => [...items, ...manualItems, ...promoItems].sort((a, b) => b.ts - a.ts).slice(0, 60),
+    [items, manualItems, promoItems],
+  )
+  const unreadCount = useMemo(
+    () => visibleItems.filter((item) => !readKeys.has(item.key)).length,
+    [visibleItems, readKeys],
+  )
 
   const persistReadKeys = useCallback(
     (next: Set<string>) => {
@@ -258,12 +310,16 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
   )
 
   const markAllRead = useCallback(() => {
-    persistReadKeys(new Set([...readKeys, ...items.map((item) => item.key)]))
-  }, [items, persistReadKeys, readKeys])
+    persistReadKeys(new Set([...readKeys, ...visibleItems.map((item) => item.key)]))
+  }, [visibleItems, persistReadKeys, readKeys])
 
   const openNotification = useCallback(
     (item: NotificationItem) => {
       persistReadKeys(new Set([...readKeys, item.key]))
+      if (item.delivery) {
+        setSelectedDelivery(item)
+        return
+      }
       setOpen(false)
       navigate(item.href)
     },
@@ -325,13 +381,42 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
               </button>
             )}
           </div>
-          {marketLoading && scriptLoading && !items.length ? (
+          {selectedDelivery?.delivery ? (
+            <DeliveryNotificationDetail
+              kind={selectedDelivery.delivery.kind}
+              id={selectedDelivery.delivery.id}
+              workspaceId={workspaceId}
+              onBack={() => setSelectedDelivery(null)}
+              onOpen={() => {
+                if (selectedDelivery.delivery?.kind === 't1' && Number(userKey) > 0) {
+                  try {
+                    const key = `zzh.manual.tasks.${Number(userKey)}.${workspaceId}`
+                    const stored: unknown = JSON.parse(localStorage.getItem(key) || '[]')
+                    const ids = Array.isArray(stored) ? stored.filter((id) => Number.isSafeInteger(id) && id > 0) : []
+                    localStorage.setItem(
+                      key,
+                      JSON.stringify(
+                        [
+                          selectedDelivery.delivery.id,
+                          ...ids.filter((id) => id !== selectedDelivery.delivery?.id),
+                        ].slice(0, 100),
+                      ),
+                    )
+                  } catch {
+                    /* 历史缓存不可用时仍可打开任务 */
+                  }
+                }
+                setOpen(false)
+                navigate(selectedDelivery.href)
+              }}
+            />
+          ) : marketLoading && scriptLoading && !visibleItems.length ? (
             <div className="notify__skeleton" aria-label="正在加载通知">
               <i />
               <i />
               <i />
             </div>
-          ) : loadError && scriptLoadError && !items.length ? (
+          ) : loadError && scriptLoadError && !visibleItems.length && !deliveryLoading && !deliveryErrors.length ? (
             <div className="notify__empty notify__empty--error">
               <strong>通知加载失败</strong>
               <span>没有把请求失败误判为暂无通知</span>
@@ -339,7 +424,7 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
                 重新加载
               </button>
             </div>
-          ) : items.length ? (
+          ) : visibleItems.length ? (
             <>
               {(marketLoading || scriptLoading) && (
                 <div className="notify__partial-error" role="status">
@@ -354,8 +439,16 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
                   </button>
                 </div>
               )}
+              {deliveryErrors.length > 0 && (
+                <div className="notify__partial-error" role="status">
+                  {deliveryErrors.join('、')}消息加载失败，
+                  <button type="button" onClick={() => void refresh()}>
+                    重新加载
+                  </button>
+                </div>
+              )}
               <div className="notify__list">
-                {items.map((item) => (
+                {visibleItems.map((item) => (
                   <button
                     type="button"
                     className={`notify__item notify__item--${item.tone}${!readKeys.has(item.key) ? ' is-unread' : ''}`}
@@ -375,16 +468,22 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
                 ))}
               </div>
             </>
-          ) : loadError || scriptLoadError ? (
+          ) : loadError || scriptLoadError || deliveryErrors.length ? (
             <div className="notify__empty notify__empty--error">
-              <strong>{loadError ? '需求消息加载失败' : '剧本消息加载失败'}</strong>
+              <strong>
+                {loadError
+                  ? '需求消息加载失败'
+                  : scriptLoadError
+                    ? '剧本消息加载失败'
+                    : `${deliveryErrors.join('、')}消息加载失败`}
+              </strong>
               <button type="button" onClick={() => void refresh()}>
                 重新加载
               </button>
             </div>
-          ) : marketLoading || scriptLoading ? (
+          ) : marketLoading || scriptLoading || deliveryLoading ? (
             <div className="notify__empty" role="status">
-              <strong>{marketLoading ? '需求消息' : '剧本消息'}加载中…</strong>
+              <strong>{marketLoading ? '需求消息' : scriptLoading ? '剧本消息' : '交付消息'}加载中…</strong>
             </div>
           ) : (
             <div className="notify__empty">

@@ -378,7 +378,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     ])
   })
 
-  it('从即时模型选择超过 30 秒时切换精制并显示测评视频', async () => {
+  it('没有可用精制模型时不提供长时长切换', async () => {
     const user = userEvent.setup()
     render(
       <TestSmartEntry
@@ -394,12 +394,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       />,
     )
     await pickModel(user, '即时模型')
-    await user.click(screen.getByRole('button', { name: '45秒' }))
-    expect(screen.getByRole('button', { name: /生成模型，精制交付/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /创作参数/ })).toHaveTextContent('45s')
-    await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: '选择爆款脚本' }))
-    expect(screen.getByRole('option', { name: '测评视频' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '45秒' })).not.toBeInTheDocument()
   })
 
   it('switches to image mode and supports restored image-mode sessions', async () => {

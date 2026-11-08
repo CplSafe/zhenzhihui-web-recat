@@ -23,6 +23,14 @@ function model(id: number, displayName: string, operationCodes: string[]) {
 }
 
 describe('buildCanvasModelBuckets', () => {
+  it('不在画布中展示人工 T+1 模型', () => {
+    const groups = buildGenerationModelGroups([
+      { ...model(1, 'T+1 模型', ['video.generate']), model: 'video.t1', provider: 'manual-video' },
+      model(2, '普通视频模型', ['video.generate']),
+    ])
+    expect(buildCanvasModelBuckets(groups).video.map((entry) => entry.modelVersionId)).toEqual([2])
+  })
+
   it('视频保留后台顺序，隐藏已下线中转项并保留未知模型', () => {
     const names = [
       'Framora 1.0',

@@ -88,7 +88,8 @@ export default function PromoRealView() {
   const busyRef = useRef(false)
   const [error, setError] = useState('')
   const [confirm, setConfirm] = useState(false)
-  const [uploadStage, setUploadStage] = useState<Record<number, 'uploaded' | 'failed'>>({})
+  const [uploadStage, setUploadStage] = useState<Record<number, 'uploading' | 'uploaded' | 'failed'>>({})
+  const [uploadingName, setUploadingName] = useState('')
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -104,6 +105,10 @@ export default function PromoRealView() {
     void getPromoConfig(controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return
+        if (value?.enabled === false) {
+          setConfig(value)
+          return
+        }
         if (
           !Array.isArray(value.duration_options_seconds) ||
           !value.duration_options_seconds.length ||
@@ -257,35 +262,41 @@ export default function PromoRealView() {
         materials.reduce((sum, item) => sum + (item.size_bytes || 0), 0) + file.size > config.max_total_bytes
       )
         throw new Error('素材总大小超出限制')
-      const ticket = existing
-        ? await retryPromoUpload(existing.id)
-        : await createPromoUpload({
-            intake_token: token,
-            role,
-            name: file.name,
-            mime_type: file.type,
-            size_bytes: file.size,
-          })
-      if (!existing) setMaterials((list) => [...list, ticket.material])
+      setUploadingName(file.name)
       try {
-        await uploadPromoFile(ticket, file)
-        setUploadStage((old) => ({ ...old, [ticket.material.id]: 'uploaded' }))
-        const material = await completePromoUpload(ticket.material.id)
-        if (material.status !== 'active') throw new Error('素材尚未完成，请重试确认')
-        setMaterials((list) => list.map((item) => (item.id === material.id ? material : item)))
-        setUploadStage((old) => {
-          const next = { ...old }
-          delete next[material.id]
-          return next
-        })
-      } catch (reason) {
-        setUploadStage((old) => ({
-          ...old,
-          [ticket.material.id]: old[ticket.material.id] === 'uploaded' ? 'uploaded' : 'failed',
-        }))
-        throw reason
+        const ticket = existing
+          ? await retryPromoUpload(existing.id)
+          : await createPromoUpload({
+              intake_token: token,
+              role,
+              name: file.name,
+              mime_type: file.type,
+              size_bytes: file.size,
+            })
+        if (!existing) setMaterials((list) => [...list, ticket.material])
+        setUploadStage((old) => ({ ...old, [ticket.material.id]: 'uploading' }))
+        try {
+          await uploadPromoFile(ticket, file)
+          setUploadStage((old) => ({ ...old, [ticket.material.id]: 'uploaded' }))
+          const material = await completePromoUpload(ticket.material.id)
+          if (material.status !== 'active') throw new Error('素材尚未完成，请重试确认')
+          setMaterials((list) => list.map((item) => (item.id === material.id ? material : item)))
+          setUploadStage((old) => {
+            const next = { ...old }
+            delete next[material.id]
+            return next
+          })
+        } catch (reason) {
+          setUploadStage((old) => ({
+            ...old,
+            [ticket.material.id]: old[ticket.material.id] === 'uploaded' ? 'uploaded' : 'failed',
+          }))
+          throw reason
+        }
+        setQuote(null)
+      } finally {
+        if (alive.current) setUploadingName('')
       }
-      setQuote(null)
     })
   const complete = (id: number) =>
     void guarded(async () => {
@@ -440,7 +451,10 @@ export default function PromoRealView() {
                           <div className={styles.plain}>
                             <ul>
                               <li>
-                                <b>实拍素材</b>：至少 {config?.footage_min_count ?? '—'} 条图片或视频。
+                                <b>实拍素材</b>：
+                                {config?.footage_min_count != null
+                                  ? `至少 ${config.footage_min_count} 条图片或视频。`
+                                  : '图片或视频素材，具体要求以服务开放后的配置为准。'}
                               </li>
                               <li>LOGO、VI、口播稿和音乐要求可选传。</li>
                             </ul>
@@ -617,6 +631,7 @@ export default function PromoRealView() {
                     {stage === 'materials' && (
                       <section className={styles.panel}>
                         <h1 className={styles.projectTitle}>上传素材</h1>
+                        {uploadingName && <p role="status">正在处理素材：{uploadingName}，请稍候…</p>}
                         <div className={styles.uploads}>
                           {(['logo', 'footage', 'supplement'] as const).map((role) => (
                             <section
@@ -649,7 +664,15 @@ export default function PromoRealView() {
                                   <div className={styles.material} key={item.id}>
                                     <span>
                                       {item.name || `素材 #${item.id}`} ·{' '}
-                                      {item.status === 'active' ? '已就绪' : '未完成'}
+                                      {item.status === 'active'
+                                        ? '已就绪'
+                                        : uploadStage[item.id] === 'uploading'
+                                          ? '上传中'
+                                          : uploadStage[item.id] === 'uploaded'
+                                            ? '已上传，待确认'
+                                            : uploadStage[item.id] === 'failed'
+                                              ? '上传失败'
+                                              : '未完成'}
                                     </span>
                                     {item.low_resolution && <span>清晰度较低</span>}
                                     {item.status !== 'active' && (
