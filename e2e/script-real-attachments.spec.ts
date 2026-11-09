@@ -10,7 +10,12 @@ for (const width of [1440, 390]) {
         json: {
           code: 0,
           data: {
-            profile: { real_name: '测试用户', school: '测试学校', phone: '13800000000' },
+            profile: {
+              real_name: '测试用户',
+              school: width === 390 ? '' : '测试学校',
+              phone: '13800000000',
+              student_status: width === 390 ? 'graduated' : 'student',
+            },
             agreement_version: 'agreement-v1',
             originality_version: 'originality-v1',
             workflow_synced: true,
@@ -63,7 +68,7 @@ for (const width of [1440, 390]) {
       expect(body.data.attachments[0].file_id).toBe(55)
       expect(body.data).toMatchObject({
         applicant_name: '测试用户',
-        applicant_school: '测试学校',
+        applicant_school: width === 390 ? '' : '测试学校',
         applicant_phone: '13800000000',
       })
       expect(body.data.synopsis).toBe('故事简介')
@@ -85,9 +90,6 @@ for (const width of [1440, 390]) {
       }),
     )
     await page.goto('/script-ideas/new')
-    await page.getByLabel('姓名').fill('测试用户')
-    await page.getByLabel('学校 / 机构').fill('测试学校')
-    await page.getByLabel('联系电话').fill('13800000000')
     await page.getByLabel('剧名').fill('示例剧')
     await page.getByRole('combobox', { name: '题材' }).fill('悬疑')
     await page.getByRole('combobox', { name: '题材' }).press('Enter')
@@ -139,9 +141,6 @@ for (const uploadUrl of [
       return route.abort()
     })
     await page.goto('/script-ideas/new')
-    await page.getByLabel('姓名').fill('测试用户')
-    await page.getByLabel('学校 / 机构').fill('测试学校')
-    await page.getByLabel('联系电话').fill('13800000000')
     await page.getByLabel('剧名').fill('示例剧')
     await page.getByRole('combobox', { name: '题材' }).fill('悬疑')
     await page.getByRole('combobox', { name: '题材' }).press('Enter')

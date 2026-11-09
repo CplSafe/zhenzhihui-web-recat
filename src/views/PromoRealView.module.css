@@ -423,3 +423,16 @@
     width: 100%;
   }
 }
+
+.required,
+.fieldError {
+  color: #c93232;
+}
+.fieldError {
+  font-size: 12px;
+  font-weight: 400;
+}
+.fields input[aria-invalid='true'],
+.fields textarea[aria-invalid='true'] {
+  border-color: #c93232;
+}

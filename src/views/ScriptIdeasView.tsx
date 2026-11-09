@@ -538,26 +538,31 @@ export default function ScriptIdeasView() {
         document.getElementById(`si-${firstMissing}-input`)?.focus()
         return
       }
-      const name = form.name.trim(),
-        phone = form.phone.trim(),
-        school = form.school.trim()
       if (!creator?.profile || !creator.workflow_synced) {
         setSubmissionError(
           creatorError || (creator?.profile ? '创作者资料尚未同步，请重新保存入驻资料。' : '请先完成创作者入驻。'),
         )
         return
       }
+      const name = creator.profile.real_name?.trim() || '',
+        phone = creator.profile.phone?.trim() || '',
+        school = creator.profile.school?.trim() || ''
       if (
         !name ||
         Array.from(name).length > 80 ||
-        !school ||
+        (creator.profile.student_status !== 'graduated' && !school) ||
         Array.from(school).length > 200 ||
+        !/^[\d+()\s-]{7,25}$/.test(phone)
+      ) {
+        setSubmissionError('入驻资料不完整或格式有误，请先在入驻信息中检查姓名、电话和学校。')
+        return
+      }
+      if (
         Array.from(ideaFields.title.trim()).length > 200 ||
         Array.from(ideaFields.genre.trim()).length > 80 ||
-        !/^[\d+()\s-]{7,25}$/.test(phone) ||
         Array.from(form.creative.trim()).length > 12000
       ) {
-        setSubmissionError('请检查姓名、学校、电话和创意正文的填写及长度。')
+        setSubmissionError('剧名、题材或故事创意超过长度限制，请修改后重试。')
         return
       }
       if (!files.length) {
@@ -985,17 +990,6 @@ export default function ScriptIdeasView() {
                       {joinedProfile ? '查看 / 修改' : '立即入驻'}
                     </button>
                   </section>
-                  <section className="si-card">
-                    <div className="si-entry-top">
-                      <div className="si-icon">▤</div>
-                      <span className="si-home-tag muted">进度可查</span>
-                    </div>
-                    <h2>我的创意</h2>
-                    <p>查看所有已提交创意的进度、审核意见与提交内容。</p>
-                    <button disabled={!joinedProfile} onClick={() => open('/script-ideas/list')}>
-                      查看列表
-                    </button>
-                  </section>
                   <section className="si-card si-primary-card">
                     <div className="si-entry-top">
                       <div className="si-icon">✚</div>
@@ -1005,6 +999,17 @@ export default function ScriptIdeasView() {
                     <p>每条创意生成一条独立审批流程，随时可提交新的。</p>
                     <button className="si-primary" disabled={!joinedProfile} onClick={() => open('/script-ideas/new')}>
                       新建创意
+                    </button>
+                  </section>
+                  <section className="si-card">
+                    <div className="si-entry-top">
+                      <div className="si-icon">▤</div>
+                      <span className="si-home-tag muted">进度可查</span>
+                    </div>
+                    <h2>我的创意</h2>
+                    <p>查看所有已提交创意的进度、审核意见与提交内容。</p>
+                    <button disabled={!joinedProfile} onClick={() => open('/script-ideas/list')}>
+                      查看列表
                     </button>
                   </section>
                 </div>
@@ -1056,41 +1061,6 @@ export default function ScriptIdeasView() {
                   >
                     <div className="si-form-head">
                       <h2>填写提交创意</h2>
-                    </div>
-                    <div className="si-form-section">
-                      <h3>填写规范</h3>
-                      <div className="si-spec">
-                        <strong>▤ 创意里要有这三点就够了</strong>
-                        <ul>
-                          <li>主角是谁、遇到了什么困境（动机 + 代价）</li>
-                          <li>最强冲突 / 爽点在哪里</li>
-                          <li>想让观众追下去的钩子</li>
-                          <li>详细内容可参照模板，复制文本到下方提交</li>
-                        </ul>
-                        <a href="/script-idea-templates/创意提交模板.docx" download>
-                          ↓ 下载模板：创意提交模板.docx
-                        </a>
-                      </div>
-                    </div>
-                    <div className="si-form-section">
-                      <h3>申请人信息</h3>
-                      <p>请填写申请人的真实信息，以便联系和审核。</p>
-                      <button type="button" onClick={() => open('/script-ideas/join')}>
-                        查看 / 修改入驻信息
-                      </button>
-                      <div className="si-fields">
-                        {(['name', 'school', 'phone'] as const).map((k) => (
-                          <label key={k}>
-                            {{ name: '姓名', phone: '联系电话', school: '学校 / 机构' }[k]} <em>*</em>
-                            <input
-                              value={form[k]}
-                              onChange={(event) => setForm({ ...form, [k]: event.target.value })}
-                              disabled={!!pending}
-                              required
-                            />
-                          </label>
-                        ))}
-                      </div>
                     </div>
                     <div className="si-form-section">
                       <h3>申请详情</h3>
