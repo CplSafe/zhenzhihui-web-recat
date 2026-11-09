@@ -13,7 +13,7 @@ describe('剧本创意本机演示', () => {
       </MemoryRouter>,
     )
     await user.click(screen.getByRole('button', { name: '提交创意' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('剧本文档附件')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('剧本文档附件')
     expect(screen.getByRole('alert')).toHaveTextContent('申请人、学校')
     await user.type(screen.getByLabelText(/申请人/), '测试申请人')
     await user.type(screen.getByLabelText(/学校/), '测试学校')

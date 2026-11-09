@@ -68,6 +68,11 @@ for (const width of [1440, 390]) {
     expect(await episodes.evaluate((input: HTMLInputElement) => input.validity.rangeUnderflow)).toBe(true)
     expect(submitted).toBeNull()
     await page.screenshot({ path: testInfo.outputPath('minimum-episodes.png') })
+    for (const label of ['中文完整版剧情简介', '核心卖点', '人物小传', '分集大纲与付费卡点']) {
+      const field = page.getByLabel(label)
+      await field.fill('文'.repeat(20001))
+      await expect(field).toHaveValue('文'.repeat(20000))
+    }
     await episodes.fill('8')
     await page.getByRole('button', { name: '提交一卡' }).click()
     await expect.poll(() => submitted).not.toBeNull()

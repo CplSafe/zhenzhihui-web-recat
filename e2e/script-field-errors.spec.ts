@@ -81,6 +81,11 @@ for (const width of [1440, 390]) {
     await expect(count).toHaveCSS('animation-name', width === 390 ? 'none' : 'si-input-shake')
     expect(submitted).toBeNull()
     await page.screenshot({ path: testInfo.outputPath('invalid-fields.png') })
+    for (const label of ['分幕大纲', '世界观与核心规则']) {
+      const field = page.getByLabel(label)
+      await field.fill('文'.repeat(20001))
+      await expect(field).toHaveValue('文'.repeat(20000))
+    }
     await count.fill('30')
     await expect(count).not.toHaveAttribute('aria-invalid', 'true')
     await shortest.fill('60')

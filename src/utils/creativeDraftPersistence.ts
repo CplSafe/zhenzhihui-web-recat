@@ -7,6 +7,22 @@ export type DraftSaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 
 /** 一次草稿写入可返回的结果。 */
 export type DraftWriteResult = 'saved' | 'conflict' | 'error'
 
+/** 读取不同接口响应中的草稿版本；缺失或无效时返回 NaN，避免误用旧版本写入。 */
+export function normalizeCreativeDraftRevision(payload: unknown): number {
+  const value = payload as
+    | {
+        draft_revision?: unknown
+        draftRevision?: unknown
+        data?: { draft_revision?: unknown; draftRevision?: unknown }
+      }
+    | null
+    | undefined
+  const revision = Number(
+    value?.draft_revision ?? value?.draftRevision ?? value?.data?.draft_revision ?? value?.data?.draftRevision ?? NaN,
+  )
+  return Number.isFinite(revision) && revision >= 0 ? Math.floor(revision) : NaN
+}
+
 /** 当前页面不再拥有云端创作内容时使用的稳定错误码。 */
 const CONTENT_CONFLICT_CODE = 'DRAFT_CONTENT_CONFLICT'
 

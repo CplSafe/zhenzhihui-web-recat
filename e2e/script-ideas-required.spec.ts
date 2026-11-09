@@ -58,15 +58,12 @@ for (const width of [1440, 390]) {
     for (const label of ['剧名', '故事创意', '第一集剧本剧情（选填）', '人物、身份、性格（选填）']) {
       await expect(page.getByLabel(label)).toHaveValue('')
     }
-    for (const [label, value] of [
-      ['姓名', '测试学生'],
-      ['学校 / 机构', '示例大学'],
-      ['联系电话', '13800000000'],
-    ]) {
-      await expect(page.getByLabel(label)).toHaveValue('')
-      await page.getByLabel(label).fill(value)
+    await expect(page.getByText('故事创意最多 12000 个字符。')).toHaveCount(0)
+    for (const label of ['故事创意', '第一集剧本剧情（选填）', '人物、身份、性格（选填）']) {
+      const field = page.getByLabel(label)
+      await field.fill('文'.repeat(19999) + '😀' + '超')
+      await expect(field).toHaveValue('文'.repeat(19999) + '😀')
     }
-    await page.getByLabel('故事创意').fill('一段故事')
     await page
       .getByLabel('剧本文档附件')
       .setInputFiles({ name: '故事.txt', mimeType: 'text/plain', buffer: Buffer.from('test') })
@@ -109,3 +106,56 @@ for (const width of [1440, 390]) {
     expectNoUnexpectedApi(api)
   })
 }
+
+test('创意无需附件也可提交，并支持拖放与移除', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 900 })
+  await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/script-creators/me', (route) =>
+    route.fulfill({
+      json: {
+        code: 0,
+        data: {
+          profile: { real_name: '测试学生', school: '示例大学', phone: '13800000000' },
+          workflow_synced: true,
+        },
+      },
+    }),
+  )
+  let submitted: any = null
+  await page.route('**/api/v1/student-applications**', (route) => {
+    if (route.request().method() === 'POST') {
+      submitted = route.request().postDataJSON()
+      return route.fulfill({ json: { code: 0, data: { id: 124, state: 'submitted' } } })
+    }
+    return route.fulfill({
+      json: {
+        code: 0,
+        data: {
+          application: { id: 124, state: 'submitted' },
+          progress_available: true,
+          workflow: { status: 1, stage: 'waiting_review', versions: [], reviews: [] },
+        },
+      },
+    })
+  })
+  await page.goto('/script-ideas/new')
+  await page.getByLabel('剧名').fill('测试剧名')
+  await page.getByRole('combobox', { name: '题材' }).fill('奇幻')
+  await page.getByRole('combobox', { name: '题材' }).press('Enter')
+  await page.getByLabel('故事创意').fill('故事')
+  await expect(page.getByText('这份附件要写什么？')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: '下载创意模板' })).toBeVisible()
+  await expect(page.locator('.si-upload a[download]')).toHaveCount(0)
+  await page.locator('.si-upload-drop').evaluate((element) => {
+    const data = new DataTransfer()
+    data.items.add(new File(['内容'], '拖放.txt', { type: 'text/plain' }))
+    element.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: data }))
+  })
+  await expect(page.getByText('拖放.txt')).toBeVisible()
+  await page.locator('.si-upload').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('optional-upload-mobile.png') })
+  await page.getByRole('button', { name: '删除附件 拖放.txt' }).click()
+  await page.getByRole('button', { name: '提交创意', exact: true }).click()
+  await expect.poll(() => submitted).not.toBeNull()
+  expect(submitted.data.attachments).toEqual([])
+})

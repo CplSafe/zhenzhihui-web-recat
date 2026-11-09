@@ -38,6 +38,7 @@ for (const width of [1440, 390]) {
     )
     await page.goto('/script-ideas/new')
     await expect(page.getByRole('link', { name: '下载创意模板' })).toBeVisible()
+    await expect(page.locator('.si-upload a[download]')).toHaveCount(0)
     await expect(page.getByText('一卡模板', { exact: true })).toHaveCount(0)
     await expect(page.getByText('剧本模板', { exact: true })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath(`templates-new-${width}.png`) })
@@ -46,6 +47,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('heading', { name: '模板下载' })).toHaveCount(0)
     await page.getByRole('button', { name: '撤回提交' }).click()
     await expect(page.getByRole('link', { name: '下载创意模板' })).toBeVisible()
+    await expect(page.locator('.si-upload a[download]')).toHaveCount(0)
     await expect(page.getByText('一卡模板', { exact: true })).toHaveCount(0)
     reviews = [{ status: 2, stage: 'creative' }]
     stage = 'card'
@@ -54,6 +56,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('heading', { name: '模板下载' })).toHaveCount(0)
     await page.getByRole('button', { name: '撤回提交' }).click()
     await expect(page.getByRole('link', { name: '下载一卡模板' })).toBeVisible()
+    await expect(page.locator('.si-upload a[download]')).toHaveCount(0)
     await expect(page.getByRole('link', { name: '下载创意模板' })).toHaveCount(0)
     await expect(page.getByText('剧本模板', { exact: true })).toHaveCount(0)
     reviews = [...reviews, { status: 2, stage: 'card' }]
@@ -63,6 +66,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('heading', { name: '模板下载' })).toHaveCount(0)
     await page.getByRole('button', { name: '撤回提交' }).click()
     await expect(page.getByRole('link', { name: '下载剧本模板' })).toBeVisible()
+    await expect(page.locator('.si-upload a[download]')).toHaveCount(0)
     await expect(page.locator('a[download][href*="script-idea-templates"]')).toHaveCount(1)
     await expect(page.getByText('创意模板', { exact: true })).toHaveCount(0)
     await expect(page.getByText('一卡模板', { exact: true })).toHaveCount(0)

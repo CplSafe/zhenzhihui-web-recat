@@ -3,33 +3,7 @@
  * 权限列表尚未加载时默认不展示有项目归属的素材，避免短暂越权泄露。
  */
 import { isCreativeProjectRestrictedForUser, resolveUserId } from '@/utils/creativeDraftMetadata'
-
-/** 不可信接口对象的通用键值结构。 */
-type UnknownRecord = Record<string, unknown>
-
-/** 将未知值收敛为普通记录。 */
-function asRecord(value: unknown): UnknownRecord | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  return value as UnknownRecord
-}
-
-/** 兼容解析对象或 JSON 字符串形式的记录。 */
-function parseRecord(value: unknown): UnknownRecord | null {
-  const record = asRecord(value)
-  if (record) return record
-  if (typeof value !== 'string' || !value.trim()) return null
-  try {
-    return asRecord(JSON.parse(value))
-  } catch {
-    return null
-  }
-}
-
-/** 将候选标识规范化为正整数。 */
-function positiveInteger(value: unknown): number {
-  const number = Number(value)
-  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0
-}
+import { asRecord, parseRecord, positiveInteger } from '@/utils/projectRecord'
 
 /** 返回候选列表中的第一个有效正整数。 */
 function firstPositiveInteger(values: unknown[]): number {

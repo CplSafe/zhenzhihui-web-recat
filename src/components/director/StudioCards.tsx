@@ -22,8 +22,8 @@ export function TooltipLayer({ scope }: { scope: React.RefObject<HTMLElement> })
       setTip(null)
     }
     const show = (event: Event) => {
-      const button = (event.target as Element).closest<HTMLButtonElement>('button[data-tooltip]')
-      if (!button || button.disabled || button.getAttribute('aria-expanded') === 'true') {
+      const button = (event.target as Element).closest<HTMLElement>('[data-tooltip]')
+      if (!button || button.hasAttribute('disabled') || button.getAttribute('aria-expanded') === 'true') {
         hide()
         return
       }
@@ -259,6 +259,18 @@ const taskNames: Record<string, string> = {
   'studio.read_context': '读取制作资料',
   'studio.load_tools': '准备制作工具',
 }
+function publicReasoning(event: StudioEvent) {
+  return event.data?.reasoning_enabled === true && typeof event.data?.reasoning_summary === 'string'
+    ? event.data.reasoning_summary.trim()
+    : ''
+}
+function isInferenceEvent(event: StudioEvent) {
+  return (
+    ['cost', 'tool', 'progress'].includes(event.kind) &&
+    event.data?.tool === 'model.generate_text' &&
+    event.data?.purpose !== 'context_compaction'
+  )
+}
 export function EventCard({
   event,
   canvas,
@@ -317,7 +329,23 @@ export function EventCard({
       </article>
     )
   if (['canvas', 'node', 'batch', 'context', 'tool_start'].includes(event.kind)) return null
-  const thinking = data.tool === 'model.generate_text' && data.purpose !== 'context_compaction'
+  if (isInferenceEvent(event)) {
+    const summary = publicReasoning(event)
+    if (!summary) return null
+    return (
+      <article className={styles.event}>
+        <details className={`${styles.taskCard} ${styles.thinkingCard}`}>
+          <summary>
+            <StudioIcon name="process" size={14} />
+            <strong>思考</strong>
+          </summary>
+          <div className={styles.taskContent}>
+            <Markdown>{summary}</Markdown>
+          </div>
+        </details>
+      </article>
+    )
+  }
   const taskLabel =
     event.kind === 'progress'
       ? event.text
@@ -345,7 +373,7 @@ export function EventCard({
   if (['cost', 'tool', 'merge'].includes(event.kind) || (event.kind === 'progress' && data.status))
     return (
       <article className={styles.event}>
-        <details className={`${styles.taskCard} ${thinking ? styles.thinkingCard : ''}`}>
+        <details className={styles.taskCard}>
           <summary>
             {data.tool === 'model.generate_text' ? (
               <StudioIcon name="process" size={16} />
@@ -360,17 +388,13 @@ export function EventCard({
             ) : (
               <LoaderCircle size={18} className={styles.spin} />
             )}
-            <strong>
-              {thinking ? (settled ? '思考' : failed ? '思考未完成' : active ? '正在思考' : '思考已暂停') : taskLabel}
-            </strong>
-            {!thinking && <small>{taskState}</small>}
+            <strong>{taskLabel}</strong>
+            <small>{taskState}</small>
           </summary>
           <div className={styles.taskContent}>
-            {!thinking && (
-              <p>
-                {taskLabel} · {taskState}
-              </p>
-            )}
+            <p>
+              {taskLabel} · {taskState}
+            </p>
             {settled && data.actual_cost != null && <p>实际消耗 {data.actual_cost} 积分</p>}
             {!settled && !failed && data.estimated_cost != null && <p>已预留 {data.estimated_cost} 积分 · 待结算</p>}
           </div>
@@ -445,6 +469,7 @@ export function Conversation({
   const groups: StudioEvent[][] = []
   let tools: StudioEvent[] = []
   for (const event of events) {
+    if (isInferenceEvent(event) && !publicReasoning(event)) continue
     if (event.kind === 'tool' && !event.data?.assets && !event.data?.asset) tools.push(event)
     else {
       if (tools.length) groups.push(tools)

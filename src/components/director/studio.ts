@@ -25,6 +25,7 @@ export interface StudioBatch {
   nodes: Record<string, Data>
 }
 export interface StudioRun {
+  history_events?: StudioEvent[]
   id: string
   title?: string
   status: RunStatus
@@ -274,11 +275,13 @@ export function contextInfo(run: StudioRun | null, catalog?: StudioCatalog) {
     )?.data?.usage
   const input =
     Number.isFinite(context.input_tokens) && context.input_tokens >= 0 ? context.input_tokens : lastUsage?.input_tokens
-  const capacity =
-    Number.isFinite(context.capacity_tokens) && context.capacity_tokens > 0 ? context.capacity_tokens : null
+  const knownCapacity = context.capacity_tokens ??
+    (context.model_id == null || context.model_id === defaults?.model_id ? defaults?.capacity_tokens : null)
+  const capacity = Number.isFinite(knownCapacity) && knownCapacity > 0 ? knownCapacity : null
+  const output = Number.isFinite(context.output_tokens) && context.output_tokens >= 0 ? context.output_tokens : 0
   const measured =
     context.measurement === 'provider_usage' && Number.isFinite(context.input_tokens) && context.input_tokens >= 0
-  const remaining = capacity && measured ? Math.max(0, capacity - context.input_tokens) : null
-  const percent = remaining !== null ? Math.round((remaining / capacity) * 100) : null
+  const remaining = capacity && measured ? Math.max(0, capacity - context.input_tokens - output) : null
+  const percent = remaining !== null ? Math.round((remaining / capacity) * 1000) / 10 : null
   return { context, input, capacity, remaining, percent }
 }

@@ -83,7 +83,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByText('将沿用本阶段已有附件：本阶段.txt')).toBeVisible()
     await page.getByText('将沿用本阶段已有附件：本阶段.txt').scrollIntoViewIfNeeded()
     await page.screenshot({ path: testInfo.outputPath('withdraw-attachment.png'), fullPage: true })
-    await page.getByLabel('我确认本剧本为原创，并同意平台用于后续制作评估').check()
+    await page.getByRole('checkbox', { name: /我确认本剧本为原创/ }).check()
     await page.getByRole('button', { name: '提交剧本' }).click()
     await expect.poll(() => submitted).not.toBeNull()
     expect(submitted.data.attachments).toEqual([{ file_id: 11 }])
@@ -91,7 +91,7 @@ for (const width of [1440, 390]) {
   })
 }
 
-test('撤回后重新选择附件会替换原附件', async ({ page }) => {
+test('撤回后继续选择附件会保留并提交原附件', async ({ page }) => {
   await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/script-creators/me', (route) =>
     route.fulfill({ json: { code: 0, data: { profile: null, originality_version: 'v1', workflow_synced: true } } }),
@@ -158,9 +158,9 @@ test('撤回后重新选择附件会替换原附件', async ({ page }) => {
   await page
     .getByLabel('本次提交附件')
     .setInputFiles({ name: '新稿.txt', mimeType: 'text/plain', buffer: Buffer.from('new') })
-  await expect(page.getByText('将沿用本阶段已有附件：原稿.txt')).toHaveCount(0)
-  await page.getByLabel('我确认本剧本为原创，并同意平台用于后续制作评估').check()
+  await expect(page.getByText('将沿用本阶段已有附件：原稿.txt')).toBeVisible()
+  await page.getByRole('checkbox', { name: /我确认本剧本为原创/ }).check()
   await page.getByRole('button', { name: '提交剧本' }).click()
   await expect.poll(() => submitted).not.toBeNull()
-  expect(submitted.data.attachments).toEqual([{ file_id: 13 }])
+  expect(submitted.data.attachments).toEqual([{ file_id: 11 }, { file_id: 13 }])
 })

@@ -3,9 +3,7 @@
  * 仅把当前可访问项目中的素材归组，其余素材保留在未归类集合中。
  */
 import { resolveAssetProjectId, resolveCreativeProjectId } from '@/utils/projectAssetAccess'
-
-/** 项目草稿解析使用的通用对象结构。 */
-type UnknownRecord = Record<string, unknown>
+import { asRecord, parseRecord, positiveInteger } from '@/utils/projectRecord'
 
 /** 单个项目文件夹及其包含的素材。 */
 export interface MaterialProjectGroup<TMaterial = any, TProject = any> {
@@ -18,30 +16,6 @@ export interface MaterialProjectGroup<TMaterial = any, TProject = any> {
 export interface GroupMaterialsByProjectResult<TMaterial = any, TProject = any> {
   groups: MaterialProjectGroup<TMaterial, TProject>[]
   unclassified: TMaterial[]
-}
-
-/** 将未知值收敛为普通记录。 */
-function asRecord(value: unknown): UnknownRecord | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  return value as UnknownRecord
-}
-
-/** 兼容解析对象或 JSON 字符串形式的记录。 */
-function parseRecord(value: unknown): UnknownRecord | null {
-  const record = asRecord(value)
-  if (record) return record
-  if (typeof value !== 'string' || !value.trim()) return null
-  try {
-    return asRecord(JSON.parse(value))
-  } catch {
-    return null
-  }
-}
-
-/** 将候选标识规范化为正整数。 */
-function positiveInteger(value: unknown): number {
-  const number = Number(value)
-  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0
 }
 
 /** 从不同素材响应结构中解析素材 ID。 */

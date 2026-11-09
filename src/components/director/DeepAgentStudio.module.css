@@ -222,11 +222,7 @@
   background: #a0a0a0;
   margin-right: 8px;
 }
-.billing {
-  padding: 12px 0;
-  color: #929292;
-  font-size: 12px;
-}
+
 .alert {
   background: #6b46342b;
   border: 1px solid #8a5c47;
@@ -549,6 +545,11 @@
   padding: 6px !important;
   flex-shrink: 0;
 }
+.studio .send:hover:not(:disabled) {
+  background: #fff !important;
+  color: #222 !important;
+}
+
 .send:disabled {
   background: #999999 !important;
   opacity: 0.5 !important;
@@ -849,10 +850,7 @@
     padding: 0 18px 6px;
     font-size: 11px;
   }
-  .billing {
-    padding: 0 18px 8px;
-    font-size: 11px;
-  }
+
   .scrollArea {
     padding: 8px 16px 16px;
   }
@@ -1028,15 +1026,7 @@
   padding: 4px 0;
   margin-left: 22px;
 }
-.billing summary {
-  cursor: pointer;
-  color: #939393;
-  font-size: 12px;
-}
-.billing p {
-  margin-top: 7px;
-  font-size: 11px;
-}
+
 .scrollBottom {
   position: absolute;
   z-index: 4;
@@ -1252,15 +1242,7 @@
   margin-left: auto;
   flex-shrink: 0;
 }
-.contextInfo p {
-  margin: 8px 0;
-  color: #bbb;
-  font-size: 12px;
-}
-.contextInfo small {
-  color: #888;
-  font-size: 11px;
-}
+
 
 .answeredCard {
   border: 1px solid #363636;
@@ -1426,3 +1408,24 @@
     animation: none;
   }
 }
+
+.replyPending {
+  color: #aaa;
+  font-size: 13px;
+  margin: 14px 0 22px;
+}
+.replyPending span {
+  animation: reply-pulse 1.6s ease-in-out infinite;
+}
+@keyframes reply-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .replyPending span {
+    animation: none;
+  }
+}
+
+.contextButton:focus-visible { outline: 2px solid #b8b8b8; outline-offset: 2px; border-radius: 8px; }
