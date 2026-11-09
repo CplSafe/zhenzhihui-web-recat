@@ -2,10 +2,17 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCreator, saveCreator, type CreatorResponse } from '@/api/studentApplications'
 import { scriptIdeaGenres } from '@/utils/scriptIdeaGenres'
+import creatorRegions from '@/data/creatorRegions.json'
+
+// 大陆数据以 2023 年快照为基础，并与民政部 2025 年地级区划核对；港澳台另行补充。
+const regions: Record<string, string[]> = creatorRegions
+const otherRegion = '其他地区'
+const otherCity = '其他城市'
 
 const joinFields = [
   ['真实姓名', '请输入真实姓名'],
-  ['身份类型', '请选择'],
+  ['学生状态', '请选择'],
+  ['创作身份', '请选择'],
   ['学校 / 机构', '请输入学校全称'],
   ['年级 / 专业', '例如：大三 · 广播电视编导'],
   ['所在城市', '例如：山东 · 济宁'],
@@ -128,6 +135,7 @@ export function JoinPreview({ user }: { user: any }) {
   const owner = accountId == null ? '' : String(accountId)
   const [creator, setCreator] = useState<CreatorResponse | null>(null)
   const [profile, setProfile] = useState<Record<string, string>>({})
+  const [legacyCity, setLegacyCity] = useState('')
   const [joined, setJoined] = useState(false)
   const [saving, setSaving] = useState(false)
   const [agreed, setAgreed] = useState(false)
@@ -141,17 +149,29 @@ export function JoinPreview({ user }: { user: any }) {
         if (result.profile) {
           const p = result.profile
           const identities: Record<string, string> = {
-            student: '在校学生',
             creator: '自然流创作者',
             team: '团队编剧',
             freelancer: '自由职业',
           }
+          const knownProvince = p.province && regions[p.province] ? p.province : ''
+          const selectedProvince = p.province ? knownProvince || otherRegion : ''
+          const knownCity = knownProvince && p.city && regions[knownProvince].includes(p.city) ? p.city : ''
+          setLegacyCity(!p.province && p.city ? p.city : '')
           setProfile({
             真实姓名: p.real_name || '',
-            身份类型: identities[p.identity_type] || '',
+            学生状态:
+              p.student_status === 'student' || (!p.student_status && p.identity_type === 'student')
+                ? '在校学生'
+                : p.student_status === 'graduated'
+                  ? '已毕业'
+                  : '',
+            创作身份: identities[p.creator_type || p.identity_type] || '',
             '学校 / 机构': p.school || '',
             '年级 / 专业': p.grade_major || '',
-            所在城市: p.city || '',
+            省份: selectedProvince,
+            其他省份: p.province && !knownProvince ? p.province : '',
+            所在城市: p.province && p.city ? knownCity || otherCity : '',
+            其他城市: p.province && p.city && !knownCity ? p.city : '',
             联系手机: p.phone || '',
             联系邮箱: p.email || '',
             '微信 / QQ': p.contact_im || '',
@@ -172,6 +192,8 @@ export function JoinPreview({ user }: { user: any }) {
   const [genreQuery, setGenreQuery] = useState('')
   const [genreOpen, setGenreOpen] = useState(false)
   const genres = parseGenres(profile[genreKey])
+  const province = profile['省份'] === otherRegion ? profile['其他省份']?.trim() || '' : profile['省份'] || ''
+  const city = profile['所在城市'] === otherCity ? profile['其他城市']?.trim() || '' : profile['所在城市'] || ''
   const mobile = String(user?.mobile || user?.phone || '').trim()
   const maskedPhone = /^\d{7,}$/.test(mobile) ? `${mobile.slice(0, 3)}****${mobile.slice(-4)}` : ''
   const addGenre = (value: string) => {
@@ -211,12 +233,16 @@ export function JoinPreview({ user }: { user: any }) {
               <dd>{profile['真实姓名']}</dd>
             </div>
             <div>
-              <dt>身份类型</dt>
-              <dd>{profile['身份类型']}</dd>
+              <dt>学生状态</dt>
+              <dd>{profile['学生状态']}</dd>
             </div>
             <div>
-              <dt>学校 / 机构</dt>
-              <dd>{profile['学校 / 机构']}</dd>
+              <dt>创作身份</dt>
+              <dd>{profile['创作身份']}</dd>
+            </div>
+            <div>
+              <dt>{profile['学生状态'] === '在校学生' ? '学校全称' : '机构 / 公司'}</dt>
+              <dd>{profile['学校 / 机构'] || '未填写'}</dd>
             </div>
           </dl>
           <ol className="si-join-success-steps" aria-label="创作流程">
@@ -263,9 +289,12 @@ export function JoinPreview({ user }: { user: any }) {
             const nextGenres = pendingGenre && !genres.includes(pendingGenre) ? [...genres, pendingGenre] : genres
             const next = { ...profile, [genreKey]: nextGenres.join('、') }
             if (
-              ['真实姓名', '身份类型', '学校 / 机构', '联系手机', '联系邮箱', genreKey].some(
+              ['真实姓名', '学生状态', '创作身份', '联系手机', '联系邮箱', genreKey].some(
                 (name) => !next[name]?.trim(),
-              )
+              ) ||
+              (next['学生状态'] === '在校学生' && !next['学校 / 机构']?.trim()) ||
+              !province ||
+              !city
             ) {
               setSaveError('请填写完整的必填信息。')
               return
@@ -279,19 +308,23 @@ export function JoinPreview({ user }: { user: any }) {
               return
             }
             const identities: Record<string, string> = {
-              在校学生: 'student',
               自然流创作者: 'creator',
               团队编剧: 'team',
               自由职业: 'freelancer',
             }
             setSaving(true)
             try {
+              const expectedSchool = next['学校 / 机构']?.trim() || ''
+              const expectedGradeMajor = next['学生状态'] === '在校学生' ? next['年级 / 专业']?.trim() || '' : ''
               const response = await saveCreator({
                 real_name: next['真实姓名'],
-                identity_type: identities[next['身份类型']],
-                school: next['学校 / 机构'],
-                grade_major: next['年级 / 专业'] || '',
-                city: next['所在城市'] || '',
+                identity_type: next['学生状态'] === '在校学生' ? 'student' : identities[next['创作身份']],
+                student_status: next['学生状态'] === '在校学生' ? 'student' : 'graduated',
+                creator_type: identities[next['创作身份']] as 'creator' | 'team' | 'freelancer',
+                school: expectedSchool,
+                grade_major: expectedGradeMajor,
+                province,
+                city,
                 phone: next['联系手机'],
                 email: next['联系邮箱'],
                 contact_im: next['微信 / QQ'] || '',
@@ -302,7 +335,19 @@ export function JoinPreview({ user }: { user: any }) {
               setCreator(response)
               setProfile(next)
               setGenreQuery('')
-              if (response.workflow_synced) {
+              const expectedStatus = next['学生状态'] === '在校学生' ? 'student' : 'graduated'
+              if (
+                response.profile?.student_status !== expectedStatus ||
+                response.profile?.creator_type !== identities[next['创作身份']] ||
+                (response.profile?.school || '') !== expectedSchool ||
+                (response.profile?.grade_major || '') !== expectedGradeMajor ||
+                (response.profile?.province || '') !== province ||
+                (response.profile?.city || '') !== city
+              ) {
+                setSaveError(
+                  '资料可能已部分保存，但服务端尚未确认学生状态、创作身份、学校或所在地信息，请联系管理员确认后再重试。',
+                )
+              } else if (response.workflow_synced) {
                 setSaved(true)
                 setSaveError('')
               } else setSaveError('资料已保存，但流程账号同步尚未完成，请再次保存重试。')
@@ -332,106 +377,247 @@ export function JoinPreview({ user }: { user: any }) {
               </div>
             </div>
           </div>
-          <div className="si-form-section">
-            <h3>个人必要信息</h3>
-            <div className="si-fields">
-              {joinFields.map(([label, placeholder]) => {
-                const required = ['真实姓名', '身份类型', '学校 / 机构', '联系手机', '联系邮箱', genreKey].includes(
-                  label,
-                )
-                if (label === genreKey)
-                  return (
-                    <div className="si-field-wide si-genre-field" key={label}>
-                      <label htmlFor="si-join-genres">
-                        {label} <em>*</em>
-                      </label>
-                      <div className="si-genre-input">
-                        {genres.map((item) => (
-                          <span className="si-genre-chip" key={item}>
-                            {item}
-                            <button
-                              type="button"
-                              aria-label={`移除题材 ${item}`}
-                              onClick={() =>
-                                setProfile({ ...profile, [genreKey]: genres.filter((x) => x !== item).join('、') })
-                              }
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                        <input
-                          id="si-join-genres"
-                          value={genreQuery}
-                          placeholder={genres.length ? '搜索或输入新题材，回车添加' : placeholder}
-                          required={!genres.length}
-                          autoComplete="off"
-                          onFocus={() => setGenreOpen(true)}
-                          onBlur={() => window.setTimeout(() => setGenreOpen(false), 150)}
-                          onChange={(e) => {
-                            setGenreQuery(e.target.value)
-                            setGenreOpen(true)
+          {[
+            {
+              title: '身份信息',
+              fields: ['真实姓名', '学生状态', '创作身份', '学校 / 机构', '年级 / 专业'],
+            },
+            { title: '所在地', fields: ['所在城市'] },
+            { title: '联系方式', fields: ['联系手机', '联系邮箱', '微信 / QQ'] },
+            { title: '创作方向', fields: [genreKey] },
+          ].map((section) => (
+            <div className="si-form-section" key={section.title}>
+              <h3>{section.title}</h3>
+              <div className="si-fields">
+                {joinFields
+                  .filter(([label]) => section.fields.includes(label))
+                  .map(([label, placeholder]) => {
+                    if (label === '所在城市')
+                      return (
+                        <fieldset className="si-field-wide si-region-field" key={label}>
+                          <legend>
+                            所在城市 <em>*</em>
+                          </legend>
+                          {legacyCity && !city && (
+                            <p className="si-field-hint">原所在地：{legacyCity}。请重新选择省市。</p>
+                          )}
+                          <div className="si-region-selects">
+                            <label>
+                              <span className="si-visually-hidden">省 / 直辖市</span>
+                              <select
+                                aria-label="省 / 直辖市"
+                                required
+                                value={profile['省份'] || ''}
+                                onChange={(event) => {
+                                  const value = event.target.value
+                                  setProfile((old) => ({
+                                    ...old,
+                                    省份: value,
+                                    其他省份: '',
+                                    所在城市: '',
+                                    其他城市: '',
+                                  }))
+                                }}
+                              >
+                                <option value="">请选择省 / 直辖市</option>
+                                {Object.keys(regions).map((name) => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                                <option value={otherRegion}>{otherRegion}</option>
+                              </select>
+                            </label>
+                            <label>
+                              <span className="si-visually-hidden">城市</span>
+                              <select
+                                aria-label="城市"
+                                required
+                                disabled={!profile['省份']}
+                                value={profile['所在城市'] || ''}
+                                onChange={(event) => {
+                                  const value = event.target.value
+                                  setProfile((old) => ({ ...old, 所在城市: value, 其他城市: '' }))
+                                }}
+                              >
+                                <option value="">{profile['省份'] ? '请选择城市' : '请先选择省'}</option>
+                                {(regions[profile['省份']] || []).map((name) => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                                <option value={otherCity}>{otherCity}</option>
+                              </select>
+                            </label>
+                            {profile['省份'] === otherRegion && (
+                              <label>
+                                省份 / 地区名称 <em>*</em>
+                                <input
+                                  required
+                                  value={profile['其他省份'] || ''}
+                                  onChange={(event) => {
+                                    const value = event.target.value
+                                    setProfile((old) => ({ ...old, 其他省份: value }))
+                                  }}
+                                />
+                              </label>
+                            )}
+                            {profile['所在城市'] === otherCity && (
+                              <label>
+                                城市名称 <em>*</em>
+                                <input
+                                  required
+                                  value={profile['其他城市'] || ''}
+                                  onChange={(event) => {
+                                    const value = event.target.value
+                                    setProfile((old) => ({ ...old, 其他城市: value }))
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        </fieldset>
+                      )
+                    if (label === '年级 / 专业' && profile['学生状态'] !== '在校学生') return null
+                    if (label === '学校 / 机构' && !profile['学生状态']) return null
+                    const required =
+                      ['真实姓名', '学生状态', '创作身份', '联系手机', '联系邮箱', genreKey].includes(label) ||
+                      (label === '学校 / 机构' && profile['学生状态'] === '在校学生')
+                    const displayLabel =
+                      label === '学校 / 机构'
+                        ? profile['学生状态'] === '在校学生'
+                          ? '学校全称'
+                          : '机构 / 公司（选填）'
+                        : label === '年级 / 专业'
+                          ? '年级 / 专业（选填）'
+                          : label
+                    if (label === genreKey)
+                      return (
+                        <div
+                          className="si-field-wide si-genre-field"
+                          key={label}
+                          onBlur={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget)) setGenreOpen(false)
                           }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault()
-                              addGenre(genreQuery)
-                            }
-                            if (e.key === 'Escape') setGenreOpen(false)
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') setGenreOpen(false)
                           }}
-                        />
-                      </div>
-                      {genreOpen && (
-                        <div className="si-genre-options" aria-label="题材选项">
-                          {scriptIdeaGenres
-                            .filter(
-                              (item) => !genres.includes(item) && item.toLowerCase().includes(genreQuery.toLowerCase()),
-                            )
-                            .map((item) => (
-                              <button type="button" key={item} onClick={() => addGenre(item)}>
+                        >
+                          <label htmlFor="si-join-genres">
+                            {label} <em>*</em>
+                          </label>
+                          <div className="si-genre-input">
+                            {genres.map((item) => (
+                              <span className="si-genre-chip" key={item}>
                                 {item}
-                              </button>
+                                <button
+                                  type="button"
+                                  aria-label={`移除题材 ${item}`}
+                                  onClick={() =>
+                                    setProfile({ ...profile, [genreKey]: genres.filter((x) => x !== item).join('、') })
+                                  }
+                                >
+                                  ×
+                                </button>
+                              </span>
                             ))}
-                          {genreQuery.trim() && !genres.includes(genreQuery.trim()) && (
-                            <button type="button" onClick={() => addGenre(genreQuery)}>
-                              添加“{genreQuery.trim()}”
-                            </button>
+                            <input
+                              id="si-join-genres"
+                              value={genreQuery}
+                              placeholder={genres.length ? '搜索或输入新题材，回车添加' : placeholder}
+                              required={!genres.length}
+                              autoComplete="off"
+                              aria-expanded={genreOpen}
+                              aria-controls="si-join-genre-options"
+                              onFocus={() => setGenreOpen(true)}
+                              onChange={(e) => {
+                                setGenreQuery(e.target.value)
+                                setGenreOpen(true)
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  addGenre(genreQuery)
+                                }
+                                if (e.key === 'ArrowDown' && genreOpen) {
+                                  e.preventDefault()
+                                  document.querySelector<HTMLButtonElement>('#si-join-genre-options button')?.focus()
+                                }
+                              }}
+                            />
+                          </div>
+                          {genreOpen && (
+                            <div id="si-join-genre-options" className="si-genre-options" aria-label="题材选项">
+                              {scriptIdeaGenres
+                                .filter(
+                                  (item) =>
+                                    !genres.includes(item) && item.toLowerCase().includes(genreQuery.toLowerCase()),
+                                )
+                                .map((item) => (
+                                  <button type="button" key={item} onClick={() => addGenre(item)}>
+                                    {item}
+                                  </button>
+                                ))}
+                              {genreQuery.trim() && !genres.includes(genreQuery.trim()) && (
+                                <button type="button" onClick={() => addGenre(genreQuery)}>
+                                  添加“{genreQuery.trim()}”
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  )
-                return (
-                  <label key={label}>
-                    {label} {required && <em>*</em>}
-                    {label === '身份类型' ? (
-                      <select
-                        required
-                        value={profile[label] || ''}
-                        onChange={(e) => setProfile({ ...profile, [label]: e.target.value })}
-                      >
-                        <option value="">请选择</option>
-                        {['在校学生', '自然流创作者', '团队编剧', '自由职业'].map((value) => (
-                          <option key={value}>{value}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        required={required}
-                        type={label === '联系邮箱' ? 'email' : 'text'}
-                        value={profile[label] || ''}
-                        placeholder={placeholder}
-                        onChange={(e) => setProfile({ ...profile, [label]: e.target.value })}
-                      />
-                    )}
-                    {label === '真实姓名' && <small className="si-field-hint">与后续署名、结算一致</small>}
-                    {label === '学校 / 机构' && <small className="si-field-hint">自然流创作者可填「个人创作者」</small>}
-                  </label>
-                )
-              })}
+                      )
+                    return (
+                      <label key={label}>
+                        {displayLabel} {required && <em>*</em>}
+                        {label === '学生状态' || label === '创作身份' ? (
+                          <select
+                            required
+                            value={profile[label] || ''}
+                            onChange={(e) => {
+                              const value = e.target.value
+                              setProfile((old) => ({
+                                ...old,
+                                [label]: value,
+                                ...(label === '学生状态' && old['学生状态'] && old['学生状态'] !== value
+                                  ? { '学校 / 机构': '', '年级 / 专业': '' }
+                                  : {}),
+                              }))
+                            }}
+                          >
+                            <option value="">请选择</option>
+                            {(label === '学生状态'
+                              ? ['在校学生', '已毕业']
+                              : ['自然流创作者', '团队编剧', '自由职业']
+                            ).map((value) => (
+                              <option key={value}>{value}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            required={required}
+                            type={label === '联系邮箱' ? 'email' : 'text'}
+                            value={profile[label] || ''}
+                            placeholder={
+                              label === '学校 / 机构' && profile['学生状态'] === '已毕业'
+                                ? '请输入机构或公司名称'
+                                : placeholder
+                            }
+                            onChange={(e) => setProfile({ ...profile, [label]: e.target.value })}
+                          />
+                        )}
+                        {label === '真实姓名' && <small className="si-field-hint">与后续署名、结算一致</small>}
+                        {label === '学校 / 机构' && profile['学生状态'] === '已毕业' && (
+                          <small className="si-field-hint">个人创作者可填「个人创作者」</small>
+                        )}
+                      </label>
+                    )
+                  })}
+              </div>
             </div>
-          </div>
+          ))}
           <div className="si-agreement-section">
+            <h3>协议确认</h3>
             <label className="si-agreement">
               <input
                 type="checkbox"
@@ -473,6 +659,10 @@ export function JoinPreview({ user }: { user: any }) {
                 {item}
               </p>
             ))}
+          </section>
+          <section className="si-card si-side-card">
+            <h3>关于信息同步</h3>
+            <p>入驻资料按当前账号保存，提交创意时可带入；入驻资料不计入「我的创意」。</p>
           </section>
         </aside>
       </div>
