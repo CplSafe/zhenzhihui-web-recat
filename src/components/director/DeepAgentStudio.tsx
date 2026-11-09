@@ -297,6 +297,13 @@ export default function DeepAgentStudio({
     () => doudouState(run, !!studio.streamState && studio.streamState !== '实时更新'),
     [run, studio.streamState],
   )
+  const latestTask = [...(run?.events || [])].reverse().find((event) =>
+    ['cost', 'progress', 'tool'].includes(event.kind) && event.data?.tool,
+  )
+  const replying = run?.events.some((event) =>
+    event.kind === 'assistant' && event.data?.streaming &&
+    event.data.task_id === latestTask?.data?.task_id,
+  )
   const status =
     {
       running: run?.stop ? '正在停止后续步骤' : doudouLabels[mascotState],
@@ -493,7 +500,7 @@ export default function DeepAgentStudio({
                   }}
                 />
               </div>
-              {running && !run.stop && !stopping && mascotState === 'thinking' && (
+              {running && !run.stop && !stopping && !replying && mascotState === 'thinking' && (
                 <div className={styles.replyPending} role="status">
                   正在思考<span aria-hidden="true">…</span>
                 </div>

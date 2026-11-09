@@ -1177,3 +1177,20 @@ it('does not leave empty or overcounted tool groups for hidden inference receipt
   expect(screen.queryByText(/已执行.*工具/)).not.toBeInTheDocument()
   expect(container.querySelectorAll('article')).toHaveLength(1)
 })
+
+it('renders real reply updates while running without duplicating the final message', async () => {
+  server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running', events: [
+    { id: 'planning', kind: 'cost', text: '生成中', data: { task_id: 808, tool: 'model.generate_text', status: 'running' } },
+  ] }))))
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const socket = Socket.instances[0]
+  for (const [index, text] of ['你好', '你好，欢迎', '你好，欢迎！'].entries()) {
+    act(() => socket.emit({ event: 'update', cursor: 8 + index, data: {
+      run_id: 'run1', type: 'MESSAGE_UPSERT', data: { id: 'deep-plan-0', kind: 'assistant', text, data: { streaming: true, task_id: 808 } },
+    } }))
+    expect(screen.getAllByText(text)).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+  }
+})

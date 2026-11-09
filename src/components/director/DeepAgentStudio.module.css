@@ -545,6 +545,11 @@
   padding: 6px !important;
   flex-shrink: 0;
 }
+.studio .send:hover:not(:disabled) {
+  background: #fff !important;
+  color: #222 !important;
+}
+
 .send:disabled {
   background: #999999 !important;
   opacity: 0.5 !important;
