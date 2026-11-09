@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ScriptGenreSelect } from './ScriptGenreSelect'
+import { ScriptTemplateDownloads } from './ScriptTemplateDownloads'
 
 const stages = ['提交创意', '一卡', '剧本', '完善剧本']
 const descriptions = ['说清楚你想写什么故事', '把创意扩成标准一卡', '补齐可生产的完整剧本', '按评审意见修订并提交终稿']
@@ -245,6 +246,7 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
           </div>
         </section>
       )}
+      <ScriptTemplateDownloads stage={demo.stage === 0 ? 'creative' : demo.stage === 1 ? 'card' : 'script'} />
       <div className={`si-detail-grid${isNew ? ' si-demo-new' : ''}`}>
         {!isNew && (
           <aside className="si-detail-side">
@@ -307,14 +309,6 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
                   <p className="si-preserve">{values[field.name] || '—'}</p>
                 </div>
               ))}
-              <div className="si-readonly-foot">
-                <a
-                  download
-                  href={`/script-idea-templates/${['创意提交模板.docx', '一卡标准模板.docx', '完整剧本标准模板.docx', '终稿提交模板.docx'][demo.stage]}`}
-                >
-                  ↓ 下载本阶段模板
-                </a>
-              </div>
             </section>
           ) : (
             <form
@@ -369,12 +363,6 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
                       <li key={line}>{line}</li>
                     ))}
                   </ul>
-                  <a
-                    download
-                    href={`/script-idea-templates/${['创意提交模板.docx', '一卡标准模板.docx', '完整剧本标准模板.docx', '终稿提交模板.docx'][demo.stage]}`}
-                  >
-                    ↓ 下载本阶段模板
-                  </a>
                 </div>
               </div>
               {demo.stage === 3 && (

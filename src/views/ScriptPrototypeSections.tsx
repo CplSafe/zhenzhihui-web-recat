@@ -697,10 +697,7 @@ export function StagePreview({ stage }: { stage: string }) {
           <h3>填写规范</h3>
           <div className="si-spec">
             <strong>▤ 按模板准备{config.title}内容</strong>
-            <p>下载模板查看结构和填写说明，实际提交时将完整正文粘贴到待办编辑器中。</p>
-            <a href={`/script-idea-templates/${config.template}`} download>
-              ↓ 下载模板：{config.template}
-            </a>
+            <p>请在申请详情的待办中按阶段要求准备并提交内容。</p>
           </div>
         </div>
         <PrototypeStageFields stage={stage} />

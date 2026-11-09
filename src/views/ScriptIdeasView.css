@@ -1944,6 +1944,83 @@
   background: transparent;
 }
 
+.si-template-downloads {
+  margin-bottom: 16px;
+  padding: 20px 24px;
+}
+.si-template-heading h2 {
+  margin: 0;
+  color: #202f40;
+  font-size: 16px;
+}
+.si-template-heading p {
+  margin: 6px 0 16px;
+  color: #61738a;
+  font-size: 13px;
+}
+.si-template-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+.si-template-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e1ebe8;
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+.si-template-item strong,
+.si-template-item small {
+  display: block;
+}
+.si-template-item strong {
+  color: #253b45;
+  font-size: 13px;
+}
+.si-template-item small {
+  margin-top: 4px;
+  color: #61757e;
+  font-size: 12px;
+}
+.si-template-item a,
+.si-template-item button {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border: 1px solid #a7d9cc;
+  border-radius: 6px;
+  background: #fff;
+  color: #087a67;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.si-template-item a:hover {
+  background: #e7f7f2;
+}
+.si-template-item a:focus-visible {
+  outline: 2px solid #087f6c;
+  outline-offset: 2px;
+}
+.si-template-item button:disabled {
+  border-color: #e2e8e7;
+  color: #788787;
+  background: #f3f5f4;
+  cursor: not-allowed;
+}
+@media (max-width: 760px) {
+  .si-template-downloads {
+    padding: 16px;
+  }
+  .si-template-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* 创作者入驻：两级地区选择与无障碍名称 */
 .si-join-form .si-region-field {
   min-width: 0;
