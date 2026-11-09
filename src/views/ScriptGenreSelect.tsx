@@ -24,6 +24,7 @@ export function ScriptGenreSelect({
       aria-invalid={invalid || undefined}
       aria-describedby={invalid ? 'si-genre-error' : undefined}
       className="si-genre-select"
+      popupClassName="si-genre-dropdown"
       mode="tags"
       value={value
         .split(/[、,，]/)

@@ -121,8 +121,12 @@ export const listApplications = (
 export type CreatorProfile = {
   real_name: string
   identity_type: string
+  /** 待后端支持：学生状态与创作身份独立持久化。 */
+  student_status?: 'student' | 'graduated'
+  creator_type?: 'creator' | 'team' | 'freelancer'
   school: string
   grade_major?: string
+  province?: string
   city?: string
   phone: string
   email: string
