@@ -22,7 +22,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByText('新建本机演示创意')).toHaveCount(0)
     await expect(page.getByText('把故事讲明白，提交完整文本。')).toHaveCount(0)
     await expect(page.getByText('附件将在提交时上传并关联申请')).toHaveCount(0)
-    await expect(page.getByRole('link', { name: /下载模板/ })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: '下载创意模板' })).toBeVisible()
     await expect(page.getByText('申请人信息', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('heading', { name: '填写规范' })).toHaveCount(0)
     expect(await page.locator('.home__content').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)

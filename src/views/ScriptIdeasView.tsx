@@ -27,6 +27,7 @@ import {
 import { JoinPreview, StagePreview } from './ScriptPrototypeSections'
 import { ScriptFlowDemo } from './ScriptFlowDemo'
 import { ScriptGenreSelect } from './ScriptGenreSelect'
+import { ScriptTemplateDownloads } from './ScriptTemplateDownloads'
 import { parseSubmittedIdea } from '@/utils/parseSubmittedIdea'
 import {
   cardFields,
@@ -913,6 +914,24 @@ export default function ScriptIdeasView() {
         : showScriptApproved || currentStage === 'script' || isRevision(currentStage)
           ? 2
           : -1
+  const approvedStages = new Set(
+    (detail?.workflow?.reviews || [])
+      .filter((review) => review.status === 2)
+      .map(
+        (review) =>
+          review.stage || detail?.workflow?.versions?.find((version) => version.version === review.version)?.stage,
+      ),
+  )
+  const hasCardTask =
+    isCard(task?.stage) ||
+    task?.stage === 'script' ||
+    (isRevision(task?.stage) && (detail?.workflow?.flow_version || 0) >= 4)
+  const hasScriptTask =
+    task?.stage === 'script' || (isRevision(task?.stage) && (detail?.workflow?.flow_version || 0) >= 4)
+  const cardTemplateAvailable = Boolean(detail?.progress_available && (approvedStages.has('creative') || hasCardTask))
+  const scriptTemplateAvailable = Boolean(
+    detail?.progress_available && (approvedStages.has('draft') || approvedStages.has('card') || hasScriptTask),
+  )
   const serverStatus: Record<string, string> = {
     under_review: '审核中',
     withdrawn: '已撤回',
@@ -1051,6 +1070,7 @@ export default function ScriptIdeasView() {
                     {error}
                   </div>
                 )}
+                {isNew && <ScriptTemplateDownloads stage="creative" />}
                 {isNew && (
                   <form
                     className="si-card si-form"
@@ -1430,6 +1450,9 @@ export default function ScriptIdeasView() {
                             )}
                           </div>
                         </section>
+                        {currentStep === 0 && <ScriptTemplateDownloads stage="creative" />}
+                        {currentStep === 1 && cardTemplateAvailable && <ScriptTemplateDownloads stage="card" />}
+                        {currentStep === 2 && scriptTemplateAvailable && <ScriptTemplateDownloads stage="script" />}
                         <div className="si-detail-grid">
                           <aside className="si-detail-side">
                             <div className="si-card si-progress">
@@ -1535,19 +1558,6 @@ export default function ScriptIdeasView() {
                                         <li key={item}>{item}</li>
                                       ))}
                                     </ul>
-                                    <a
-                                      href={
-                                        isCard(task!.stage)
-                                          ? '/script-idea-templates/一卡标准模板.docx'
-                                          : task!.stage === 'script'
-                                            ? '/script-idea-templates/完整剧本标准模板.docx'
-                                            : '/script-idea-templates/终稿提交模板.docx'
-                                      }
-                                      download
-                                    >
-                                      ↓ 下载本阶段模板
-                                    </a>
-                                    <span> 模板供参考，可选择文档附件随本次提交。</span>
                                   </div>
                                 </div>
                                 <p>重新加载进度不会覆盖正在编辑的内容。</p>
@@ -2092,9 +2102,6 @@ export default function ScriptIdeasView() {
                                               <li>最强冲突和亮点在哪里</li>
                                               <li>想让观众追下去的钩子</li>
                                             </ul>
-                                            <a href="/script-idea-templates/创意提交模板.docx" download>
-                                              ↓ 下载模板：创意提交模板.docx
-                                            </a>
                                           </div>
                                           <h3>申请人信息</h3>
                                           <div className="si-approved-grid">
@@ -2155,20 +2162,6 @@ export default function ScriptIdeasView() {
                                   )
                                 })()}
                                 <div className="si-readonly-foot">
-                                  <a
-                                    href={
-                                      showScriptApproved || currentStage === 'script'
-                                        ? '/script-idea-templates/完整剧本标准模板.docx'
-                                        : (showCardApproved || isCard(currentStage)) && !showCreativeApproved
-                                          ? '/script-idea-templates/一卡标准模板.docx'
-                                          : isRevision(currentStage)
-                                            ? '/script-idea-templates/终稿提交模板.docx'
-                                            : '/script-idea-templates/创意提交模板.docx'
-                                    }
-                                    download
-                                  >
-                                    ↓ 下载本阶段模板
-                                  </a>
                                   <span>已提交内容仅供查看。</span>
                                 </div>
                               </section>
