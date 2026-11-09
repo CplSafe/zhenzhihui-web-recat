@@ -134,7 +134,9 @@ Agent 已在后端将制作文档、任务、图片和视频写入绑定画布�
 
 `RUN_STATE` 更新执行状态；`ACTIVITY_SNAPSHOT` **替换**费用快照；事件按稳定 ID upsert，cursor 旧帧被忽略。费用不能把旧帧反复累加；预留与实际结算分别展示。当前文本通过已完成消息和进度事件反馈，没有 token delta 时不伪造打字流。
 
-上下文入口读取 `GET run.context`，并通过 `MESSAGE_UPSERT` 中 `kind=context` 的持久事件更新。只有 `measurement=provider_usage` 且有有效的 `capacity_tokens/input_tokens` 时，才显示“上次请求后剩余”比例；容量未知显示“未提供”。这里是最近一次实际请求的占用，不是累计 token，也不是下一次请求的精确预测。新增消息和工具会改变下一次用量。`auto_compaction/status/compaction_count` 控制压缩状态展示，不由前端猜测。
+上下文圆环只提供 hover/键盘聚焦提示，不打开详情弹窗。读取 `GET run.context`，并通过 `MESSAGE_UPSERT kind=context` 更新；旧回执缺少容量时，只允许用相同 `model_id` 的目录容量补齐。后端优先读取 `params_schema.context_profile.max_input_tokens`，否则精确匹配已核对的官方型号（GPT-5.6 Terra 为 1,050,000 tokens，[官方说明](https://developers.openai.com/api/docs/models/gpt-5.6-terra)）。有真实 `input_tokens` 回执时，用容量减去本次输入及已报告的输出计算剩余比例；不是累计 token，也不是下一次请求的精确预测。未知型号不套用其他型号容量。`status=compacting` 时显示“正在整理上下文”。
+
+用户会话与后台执行轮次分离：`GET /api/state` 每个 `conversation_id` 只返回最新执行 `id`，标题沿用会话首轮；分页按会话计数。续聊仍提交 `previous`，它必须是最新轮，否则返回 409。`GET /api/runs/{id}` / 流首帧携带 `history_events`，前端按 `[...history_events, ...events]` 展示，历史事件 ID 带原轮次前缀；当前轮的流式更新仅更新 `events`，费用快照只结算当前轮。历史文档、素材及审批原记录保留；模型继承原对话和既有压缩摘要，不重新总结计费。只有点击新建、不传 `previous` 时开始独立会话。
 
 压缩回执仍为 `cost` 事件，`data.tool=model.generate_text`、`data.purpose=context_compaction`，在对话中显示“整理上下文”，纳入现有实际费用快照，不另加固定压缩费。压缩摘要内容不渲染在用户聊天；剧本、素材与审批的原始记录由后端保留。
 

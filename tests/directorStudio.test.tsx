@@ -11,7 +11,7 @@ import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import DirectorStudioView from '@/views/DirectorStudioView'
 import { DocumentEditor, Markdown, EventCard, Conversation, Approval } from '@/components/director/StudioCards'
 import { Media, StudioMediaContext } from '@/components/director/StudioMedia'
-import { applyStudioFrame, createStudioAPI, defaultModel, mediaURLs } from '@/components/director/studio'
+import { applyStudioFrame, createStudioAPI, defaultModel, mediaURLs, contextInfo } from '@/components/director/studio'
 import type { StudioRun, StudioDocument } from '@/components/director/studio'
 
 const catalog = {
@@ -744,7 +744,7 @@ describe('Director conversation parity', () => {
     render(<DirectorStudioView />)
     await openHistory()
     fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '保留这一段草稿' } })
-    fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
+    fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
     fireEvent.click(screen.getByRole('button', { name: '收起 DoDo Agent' }))
     expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: '创作要求' })).not.toBeInTheDocument()
@@ -872,10 +872,9 @@ describe('Director conversation parity', () => {
   it('shows unavailable context honestly and uses only reported input usage without inventing a percentage', async () => {
     render(<DeepAgentStudio />)
     await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
-    expect(screen.getByText('上下文用量未提供')).toBeInTheDocument()
-    expect(screen.getByText('模型上下文总容量：未提供')).toBeInTheDocument()
-    expect(screen.getByText('自动压缩：状态未提供')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+    expect(screen.getByRole('img', { name: '上下文用量' })).toHaveAttribute('data-tooltip', '上下文用量未提供')
+    expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
     server.use(
       http.get('*/agent-studio/api/runs/run1', () =>
@@ -898,8 +897,8 @@ describe('Director conversation parity', () => {
       ),
     )
     await openHistory()
-    fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
-    expect(screen.getByText('上次输入 12,345 tokens')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+    expect(screen.getByRole('img', { name: '上下文用量' })).toHaveAttribute('data-tooltip', '上次输入 12,345 tokens')
     expect(screen.queryByText(/剩余.*%/)).not.toBeInTheDocument()
   })
   it('replaces cumulative billing updates without adding the same charge twice', async () => {
@@ -1000,11 +999,9 @@ it('updates real context remaining over websocket without rendering the summary 
       },
     }),
   )
-  fireEvent.click(screen.getByRole('button', { name: '上下文用量', exact: true }))
-  expect(screen.getByText('上次请求后剩余 75%')).toBeInTheDocument()
-  expect(screen.getByText('上次请求后可用：75,000 tokens')).toBeInTheDocument()
-  expect(screen.getByText('自动压缩：已开启')).toBeInTheDocument()
-  expect(screen.getByText('已整理 2 次')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+  expect(screen.getByRole('img', { name: '上下文用量' })).toHaveAttribute('data-tooltip', '上次请求后剩余 75%')
+  expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
   expect(document.body.textContent).not.toContain('private-context-summary')
   act(() =>
     Socket.instances[0].emit({
@@ -1018,7 +1015,7 @@ it('updates real context remaining over websocket without rendering the summary 
     }),
   )
   expect(screen.queryByText(/剩余.*%/)).not.toBeInTheDocument()
-  expect(screen.getByText('模型上下文总容量：未提供')).toBeInTheDocument()
+  expect(screen.getByRole('img', { name: '上下文用量' }).getAttribute('data-tooltip')).not.toContain('%')
 })
 it('preserves user-facing correction and recovery progress messages', () => {
   render(
@@ -1193,4 +1190,39 @@ it('renders real reply updates while running without duplicating the final messa
     expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
     expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   }
+})
+
+
+it('uses matching catalog capacity for old receipts, includes output, and rejects another model profile', () => {
+  const modelCatalog = { ...catalog, context_defaults: { model_id: 21, capacity_tokens: 100000 } }
+  const run = snapshot({ selection: { image: 29, video: 18, mode: 'manual', chat: 21 }, context: {
+    model_id: 21, input_tokens: 24000, output_tokens: 1000, measurement: 'provider_usage', capacity_tokens: null,
+  } })
+  expect(contextInfo(run, modelCatalog).percent).toBe(75)
+  expect(contextInfo({ ...run, selection: { ...run.selection!, chat: 55 } }, modelCatalog).percent).toBeNull()
+})
+
+it('keeps previous messages and media through live updates and clears them only for a new conversation', async () => {
+  const previous = [
+    { id: 'history:old:user', kind: 'user', text: '记住海棠这个名字' },
+    { id: 'history:old:reply', kind: 'assistant', text: '已记住海棠' },
+    { id: 'history:old:image', kind: 'cost', text: '图片完成', data: {
+      tool: 'model.generate_image', status: 'succeeded', assets: [{ id: 12, download_url: 'https://media.test/old.png' }],
+    } },
+  ]
+  server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({
+    history_events: previous, events: [{ id: 'user', kind: 'user', text: '继续制作' }],
+  }))))
+  render(<DeepAgentStudio />)
+  await openHistory()
+  expect(screen.getByText('记住海棠这个名字')).toBeVisible()
+  expect(screen.getByText('已记住海棠')).toBeVisible()
+  expect(screen.getByRole('img', { name: '生成素材' })).toBeVisible()
+  act(() => Socket.instances[0].emit({ event: 'update', cursor: 8, data: {
+    run_id: 'run1', type: 'MESSAGE_UPSERT', data: { id: 'reply', kind: 'assistant', text: '正在继续' },
+  } }))
+  expect(screen.getByText('已记住海棠')).toBeVisible()
+  expect(screen.getByText('正在继续')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+  expect(screen.queryByText('已记住海棠')).not.toBeInTheDocument()
 })

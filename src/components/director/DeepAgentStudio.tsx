@@ -45,7 +45,7 @@ export default function DeepAgentStudio({
     [video, setVideo] = useState<number>(),
     [skill, setSkill] = useState('')
   const [dialog, setDialog] = useState<
-    'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'context' | 'attachments' | 'assets' | null
+    'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'attachments' | 'assets' | null
   >(null)
   const [modelTab, setModelTab] = useState<'image' | 'video'>('image'),
     [query, setQuery] = useState('')
@@ -282,7 +282,7 @@ export default function DeepAgentStudio({
   }
   const currentSkill = catalog.skills.find((s) => s.name === skill)
   const context = contextInfo(run, catalog)
-  const contextLabel =
+  const contextLabel = context.context.status === 'compacting' ? '正在整理上下文' :
     context.percent !== null
       ? `上次请求后剩余 ${context.percent}%`
       : context.input != null
@@ -492,7 +492,7 @@ export default function DeepAgentStudio({
               <div className={styles.conversation}>
                 <Conversation
                   active={running && !run.stop}
-                  events={run.events}
+                  events={[...(run.history_events || []), ...run.events]}
                   canvas={run.canvas}
                   onDocument={(id) => {
                     setSelectedDocument(id)
@@ -798,13 +798,12 @@ export default function DeepAgentStudio({
                   <span>{mode === 'auto' ? '自动生成' : '手动确认'}</span>
                 </button>
               </div>
-              <button
-                type="button"
+              <span
+                role="img"
+                tabIndex={0}
                 className={styles.contextButton}
                 aria-label="上下文用量"
                 data-tooltip={contextLabel}
-                aria-expanded={dialog === 'context'}
-                onClick={() => openDialog('context')}
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                   <circle cx="6" cy="6" r="5.25" stroke="currentColor" strokeWidth="1.5" opacity=".25" />
@@ -822,7 +821,7 @@ export default function DeepAgentStudio({
                     />
                   )}
                 </svg>
-              </button>
+              </span>
               {run && ['running', 'waiting'].includes(run.status) ? (
                 <button
                   type="button"
@@ -1078,29 +1077,6 @@ export default function DeepAgentStudio({
                 </span>
                 {mode === 'auto' && <Check size={16} />}
               </button>
-            </div>
-          </Popover>
-        )}
-        {dialog === 'context' && (
-          <Popover anchor={composerAnchor.current} title="上下文用量" onClose={() => setDialog(null)}>
-            <div className={styles.contextInfo}>
-              <p>{contextLabel}</p>
-              <p>模型上下文总容量：{context.capacity ? `${context.capacity.toLocaleString()} tokens` : '未提供'}</p>
-              {context.remaining !== null && <p>上次请求后可用：{context.remaining.toLocaleString()} tokens</p>}
-              <p>
-                自动压缩：
-                {context.context.status === 'compacting'
-                  ? '正在整理'
-                  : context.context.auto_compaction === true
-                    ? '已开启'
-                    : '状态未提供'}
-              </p>
-              {Number.isSafeInteger(context.context.compaction_count) && (
-                <p>已整理 {context.context.compaction_count} 次</p>
-              )}
-              <small>
-                用量来自最近一次模型请求的实际回执。新增消息、素材与工具会改变下次用量；剧本、素材和审批原始记录会保留。整理上下文按实际用量计费。
-              </small>
             </div>
           </Popover>
         )}

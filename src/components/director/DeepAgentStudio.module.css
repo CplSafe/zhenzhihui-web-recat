@@ -1242,15 +1242,7 @@
   margin-left: auto;
   flex-shrink: 0;
 }
-.contextInfo p {
-  margin: 8px 0;
-  color: #bbb;
-  font-size: 12px;
-}
-.contextInfo small {
-  color: #888;
-  font-size: 11px;
-}
+
 
 .answeredCard {
   border: 1px solid #363636;
@@ -1435,3 +1427,5 @@
     animation: none;
   }
 }
+
+.contextButton:focus-visible { outline: 2px solid #b8b8b8; outline-offset: 2px; border-radius: 8px; }

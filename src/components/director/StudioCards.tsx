@@ -22,8 +22,8 @@ export function TooltipLayer({ scope }: { scope: React.RefObject<HTMLElement> })
       setTip(null)
     }
     const show = (event: Event) => {
-      const button = (event.target as Element).closest<HTMLButtonElement>('button[data-tooltip]')
-      if (!button || button.disabled || button.getAttribute('aria-expanded') === 'true') {
+      const button = (event.target as Element).closest<HTMLElement>('[data-tooltip]')
+      if (!button || button.hasAttribute('disabled') || button.getAttribute('aria-expanded') === 'true') {
         hide()
         return
       }
