@@ -79,6 +79,7 @@ export default function PromoRealView() {
   const [materials, setMaterials] = useState<PromoMaterial[]>([])
   const [offline, setOffline] = useState(false)
   const [form, setForm] = useState<Form>(initial)
+  const [formValidated, setFormValidated] = useState(false)
   const [draftScope, setDraftScope] = useState('')
   const [authorized, setAuthorized] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
@@ -159,6 +160,7 @@ export default function PromoRealView() {
     setRestoreError('')
     setRestoreLoading(false)
     setForm(initial)
+    setFormValidated(false)
     setDraftScope('')
     try {
       const savedForm = localStorage.getItem(`zzh.promo.draft.${scope}`)
@@ -523,16 +525,74 @@ export default function PromoRealView() {
                         <h1 className={styles.projectTitle}>定制宣传片 · 需求填写</h1>
                         <fieldset disabled={busy} className={styles.fields}>
                           <label>
-                            单位 / 公司名称
-                            <input value={form.company} onChange={(e) => setField('company', e.target.value)} />
+                            <span>
+                              单位 / 公司名称{' '}
+                              <span className={styles.required} aria-hidden="true">
+                                *
+                              </span>
+                            </span>
+                            <input
+                              id="promo-company"
+                              aria-label="单位 / 公司名称"
+                              required
+                              aria-invalid={formValidated && !form.company.trim()}
+                              aria-describedby={
+                                formValidated && !form.company.trim() ? 'promo-company-error' : undefined
+                              }
+                              value={form.company}
+                              onChange={(e) => setField('company', e.target.value)}
+                            />
+                            {formValidated && !form.company.trim() && (
+                              <span id="promo-company-error" className={styles.fieldError}>
+                                请填写单位 / 公司名称
+                              </span>
+                            )}
                           </label>
                           <label>
-                            联系人
-                            <input value={form.contact} onChange={(e) => setField('contact', e.target.value)} />
+                            <span>
+                              联系人{' '}
+                              <span className={styles.required} aria-hidden="true">
+                                *
+                              </span>
+                            </span>
+                            <input
+                              id="promo-contact"
+                              aria-label="联系人"
+                              required
+                              aria-invalid={formValidated && !form.contact.trim()}
+                              aria-describedby={
+                                formValidated && !form.contact.trim() ? 'promo-contact-error' : undefined
+                              }
+                              value={form.contact}
+                              onChange={(e) => setField('contact', e.target.value)}
+                            />
+                            {formValidated && !form.contact.trim() && (
+                              <span id="promo-contact-error" className={styles.fieldError}>
+                                请填写联系人
+                              </span>
+                            )}
                           </label>
                           <label>
-                            联系电话
-                            <input value={form.phone} onChange={(e) => setField('phone', e.target.value)} />
+                            <span>
+                              联系电话{' '}
+                              <span className={styles.required} aria-hidden="true">
+                                *
+                              </span>
+                            </span>
+                            <input
+                              id="promo-phone"
+                              aria-label="联系电话"
+                              required
+                              aria-invalid={formValidated && !form.phone.trim()}
+                              aria-describedby={formValidated && !form.phone.trim() ? 'promo-phone-error' : undefined}
+                              value={form.phone}
+                              onChange={(e) => setField('phone', e.target.value)}
+                            />
+                            {formValidated && !form.phone.trim() && (
+                              <span id="promo-phone-error" className={styles.fieldError}>
+                                请填写联系电话
+                              </span>
+                            )}
                           </label>
                           <label>
                             宣传片场景
@@ -589,8 +649,26 @@ export default function PromoRealView() {
                             </select>
                           </label>
                           <label className={styles.wide}>
-                            制作需求
-                            <textarea value={form.brief} onChange={(e) => setField('brief', e.target.value)} />
+                            <span>
+                              制作需求{' '}
+                              <span className={styles.required} aria-hidden="true">
+                                *
+                              </span>
+                            </span>
+                            <textarea
+                              id="promo-brief"
+                              aria-label="制作需求"
+                              required
+                              aria-invalid={formValidated && !form.brief.trim()}
+                              aria-describedby={formValidated && !form.brief.trim() ? 'promo-brief-error' : undefined}
+                              value={form.brief}
+                              onChange={(e) => setField('brief', e.target.value)}
+                            />
+                            {formValidated && !form.brief.trim() && (
+                              <span id="promo-brief-error" className={styles.fieldError}>
+                                请填写制作需求
+                              </span>
+                            )}
                           </label>
                           <label className={styles.wide}>
                             参考链接（选填）
@@ -610,13 +688,13 @@ export default function PromoRealView() {
                             type="button"
                             disabled={busy}
                             onClick={() => {
-                              if (
-                                !form.company.trim() ||
-                                !form.contact.trim() ||
-                                !form.phone.trim() ||
-                                !form.brief.trim()
-                              ) {
-                                setError('请填写公司、联系人、电话和制作需求')
+                              setFormValidated(true)
+                              const missing = (['company', 'contact', 'phone', 'brief'] as const).find(
+                                (key) => !form[key].trim(),
+                              )
+                              if (missing) {
+                                setError('请填写必填项')
+                                document.getElementById(`promo-${missing}`)?.focus()
                                 return
                               }
                               setError('')

@@ -985,17 +985,6 @@ export default function ScriptIdeasView() {
                       {joinedProfile ? '查看 / 修改' : '立即入驻'}
                     </button>
                   </section>
-                  <section className="si-card">
-                    <div className="si-entry-top">
-                      <div className="si-icon">▤</div>
-                      <span className="si-home-tag muted">进度可查</span>
-                    </div>
-                    <h2>我的创意</h2>
-                    <p>查看所有已提交创意的进度、审核意见与提交内容。</p>
-                    <button disabled={!joinedProfile} onClick={() => open('/script-ideas/list')}>
-                      查看列表
-                    </button>
-                  </section>
                   <section className="si-card si-primary-card">
                     <div className="si-entry-top">
                       <div className="si-icon">✚</div>
@@ -1005,6 +994,17 @@ export default function ScriptIdeasView() {
                     <p>每条创意生成一条独立审批流程，随时可提交新的。</p>
                     <button className="si-primary" disabled={!joinedProfile} onClick={() => open('/script-ideas/new')}>
                       新建创意
+                    </button>
+                  </section>
+                  <section className="si-card">
+                    <div className="si-entry-top">
+                      <div className="si-icon">▤</div>
+                      <span className="si-home-tag muted">进度可查</span>
+                    </div>
+                    <h2>我的创意</h2>
+                    <p>查看所有已提交创意的进度、审核意见与提交内容。</p>
+                    <button disabled={!joinedProfile} onClick={() => open('/script-ideas/list')}>
+                      查看列表
                     </button>
                   </section>
                 </div>
