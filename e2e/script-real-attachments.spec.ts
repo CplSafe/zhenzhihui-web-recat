@@ -94,8 +94,6 @@ for (const width of [1440, 390]) {
     await page.getByRole('combobox', { name: '题材' }).fill('悬疑')
     await page.getByRole('combobox', { name: '题材' }).press('Enter')
     await page.getByLabel('故事创意').fill('故事简介')
-    await page.getByRole('button', { name: '提交创意', exact: true }).click()
-    await expect(page.getByText('请选择剧本文档附件。')).toBeVisible()
     await page
       .getByLabel('剧本文档附件')
       .setInputFiles({ name: '故事.txt', mimeType: 'text/plain', buffer: Buffer.from('content') })

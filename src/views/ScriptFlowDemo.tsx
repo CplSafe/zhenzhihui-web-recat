@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ScriptGenreSelect } from './ScriptGenreSelect'
 import { ScriptTemplateDownloads } from './ScriptTemplateDownloads'
+import { scriptPlaceholders } from './scriptPlaceholders'
+import { ScriptAttachmentPicker } from './ScriptAttachmentPicker'
 
 const stages = ['提交创意', '一卡', '剧本', '完善剧本']
 const descriptions = ['说清楚你想写什么故事', '把创意扩成标准一卡', '补齐可生产的完整剧本', '按评审意见修订并提交终稿']
@@ -58,7 +60,7 @@ const fields: Field[][] = [
     { name: '剧情简介', type: 'textarea', required: true },
     { name: '第一集剧本剧情', type: 'textarea' },
     { name: '人物、身份、性格', type: 'textarea' },
-    { name: '剧本文档附件', type: 'file', required: true },
+    { name: '剧本文档附件', type: 'file' },
   ],
   [
     { name: '中文剧名', required: true },
@@ -69,7 +71,7 @@ const fields: Field[][] = [
     { name: '核心卖点', type: 'textarea', required: true },
     { name: '人物小传', type: 'textarea', required: true },
     { name: '分集大纲与付费卡点', type: 'textarea', required: true },
-    { name: '一卡文档附件', type: 'file', required: true },
+    { name: '一卡文档附件', type: 'file' },
   ],
   [
     { name: '中文剧名', required: true },
@@ -81,11 +83,11 @@ const fields: Field[][] = [
     { name: '重点付费 / 追更节点', type: 'number' },
     { name: '分幕大纲', type: 'textarea', required: true },
     { name: '世界观与核心规则', type: 'textarea' },
-    { name: '完整剧本文档附件', type: 'file', required: true },
+    { name: '完整剧本文档附件', type: 'file' },
   ],
   [
     { name: '本次修改说明', type: 'textarea', required: true },
-    { name: '终稿附件', type: 'file', required: true },
+    { name: '终稿附件', type: 'file' },
     { name: '我确认本剧本为原创，并同意平台用于后续制作评估', type: 'check', required: true },
   ],
 ]
@@ -402,188 +404,207 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
                 <div className="si-fields">
                   {fields[demo.stage]
                     .filter((f) => f.name !== '单集最长时长')
-                    .map((f) => (
-                      <label
-                        key={f.name}
-                        className={['textarea', 'file', 'check'].includes(f.type || '') ? 'si-field-wide' : ''}
-                      >
-                        {f.name === '单集最短时长' ? '单集时长' : f.name} {f.required && <em>*</em>}
-                        {locked ? (
-                          <p className="si-preserve">{values[f.name] || '—'}</p>
-                        ) : f.name === '题材' && demo.stage === 0 ? (
-                          <ScriptGenreSelect
-                            value={values[f.name] || ''}
-                            onChange={(value) => setValue(f.name, value)}
-                          />
-                        ) : f.type === 'textarea' ? (
-                          <textarea
-                            value={values[f.name] || ''}
-                            onChange={(e) => setValue(f.name, e.target.value)}
-                            rows={4}
-                          />
-                        ) : f.type === 'file' ? (
-                          <>
-                            <input
-                              type="file"
-                              accept=".doc,.docx,.pdf,.txt,.md,.ppt,.pptx"
-                              multiple
-                              onChange={(e) => {
-                                const files = [...(selectedFiles[f.name] || []), ...Array.from(e.target.files || [])]
-                                if (files.some((x) => !/\.(doc|docx|pdf|txt|md|ppt|pptx)$/i.test(x.name))) {
-                                  setError('请上传 doc、docx、pdf、txt、md、ppt 或 pptx 格式的文件。')
-                                  return
-                                }
-                                if (files.length > 30 || files.some((x) => x.size > 500 * 1024 * 1024)) {
-                                  setError('最多选择 30 个文件，每个文件不超过 500 MB。')
-                                  return
-                                }
-                                setSelectedFiles({ ...selectedFiles, [f.name]: files })
-                                setValue(f.name, files.map((x) => x.name).join('、'))
-                              }}
-                            />
-                            <small>上限 30 个文件，最大 500 MB/个；本机演示仅记录文件名。</small>
-                            {(values[f.name] || '')
-                              .split('、')
-                              .filter(Boolean)
-                              .map((name, index) => (
-                                <div className="si-demo-file" key={`${name}-${index}`}>
-                                  <span>{name}</span>
-                                  <button
-                                    type="button"
-                                    aria-label={`移除${name}`}
-                                    onClick={() => {
-                                      const names = (values[f.name] || '').split('、')
-                                      names.splice(index, 1)
-                                      const files = [...(selectedFiles[f.name] || [])]
-                                      files.splice(index, 1)
-                                      setSelectedFiles({ ...selectedFiles, [f.name]: files })
-                                      setValue(f.name, names.join('、'))
-                                    }}
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
-                          </>
-                        ) : f.type === 'check' ? (
-                          <input
-                            type="checkbox"
-                            checked={values[f.name] === '已确认'}
-                            onChange={(e) => setValue(f.name, e.target.checked ? '已确认' : '')}
-                          />
-                        ) : f.name === '单集最短时长' ? (
-                          <div className="si-range">
-                            <input
-                              aria-label="单集最短时长"
-                              type="number"
-                              min={10}
-                              max={600}
-                              value={values['单集最短时长'] || ''}
-                              onChange={(e) => setValue('单集最短时长', e.target.value)}
-                            />
-                            <span>～</span>
-                            <input
-                              aria-label="单集最长时长"
-                              type="number"
-                              min={10}
-                              max={600}
-                              value={values['单集最长时长'] || ''}
-                              onChange={(e) => setValue('单集最长时长', e.target.value)}
-                            />
-                            <span>秒</span>
-                          </div>
-                        ) : f.type === 'number' ? (
-                          <div className="si-stepper">
-                            {(f.name === '免费段最强付费卡点' || f.name === '首个付费解锁集') && <span>第</span>}
-                            <button
-                              type="button"
-                              aria-label={`减少${f.name}`}
-                              onClick={() =>
-                                setValue(
-                                  f.name,
-                                  String(
-                                    Math.max(
-                                      f.name === '重点付费 / 追更节点' ? 0 : f.name === '一卡覆盖集数' ? 8 : 1,
-                                      Number(values[f.name] || 0) - 1,
-                                    ),
-                                  ),
+                    .map((f) =>
+                      f.type === 'file' ? (
+                        <div className="si-field-wide" key={f.name}>
+                          <ScriptAttachmentPicker
+                            label={f.name}
+                            stage={(['creative', 'card', 'script', 'final'] as const)[demo.stage]}
+                            disabled={locked}
+                            count={(values[f.name] || '').split('、').filter(Boolean).length}
+                            onFiles={(selected) => {
+                              const files = [...(selectedFiles[f.name] || []), ...selected]
+                              const names = [
+                                ...(values[f.name] || '').split('、').filter(Boolean),
+                                ...selected.map((file) => file.name),
+                              ]
+                              if (
+                                names.length > 30 ||
+                                files.some(
+                                  (file) =>
+                                    file.size > 500 * 1024 * 1024 || !/\.(docx?|pdf|txt|md|pptx?)$/i.test(file.name),
                                 )
+                              ) {
+                                setError('最多选择 30 个文件，每个文件不超过 500 MiB，且须为支持的文档格式。')
+                                return
                               }
-                            >
-                              −
-                            </button>
+                              setSelectedFiles({ ...selectedFiles, [f.name]: files })
+                              setValue(f.name, names.join('、'))
+                            }}
+                          />
+                          {(values[f.name] || '')
+                            .split('、')
+                            .filter(Boolean)
+                            .map((name, index) => (
+                              <div className="si-demo-file" key={`${name}-${index}`}>
+                                <span>{name}</span>
+                                <button
+                                  type="button"
+                                  aria-label={`移除${name}`}
+                                  onClick={() => {
+                                    const names = (values[f.name] || '').split('、')
+                                    names.splice(index, 1)
+                                    const files = [...(selectedFiles[f.name] || [])]
+                                    files.splice(index, 1)
+                                    setSelectedFiles({ ...selectedFiles, [f.name]: files })
+                                    setValue(f.name, names.join('、'))
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                        </div>
+                      ) : (
+                        <label
+                          key={f.name}
+                          className={['textarea', 'file', 'check'].includes(f.type || '') ? 'si-field-wide' : ''}
+                        >
+                          {f.name === '单集最短时长' ? '单集时长' : f.name} {f.required && <em>*</em>}
+                          {locked ? (
+                            <p className="si-preserve">{values[f.name] || '—'}</p>
+                          ) : f.name === '题材' && demo.stage === 0 ? (
+                            <ScriptGenreSelect
+                              value={values[f.name] || ''}
+                              onChange={(value) => setValue(f.name, value)}
+                            />
+                          ) : f.type === 'textarea' ? (
+                            <textarea
+                              value={values[f.name] || ''}
+                              placeholder={
+                                f.name === '剧情简介'
+                                  ? scriptPlaceholders.creative
+                                  : f.name === '第一集剧本剧情'
+                                    ? scriptPlaceholders.ep1Plot
+                                    : f.name === '人物、身份、性格'
+                                      ? scriptPlaceholders.characters
+                                      : f.name === '本次修改说明'
+                                        ? scriptPlaceholders.revision
+                                        : scriptPlaceholders.fields[f.name]
+                              }
+                              onChange={(e) => setValue(f.name, Array.from(e.target.value).slice(0, 20000).join(''))}
+                              rows={4}
+                            />
+                          ) : f.type === 'check' ? (
                             <input
-                              aria-label={f.name}
-                              type="number"
-                              min={f.name === '重点付费 / 追更节点' ? 0 : f.name === '一卡覆盖集数' ? 8 : 1}
+                              type="checkbox"
+                              checked={values[f.name] === '已确认'}
+                              onChange={(e) => setValue(f.name, e.target.checked ? '已确认' : '')}
+                            />
+                          ) : f.name === '单集最短时长' ? (
+                            <div className="si-range">
+                              <input
+                                aria-label="单集最短时长"
+                                type="number"
+                                min={10}
+                                max={600}
+                                value={values['单集最短时长'] || ''}
+                                onChange={(e) => setValue('单集最短时长', e.target.value)}
+                              />
+                              <span>～</span>
+                              <input
+                                aria-label="单集最长时长"
+                                type="number"
+                                min={10}
+                                max={600}
+                                value={values['单集最长时长'] || ''}
+                                onChange={(e) => setValue('单集最长时长', e.target.value)}
+                              />
+                              <span>秒</span>
+                            </div>
+                          ) : f.type === 'number' ? (
+                            <div className="si-stepper">
+                              {(f.name === '免费段最强付费卡点' || f.name === '首个付费解锁集') && <span>第</span>}
+                              <button
+                                type="button"
+                                aria-label={`减少${f.name}`}
+                                onClick={() =>
+                                  setValue(
+                                    f.name,
+                                    String(
+                                      Math.max(
+                                        f.name === '重点付费 / 追更节点' ? 0 : f.name === '一卡覆盖集数' ? 8 : 1,
+                                        Number(values[f.name] || 0) - 1,
+                                      ),
+                                    ),
+                                  )
+                                }
+                              >
+                                −
+                              </button>
+                              <input
+                                aria-label={f.name}
+                                type="number"
+                                min={f.name === '重点付费 / 追更节点' ? 0 : f.name === '一卡覆盖集数' ? 8 : 1}
+                                max={
+                                  f.name === '一卡覆盖集数' ||
+                                  f.name === '免费段最强付费卡点' ||
+                                  f.name === '重点付费 / 追更节点'
+                                    ? 30
+                                    : 200
+                                }
+                                value={values[f.name] || ''}
+                                onChange={(e) => setValue(f.name, e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                aria-label={`增加${f.name}`}
+                                onClick={() =>
+                                  setValue(
+                                    f.name,
+                                    String(
+                                      Math.min(
+                                        f.name === '一卡覆盖集数' ||
+                                          f.name === '免费段最强付费卡点' ||
+                                          f.name === '重点付费 / 追更节点'
+                                          ? 30
+                                          : 200,
+                                        Number(values[f.name] || 0) + 1,
+                                      ),
+                                    ),
+                                  )
+                                }
+                              >
+                                ＋
+                              </button>
+                              <span>{f.name === '重点付费 / 追更节点' ? '个' : '集'}</span>
+                            </div>
+                          ) : (
+                            <input
+                              type={f.type === 'number' ? 'number' : 'text'}
+                              readOnly={
+                                (demo.stage === 1 && f.name === '中文剧名') ||
+                                (demo.stage === 2 && (f.name === '中文剧名' || f.name === '题材'))
+                              }
+                              min={
+                                f.type === 'number'
+                                  ? f.name === '重点付费 / 追更节点'
+                                    ? 0
+                                    : f.name === '一卡覆盖集数'
+                                      ? 8
+                                      : f.name.startsWith('单集')
+                                        ? 10
+                                        : 1
+                                  : undefined
+                              }
                               max={
-                                f.name === '一卡覆盖集数' ||
-                                f.name === '免费段最强付费卡点' ||
-                                f.name === '重点付费 / 追更节点'
-                                  ? 30
-                                  : 200
+                                f.type === 'number'
+                                  ? f.name === '一卡覆盖集数' ||
+                                    f.name === '免费段最强付费卡点' ||
+                                    f.name === '重点付费 / 追更节点'
+                                    ? 30
+                                    : f.name.startsWith('单集')
+                                      ? 600
+                                      : 200
+                                  : undefined
                               }
                               value={values[f.name] || ''}
                               onChange={(e) => setValue(f.name, e.target.value)}
                             />
-                            <button
-                              type="button"
-                              aria-label={`增加${f.name}`}
-                              onClick={() =>
-                                setValue(
-                                  f.name,
-                                  String(
-                                    Math.min(
-                                      f.name === '一卡覆盖集数' ||
-                                        f.name === '免费段最强付费卡点' ||
-                                        f.name === '重点付费 / 追更节点'
-                                        ? 30
-                                        : 200,
-                                      Number(values[f.name] || 0) + 1,
-                                    ),
-                                  ),
-                                )
-                              }
-                            >
-                              ＋
-                            </button>
-                            <span>{f.name === '重点付费 / 追更节点' ? '个' : '集'}</span>
-                          </div>
-                        ) : (
-                          <input
-                            type={f.type === 'number' ? 'number' : 'text'}
-                            readOnly={
-                              (demo.stage === 1 && f.name === '中文剧名') ||
-                              (demo.stage === 2 && (f.name === '中文剧名' || f.name === '题材'))
-                            }
-                            min={
-                              f.type === 'number'
-                                ? f.name === '重点付费 / 追更节点'
-                                  ? 0
-                                  : f.name === '一卡覆盖集数'
-                                    ? 8
-                                    : f.name.startsWith('单集')
-                                      ? 10
-                                      : 1
-                                : undefined
-                            }
-                            max={
-                              f.type === 'number'
-                                ? f.name === '一卡覆盖集数' ||
-                                  f.name === '免费段最强付费卡点' ||
-                                  f.name === '重点付费 / 追更节点'
-                                  ? 30
-                                  : f.name.startsWith('单集')
-                                    ? 600
-                                    : 200
-                                : undefined
-                            }
-                            value={values[f.name] || ''}
-                            onChange={(e) => setValue(f.name, e.target.value)}
-                          />
-                        )}
-                      </label>
-                    ))}
+                          )}
+                        </label>
+                      ),
+                    )}
                 </div>
               </div>
               {!locked && (

@@ -2181,3 +2181,115 @@
     transition: none;
   }
 }
+
+.si-upload-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.si-upload-drop {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+  border: 1px dashed #bac9d9;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.si-upload-drop.is-disabled {
+  opacity: 0.6;
+}
+.si-upload-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: #e7f6f3;
+  color: #07846e;
+  font-size: 25px;
+}
+.si-upload-select {
+  display: inline !important;
+  color: #07846e;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.si-upload-drop.is-disabled .si-upload-select {
+  cursor: not-allowed;
+}
+.si-upload-input {
+  position: absolute;
+  width: 1px !important;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.si-upload-input:focus-visible + * {
+  outline: 2px solid #07846e;
+}
+.si-upload-drop:focus-within {
+  outline: 2px solid #07846e;
+  outline-offset: 2px;
+}
+.si-upload-drop p {
+  margin: 8px 0;
+  color: #526277;
+}
+.si-upload-drop small {
+  color: #8794a7;
+}
+
+.si-identity-field {
+  grid-column: 1 / -1;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.si-identity-field legend {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.si-identity-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.si-identity-option {
+  position: relative;
+  display: block;
+  border: 1px solid #d9e1e9;
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+}
+.si-identity-option:has(input:checked) {
+  border-color: #07846e;
+  background: #eaf8f5;
+}
+.si-identity-option:focus-within {
+  outline: 2px solid #07846e;
+  outline-offset: 2px;
+}
+.si-identity-option input {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: auto !important;
+  accent-color: #07846e;
+}
+.si-identity-option strong {
+  display: block;
+  padding-right: 24px;
+}
+.si-identity-option span {
+  display: block;
+  margin-top: 8px;
+  color: #526277;
+  line-height: 1.5;
+}
+@media (max-width: 700px) {
+  .si-identity-options {
+    grid-template-columns: 1fr;
+  }
+}

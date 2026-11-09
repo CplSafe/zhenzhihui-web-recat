@@ -28,6 +28,8 @@ import { JoinPreview, StagePreview } from './ScriptPrototypeSections'
 import { ScriptFlowDemo } from './ScriptFlowDemo'
 import { ScriptGenreSelect } from './ScriptGenreSelect'
 import { ScriptTemplateDownloads } from './ScriptTemplateDownloads'
+import { ScriptAttachmentPicker } from './ScriptAttachmentPicker'
+import { scriptPlaceholders } from './scriptPlaceholders'
 import { parseSubmittedIdea } from '@/utils/parseSubmittedIdea'
 import {
   cardFields,
@@ -42,6 +44,14 @@ import {
 } from '@/utils/scriptCardContent'
 import './HomeView.css'
 import './ScriptIdeasView.css'
+
+const fileRuleError = '最多选择 30 个文档，单个不超过 500 MiB，格式须为 doc、docx、pdf、txt、md、ppt 或 pptx。'
+const validScriptFiles = (files: File[]) =>
+  files.length <= 30 &&
+  files.every((file) => file.size <= 500 * 1024 * 1024 && /\.(docx?|pdf|txt|md|pptx?)$/i.test(file.name))
+const TEXT_LIMIT = 20000
+const limitText = (value: string) => Array.from(value).slice(0, TEXT_LIMIT).join('')
+const exceedsTextLimit = (value: string) => Array.from(value).length > TEXT_LIMIT
 
 type Snapshot = { key: string; body: FirstBody | StageBody }
 const stageLabel: Record<string, string> = {
@@ -561,13 +571,9 @@ export default function ScriptIdeasView() {
       if (
         Array.from(ideaFields.title.trim()).length > 200 ||
         Array.from(ideaFields.genre.trim()).length > 80 ||
-        Array.from(form.creative.trim()).length > 12000
+        [form.creative, ideaFields.ep1Plot, ideaFields.characters].some(exceedsTextLimit)
       ) {
-        setSubmissionError('剧名、题材或故事创意超过长度限制，请修改后重试。')
-        return
-      }
-      if (!files.length) {
-        setSubmissionError('请选择剧本文档附件。')
+        setSubmissionError('剧名、题材或正文类字段超过长度限制，请修改后重试。')
         return
       }
       const body: FirstBody = {
@@ -580,6 +586,7 @@ export default function ScriptIdeasView() {
           synopsis: form.creative.trim(),
           episode_1_plot: ideaFields.ep1Plot.trim(),
           characters: ideaFields.characters.trim(),
+          attachments: [],
         },
       }
       next = { key: crypto.randomUUID(), body }
@@ -615,10 +622,11 @@ export default function ScriptIdeasView() {
           : content.trim()
         if (
           !content.trim() ||
-          Array.from(stageContent).length > 20000 ||
+          exceedsTextLimit(content) ||
+          (isRevision(task.stage) && exceedsTextLimit(revisionDescription)) ||
           (isRevision(task.stage) && (!revisionDescription.trim() || !revisionOriginal))
         ) {
-          setSubmissionError('请填写不超过 20000 字符的完整正文，并确认当前待办。')
+          setSubmissionError('请填写完整正文并确认当前待办，每个正文类字段最多 20000 个字符。')
           return
         }
         next = { key: crypto.randomUUID(), body: { task_id: task.task_id, stage: task.stage, content: stageContent } }
@@ -636,7 +644,7 @@ export default function ScriptIdeasView() {
             !/^[\d+()\s-]{7,25}$/.test(form.phone.trim()) ||
             Array.from(ideaFields.title.trim()).length > 200 ||
             Array.from(ideaFields.genre.trim()).length > 80 ||
-            Array.from(form.creative.trim()).length > 12000
+            [form.creative, ideaFields.ep1Plot, ideaFields.characters].some(exceedsTextLimit)
           ) {
             setSubmissionError('请填写完整的申请人、学校、电话、剧名、题材和故事创意。')
             return
@@ -718,16 +726,30 @@ export default function ScriptIdeasView() {
           setSubmissionError('当前阶段内容不完整，请检查后提交。')
           return
         }
-        if (
-          !files.length &&
-          (!previous.length ||
-            previous.length > 30 ||
-            new Set(previous.map((file) => file.file_id)).size !== previous.length)
-        ) {
-          setSubmissionError('请为本次提交选择 1 至 30 个附件。')
+        const textFields = [
+          'synopsis',
+          'episode_1_plot',
+          'characters',
+          'synopsis_zh_full',
+          'selling_points',
+          'character_bios',
+          'episode_outline_and_paywalls',
+          'act_outline',
+          'world_rules',
+          'revision_description',
+        ]
+        if (textFields.some((field) => typeof data[field] === 'string' && exceedsTextLimit(data[field] as string))) {
+          setSubmissionError('每个正文类字段最多 20000 个字符。')
           return
         }
-        if (!files.length) data.attachments = previous
+        if (
+          previous.length + files.length > 30 ||
+          new Set(previous.map((file) => file.file_id)).size !== previous.length
+        ) {
+          setSubmissionError('附件不能超过 30 个或重复，请重新选择。')
+          return
+        }
+        data.attachments = previous
         next = { key: crypto.randomUUID(), body: { task_id: task.task_id, stage: task.stage, data } }
       }
     }
@@ -737,7 +759,7 @@ export default function ScriptIdeasView() {
       setBusy(true)
       setSubmissionError('')
       try {
-        const attachments: ScriptAttachment[] = []
+        const attachments: ScriptAttachment[] = [...(next.body.data?.attachments || [])]
         for (const file of files) {
           let attachment = uploaded.current.get(file)
           if (!attachment) {
@@ -1131,9 +1153,9 @@ export default function ScriptIdeasView() {
                           id="si-creative-input"
                           rows={7}
                           value={form.creative}
-                          onChange={(e) => setForm({ ...form, creative: e.target.value })}
+                          onChange={(e) => setForm({ ...form, creative: limitText(e.target.value) })}
                           disabled={!!pending}
-                          placeholder="交代主角、困境、冲突和想看的爽点"
+                          placeholder={scriptPlaceholders.creative}
                           required
                         />
                       </label>
@@ -1142,9 +1164,9 @@ export default function ScriptIdeasView() {
                         <textarea
                           rows={5}
                           value={ideaFields.ep1Plot}
-                          onChange={(e) => setIdeaFields({ ...ideaFields, ep1Plot: e.target.value })}
+                          onChange={(e) => setIdeaFields({ ...ideaFields, ep1Plot: limitText(e.target.value) })}
                           disabled={!!pending}
-                          placeholder="场景、时间、地点、人物、动作和对白"
+                          placeholder={scriptPlaceholders.ep1Plot}
                         />
                       </label>
                       <label>
@@ -1152,42 +1174,28 @@ export default function ScriptIdeasView() {
                         <textarea
                           rows={4}
                           value={ideaFields.characters}
-                          onChange={(e) => setIdeaFields({ ...ideaFields, characters: e.target.value })}
+                          onChange={(e) => setIdeaFields({ ...ideaFields, characters: limitText(e.target.value) })}
                           disabled={!!pending}
-                          placeholder="一行一个人：姓名 / 身份 / 年龄 / 性格"
+                          placeholder={scriptPlaceholders.characters}
                         />
                       </label>
-                      <small>故事创意最多 12000 个字符。</small>
                       <div className="si-attachments">
-                        <label>
-                          剧本文档附件 <em>*</em>
-                          <input
-                            type="file"
-                            multiple
-                            accept=".doc,.docx,.pdf,.txt,.md,.ppt,.pptx"
-                            disabled={busy || !!pending || deletingFile}
-                            onChange={(event) => {
-                              const selected = Array.from(event.target.files || [])
-                              event.target.value = ''
-                              if (!selected.length) return
-                              if (
-                                selected.length > 30 ||
-                                selected.some(
-                                  (file) =>
-                                    file.size > 500 * 1024 * 1024 || !/\.(docx?|pdf|txt|md|pptx?)$/i.test(file.name),
-                                )
-                              ) {
-                                setError(
-                                  '最多选择 30 个文档，单个不超过 500 MiB，格式须为 doc、docx、pdf、txt、md、ppt 或 pptx。',
-                                )
-                                return
-                              }
-                              setFiles(selected)
-                              setError('')
-                            }}
-                          />
-                          <small>最多 30 个文件，单个不超过 500 MiB；支持 doc、docx、pdf、txt、md、ppt、pptx。</small>
-                        </label>
+                        <ScriptAttachmentPicker
+                          label="剧本文档附件"
+                          stage="creative"
+                          disabled={busy || !!pending || deletingFile}
+                          count={files.length}
+                          onFiles={(selected) => {
+                            if (!selected.length) return
+                            const combined = [...files, ...selected]
+                            if (!validScriptFiles(combined)) {
+                              setError(fileRuleError)
+                              return
+                            }
+                            setFiles(combined)
+                            setError('')
+                          }}
+                        />
                         {files.map((file, index) => (
                           <div className="si-attachment-item" key={`${file.name}-${file.size}-${index}`}>
                             <span>{file.name}</span>
@@ -1471,23 +1479,24 @@ export default function ScriptIdeasView() {
                             <div className="si-card si-progress">
                               <h2>流程进度</h2>
                               {['提交创意', '一卡', '剧本'].map((x, i) => {
-                                const done = i < currentStep
+                                const done = detail.workflow?.status === 2 || i < currentStep
+                                const current = currentStep === i && !done
                                 return (
                                   <div
                                     key={x}
                                     className={
-                                      currentStep === i
+                                      current
                                         ? `is-current${showRejection ? ' is-rejected' : ''}`
                                         : done
                                           ? 'is-done'
                                           : undefined
                                     }
-                                    aria-current={currentStep === i ? 'step' : undefined}
+                                    aria-current={current ? 'step' : undefined}
                                   >
                                     <b aria-label={done ? '已通过' : undefined}>{done ? '✓' : i + 1}</b>
                                     <span>
                                       {x}
-                                      {currentStep === i ? ' · 当前' : ''}
+                                      {current ? ' · 当前' : ''}
                                       <small>
                                         {i === 2 && isRevision(currentStage)
                                           ? '按评审意见完善正文'
@@ -1643,10 +1652,11 @@ export default function ScriptIdeasView() {
                                       <textarea
                                         required
                                         value={form.creative}
+                                        placeholder={scriptPlaceholders.creative}
                                         disabled={busy || !!pending}
                                         onChange={(event) => {
                                           dirtyRef.current = true
-                                          setForm({ ...form, creative: event.target.value })
+                                          setForm({ ...form, creative: limitText(event.target.value) })
                                         }}
                                       />
                                     </label>
@@ -1655,10 +1665,11 @@ export default function ScriptIdeasView() {
                                         {key === 'ep1Plot' ? '第一集剧本剧情' : '人物、身份、性格'}
                                         <textarea
                                           value={ideaFields[key]}
+                                          placeholder={scriptPlaceholders[key]}
                                           disabled={busy || !!pending}
                                           onChange={(event) => {
                                             dirtyRef.current = true
-                                            setIdeaFields({ ...ideaFields, [key]: event.target.value })
+                                            setIdeaFields({ ...ideaFields, [key]: limitText(event.target.value) })
                                           }}
                                         />
                                       </label>
@@ -1676,9 +1687,10 @@ export default function ScriptIdeasView() {
                                         required
                                         disabled={!!pending}
                                         value={revisionDescription}
+                                        placeholder={scriptPlaceholders.revision}
                                         onChange={(event) => {
                                           dirtyRef.current = true
-                                          setRevisionDescription(event.target.value)
+                                          setRevisionDescription(limitText(event.target.value))
                                         }}
                                       />
                                     </label>
@@ -1694,12 +1706,12 @@ export default function ScriptIdeasView() {
                                           value={content}
                                           onChange={(event) => {
                                             dirtyRef.current = true
-                                            setContent(event.target.value)
+                                            setContent(limitText(event.target.value))
                                           }}
                                         />
                                       </label>
                                     )}
-                                    <small>正文与修改说明合计最多 20000 个字符。</small>
+                                    <small>每个正文类字段最多 20000 个字符。</small>
 
                                     <label className="si-original-check">
                                       <input
@@ -1745,6 +1757,7 @@ export default function ScriptIdeasView() {
                                         const props = {
                                           id: `si-script-field-${index}`,
                                           value: values[field] || '',
+                                          placeholder: scriptPlaceholders.fields[field],
                                           required: ![6, 8].includes(index),
                                           readOnly: (detail.workflow?.flow_version || 0) >= 4 && index < 2,
                                           disabled: !!pending,
@@ -1761,7 +1774,10 @@ export default function ScriptIdeasView() {
                                             event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
                                           ) => {
                                             dirtyRef.current = true
-                                            const nextValues = { ...values, [field]: event.target.value }
+                                            const nextValues = {
+                                              ...values,
+                                              [field]: index >= 7 ? limitText(event.target.value) : event.target.value,
+                                            }
                                             setContent(formatScriptContent(nextValues))
                                             if (
                                               scriptValidationAttempted &&
@@ -1843,6 +1859,7 @@ export default function ScriptIdeasView() {
                                         }
                                         const props = {
                                           value: values[field] || '',
+                                          placeholder: scriptPlaceholders.fields[field],
                                           required: true,
                                           readOnly: (detail.workflow?.flow_version || 0) >= 4 && index === 0,
                                           disabled: !!pending,
@@ -1850,7 +1867,13 @@ export default function ScriptIdeasView() {
                                             event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
                                           ) => {
                                             dirtyRef.current = true
-                                            setContent(formatCardContent({ ...values, [field]: event.target.value }))
+                                            setContent(
+                                              formatCardContent({
+                                                ...values,
+                                                [field]:
+                                                  index >= 4 ? limitText(event.target.value) : event.target.value,
+                                              }),
+                                            )
                                           },
                                         }
                                         return (
@@ -1883,7 +1906,7 @@ export default function ScriptIdeasView() {
                                         disabled={!!pending}
                                         onChange={(e) => {
                                           dirtyRef.current = true
-                                          setContent(e.target.value)
+                                          setContent(limitText(e.target.value))
                                         }}
                                         required
                                       />
@@ -1893,39 +1916,39 @@ export default function ScriptIdeasView() {
                                 )}
                                 {(detail.workflow?.structured || (detail.workflow?.flow_version || 0) >= 4) && (
                                   <div className="si-attachments">
-                                    <label>
-                                      本次提交附件 <em>*</em>
-                                      <input
-                                        type="file"
-                                        multiple
-                                        accept=".doc,.docx,.pdf,.txt,.md,.ppt,.pptx"
-                                        disabled={busy || !!pending || deletingFile}
-                                        onChange={(event) => {
-                                          const selected = Array.from(event.target.files || [])
-                                          event.target.value = ''
-                                          if (!selected.length) return
-                                          if (
-                                            selected.length > 30 ||
-                                            selected.some(
-                                              (file) =>
-                                                file.size > 500 * 1024 * 1024 ||
-                                                !/\.(docx?|pdf|txt|md|pptx?)$/i.test(file.name),
-                                            )
-                                          ) {
-                                            setSubmitError(
-                                              '最多选择 30 个文档，单个不超过 500 MiB，格式须为 doc、docx、pdf、txt、md、ppt 或 pptx。',
-                                            )
-                                            return
-                                          }
-                                          dirtyRef.current = true
-                                          setFiles(selected)
-                                          setSubmitError('')
-                                        }}
-                                      />
-                                      <small>
-                                        每次提交需有 1 至 30 个文档，单个不超过 500 MiB。重新选择将替换本阶段已有附件。
-                                      </small>
-                                    </label>
+                                    <ScriptAttachmentPicker
+                                      label="本次提交附件"
+                                      stage={
+                                        isCard(task!.stage)
+                                          ? 'card'
+                                          : task!.stage === 'script'
+                                            ? 'script'
+                                            : isRevision(task!.stage)
+                                              ? 'final'
+                                              : 'creative'
+                                      }
+                                      disabled={busy || !!pending || deletingFile}
+                                      count={
+                                        files.length +
+                                        editableAttachments(detail, task!).filter(
+                                          (file) => !excludedAttachmentIds.includes(file.file_id),
+                                        ).length
+                                      }
+                                      onFiles={(selected) => {
+                                        if (!selected.length) return
+                                        const combined = [...files, ...selected]
+                                        const retainedCount = editableAttachments(detail, task!).filter(
+                                          (file) => !excludedAttachmentIds.includes(file.file_id),
+                                        ).length
+                                        if (!validScriptFiles(combined) || combined.length + retainedCount > 30) {
+                                          setSubmitError(fileRuleError)
+                                          return
+                                        }
+                                        dirtyRef.current = true
+                                        setFiles(combined)
+                                        setSubmitError('')
+                                      }}
+                                    />
                                     {files.map((file, index) => (
                                       <div className="si-attachment-item" key={`${file.name}-${file.size}-${index}`}>
                                         <span>{file.name}</span>
@@ -1939,27 +1962,24 @@ export default function ScriptIdeasView() {
                                         </button>
                                       </div>
                                     ))}
-                                    {!files.length &&
-                                      editableAttachments(detail, task!)
-                                        .filter((file) => !excludedAttachmentIds.includes(file.file_id))
-                                        .map((file) => (
-                                          <div className="si-attachment-item" key={file.file_id}>
-                                            <span>
-                                              将沿用本阶段已有附件：{file.file_name || `文件 ${file.file_id}`}
-                                            </span>
-                                            <button
-                                              type="button"
-                                              disabled={busy || !!pending || deletingFile}
-                                              aria-label={`移除本次附件 ${file.file_name || `文件 ${file.file_id}`}`}
-                                              onClick={() => {
-                                                dirtyRef.current = true
-                                                setExcludedAttachmentIds((ids) => [...ids, file.file_id])
-                                              }}
-                                            >
-                                              移除
-                                            </button>
-                                          </div>
-                                        ))}
+                                    {editableAttachments(detail, task!)
+                                      .filter((file) => !excludedAttachmentIds.includes(file.file_id))
+                                      .map((file) => (
+                                        <div className="si-attachment-item" key={file.file_id}>
+                                          <span>将沿用本阶段已有附件：{file.file_name || `文件 ${file.file_id}`}</span>
+                                          <button
+                                            type="button"
+                                            disabled={busy || !!pending || deletingFile}
+                                            aria-label={`移除本次附件 ${file.file_name || `文件 ${file.file_id}`}`}
+                                            onClick={() => {
+                                              dirtyRef.current = true
+                                              setExcludedAttachmentIds((ids) => [...ids, file.file_id])
+                                            }}
+                                          >
+                                            移除
+                                          </button>
+                                        </div>
+                                      ))}
                                   </div>
                                 )}
                                 {submitError && (

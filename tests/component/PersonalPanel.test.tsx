@@ -124,7 +124,7 @@ describe('PersonalPanel', () => {
     expect(screen.queryByRole('button', { name: /邀请返利/ })).not.toBeInTheDocument()
   })
 
-  it('shows role, membership usage, and switches one non-active workspace without closing the panel', async () => {
+  it('switches a workspace without navigating to the team dashboard', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     const onMember = vi.fn()
@@ -135,7 +135,8 @@ describe('PersonalPanel', () => {
     expect(screen.getByRole('button', { name: 'Alpha团队' })).toHaveAttribute('aria-current', 'true')
     await user.click(screen.getByRole('button', { name: 'Beta团队' }))
     expect(mocks.safeSwitch).toHaveBeenCalledWith(22)
-    expect(onClose).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.navigate).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: /团队版/ }))
     expect(onMember).toHaveBeenCalledTimes(1)

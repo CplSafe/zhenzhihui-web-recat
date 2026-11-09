@@ -123,6 +123,7 @@ import {
   isCreativeDraftContentConflictError,
   isDraftConflictError,
   isRetryableDraftSaveError,
+  normalizeCreativeDraftRevision as normRev,
   waitForDraftSaveRetry,
   type DraftSaveStatus,
   type DraftWriteResult,
@@ -3135,11 +3136,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     }
   }
 
-  // 从任意返回体/错误体取 draft_revision(下划线/驼峰/嵌套 data 多种写法)
-  const normRev = (p: any): number => {
-    const v = Number(p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN)
-    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
-  }
   const rememberProjectRevision = (id: number, ws: number, revision: number) => {
     if (!id || !ws || !Number.isFinite(revision)) return
     draftRevisionByProjectRef.current.set(hotCopyProjectKey(ws, id), revision)

@@ -199,7 +199,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const usedPct =
     baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
-  const pickWs = (id: number, personal: boolean) => {
+  const pickWs = (id: number) => {
     if (workspaceSwitchLocked) {
       showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
       return
@@ -208,7 +208,6 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     if (!switchWorkspaceSafely(id)) return
     showToast('切换成功', 'success')
     onClose?.()
-    if (!personal) navigate('/team')
   }
 
   const openTeamDashboard = (workspace: any) => {
@@ -338,7 +337,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
                 aria-current={active ? 'true' : undefined}
                 disabled={workspaceSwitchLocked}
                 title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
-                onClick={() => pickWs(Number(ws.id), isPersonal)}
+                onClick={() => pickWs(Number(ws.id))}
                 onDoubleClick={() => {
                   if (!isPersonal) openTeamDashboard(ws)
                 }}

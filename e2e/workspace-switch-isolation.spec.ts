@@ -128,7 +128,14 @@ test.describe('创作页空间切换隔离', () => {
         activeWorkspaceId: scenario.sourceWorkspaceId,
       })
 
-      await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}`)
+      await page.addInitScript(() => {
+        localStorage.setItem('zzh_guide_seen_home_u7', '1')
+        localStorage.setItem('zzh_guide_seen_smart_u7', '1')
+      })
+      // 此用例验证创作会话隔离；通用 fixture 的模板视频硬编码团队空间，
+      // 不能让无关模板媒体请求伪装成切换后旧项目的请求。
+      await page.route('**/api/v1/templates**', (route) => route.fulfill({ json: [] }))
+      await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}?edit=1`)
       const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
       await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
       await resumeGeneration.click()

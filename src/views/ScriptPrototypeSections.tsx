@@ -149,9 +149,9 @@ export function JoinPreview({ user }: { user: any }) {
         if (result.profile) {
           const p = result.profile
           const identities: Record<string, string> = {
-            creator: '自然流创作者',
+            creator: '业余创作者',
             team: '团队编剧',
-            freelancer: '自由职业',
+            freelancer: '独立编剧',
           }
           const knownProvince = p.province && regions[p.province] ? p.province : ''
           const selectedProvince = p.province ? knownProvince || otherRegion : ''
@@ -308,9 +308,9 @@ export function JoinPreview({ user }: { user: any }) {
               return
             }
             const identities: Record<string, string> = {
-              自然流创作者: 'creator',
+              业余创作者: 'creator',
               团队编剧: 'team',
-              自由职业: 'freelancer',
+              独立编剧: 'freelancer',
             }
             setSaving(true)
             try {
@@ -478,6 +478,37 @@ export function JoinPreview({ user }: { user: any }) {
                           </div>
                         </fieldset>
                       )
+                    if (label === '创作身份')
+                      return (
+                        <fieldset className="si-identity-field" key={label}>
+                          <legend>
+                            创作身份 <em>*</em>
+                          </legend>
+                          <div className="si-identity-options">
+                            {[
+                              ['业余创作者', '写作不是主业，用业余时间写，靠投稿拿稿费'],
+                              ['独立编剧', '靠写剧本为生，自己接项目、按单结算'],
+                              ['团队编剧', '已在制作团队里，按团队分工和排期写作'],
+                            ].map(([value, description]) => (
+                              <label className="si-identity-option" key={value}>
+                                <input
+                                  type="radio"
+                                  name="creator-identity"
+                                  required
+                                  value={value}
+                                  checked={profile[label] === value}
+                                  onChange={() => setProfile((old) => ({ ...old, [label]: value }))}
+                                />
+                                <strong>{value}</strong>
+                                <span>{description}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <small className="si-field-hint">
+                            按你现在的实际情况选，选错随时可以在入驻信息里改，不影响已提交的创意
+                          </small>
+                        </fieldset>
+                      )
                     if (label === '年级 / 专业' && profile['学生状态'] !== '在校学生') return null
                     if (label === '学校 / 机构' && !profile['学生状态']) return null
                     const required =
@@ -570,7 +601,7 @@ export function JoinPreview({ user }: { user: any }) {
                     return (
                       <label key={label}>
                         {displayLabel} {required && <em>*</em>}
-                        {label === '学生状态' || label === '创作身份' ? (
+                        {label === '学生状态' ? (
                           <select
                             required
                             value={profile[label] || ''}
@@ -586,10 +617,7 @@ export function JoinPreview({ user }: { user: any }) {
                             }}
                           >
                             <option value="">请选择</option>
-                            {(label === '学生状态'
-                              ? ['在校学生', '已毕业']
-                              : ['自然流创作者', '团队编剧', '自由职业']
-                            ).map((value) => (
+                            {['在校学生', '已毕业'].map((value) => (
                               <option key={value}>{value}</option>
                             ))}
                           </select>

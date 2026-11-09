@@ -67,6 +67,10 @@ for (const width of [1440, 390]) {
     )
     await page.goto('/script-ideas/96')
     await expect(page.getByRole('heading', { name: '已通过' })).toBeVisible()
+    const progress = page.locator('.si-progress')
+    await expect(progress.locator('.is-done')).toHaveCount(3)
+    await expect(progress.getByLabel('已通过')).toHaveCount(3)
+    await expect(progress.locator('[aria-current=step]')).toHaveCount(0)
     const details = page.locator('.si-readonly')
     for (const text of [
       '中文剧名',
@@ -143,6 +147,7 @@ test('审核中的创意附件从附件行下载', async ({ page }, testInfo) =>
   )
   await page.goto('/script-ideas/97')
   await expect(page.getByRole('heading', { name: '审核中' })).toBeVisible()
+  await expect(page.locator('.si-progress [aria-current=step]')).toContainText('提交创意 · 当前')
   const details = page.locator('.si-readonly')
   const attachmentRow = details.locator('.si-readonly-body').filter({ hasText: '附件' })
   await expect(attachmentRow).toHaveCount(1)

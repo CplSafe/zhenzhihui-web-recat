@@ -7,11 +7,23 @@ import {
   isCreativeDraftContentConflictError,
   isDraftConflictError,
   isRetryableDraftSaveError,
+  normalizeCreativeDraftRevision,
   waitForDraftSaveRetry,
 } from '@/utils/creativeDraftPersistence'
 
 describe('creative draft persistence helpers', () => {
   afterEach(() => vi.useRealTimers())
+
+  it('normalizes supported draft revision responses without inventing a missing revision', () => {
+    expect(normalizeCreativeDraftRevision({ draft_revision: '3.8' })).toBe(3)
+    expect(normalizeCreativeDraftRevision({ draftRevision: 0 })).toBe(0)
+    expect(normalizeCreativeDraftRevision({ data: { draft_revision: 4 } })).toBe(4)
+    expect(normalizeCreativeDraftRevision({ data: { draftRevision: '5' } })).toBe(5)
+    expect(normalizeCreativeDraftRevision({ draft_revision: 1, data: { draft_revision: 2 } })).toBe(1)
+    for (const value of [undefined, null, {}, { draft_revision: -1 }, { draft_revision: 'invalid' }]) {
+      expect(normalizeCreativeDraftRevision(value)).toBeNaN()
+    }
+  })
 
   it('recognizes all supported conflict shapes', () => {
     expect(isDraftConflictError({ status: 409 })).toBe(true)

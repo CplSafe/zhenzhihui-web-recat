@@ -204,6 +204,7 @@ import {
   isCreativeDraftContentConflictError,
   isDraftConflictError,
   isRetryableDraftSaveError,
+  normalizeCreativeDraftRevision as normRev,
   waitForDraftSaveRetry,
   type DraftSaveStatus,
   type DraftWriteResult,
@@ -318,19 +319,6 @@ function isUnsubmittedImagePreparationFailure(message: ChatMessage): boolean {
     (message.preparationFailure === true ||
       (message.terminalFailure === true && /未提交任何付费任务/.test(String(message.error || ''))))
   )
-}
-
-// 后端在不同接口里会用下划线、驼峰或嵌套 data 返回草稿版本号。
-// 保持为模块级纯函数，避免依赖它的保存回调在每次渲染时失效。
-function normRev(payload: any): number {
-  const value = Number(
-    payload?.draft_revision ??
-      payload?.draftRevision ??
-      payload?.data?.draft_revision ??
-      payload?.data?.draftRevision ??
-      NaN,
-  )
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : NaN
 }
 
 /** 为不受模型支持的总时长生成明确调整提示；档位文案由所选模型实际支持的秒数推导。 */
