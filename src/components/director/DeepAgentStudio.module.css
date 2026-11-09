@@ -1411,3 +1411,22 @@
     animation: none;
   }
 }
+
+.replyPending {
+  color: #aaa;
+  font-size: 13px;
+  margin: 14px 0 22px;
+}
+.replyPending span {
+  animation: reply-pulse 1.6s ease-in-out infinite;
+}
+@keyframes reply-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .replyPending span {
+    animation: none;
+  }
+}

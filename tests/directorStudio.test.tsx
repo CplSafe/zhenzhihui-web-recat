@@ -404,6 +404,7 @@ describe('Director interactions', () => {
     const socket = Socket.instances[0]
     act(() => socket.onopen?.())
     expect(await screen.findByRole('img', { name: /豆豆正在思考/ })).toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toHaveAttribute('role', 'status')
     act(() =>
       socket.emit({
         event: 'update',
@@ -421,6 +422,7 @@ describe('Director interactions', () => {
       }),
     )
     expect(screen.getByRole('img', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
     server.use(
       http.get('*/agent-studio/api/state', () => HttpResponse.json({ error: '历史读取失败' }, { status: 500 })),
     )
@@ -428,6 +430,7 @@ describe('Director interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: '刷新历史' }))
     await screen.findByText('历史读取失败')
     expect(screen.getByRole('img', { name: /豆豆正在制作素材/ })).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
     act(() => socket.emit({ event: 'snapshot', cursor: 9, data: snapshot({ cursor: 9, status: 'waiting' }) }))
     expect(screen.getByRole('img', { name: /豆豆在等你确认/ })).toBeInTheDocument()
     act(() => socket.emit({ event: 'snapshot', cursor: 10, data: snapshot({ cursor: 10, status: 'complete' }) }))
@@ -594,7 +597,8 @@ describe('Studio concurrency and content boundaries', () => {
         data: { run_id: 'run1', type: 'RUN_STATE', data: { status: 'running', stop: false } },
       }),
     )
-    const stop = screen.getByRole('button', { name: '停止后续执行' })
+    const stop = screen.getByRole('button', { name: '停止回复' })
+    expect(stop.closest('form')).not.toBeNull()
     expect(stop).not.toBeDisabled()
     fireEvent.click(stop)
     await waitFor(() => expect(stops).toEqual([{}]))
@@ -817,7 +821,11 @@ describe('Director conversation parity', () => {
       <EventCard
         event={{
           ...event,
-          data: { ...event.data, reasoning_summary: '先整理人物关系。 <img src=x onerror=alert(1)>' },
+          data: {
+            ...event.data,
+            reasoning_enabled: true,
+            reasoning_summary: '先整理人物关系。 <img src=x onerror=alert(1)>',
+          },
         }}
       />,
     )
@@ -826,6 +834,12 @@ describe('Director conversation parity', () => {
     expect(screen.getByText(/先整理人物关系/)).toBeVisible()
     expect(container.querySelector('img')).toBeNull()
     expect(container.textContent).not.toMatch(/1.37|4509|opaque|积分/)
+    rerender(
+      <EventCard
+        event={{ ...event, data: { ...event.data, reasoning_enabled: false, reasoning_summary: 'hidden' } }}
+      />,
+    )
+    expect(container).toBeEmptyDOMElement()
     rerender(<EventCard event={{ ...event, data: { ...event.data, reasoning_summary: '  ' } }} />)
     expect(container).toBeEmptyDOMElement()
   })

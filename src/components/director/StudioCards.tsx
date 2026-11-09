@@ -260,7 +260,9 @@ const taskNames: Record<string, string> = {
   'studio.load_tools': '准备制作工具',
 }
 function publicReasoning(event: StudioEvent) {
-  return typeof event.data?.reasoning_summary === 'string' ? event.data.reasoning_summary.trim() : ''
+  return event.data?.reasoning_enabled === true && typeof event.data?.reasoning_summary === 'string'
+    ? event.data.reasoning_summary.trim()
+    : ''
 }
 function isInferenceEvent(event: StudioEvent) {
   return (

@@ -493,6 +493,11 @@ export default function DeepAgentStudio({
                   }}
                 />
               </div>
+              {running && !run.stop && !stopping && mascotState === 'thinking' && (
+                <div className={styles.replyPending} role="status">
+                  正在思考<span aria-hidden="true">…</span>
+                </div>
+              )}
               {!!run.batches?.length && (
                 <section className={styles.batches} aria-label="制作任务">
                   {run.batches.map((batch) => (
@@ -815,7 +820,7 @@ export default function DeepAgentStudio({
                 <button
                   type="button"
                   className={styles.send}
-                  aria-label="停止后续执行"
+                  aria-label={stopping || run.stop ? '正在停止' : '停止回复'}
                   disabled={stopping || run.stop}
                   onClick={() => void operation('stop')}
                 >
