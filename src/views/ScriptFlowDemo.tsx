@@ -246,7 +246,9 @@ export function ScriptFlowDemo({ owner }: { owner: string }) {
           </div>
         </section>
       )}
-      <ScriptTemplateDownloads stage={demo.stage === 0 ? 'creative' : demo.stage === 1 ? 'card' : 'script'} />
+      {(isNew || ['pending', 'revision', 'withdrawn'].includes(demo.status)) && (
+        <ScriptTemplateDownloads stage={demo.stage === 0 ? 'creative' : demo.stage === 1 ? 'card' : 'script'} />
+      )}
       <div className={`si-detail-grid${isNew ? ' si-demo-new' : ''}`}>
         {!isNew && (
           <aside className="si-detail-side">

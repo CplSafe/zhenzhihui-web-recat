@@ -80,7 +80,7 @@ import ManualVideoFlow from '@/components/smart/refine/ManualVideoFlow'
 import { REFINE_DURATIONS, type RefineDuration } from '@/utils/refineDelivery'
 import { getManualDurationSpec, getManualParamOptions } from '@/utils/manualVideoParams'
 import { useRefineDemoStore } from '@/stores/refineDemo'
-import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import { MANUAL_DELIVERY_CREATE_ENABLED, MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import { registerUpdateDraftSaver } from '@/utils/updateDraftRegistry'
 import { getManualVideoOperation, listVideoModels, type ManualVideoModel } from '@/api/manualVideo'
 import { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
@@ -335,7 +335,9 @@ export default function SmartEntry({
   // 回填优先级:initial(同一次挂载内「上一步」回填,值非空时为准)> sessionStorage 暂存(跨路由保活)> 默认。
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
   const [stored] = useState(() => (restoreSessionDraft ? loadSmartEntryDraft() : null))
-  const [refineSelected, setRefineSelected] = useState(MANUAL_DELIVERY_ENABLED && Boolean(stored?.refineSelected))
+  const [refineSelected, setRefineSelected] = useState(
+    MANUAL_DELIVERY_CREATE_ENABLED && Boolean(stored?.refineSelected),
+  )
   const [refineModels, setRefineModels] = useState<ManualVideoModel[]>([])
   const [refineModelId, setRefineModelId] = useState(stored?.refineModelId || 0)
   useEffect(() => {
@@ -356,7 +358,7 @@ export default function SmartEntry({
       })
     return () => controller.abort()
   }, [workspaceId])
-  const [refineDemoOpen, setRefineDemoOpen] = useState(MANUAL_DELIVERY_ENABLED && Boolean(stored?.refineScreen))
+  const [refineDemoOpen, setRefineDemoOpen] = useState(MANUAL_DELIVERY_CREATE_ENABLED && Boolean(stored?.refineScreen))
   const [refineScreen, setRefineScreen] = useState<'preparing' | 'order'>(stored?.refineScreen ?? 'preparing')
   const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
   const seedSkill = normalizeSmartScriptName(initial?.skill ?? stored?.skill ?? '')
@@ -1022,7 +1024,7 @@ export default function SmartEntry({
       if (next.ratio !== ratio) pickRatio(next.ratio)
       if (next.resolution !== resolution) pickResolution(next.resolution)
       if (
-        MANUAL_DELIVERY_ENABLED &&
+        MANUAL_DELIVERY_CREATE_ENABLED &&
         mode === 'video' &&
         !isRealPersonVariant &&
         !refineSelected &&
@@ -1751,13 +1753,13 @@ export default function SmartEntry({
                         onChange={updateGenerationModel}
                         refineSelected={refineSelected}
                         refineModelId={refineModelId}
-                        refineModels={refineModels.map((model) => ({
+                        refineModels={(MANUAL_DELIVERY_CREATE_ENABLED ? refineModels : []).map((model) => ({
                           id: model.id,
                           name: model.display_name || model.model || '精制交付',
                           logo: readModelLogo(model),
                         }))}
                         onSelectRefine={
-                          MANUAL_DELIVERY_ENABLED && mode === 'video' && !isRealPersonVariant
+                          MANUAL_DELIVERY_CREATE_ENABLED && mode === 'video' && !isRealPersonVariant
                             ? (id) => {
                                 setRefineModelId(id)
                                 setRefineSelected(true)
@@ -1795,7 +1797,7 @@ export default function SmartEntry({
                         }
                         onDurationInput={(value) => setDuration(value ? `${value}s` : '')}
                         refineDurations={
-                          MANUAL_DELIVERY_ENABLED &&
+                          MANUAL_DELIVERY_CREATE_ENABLED &&
                           mode === 'video' &&
                           !isRealPersonVariant &&
                           !refineSelected &&

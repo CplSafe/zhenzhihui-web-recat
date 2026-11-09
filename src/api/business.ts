@@ -351,6 +351,11 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
       return '团队已满，暂时无法加入'
     }
 
+    const code = String(error.code || '')
+    if (code === 'INSUFFICIENT_CREDITS' || code === '10402' || /insufficient credits/i.test(error.message)) {
+      return '积分不足，请充值积分后再试'
+    }
+
     if (error.status === 409) {
       const responseMessage = String(
         error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
@@ -362,10 +367,6 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
     }
 
     // 业务错误码优先按 code/code_string 映射（后端 message 多为英文）。
-    const code = String(error.code || '')
-    if (code === 'INSUFFICIENT_CREDITS' || code === '10402' || /insufficient credits/i.test(error.message)) {
-      return '积分不足，请先购买积分或开通套餐后再试'
-    }
     if (
       code === 'WORKSPACE_CONCURRENCY_LIMIT' ||
       code === '10401' ||

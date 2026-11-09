@@ -2,6 +2,7 @@ import { isDefiniteSubmissionRejection } from '@/utils/submissionRecovery'
 import { useEffect, useRef, useState } from 'react'
 import { Modal } from 'antd'
 import { useSearchParams } from 'react-router-dom'
+import { PROMO_DELIVERY_CREATE_ENABLED } from '@/utils/manualDeliveryVisibility'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
@@ -436,7 +437,7 @@ export default function PromoRealView() {
                     </button>
                   </div>
                 )}
-                {(!started || stage === 'intro' || !config?.enabled) && !pending && (
+                {(!started || stage === 'intro' || !config?.enabled || !PROMO_DELIVERY_CREATE_ENABLED) && !pending && (
                   <>
                     <h1 className={styles.heroTitle}>{config?.entry_name || '定制宣传片'}</h1>
                     <p className={styles.heroSubtitle}>实拍＋AI 混剪 · 每单交付 1 条成片</p>
@@ -491,11 +492,11 @@ export default function PromoRealView() {
                           </dl>
                         </aside>
                       </div>
-                      {config && !config.enabled && (
+                      {config && (!config.enabled || !PROMO_DELIVERY_CREATE_ENABLED) && (
                         <p className={styles.notice}>新建服务暂未开放，已有订单仍可查看。</p>
                       )}
                       <div className={styles.introActions}>
-                        {config?.enabled && (
+                        {config?.enabled && PROMO_DELIVERY_CREATE_ENABLED && (
                           <button className={styles.primary} type="button" disabled={busy} onClick={start}>
                             提交需求，进入制作排期
                           </button>
@@ -507,476 +508,485 @@ export default function PromoRealView() {
                     </section>
                   </>
                 )}
-                {config?.enabled && started && !pending && !restoreLoading && !restoreError && (
-                  <>
-                    <div className={`smart__progress ${styles.steps}`}>
-                      <StepProgress
-                        steps={[
-                          { key: 'material', label: '需求与素材' },
-                          { key: 'confirm', label: '确认并提交' },
-                          { key: 'produce', label: '制作中' },
-                          { key: 'delivery', label: '交付验收' },
-                        ]}
-                        current={stage === 'order' ? 1 : 0}
-                      />
-                    </div>
-                    {stage === 'form' && (
-                      <section className={styles.panel}>
-                        <h1 className={styles.projectTitle}>定制宣传片 · 需求填写</h1>
-                        <fieldset disabled={busy} className={styles.fields}>
-                          <label>
-                            <span>
-                              单位 / 公司名称{' '}
-                              <span className={styles.required} aria-hidden="true">
-                                *
+                {config?.enabled &&
+                  PROMO_DELIVERY_CREATE_ENABLED &&
+                  started &&
+                  !pending &&
+                  !restoreLoading &&
+                  !restoreError && (
+                    <>
+                      <div className={`smart__progress ${styles.steps}`}>
+                        <StepProgress
+                          steps={[
+                            { key: 'material', label: '需求与素材' },
+                            { key: 'confirm', label: '确认并提交' },
+                            { key: 'produce', label: '制作中' },
+                            { key: 'delivery', label: '交付验收' },
+                          ]}
+                          current={stage === 'order' ? 1 : 0}
+                        />
+                      </div>
+                      {stage === 'form' && (
+                        <section className={styles.panel}>
+                          <h1 className={styles.projectTitle}>定制宣传片 · 需求填写</h1>
+                          <fieldset disabled={busy} className={styles.fields}>
+                            <label>
+                              <span>
+                                单位 / 公司名称{' '}
+                                <span className={styles.required} aria-hidden="true">
+                                  *
+                                </span>
                               </span>
-                            </span>
-                            <input
-                              id="promo-company"
-                              aria-label="单位 / 公司名称"
-                              required
-                              aria-invalid={formValidated && !form.company.trim()}
-                              aria-describedby={
-                                formValidated && !form.company.trim() ? 'promo-company-error' : undefined
-                              }
-                              value={form.company}
-                              onChange={(e) => setField('company', e.target.value)}
-                            />
-                            {formValidated && !form.company.trim() && (
-                              <span id="promo-company-error" className={styles.fieldError}>
-                                请填写单位 / 公司名称
+                              <input
+                                id="promo-company"
+                                aria-label="单位 / 公司名称"
+                                required
+                                aria-invalid={formValidated && !form.company.trim()}
+                                aria-describedby={
+                                  formValidated && !form.company.trim() ? 'promo-company-error' : undefined
+                                }
+                                value={form.company}
+                                onChange={(e) => setField('company', e.target.value)}
+                              />
+                              {formValidated && !form.company.trim() && (
+                                <span id="promo-company-error" className={styles.fieldError}>
+                                  请填写单位 / 公司名称
+                                </span>
+                              )}
+                            </label>
+                            <label>
+                              <span>
+                                联系人{' '}
+                                <span className={styles.required} aria-hidden="true">
+                                  *
+                                </span>
                               </span>
-                            )}
-                          </label>
-                          <label>
-                            <span>
-                              联系人{' '}
-                              <span className={styles.required} aria-hidden="true">
-                                *
+                              <input
+                                id="promo-contact"
+                                aria-label="联系人"
+                                required
+                                aria-invalid={formValidated && !form.contact.trim()}
+                                aria-describedby={
+                                  formValidated && !form.contact.trim() ? 'promo-contact-error' : undefined
+                                }
+                                value={form.contact}
+                                onChange={(e) => setField('contact', e.target.value)}
+                              />
+                              {formValidated && !form.contact.trim() && (
+                                <span id="promo-contact-error" className={styles.fieldError}>
+                                  请填写联系人
+                                </span>
+                              )}
+                            </label>
+                            <label>
+                              <span>
+                                联系电话{' '}
+                                <span className={styles.required} aria-hidden="true">
+                                  *
+                                </span>
                               </span>
-                            </span>
-                            <input
-                              id="promo-contact"
-                              aria-label="联系人"
-                              required
-                              aria-invalid={formValidated && !form.contact.trim()}
-                              aria-describedby={
-                                formValidated && !form.contact.trim() ? 'promo-contact-error' : undefined
-                              }
-                              value={form.contact}
-                              onChange={(e) => setField('contact', e.target.value)}
-                            />
-                            {formValidated && !form.contact.trim() && (
-                              <span id="promo-contact-error" className={styles.fieldError}>
-                                请填写联系人
-                              </span>
-                            )}
-                          </label>
-                          <label>
-                            <span>
-                              联系电话{' '}
-                              <span className={styles.required} aria-hidden="true">
-                                *
-                              </span>
-                            </span>
-                            <input
-                              id="promo-phone"
-                              aria-label="联系电话"
-                              required
-                              aria-invalid={formValidated && !form.phone.trim()}
-                              aria-describedby={formValidated && !form.phone.trim() ? 'promo-phone-error' : undefined}
-                              value={form.phone}
-                              onChange={(e) => setField('phone', e.target.value)}
-                            />
-                            {formValidated && !form.phone.trim() && (
-                              <span id="promo-phone-error" className={styles.fieldError}>
-                                请填写联系电话
-                              </span>
-                            )}
-                          </label>
-                          <label>
-                            宣传片场景
-                            <select
-                              value={form.scenario}
-                              onChange={(e) => setField('scenario', e.target.value as Form['scenario'])}
-                            >
-                              <option value="government_corporate">政企宣传</option>
-                              <option value="product_launch">产品发布</option>
-                              <option value="investment_financing">招商融资</option>
-                            </select>
-                          </label>
-                          <label>
-                            期望时长
-                            <select
-                              value={form.duration_seconds}
-                              onChange={(e) => setField('duration_seconds', Number(e.target.value))}
-                            >
-                              {config.duration_options_seconds.map((v) => (
-                                <option key={v} value={v}>
-                                  {v >= 60 ? `${v / 60} 分钟` : `${v} 秒`}
-                                </option>
-                              ))}
-                            </select>
-                            <small>时长影响制作规格与积分消耗</small>
-                          </label>
-                          <label>
-                            画面比例
-                            <select value={form.ratio} onChange={(e) => setField('ratio', e.target.value)}>
-                              {config.ratio_options.map((v) => (
-                                <option key={v}>{v}</option>
-                              ))}
-                            </select>
-                            <small>交付按此比例出片</small>
-                          </label>
-                          <label>
-                            分辨率
-                            <select value={form.resolution} onChange={(e) => setField('resolution', e.target.value)}>
-                              {config.resolution_options.map((v) => (
-                                <option key={v}>{v}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            旁白与字幕
-                            <select
-                              value={form.narration}
-                              onChange={(e) => setField('narration', e.target.value as Form['narration'])}
-                            >
-                              <option value="both">旁白及字幕</option>
-                              <option value="subtitles">仅字幕</option>
-                              <option value="narration">仅旁白</option>
-                              <option value="none">均不需要</option>
-                            </select>
-                          </label>
-                          <label className={styles.wide}>
-                            <span>
-                              制作需求{' '}
-                              <span className={styles.required} aria-hidden="true">
-                                *
-                              </span>
-                            </span>
-                            <textarea
-                              id="promo-brief"
-                              aria-label="制作需求"
-                              required
-                              aria-invalid={formValidated && !form.brief.trim()}
-                              aria-describedby={formValidated && !form.brief.trim() ? 'promo-brief-error' : undefined}
-                              value={form.brief}
-                              onChange={(e) => setField('brief', e.target.value)}
-                            />
-                            {formValidated && !form.brief.trim() && (
-                              <span id="promo-brief-error" className={styles.fieldError}>
-                                请填写制作需求
-                              </span>
-                            )}
-                          </label>
-                          <label className={styles.wide}>
-                            参考链接（选填）
-                            <input
-                              value={form.reference_url}
-                              onChange={(e) => setField('reference_url', e.target.value)}
-                            />
-                          </label>
-                        </fieldset>
-                        <div className={styles.plain}>
-                          <b>接下来：</b>填写需求后上传素材，交付日期以报价和订单详情为准。
-                        </div>
-                        <div className={styles.actions}>
-                          <span>第 1 步 / 共 2 步：需求</span>
-                          <button
-                            className={styles.primary}
-                            type="button"
-                            disabled={busy}
-                            onClick={() => {
-                              setFormValidated(true)
-                              const missing = (['company', 'contact', 'phone', 'brief'] as const).find(
-                                (key) => !form[key].trim(),
-                              )
-                              if (missing) {
-                                setError('请填写必填项')
-                                document.getElementById(`promo-${missing}`)?.focus()
-                                return
-                              }
-                              setError('')
-                              setStage('materials')
-                            }}
-                          >
-                            下一步：上传素材 →
-                          </button>
-                        </div>
-                      </section>
-                    )}
-                    {stage === 'materials' && (
-                      <section className={styles.panel}>
-                        <h1 className={styles.projectTitle}>上传素材</h1>
-                        {uploadingName && <p role="status">正在处理素材：{uploadingName}，请稍候…</p>}
-                        <div className={styles.uploads}>
-                          {(['logo', 'footage', 'supplement'] as const).map((role) => (
-                            <section
-                              key={role}
-                              className={`${styles.materialCard} ${role === 'footage' ? styles.requiredMaterial : ''}`}
-                            >
-                              <h2>
-                                {role === 'footage' ? '实拍素材' : role === 'logo' ? 'LOGO' : 'VI / 口播稿 / 音乐'}{' '}
-                                <span className={styles.pill}>{role === 'footage' ? '必传' : '选传'}</span>
-                              </h2>
-                              <p>
-                                {role === 'footage'
-                                  ? `至少 ${config.footage_min_count} 条图片或视频`
-                                  : role === 'logo'
-                                    ? '图片文件，透明底优先'
-                                    : '补充文件可选传'}
-                              </p>
-                              <label className={styles.uploadBox}>
-                                {role === 'footage' ? '上传实拍素材' : role === 'logo' ? '上传 LOGO' : '上传补充文件'}
-                                <input
-                                  type="file"
-                                  disabled={busy}
-                                  accept={config.allowed_mime.join(',')}
-                                  onChange={selectFile(role)}
-                                />
-                              </label>
-                              {materials
-                                .filter((item) => item.role === role)
-                                .map((item) => (
-                                  <div className={styles.material} key={item.id}>
-                                    <span>
-                                      {item.name || `素材 #${item.id}`} ·{' '}
-                                      {item.status === 'active'
-                                        ? '已就绪'
-                                        : uploadStage[item.id] === 'uploading'
-                                          ? '上传中'
-                                          : uploadStage[item.id] === 'uploaded'
-                                            ? '已上传，待确认'
-                                            : uploadStage[item.id] === 'failed'
-                                              ? '上传失败'
-                                              : '未完成'}
-                                    </span>
-                                    {item.low_resolution && <span>清晰度较低</span>}
-                                    {item.status !== 'active' && (
-                                      <>
-                                        <button type="button" disabled={busy} onClick={() => complete(item.id)}>
-                                          重试确认
-                                        </button>
-                                        {uploadStage[item.id] !== 'uploaded' && (
-                                          <label>
-                                            选择原文件重试
-                                            <input
-                                              type="file"
-                                              disabled={busy}
-                                              onChange={selectFile(item.role || 'footage', item)}
-                                            />
-                                          </label>
-                                        )}
-                                      </>
-                                    )}
-                                    <button type="button" disabled={busy} onClick={() => remove(item.id)}>
-                                      删除
-                                    </button>
-                                  </div>
+                              <input
+                                id="promo-phone"
+                                aria-label="联系电话"
+                                required
+                                aria-invalid={formValidated && !form.phone.trim()}
+                                aria-describedby={formValidated && !form.phone.trim() ? 'promo-phone-error' : undefined}
+                                value={form.phone}
+                                onChange={(e) => setField('phone', e.target.value)}
+                              />
+                              {formValidated && !form.phone.trim() && (
+                                <span id="promo-phone-error" className={styles.fieldError}>
+                                  请填写联系电话
+                                </span>
+                              )}
+                            </label>
+                            <label>
+                              宣传片场景
+                              <select
+                                value={form.scenario}
+                                onChange={(e) => setField('scenario', e.target.value as Form['scenario'])}
+                              >
+                                <option value="government_corporate">政企宣传</option>
+                                <option value="product_launch">产品发布</option>
+                                <option value="investment_financing">招商融资</option>
+                              </select>
+                            </label>
+                            <label>
+                              期望时长
+                              <select
+                                value={form.duration_seconds}
+                                onChange={(e) => setField('duration_seconds', Number(e.target.value))}
+                              >
+                                {config.duration_options_seconds.map((v) => (
+                                  <option key={v} value={v}>
+                                    {v >= 60 ? `${v / 60} 分钟` : `${v} 秒`}
+                                  </option>
                                 ))}
-                            </section>
-                          ))}
-                        </div>
-                        <div className={styles.plain}>
-                          <b>传不上来怎么办？</b>{' '}
-                          {config.offline_fallback
-                            ? '可以登记线下交接，由顾问联系你。'
-                            : '请检查素材后重试，或联系客服。'}
-                        </div>
-                        {config.offline_fallback && !offline && (
-                          <button
-                            className={styles.secondary}
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void guarded(async () => {
-                                await registerPromoOffline(token)
-                                localStorage.setItem(`zzh.promo.offline.${scope}`, '1')
-                                setOffline(true)
-                                setQuote(null)
-                              })
-                            }
-                          >
-                            素材我线下交给顾问
-                          </button>
-                        )}
-                        {offline && <p>已登记线下交接，具体交付日期以报价为准。</p>}
-                        <fieldset className={styles.consent} disabled={busy}>
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={authorized}
-                              onChange={(e) => setAuthorized(e.target.checked)}
-                            />
-                            {config.authorization_text}
-                          </label>
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={acknowledged}
-                              onChange={(e) => setAcknowledged(e.target.checked)}
-                            />
-                            {config.acknowledgement_text}
-                          </label>
-                        </fieldset>
-                        {(!config.price_show || config.manual_quote_required) && (
-                          <p className={styles.notice}>
-                            当前规格需要顾问核价，请联系 {config.service_tel}。{' '}
+                              </select>
+                              <small>时长影响制作规格与积分消耗</small>
+                            </label>
+                            <label>
+                              画面比例
+                              <select value={form.ratio} onChange={(e) => setField('ratio', e.target.value)}>
+                                {config.ratio_options.map((v) => (
+                                  <option key={v}>{v}</option>
+                                ))}
+                              </select>
+                              <small>交付按此比例出片</small>
+                            </label>
+                            <label>
+                              分辨率
+                              <select value={form.resolution} onChange={(e) => setField('resolution', e.target.value)}>
+                                {config.resolution_options.map((v) => (
+                                  <option key={v}>{v}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              旁白与字幕
+                              <select
+                                value={form.narration}
+                                onChange={(e) => setField('narration', e.target.value as Form['narration'])}
+                              >
+                                <option value="both">旁白及字幕</option>
+                                <option value="subtitles">仅字幕</option>
+                                <option value="narration">仅旁白</option>
+                                <option value="none">均不需要</option>
+                              </select>
+                            </label>
+                            <label className={styles.wide}>
+                              <span>
+                                制作需求{' '}
+                                <span className={styles.required} aria-hidden="true">
+                                  *
+                                </span>
+                              </span>
+                              <textarea
+                                id="promo-brief"
+                                aria-label="制作需求"
+                                required
+                                aria-invalid={formValidated && !form.brief.trim()}
+                                aria-describedby={formValidated && !form.brief.trim() ? 'promo-brief-error' : undefined}
+                                value={form.brief}
+                                onChange={(e) => setField('brief', e.target.value)}
+                              />
+                              {formValidated && !form.brief.trim() && (
+                                <span id="promo-brief-error" className={styles.fieldError}>
+                                  请填写制作需求
+                                </span>
+                              )}
+                            </label>
+                            <label className={styles.wide}>
+                              参考链接（选填）
+                              <input
+                                value={form.reference_url}
+                                onChange={(e) => setField('reference_url', e.target.value)}
+                              />
+                            </label>
+                          </fieldset>
+                          <div className={styles.plain}>
+                            <b>接下来：</b>填写需求后上传素材，交付日期以报价和订单详情为准。
+                          </div>
+                          <div className={styles.actions}>
+                            <span>第 1 步 / 共 2 步：需求</span>
                             <button
+                              className={styles.primary}
                               type="button"
-                              disabled={busy || configLoading}
-                              onClick={() => setConfigAttempt((v) => v + 1)}
+                              disabled={busy}
+                              onClick={() => {
+                                setFormValidated(true)
+                                const missing = (['company', 'contact', 'phone', 'brief'] as const).find(
+                                  (key) => !form[key].trim(),
+                                )
+                                if (missing) {
+                                  setError('请填写必填项')
+                                  document.getElementById(`promo-${missing}`)?.focus()
+                                  return
+                                }
+                                setError('')
+                                setStage('materials')
+                              }}
                             >
-                              刷新核价状态
+                              下一步：上传素材 →
                             </button>
-                          </p>
-                        )}
-                        <div className={styles.actions}>
-                          <span>第 2 步 / 共 2 步：素材</span>
-                          <button
-                            className={styles.secondary}
-                            type="button"
-                            disabled={busy}
-                            onClick={() => setStage('form')}
-                          >
-                            上一步
-                          </button>
-                          <button
-                            className={styles.primary}
-                            type="button"
-                            disabled={
-                              busy || !authorized || !acknowledged || !config.price_show || config.manual_quote_required
-                            }
-                            onClick={getQuote}
-                          >
-                            下一步：确认并提交
-                          </button>
-                        </div>
-                      </section>
-                    )}
-                    {stage === 'order' && quote && (
-                      <section className={styles.panel}>
-                        <h1 className={styles.projectTitle}>需求与素材已收齐</h1>
-                        <div className={styles.block}>
-                          <b>核心信息：</b>
-                          <p>{form.brief}</p>
-                        </div>
-                        <div className={styles.block}>
-                          <b>素材清单：</b>
-                          <div className={styles.tableWrap}>
-                            <table className={styles.table}>
-                              <thead>
-                                <tr>
-                                  <th>素材</th>
-                                  <th>文件</th>
-                                  <th>状态</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {materials.length ? (
-                                  materials.map((item) => (
-                                    <tr key={item.id}>
-                                      <td>
-                                        {item.role === 'footage'
-                                          ? '实拍素材'
-                                          : item.role === 'logo'
-                                            ? 'LOGO'
-                                            : '补充文件'}
-                                      </td>
-                                      <td>{item.name || `素材 #${item.id}`}</td>
-                                      <td>{item.status === 'active' ? '已就绪' : '未完成'}</td>
-                                    </tr>
-                                  ))
-                                ) : (
+                          </div>
+                        </section>
+                      )}
+                      {stage === 'materials' && (
+                        <section className={styles.panel}>
+                          <h1 className={styles.projectTitle}>上传素材</h1>
+                          {uploadingName && <p role="status">正在处理素材：{uploadingName}，请稍候…</p>}
+                          <div className={styles.uploads}>
+                            {(['logo', 'footage', 'supplement'] as const).map((role) => (
+                              <section
+                                key={role}
+                                className={`${styles.materialCard} ${role === 'footage' ? styles.requiredMaterial : ''}`}
+                              >
+                                <h2>
+                                  {role === 'footage' ? '实拍素材' : role === 'logo' ? 'LOGO' : 'VI / 口播稿 / 音乐'}{' '}
+                                  <span className={styles.pill}>{role === 'footage' ? '必传' : '选传'}</span>
+                                </h2>
+                                <p>
+                                  {role === 'footage'
+                                    ? `至少 ${config.footage_min_count} 条图片或视频`
+                                    : role === 'logo'
+                                      ? '图片文件，透明底优先'
+                                      : '补充文件可选传'}
+                                </p>
+                                <label className={styles.uploadBox}>
+                                  {role === 'footage' ? '上传实拍素材' : role === 'logo' ? '上传 LOGO' : '上传补充文件'}
+                                  <input
+                                    type="file"
+                                    disabled={busy}
+                                    accept={config.allowed_mime.join(',')}
+                                    onChange={selectFile(role)}
+                                  />
+                                </label>
+                                {materials
+                                  .filter((item) => item.role === role)
+                                  .map((item) => (
+                                    <div className={styles.material} key={item.id}>
+                                      <span>
+                                        {item.name || `素材 #${item.id}`} ·{' '}
+                                        {item.status === 'active'
+                                          ? '已就绪'
+                                          : uploadStage[item.id] === 'uploading'
+                                            ? '上传中'
+                                            : uploadStage[item.id] === 'uploaded'
+                                              ? '已上传，待确认'
+                                              : uploadStage[item.id] === 'failed'
+                                                ? '上传失败'
+                                                : '未完成'}
+                                      </span>
+                                      {item.low_resolution && <span>清晰度较低</span>}
+                                      {item.status !== 'active' && (
+                                        <>
+                                          <button type="button" disabled={busy} onClick={() => complete(item.id)}>
+                                            重试确认
+                                          </button>
+                                          {uploadStage[item.id] !== 'uploaded' && (
+                                            <label>
+                                              选择原文件重试
+                                              <input
+                                                type="file"
+                                                disabled={busy}
+                                                onChange={selectFile(item.role || 'footage', item)}
+                                              />
+                                            </label>
+                                          )}
+                                        </>
+                                      )}
+                                      <button type="button" disabled={busy} onClick={() => remove(item.id)}>
+                                        删除
+                                      </button>
+                                    </div>
+                                  ))}
+                              </section>
+                            ))}
+                          </div>
+                          <div className={styles.plain}>
+                            <b>传不上来怎么办？</b>{' '}
+                            {config.offline_fallback
+                              ? '可以登记线下交接，由顾问联系你。'
+                              : '请检查素材后重试，或联系客服。'}
+                          </div>
+                          {config.offline_fallback && !offline && (
+                            <button
+                              className={styles.secondary}
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void guarded(async () => {
+                                  await registerPromoOffline(token)
+                                  localStorage.setItem(`zzh.promo.offline.${scope}`, '1')
+                                  setOffline(true)
+                                  setQuote(null)
+                                })
+                              }
+                            >
+                              素材我线下交给顾问
+                            </button>
+                          )}
+                          {offline && <p>已登记线下交接，具体交付日期以报价为准。</p>}
+                          <fieldset className={styles.consent} disabled={busy}>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={authorized}
+                                onChange={(e) => setAuthorized(e.target.checked)}
+                              />
+                              {config.authorization_text}
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={acknowledged}
+                                onChange={(e) => setAcknowledged(e.target.checked)}
+                              />
+                              {config.acknowledgement_text}
+                            </label>
+                          </fieldset>
+                          {(!config.price_show || config.manual_quote_required) && (
+                            <p className={styles.notice}>
+                              当前规格需要顾问核价，请联系 {config.service_tel}。{' '}
+                              <button
+                                type="button"
+                                disabled={busy || configLoading}
+                                onClick={() => setConfigAttempt((v) => v + 1)}
+                              >
+                                刷新核价状态
+                              </button>
+                            </p>
+                          )}
+                          <div className={styles.actions}>
+                            <span>第 2 步 / 共 2 步：素材</span>
+                            <button
+                              className={styles.secondary}
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setStage('form')}
+                            >
+                              上一步
+                            </button>
+                            <button
+                              className={styles.primary}
+                              type="button"
+                              disabled={
+                                busy ||
+                                !authorized ||
+                                !acknowledged ||
+                                !config.price_show ||
+                                config.manual_quote_required
+                              }
+                              onClick={getQuote}
+                            >
+                              下一步：确认并提交
+                            </button>
+                          </div>
+                        </section>
+                      )}
+                      {stage === 'order' && quote && (
+                        <section className={styles.panel}>
+                          <h1 className={styles.projectTitle}>需求与素材已收齐</h1>
+                          <div className={styles.block}>
+                            <b>核心信息：</b>
+                            <p>{form.brief}</p>
+                          </div>
+                          <div className={styles.block}>
+                            <b>素材清单：</b>
+                            <div className={styles.tableWrap}>
+                              <table className={styles.table}>
+                                <thead>
                                   <tr>
-                                    <td colSpan={3}>{offline ? '线下交接' : '暂无素材'}</td>
+                                    <th>素材</th>
+                                    <th>文件</th>
+                                    <th>状态</th>
                                   </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                        <div className={styles.order}>
-                          <div className={styles.orderHeading}>
-                            <h2>宣传片制作订单</h2>
-                            <span className={styles.pill}>T+5 定制</span>
-                            <span>提交后进入制作排期</span>
-                          </div>
-                          <dl className={styles.orderGrid}>
-                            <div>
-                              <dt>时长</dt>
-                              <dd>
-                                {form.duration_seconds >= 60
-                                  ? `${form.duration_seconds / 60} 分钟`
-                                  : `${form.duration_seconds} 秒`}
-                              </dd>
+                                </thead>
+                                <tbody>
+                                  {materials.length ? (
+                                    materials.map((item) => (
+                                      <tr key={item.id}>
+                                        <td>
+                                          {item.role === 'footage'
+                                            ? '实拍素材'
+                                            : item.role === 'logo'
+                                              ? 'LOGO'
+                                              : '补充文件'}
+                                        </td>
+                                        <td>{item.name || `素材 #${item.id}`}</td>
+                                        <td>{item.status === 'active' ? '已就绪' : '未完成'}</td>
+                                      </tr>
+                                    ))
+                                  ) : (
+                                    <tr>
+                                      <td colSpan={3}>{offline ? '线下交接' : '暂无素材'}</td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
                             </div>
-                            <div>
-                              <dt>承诺交付</dt>
-                              <dd>{quote.promised_date || '待确定'}</dd>
-                            </div>
-                            <div>
-                              <dt>成品数量</dt>
-                              <dd>1 条</dd>
-                            </div>
-                            <div>
-                              <dt>预计消耗</dt>
-                              <dd>{quote.total_cost} 积分</dd>
-                            </div>
-                          </dl>
-                          <div className={styles.plain}>
-                            <b>出片规格：</b>
-                            {form.ratio} · {form.resolution} ·{' '}
-                            {form.narration === 'both'
-                              ? '旁白及字幕'
-                              : form.narration === 'subtitles'
-                                ? '仅字幕'
-                                : form.narration === 'narration'
-                                  ? '仅旁白'
-                                  : '均不需要'}
                           </div>
-                          <div className={styles.plain}>
-                            <b>提交前请确认：</b>
-                            <ul>
-                              <li>提交时冻结积分，首次交付时结算。</li>
-                              <li>普通取消请联系顾问，退款资格以订单状态为准。</li>
-                              <li>交付后的修改权限以订单详情为准。</li>
-                            </ul>
+                          <div className={styles.order}>
+                            <div className={styles.orderHeading}>
+                              <h2>宣传片制作订单</h2>
+                              <span className={styles.pill}>T+5 定制</span>
+                              <span>提交后进入制作排期</span>
+                            </div>
+                            <dl className={styles.orderGrid}>
+                              <div>
+                                <dt>时长</dt>
+                                <dd>
+                                  {form.duration_seconds >= 60
+                                    ? `${form.duration_seconds / 60} 分钟`
+                                    : `${form.duration_seconds} 秒`}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>承诺交付</dt>
+                                <dd>{quote.promised_date || '待确定'}</dd>
+                              </div>
+                              <div>
+                                <dt>成品数量</dt>
+                                <dd>1 条</dd>
+                              </div>
+                              <div>
+                                <dt>预计消耗</dt>
+                                <dd>{quote.total_cost} 积分</dd>
+                              </div>
+                            </dl>
+                            <div className={styles.plain}>
+                              <b>出片规格：</b>
+                              {form.ratio} · {form.resolution} ·{' '}
+                              {form.narration === 'both'
+                                ? '旁白及字幕'
+                                : form.narration === 'subtitles'
+                                  ? '仅字幕'
+                                  : form.narration === 'narration'
+                                    ? '仅旁白'
+                                    : '均不需要'}
+                            </div>
+                            <div className={styles.plain}>
+                              <b>提交前请确认：</b>
+                              <ul>
+                                <li>提交时冻结积分，首次交付时结算。</li>
+                                <li>普通取消请联系顾问，退款资格以订单状态为准。</li>
+                                <li>交付后的修改权限以订单详情为准。</li>
+                              </ul>
+                            </div>
                           </div>
-                        </div>
-                        <div className={styles.actions}>
-                          <span>还可返回修改需求与素材</span>
-                          <span className={styles.cost}>
-                            预计费用 <b>{quote.total_cost}</b> 积分
-                          </span>
-                          <button
-                            className={styles.secondary}
-                            type="button"
-                            disabled={busy}
-                            onClick={() => setStage('materials')}
-                          >
-                            上一步
-                          </button>
-                          <button
-                            className={styles.primary}
-                            type="button"
-                            disabled={
-                              busy ||
-                              !authorized ||
-                              !acknowledged ||
-                              quote.price_show === false ||
-                              quote.manual_quote_required === true
-                            }
-                            onClick={() => setConfirm(true)}
-                          >
-                            提交宣传片任务（T+5）
-                          </button>
-                        </div>
-                      </section>
-                    )}
-                  </>
-                )}
+                          <div className={styles.actions}>
+                            <span>还可返回修改需求与素材</span>
+                            <span className={styles.cost}>
+                              预计费用 <b>{quote.total_cost}</b> 积分
+                            </span>
+                            <button
+                              className={styles.secondary}
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setStage('materials')}
+                            >
+                              上一步
+                            </button>
+                            <button
+                              className={styles.primary}
+                              type="button"
+                              disabled={
+                                busy ||
+                                !authorized ||
+                                !acknowledged ||
+                                quote.price_show === false ||
+                                quote.manual_quote_required === true
+                              }
+                              onClick={() => setConfirm(true)}
+                            >
+                              提交宣传片任务（T+5）
+                            </button>
+                          </div>
+                        </section>
+                      )}
+                    </>
+                  )}
               </div>
             )}
           </main>

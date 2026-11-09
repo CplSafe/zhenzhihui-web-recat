@@ -109,6 +109,7 @@ import {
   patchCreativeProject,
   getCreativeProject,
   getBusinessErrorMessage,
+  getSubscription,
   cancelAiTask,
   updateCreativeProjectDraft,
   listAiModels,
@@ -139,6 +140,7 @@ import { openGuide, isSmartGuideArmed, disarmSmartGuide, syncSmartGuideStage, us
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
+import { emptyModelMessage, membershipAction } from '@/utils/modelAvailability'
 import { useAuth } from '@/auth/AuthContext'
 import {
   saveSmartDraft,
@@ -6752,7 +6754,19 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (controller.signal.aborted || e?.name === 'AbortError' || !isCurrentRun()) return false
       // 流结束前失败时也立即呈现最后一批已收到的有效分镜，保持原有的部分恢复能力。
       flushPendingPartial(true)
-      const message = scriptStreamFailureMessage(e, got)
+      let failure = e
+      const rawMessage = String(e?.message || '')
+      if (/需要付费套餐|not available without an active subscription/i.test(rawMessage)) {
+        try {
+          const subscription = await getSubscription(executionWorkspaceId)
+          const membershipMessage = emptyModelMessage('脚本生成模型', subscription)
+          if (membershipAction(membershipMessage)) failure = new Error(membershipMessage)
+        } catch {
+          // 无法确认订阅状态时保留原始错误，不能猜测会员已到期。
+        }
+        if (!isCurrentRun()) return false
+      }
+      const message = scriptStreamFailureMessage(failure, got)
       setScriptError(message)
       latestDraftStateRef.current = {
         ...latestDraftStateRef.current,
