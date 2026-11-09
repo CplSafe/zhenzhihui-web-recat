@@ -222,11 +222,7 @@
   background: #a0a0a0;
   margin-right: 8px;
 }
-.billing {
-  padding: 12px 0;
-  color: #929292;
-  font-size: 12px;
-}
+
 .alert {
   background: #6b46342b;
   border: 1px solid #8a5c47;
@@ -849,10 +845,7 @@
     padding: 0 18px 6px;
     font-size: 11px;
   }
-  .billing {
-    padding: 0 18px 8px;
-    font-size: 11px;
-  }
+
   .scrollArea {
     padding: 8px 16px 16px;
   }
@@ -1028,15 +1021,7 @@
   padding: 4px 0;
   margin-left: 22px;
 }
-.billing summary {
-  cursor: pointer;
-  color: #939393;
-  font-size: 12px;
-}
-.billing p {
-  margin-top: 7px;
-  font-size: 11px;
-}
+
 .scrollBottom {
   position: absolute;
   z-index: 4;

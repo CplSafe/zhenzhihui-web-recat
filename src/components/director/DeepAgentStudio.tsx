@@ -585,21 +585,6 @@ export default function DeepAgentStudio({
                   )}
                 </div>
               )}
-              {run?.billing && (
-                <details
-                  className={styles.billing}
-                  title={`推理 ${run.billing.by_kind?.text ?? '未知'} · 图片 ${run.billing.by_kind?.image ?? '未知'} · 视频 ${run.billing.by_kind?.video ?? '未知'}`}
-                >
-                  <summary>本次共消耗 {run.billing.settled_credits} 积分</summary>
-                  <p>
-                    推理 {run.billing.by_kind?.text ?? '未知'} · 图片 {run.billing.by_kind?.image ?? '未知'} · 视频{' '}
-                    {run.billing.by_kind?.video ?? '未知'}
-                  </p>
-                  {Number(run.billing.pending_tasks) > 0
-                    ? ` · ${run.billing.pending_tasks} 项待结算（已预留 ${run.billing.reserved_credits}）`
-                    : ''}
-                </details>
-              )}
             </>
           ) : (
             <section className={styles.welcome}>

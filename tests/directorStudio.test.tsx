@@ -687,7 +687,7 @@ describe('Director conversation parity', () => {
     ['running', 'running', false, true],
     ['paused', 'running', true, false],
   ] as const)(
-    'keeps %s/%s batch visibility truthful and the total after task details',
+    'keeps %s/%s batch visibility truthful without a chat billing breakdown',
     async (status, nodeStatus, cancelled, expanded) => {
       server.use(
         http.get('*/agent-studio/api/runs/run1', () =>
@@ -712,8 +712,7 @@ describe('Director conversation parity', () => {
       await openHistory()
       const batch = screen.getByText(/制作批次/).closest('details')!
       expect(batch.open).toBe(expanded)
-      const total = screen.getByText('本次共消耗 12.000 积分')
-      expect(batch.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(screen.queryByText(/本次共消耗/)).not.toBeInTheDocument()
     },
   )
   it('renders actual historical decision receipts without inventing missing questions or misclassifying resume', () => {
@@ -795,33 +794,40 @@ describe('Director conversation parity', () => {
       )
     },
   )
-  it('keeps inference compact and hides internal task/token data while retaining settled cost', () => {
+  it('hides inference receipts and shows only an explicit public reasoning summary', () => {
     const event = {
       id: 'plan',
       kind: 'cost',
-      text: '思考与编剧完成',
+      text: '思考与编剧',
       data: {
         tool: 'model.generate_text',
         status: 'succeeded',
         actual_cost: '1.37',
         task_id: 4509,
-        usage: { input_tokens: 2469, output_tokens: 419, cached_input_tokens: 0 },
+        responses_reasoning: 'opaque',
       },
     }
     const { container, rerender } = render(<EventCard event={event} />)
+    expect(container).toBeEmptyDOMElement()
+    for (const status of ['running', 'failed']) {
+      rerender(<EventCard event={{ ...event, data: { ...event.data, status } }} />)
+      expect(container).toBeEmptyDOMElement()
+    }
+    rerender(
+      <EventCard
+        event={{
+          ...event,
+          data: { ...event.data, reasoning_summary: '先整理人物关系。 <img src=x onerror=alert(1)>' },
+        }}
+      />,
+    )
     expect(screen.getByText('思考')).toBeInTheDocument()
-    const detail = container.querySelector('details')!
-    expect(detail.open).toBe(false)
-    fireEvent.click(detail.querySelector('summary')!)
-    expect(screen.getByText('实际消耗 1.37 积分')).toBeVisible()
-    expect(container.textContent).not.toMatch(/4509|2469|419|token|思考与编剧/)
-    rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'running' } }} />)
-    expect(screen.getByText('正在思考')).toBeInTheDocument()
-    rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'running' } }} active={false} />)
-    expect(screen.getByText('思考已暂停')).toBeInTheDocument()
-    expect(screen.queryByText(/实际消耗/)).not.toBeInTheDocument()
-    rerender(<EventCard event={{ ...event, data: { ...event.data, status: 'failed' } }} />)
-    expect(screen.getByText('思考未完成')).toBeInTheDocument()
+    fireEvent.click(container.querySelector('summary')!)
+    expect(screen.getByText(/先整理人物关系/)).toBeVisible()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.textContent).not.toMatch(/1.37|4509|opaque|积分/)
+    rerender(<EventCard event={{ ...event, data: { ...event.data, reasoning_summary: '  ' } }} />)
+    expect(container).toBeEmptyDOMElement()
   })
   it('groups adjacent tool receipts while keeping generated media and messages visible', () => {
     render(
@@ -897,7 +903,7 @@ describe('Director conversation parity', () => {
           },
         })
     })
-    expect(screen.getAllByText('本次共消耗 1326.000 积分')).toHaveLength(1)
+    expect(screen.queryByText(/本次共消耗/)).not.toBeInTheDocument()
     expect(screen.queryByText(/2652/)).not.toBeInTheDocument()
   })
 })
@@ -1137,4 +1143,23 @@ it('closing library registration ignores its late response without attaching or 
   })
   expect(screen.queryByRole('button', { name: '移除 迟到素材' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
+})
+
+it('does not leave empty or overcounted tool groups for hidden inference receipts', () => {
+  const hidden = ['a', 'b'].map((id) => ({
+    id,
+    kind: 'tool',
+    text: 'hidden',
+    data: { tool: 'model.generate_text', status: 'succeeded' },
+  }))
+  const { container, rerender } = render(<Conversation events={hidden} onDocument={() => {}} />)
+  expect(container).toBeEmptyDOMElement()
+  rerender(
+    <Conversation
+      events={[...hidden, { id: 'c', kind: 'tool', text: '读取素材', data: { tool: 'assets.list' } }]}
+      onDocument={() => {}}
+    />,
+  )
+  expect(screen.queryByText(/已执行.*工具/)).not.toBeInTheDocument()
+  expect(container.querySelectorAll('article')).toHaveLength(1)
 })
