@@ -7,6 +7,8 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
     () => createStudioAPI(base, business ? { workspaceId: workspaceId!, canvasId: canvasId! } : undefined),
     [base, workspaceId, canvasId, business],
   )
+  const activeAPI = useRef(api)
+  activeAPI.current = api
   const [state, setState] = useState<StudioState>({ connected: false, runs: [] })
   const [catalog, setCatalog] = useState<StudioCatalog>({ models: [], skills: [] })
   const [current, setCurrent] = useState<string | null>(null)
@@ -23,6 +25,7 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
   const refreshHistory = useCallback(
     async (offset = 0, signal?: AbortSignal) => {
       const next = await api.request<StudioState>('/api/state' + (offset ? '?offset=' + offset : ''), undefined, signal)
+      if (activeAPI.current !== api || signal?.aborted) return next
       setState((old) => ({
         ...next,
         runs: offset
