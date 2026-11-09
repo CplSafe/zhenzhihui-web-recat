@@ -77,7 +77,11 @@ import { observeElementResize } from '@/utils/observeElementResize'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { useRefineDemoStore } from '@/stores/refineDemo'
 import { usePromoDemoStore } from '@/stores/promoDemo'
-import { MANUAL_DELIVERY_ENABLED, PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
+import {
+  MANUAL_DELIVERY_ENABLED,
+  PROMO_DELIVERY_CREATE_ENABLED,
+  PROMO_DELIVERY_ENABLED,
+} from '@/utils/manualDeliveryVisibility'
 import { useDeliveryProjectItems } from '@/composables/useDeliveryProjectItems'
 import { rememberTask } from '@/components/smart/refine/ManualVideoFlow'
 import DeliveryProjectCover from '@/components/task/DeliveryProjectCover'
@@ -1798,15 +1802,17 @@ export default function ProjectManagementView() {
                     />
                   </svg>
                 </div>
-                <button
-                  type="button"
-                  className="pm2-new-btn"
-                  onClick={() =>
-                    isCanvasTab ? navigate('/canvas') : isPromoTab ? navigate('/promo') : setCreateOpen(true)
-                  }
-                >
-                  ＋ {isCanvasTab ? '进入无限画布' : isPromoTab ? '进入定制宣传片' : '新建项目'}
-                </button>
+                {(!isPromoTab || PROMO_DELIVERY_CREATE_ENABLED) && (
+                  <button
+                    type="button"
+                    className="pm2-new-btn"
+                    onClick={() =>
+                      isCanvasTab ? navigate('/canvas') : isPromoTab ? navigate('/promo') : setCreateOpen(true)
+                    }
+                  >
+                    ＋ {isCanvasTab ? '进入无限画布' : isPromoTab ? '进入定制宣传片' : '新建项目'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1940,7 +1946,7 @@ export default function ProjectManagementView() {
                       ? '没有匹配的无限画布文件'
                       : '还没有无限画布文件，进入无限画布后可新建画布'
                     : isPromoTab && !query && typeFilter === 'all' && !modelFilter && !effectiveOwnerFilter
-                      ? '暂无宣传片订单，可进入定制宣传片'
+                      ? '暂无宣传片订单'
                       : query || flowFilter !== 'all' || typeFilter !== 'all' || modelFilter || effectiveOwnerFilter
                         ? '没有匹配的项目'
                         : '还没有项目,点右上角「新建项目」开始'}

@@ -16,7 +16,6 @@ export function ScriptTemplateDownloads({ stage }: { stage: 'creative' | 'card' 
         <div className="si-template-item">
           <div>
             <strong>{template.name}</strong>
-            <small>可下载</small>
           </div>
           <a href={`/script-idea-templates/${template.file}`} download aria-label={`下载${template.name}`}>
             下载模板

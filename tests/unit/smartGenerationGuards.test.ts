@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { BusinessApiError } from '@/api/business'
 import {
   persistSmartEntryImages,
   requireReferenceImageAssetIds,
@@ -91,5 +92,11 @@ describe('smartGenerationGuards', () => {
   it('marks a partial stream as interrupted instead of complete', () => {
     expect(scriptStreamFailureMessage(new Error('连接断开'), 3)).toContain('已保留 3 个分镜')
     expect(scriptStreamFailureMessage(new Error('连接断开'), 0)).toBe('连接断开')
+  })
+
+  it('将脚本生成的积分错误码转为充值积分提示', () => {
+    const error = new BusinessApiError('余额不足', { code: 10402, status: 409 })
+    expect(scriptStreamFailureMessage(error, 0)).toBe('积分不足，请充值积分后再试')
+    expect(scriptStreamFailureMessage(error, 2)).toContain('积分不足，请充值积分后再试')
   })
 })

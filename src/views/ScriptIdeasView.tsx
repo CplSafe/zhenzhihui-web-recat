@@ -1070,7 +1070,7 @@ export default function ScriptIdeasView() {
                     {error}
                   </div>
                 )}
-                {isNew && <ScriptTemplateDownloads stage="creative" />}
+                {isNew && !busy && !pending && <ScriptTemplateDownloads stage="creative" />}
                 {isNew && (
                   <form
                     className="si-card si-form"
@@ -1450,9 +1450,22 @@ export default function ScriptIdeasView() {
                             )}
                           </div>
                         </section>
-                        {currentStep === 0 && <ScriptTemplateDownloads stage="creative" />}
-                        {currentStep === 1 && cardTemplateAvailable && <ScriptTemplateDownloads stage="card" />}
-                        {currentStep === 2 && scriptTemplateAvailable && <ScriptTemplateDownloads stage="script" />}
+                        {canEdit &&
+                          !busy &&
+                          !pending &&
+                          !showCreativeApproved &&
+                          !showCardApproved &&
+                          !showScriptApproved &&
+                          detail.workflow?.review_status !== 'under_review' &&
+                          detail.workflow?.stage !== 'waiting_review' && (
+                            <>
+                              {currentStep === 0 && <ScriptTemplateDownloads stage="creative" />}
+                              {currentStep === 1 && cardTemplateAvailable && <ScriptTemplateDownloads stage="card" />}
+                              {currentStep === 2 && scriptTemplateAvailable && (
+                                <ScriptTemplateDownloads stage="script" />
+                              )}
+                            </>
+                          )}
                         <div className="si-detail-grid">
                           <aside className="si-detail-side">
                             <div className="si-card si-progress">

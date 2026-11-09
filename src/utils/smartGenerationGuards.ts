@@ -3,6 +3,7 @@
  * 临时 data/blob 素材必须获得资产 ID 后才能发起生成，防止刷新或后台任务读取失效地址。
  */
 import { buildPersistentAssetUrl } from '@/utils/persistentMediaUrl'
+import { getBusinessErrorMessage } from '@/api/business'
 
 /** 仅存在于当前浏览器会话的临时媒体协议。 */
 const TEMPORARY_MEDIA_RE = /^(?:data:|blob:)/i
@@ -96,10 +97,11 @@ export async function persistSmartEntryImages(
 
 /** 根据已收到分镜数量生成可继续操作的流式脚本错误提示。 */
 export function scriptStreamFailureMessage(error: unknown, receivedCount: number): string {
-  const detail =
+  const rawDetail =
     typeof error === 'object' && error && 'message' in error
       ? String((error as { message?: unknown }).message || '').trim()
       : ''
+  const detail = getBusinessErrorMessage(error, rawDetail)
   if (receivedCount > 0) {
     return `脚本生成中断，已保留 ${receivedCount} 个分镜；${detail || '请重试以生成完整脚本'}`
   }
