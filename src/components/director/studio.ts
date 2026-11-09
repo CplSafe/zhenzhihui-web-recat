@@ -46,6 +46,7 @@ export interface StudioRun {
   inference_failure?: Data | null
 }
 export interface StudioState {
+  session_scope?: string | null
   connected: boolean
   workspace_id?: number
   runs: Array<{ id: string; title: string; status: RunStatus }>

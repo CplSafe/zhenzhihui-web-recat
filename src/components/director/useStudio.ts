@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { applyStudioFrame, createStudioAPI } from './studio'
+import { applyStudioFrame, createStudioAPI, StudioHTTPError } from './studio'
 import type { StudioCatalog, StudioRun, StudioState } from './studio'
 
 export function useStudio(base: string, workspaceId?: number, canvasId?: number, business = false) {
@@ -11,7 +11,18 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
   activeAPI.current = api
   const [state, setState] = useState<StudioState>({ connected: false, runs: [] })
   const [catalog, setCatalog] = useState<StudioCatalog>({ models: [], skills: [] })
-  const [current, setCurrent] = useState<string | null>(null)
+  const [current, setCurrentState] = useState<string | null>(null)
+  const conversationKey = useRef<string | null>(null)
+  const conversationChoice = useRef(0)
+  const setCurrent = useCallback((id: string | null) => {
+    conversationChoice.current++
+    setCurrentState(id)
+    if (!conversationKey.current) return
+    try {
+      if (id) sessionStorage.setItem(conversationKey.current, id)
+      else sessionStorage.removeItem(conversationKey.current)
+    } catch { /* Browser storage may be disabled. */ }
+  }, [])
   const [run, setRun] = useState<StudioRun | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -39,30 +50,55 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
   const initialize = useCallback(
     async (signal?: AbortSignal) => {
       setLoading(true)
+      const choice = conversationChoice.current
       try {
         await api.bootstrap(signal)
         const next = await refreshHistory(0, signal)
-        if (next.connected && (!workspaceId || next.workspace_id === workspaceId))
-          setCatalog(await api.request<StudioCatalog>('/api/catalog', undefined, signal))
+        if (activeAPI.current !== api || signal?.aborted) return
+        const key = next.connected && next.session_scope && (!workspaceId || next.workspace_id === workspaceId)
+          ? 'dodo-conversation:' + JSON.stringify([base, next.session_scope, canvasId ?? null]) : null
+        if (conversationKey.current !== key) {
+          conversationKey.current = key
+          let saved = null
+          try {
+            if (key) {
+              if (choice === conversationChoice.current) saved = sessionStorage.getItem(key)
+              else sessionStorage.removeItem(key) // New was clicked while connecting.
+            }
+          } catch { /* Continue without persistence. */ }
+          setCurrentState(saved)
+        }
         setError('')
+        if (next.connected && (!workspaceId || next.workspace_id === workspaceId)) {
+          try {
+            const value = await api.request<StudioCatalog>('/api/catalog', undefined, signal)
+            if (activeAPI.current !== api || signal?.aborted) return
+            setCatalog(value)
+          } catch (e) {
+            if (activeAPI.current !== api || signal?.aborted) return
+            setError(e instanceof Error ? e.message : '读取模型列表失败')
+          }
+        }
         setConnectionEpoch((value) => value + 1)
       } catch (e) {
-        if (!signal?.aborted) {
+        if (activeAPI.current === api && !signal?.aborted) {
           setState({ connected: false, runs: [] })
           setCatalog({ models: [], skills: [] })
-          setCurrent(null)
+          conversationKey.current = null
+          setCurrentState(null)
           setRun(null)
           setError(e instanceof Error ? e.message : '连接失败')
         }
       } finally {
-        if (!signal?.aborted) setLoading(false)
+        if (activeAPI.current === api && !signal?.aborted) setLoading(false)
       }
     },
-    [api, refreshHistory, workspaceId],
+    [api, refreshHistory, workspaceId, base, canvasId],
   )
   useEffect(() => {
     const controller = new AbortController()
-    setCurrent(null)
+    conversationKey.current = null
+    setCurrentState(null)
     setRun(null)
     setState({ connected: false, runs: [] })
     setCatalog({ models: [], skills: [] })
@@ -222,7 +258,11 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
         open()
       })
       .catch((e) => {
-        if (!disposed) setError(e instanceof Error ? e.message : '读取会话失败')
+        if (disposed) return
+        if (e instanceof StudioHTTPError && (e.status === 403 || e.status === 404)) {
+          setCurrent(null)
+          setError('原会话已不可访问，可以新建对话或从历史记录中选择。')
+        } else setError(e instanceof Error ? e.message : '读取会话失败')
       })
     return () => {
       disposed = true
@@ -230,7 +270,7 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
       clearTimeout(timer)
       socket?.close()
     }
-  }, [api, current, mismatch, business, connectionEpoch])
+  }, [api, current, mismatch, business, connectionEpoch, setCurrent])
   return {
     api,
     state,

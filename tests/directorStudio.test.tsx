@@ -49,6 +49,7 @@ class Socket {
   }
 }
 beforeEach(() => {
+  sessionStorage.clear()
   resetSharedSessionRefreshForTests()
   Socket.instances = []
   vi.stubGlobal('WebSocket', Socket)
@@ -64,6 +65,7 @@ beforeEach(() => {
     http.get('*/agent-studio/api/state', () =>
       HttpResponse.json({
         connected: true,
+        session_scope: 'account-1',
         workspace_id: 54,
         runs: [{ id: 'run1', title: '第一集测试', status: 'complete' }],
       }),
@@ -1325,4 +1327,73 @@ it('ignores a late history refresh from the previous canvas after the send was a
   fireEvent.click(screen.getByRole('button', { name: '新对话' }))
   expect(screen.getByRole('button', { name: /新画布历史/ })).toBeVisible()
   expect(screen.queryByRole('button', { name: /旧画布历史/ })).not.toBeInTheDocument()
+})
+
+
+describe('conversation refresh', () => {
+  it('restores the active conversation and its history without submitting work; New remains empty on refresh', async () => {
+    let posts = 0
+    server.use(
+      http.post('*/agent-studio/api/runs', () => { posts++; return HttpResponse.json({ id: 'unexpected' }) }),
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({
+        status: 'running', events: [{ id: 1, kind: 'user', text: '保留这段剧本', at: 1 }],
+      }))),
+    )
+    const first = render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await openHistory()
+    await screen.findByText('保留这段剧本')
+    first.unmount()
+    const second = render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await screen.findByText('保留这段剧本')
+    await waitFor(() => expect(Socket.instances.length).toBeGreaterThan(1))
+    expect(posts).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+    expect(screen.queryByText('保留这段剧本')).not.toBeInTheDocument()
+    second.unmount()
+    render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+    expect(screen.queryByText('保留这段剧本')).not.toBeInTheDocument()
+    expect(posts).toBe(0)
+  })
+
+  it('isolates restoration by account and canvas, and clears an inaccessible saved run', async () => {
+    const key = 'dodo-conversation:' + JSON.stringify(['/agent-studio', 'account-1', null])
+    sessionStorage.setItem(key, 'gone')
+    let reads = 0
+    server.use(http.get('*/agent-studio/api/runs/gone', () => { reads++; return HttpResponse.json({ detail: 'Not found' }, { status: 404 }) }))
+    const otherCanvas = render(<DeepAgentStudio apiBase="/agent-studio" canvasId={20} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+    expect(reads).toBe(0)
+    otherCanvas.unmount()
+    const missing = render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await screen.findByText('原会话已不可访问，可以新建对话或从历史记录中选择。')
+    expect(sessionStorage.getItem(key)).toBeNull()
+    missing.unmount()
+    sessionStorage.setItem(key, 'gone')
+    const oldReads = reads
+    server.use(http.get('*/agent-studio/api/state', () => HttpResponse.json({ connected: true, session_scope: 'account-2', workspace_id: 54, runs: [] })))
+    render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+    expect(reads).toBe(oldReads)
+  })
+})
+
+it('New clicked during delayed connection prevents saved conversation restoration', async () => {
+  const key = 'dodo-conversation:' + JSON.stringify(['/agent-studio', 'account-1', null])
+  sessionStorage.setItem(key, 'run1')
+  let release!: () => void
+  const ready = new Promise<void>(resolve => { release = resolve })
+  const requested = vi.fn()
+  server.use(http.get('*/agent-studio/api/state', async () => {
+    requested()
+    await ready
+    return HttpResponse.json({ connected: true, session_scope: 'account-1', workspace_id: 54, runs: [] })
+  }))
+  render(<DeepAgentStudio apiBase="/agent-studio" />)
+  await waitFor(() => expect(requested).toHaveBeenCalled())
+  fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+  release()
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(Socket.instances).toHaveLength(0)
 })
