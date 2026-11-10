@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import { listDemandApplications, listMyApplications, listMyDemands, formatDemandDate } from '@/api/market'
 import { getApplication, listApplications, type Application } from '@/api/studentApplications'
 import { withRequestTimeout } from '@/api/requestTimeout'
+import { MANUAL_DELIVERY_ENABLED, PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import { loadManualDeliveryNotifications, loadPromoDeliveryNotifications } from './deliveryNotifications'
 import DeliveryNotificationDetail from './DeliveryNotificationDetail'
 import './NotificationBell.css'
@@ -239,17 +240,21 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
       const loadDelivery = async () => {
         if (!workspaceId) return
         const results = await Promise.allSettled([
-          withRequestTimeout(
-            (requestSignal) => loadManualDeliveryNotifications(workspaceId, requestSignal, Number(userKey) || 0),
-            {
-              signal,
-              timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
-            },
-          ),
-          withRequestTimeout((requestSignal) => loadPromoDeliveryNotifications(workspaceId, requestSignal), {
-            signal,
-            timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
-          }),
+          MANUAL_DELIVERY_ENABLED
+            ? withRequestTimeout(
+                (requestSignal) => loadManualDeliveryNotifications(workspaceId, requestSignal, Number(userKey) || 0),
+                {
+                  signal,
+                  timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
+                },
+              )
+            : Promise.resolve([]),
+          PROMO_DELIVERY_ENABLED
+            ? withRequestTimeout((requestSignal) => loadPromoDeliveryNotifications(workspaceId, requestSignal), {
+                signal,
+                timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
+              })
+            : Promise.resolve([]),
         ])
         if (!valid()) return
         if (results[0].status === 'fulfilled') setManualItems(results[0].value)
