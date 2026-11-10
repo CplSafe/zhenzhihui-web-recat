@@ -2664,8 +2664,7 @@ function CanvasInner() {
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
-  // 本次发布暂不开放画布 Agent；保留独立调试页，下一版本统一恢复入口与挂载。
-  const showCanvasDirector = false
+  const showCanvasDirector = true
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
   const directorOpen = showCanvasDirector && openDirectorBinding === directorBindingKey

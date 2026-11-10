@@ -15,6 +15,74 @@ import {
 } from '@/utils/canvasElements'
 
 describe('canvasElements', () => {
+  it('Agent 旧节点读取正文、素材和尺寸，移动保存不丢制作关联', () => {
+    const elements = [
+      {
+        element_id: 'doc',
+        kind: 'node',
+        op: 'upsert' as const,
+        payload: {
+          type: 'text',
+          position: { x: 10, y: 20 },
+          width: 340,
+          height: 400,
+          data: { kind: 'text', title: '剧本', body: '第一场：雨夜', production_run_id: 'run', document_id: 'd1' },
+        },
+      },
+      {
+        element_id: 'video',
+        kind: 'node',
+        op: 'upsert' as const,
+        payload: {
+          type: 'video',
+          position: { x: 400, y: 20 },
+          width: 340,
+          height: 400,
+          data: {
+            kind: 'video',
+            body: '跟拍人物',
+            asset_id: 42,
+            production_node_id: 'shot-1',
+            production_run_id: 'run',
+            status: 'succeeded',
+            reference_asset_ids: [21],
+            depends_on: ['character'],
+          },
+        },
+      },
+    ]
+    const nodes = elementsToGraph(elements).nodes
+    expect(nodes[0].data.text).toBe('第一场：雨夜')
+    expect(nodes[1].data).toMatchObject({ assetId: 42, prompt: '跟拍人物' })
+    expect(nodes[1].style).toEqual({ width: 340, height: 400 })
+    const saved = nodes.map((node) => nodeToMutation(node))
+    expect(saved[0].payload.data).toMatchObject(elements[0].payload.data)
+    expect(saved[1].payload.data).toMatchObject(elements[1].payload.data)
+    expect([...collectCanvasElementAssetIds(saved)]).toEqual([42])
+  })
+
+  it('保留用户修改后的内容和尺寸；清空正文后不会被旧 body 复活', () => {
+    const node = elementsToGraph([
+      {
+        element_id: 'doc',
+        kind: 'node',
+        op: 'upsert',
+        payload: {
+          type: 'text',
+          width: 340,
+          height: 400,
+          style: { width: 600, height: 700 },
+          data: { kind: 'text', production_run_id: 'run', body: '旧正文', text: '用户修改' },
+        },
+      },
+    ]).nodes[0]
+    expect(node.style).toEqual({ width: 600, height: 700 })
+    expect(node.data.text).toBe('用户修改')
+    const cleared = new Map([['doc', '']])
+    expect(comparableNode(node, cleared).data.text).toBe('')
+    expect(elementsToGraph([nodeToMutation(node, cleared)]).nodes[0].data.text).toBe('')
+  })
+
   it('文本节点独立保存需求和编辑后的分镜，并恢复生成任务', () => {
     const mutation = nodeToMutation(
       {

@@ -42,6 +42,18 @@ export interface CanvasResultHistoryEntry {
 
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
+  /** Agent 制作关联及旧版字段：移动/保存节点时必须保留，不能静默抹掉。 */
+  production_run_id?: string
+  production_node_id?: string
+  document_id?: string
+  document_revision?: number
+  canvas_element_id?: string
+  body?: string
+  text?: string
+  asset_id?: number
+  status?: string
+  reference_asset_ids?: number[]
+  depends_on?: string[]
   kind?: string
   /**
    * 用户手动命名的节点名；未改名时不写该字段，标题回退到「类型名 + 内容摘要」。
@@ -151,6 +163,17 @@ interface SerializableNodeData {
  * realPerson 和 timeline 都踩过。下面的 exhaustive 断言让漏字段在 tsc 阶段就报错。
  */
 export const PERSISTED_NODE_DATA_FIELDS = [
+  'production_run_id',
+  'production_node_id',
+  'document_id',
+  'document_revision',
+  'canvas_element_id',
+  'body',
+  'text',
+  'asset_id',
+  'status',
+  'reference_asset_ids',
+  'depends_on',
   'kind',
   'title',
   'ratio',
@@ -456,7 +479,7 @@ export function comparableNode(
   const serializable = pickPersistedNodeData(data)
   // text 内容从 textContents 并入快照（文本编辑不经过 nodes/edges，需显式带上才能正确 diff）
   const textValue = textContents instanceof Map ? textContents.get(node.id) : textContents?.[node.id]
-  if (typeof textValue === 'string' && textValue !== '') serializable.text = textValue
+  if (typeof textValue === 'string') serializable.text = textValue
   const out: ComparableNode = {
     id: node.id,
     type: node.type || (typeof data.kind === 'string' ? data.kind : 'text'),
@@ -486,7 +509,7 @@ export function nodeToMutation(
   const serializable = pickPersistedNodeData(data)
   // 文本节点：把全局文本 Map 中的内容并入节点 data（文本编辑不经过 nodes/edges，需显式带上）
   const textValue = textContents instanceof Map ? textContents.get(node.id) : textContents?.[node.id]
-  if (textValue !== undefined && textValue !== null && String(textValue) !== '') {
+  if (textValue !== undefined && textValue !== null) {
     serializable.text = String(textValue)
   }
   return {
@@ -551,13 +574,26 @@ export function elementToNode(element: CanvasElementMutation): Node | null {
   const id = String(element.element_id || '')
   if (!id) return null
   const nodeData = { ...data } as Record<string, unknown>
+  // 兼容旧 Agent 载荷；优先保留用户已编辑的标准字段，包括空文本。
+  if (typeof data.production_run_id === 'string') {
+    if (kind === 'text' && nodeData.text === undefined && typeof data.body === 'string') nodeData.text = data.body
+    if (kind !== 'text' && nodeData.prompt === undefined && typeof data.body === 'string') nodeData.prompt = data.body
+    if (nodeData.assetId === undefined && Number.isSafeInteger(data.asset_id) && Number(data.asset_id) > 0)
+      nodeData.assetId = data.asset_id
+  }
+  const style = { ...((payload.style || {}) as Record<string, unknown>) }
+  for (const dimension of ['width', 'height']) {
+    const value = payload[dimension]
+    if (style[dimension] === undefined && typeof value === 'number' && Number.isFinite(value) && value > 0)
+      style[dimension] = value
+  }
   // 云端持久化的文本内容还原到节点 data（渲染期由 CanvasDefaultNode 写入全局 Map）
   return {
     id,
     type: String(payload.type || kind),
     position: (payload.position as { x: number; y: number }) || { x: 0, y: 0 },
     data: nodeData as Record<string, unknown>,
-    ...(payload.style ? { style: payload.style as Record<string, unknown> } : {}),
+    ...(Object.keys(style).length ? { style } : {}),
   }
 }
 

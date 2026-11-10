@@ -585,12 +585,21 @@ export function JoinPreview({ user }: { user: any }) {
                                     !genres.includes(item) && item.toLowerCase().includes(genreQuery.toLowerCase()),
                                 )
                                 .map((item) => (
-                                  <button type="button" key={item} onClick={() => addGenre(item)}>
+                                  <button
+                                    type="button"
+                                    key={item}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => addGenre(item)}
+                                  >
                                     {item}
                                   </button>
                                 ))}
                               {genreQuery.trim() && !genres.includes(genreQuery.trim()) && (
-                                <button type="button" onClick={() => addGenre(genreQuery)}>
+                                <button
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => addGenre(genreQuery)}
+                                >
                                   添加“{genreQuery.trim()}”
                                 </button>
                               )}

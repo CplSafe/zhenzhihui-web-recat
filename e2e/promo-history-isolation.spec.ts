@@ -28,8 +28,8 @@ test('宣传片任务分页保留已有订单并隔离空间', async ({ page }, 
   const offsets: number[] = []
   let pageTwoAttempts = 0
   const firstPage = [
-    { id: 100, company: '空间甲订单', status: 'pending' },
-    ...Array.from({ length: 19 }, (_, i) => ({ id: 200 + i, company: `空间乙订单${i}`, status: 'pending' })),
+    { id: 100, company: '空间甲订单', status: 'delivered' },
+    ...Array.from({ length: 19 }, (_, i) => ({ id: 200 + i, company: `空间乙订单${i}`, status: 'delivered' })),
   ]
   await page.route('**/api/v1/ai/tasks**', async (route) => {
     const url = new URL(route.request().url())
@@ -58,7 +58,7 @@ test('宣传片任务分页保留已有订单并隔离空间', async ({ page }, 
       json: {
         code: 0,
         data: {
-          items: offset === 0 ? firstPage : [{ id: 121, company: '空间甲后续订单', status: 'pending' }],
+          items: offset === 0 ? firstPage : [{ id: 121, company: '空间甲后续订单', status: 'delivered' }],
           total: 21,
           limit: 20,
           offset,
