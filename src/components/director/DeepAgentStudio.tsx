@@ -8,6 +8,7 @@ import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
 import { StudioAssetPicker } from './StudioAssetPicker'
 import { DoudouMascot } from './DoudouMascot'
+import { MediaRetry } from './MediaRetry'
 import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
 
@@ -620,6 +621,7 @@ export default function DeepAgentStudio({
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
+                  {!run.pending && <MediaRetry key={run.id} api={api} runId={run.id} models={catalog.models} reload={studio.reload} />}
                   <p>已成功的素材会保留。恢复会先查询已提交任务；失败素材重试需要单独确认。</p>
                   <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
                     恢复执行 / 查询已有任务
