@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { LoadingOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { getManualVideoDownloadUrl, getManualVideoTask } from '@/api/manualVideo'
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
@@ -12,6 +12,7 @@ export default function DeliveryTaskCard({
   workspaceId = 0,
   video,
   manualTaskId = 0,
+  countdown,
 }: {
   title: string
   status: string
@@ -20,6 +21,7 @@ export default function DeliveryTaskCard({
   workspaceId?: number
   video?: { asset_id?: number; url?: string }
   manualTaskId?: number
+  countdown?: ReactNode
 }) {
   const [detailVideo, setDetailVideo] = useState<{ asset_id?: number; url?: string } | null>(null)
   useEffect(() => {
@@ -82,6 +84,7 @@ export default function DeliveryTaskCard({
             {title}
           </span>
           <span className={styles.taskMeta}>{meta}</span>
+          {countdown}
         </span>
       </button>
     </article>

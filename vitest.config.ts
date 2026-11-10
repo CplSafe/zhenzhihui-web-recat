@@ -24,6 +24,7 @@ export default defineConfig({
       include: [
         'src/utils/parseSubmittedIdea.ts',
         'src/utils/refineDelivery.ts',
+        'src/utils/deliveryCountdown.ts',
         'src/utils/manualVideoParams.ts',
         'src/components/layout/deliveryNotifications.ts',
         'src/composables/useDeliveryProjectItems.ts',

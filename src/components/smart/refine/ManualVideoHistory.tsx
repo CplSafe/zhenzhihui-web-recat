@@ -3,6 +3,7 @@ import { getManualVideoTask, listManualVideoHistory, type ManualVideoTask } from
 import styles from './ManualVideoFlow.module.css'
 import DeliveryTaskCard from '@/components/task/DeliveryTaskCard'
 import cardStyles from '@/components/task/PromoTaskList.module.css'
+import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 
 /** 混合任务列表中只展示服务端明确标识为 video.t1 的记录。 */
 export default function ManualVideoHistory({
@@ -13,6 +14,7 @@ export default function ManualVideoHistory({
   presentation = 'inline',
   showEmpty = true,
   onPresenceChange,
+  taskGroup = 'all',
 }: {
   ownerId: number
   workspaceId: number
@@ -21,6 +23,7 @@ export default function ManualVideoHistory({
   presentation?: 'inline' | 'cards'
   showEmpty?: boolean
   onPresenceChange?: (present: boolean) => void
+  taskGroup?: 'all' | 'active' | 'history'
 }) {
   const [tasks, setTasks] = useState<ManualVideoTask[]>([])
   const [error, setError] = useState('')
@@ -64,7 +67,7 @@ export default function ManualVideoHistory({
             const remote = (Array.isArray(result?.items) ? result.items : []).filter(
               (item) => item.operation_code === 'video.t1' && Number.isSafeInteger(item.id) && item.id > 0,
             )
-            return [...old, ...remote.filter((item) => !old.some((entry) => entry.id === item.id))]
+            return [...remote, ...old.filter((entry) => !remote.some((item) => item.id === entry.id))]
           })
         if (!controller.signal.aborted) {
           const count = Array.isArray(result?.items) ? result.items.length : 0
@@ -79,11 +82,20 @@ export default function ManualVideoHistory({
       })
     return () => controller.abort()
   }, [ownerId, workspaceId, attempt, includeLocal, offset])
-  const present = Boolean(tasks.length || loading || error || hasMore)
+  useEffect(() => {
+    if (presentation !== 'cards' || offset !== 0) return
+    const timer = window.setInterval(() => setAttempt((value) => value + 1), 30_000)
+    return () => window.clearInterval(timer)
+  }, [presentation, offset])
+  const visibleTasks = tasks.filter((task) => {
+    const active = !['succeeded', 'failed', 'cancelled'].includes(task.status)
+    return taskGroup === 'all' || (taskGroup === 'active' ? active : !active)
+  })
+  const present = Boolean(visibleTasks.length || loading || error || hasMore)
   useEffect(() => {
     onPresenceChange?.(present)
   }, [onPresenceChange, present])
-  if (!tasks.length && !error && !loading && !hasMore)
+  if (!visibleTasks.length && !error && !loading && !hasMore)
     return presentation === 'cards' && showEmpty ? (
       <div className={cardStyles.empty}>
         暂无精制任务
@@ -103,7 +115,7 @@ export default function ManualVideoHistory({
             </button>
           </div>
         )}
-        {tasks.map((task) => (
+        {visibleTasks.map((task) => (
           <DeliveryTaskCard
             key={task.id}
             title={String((task as ManualVideoTask & { prompt?: string }).prompt || `精制任务 #${task.id}`)}
@@ -119,6 +131,11 @@ export default function ManualVideoHistory({
               )[task.status] || task.status
             }
             meta={`T+1 · 任务 #${task.id}`}
+            countdown={
+              ['awaiting_manual', 'manual_processing'].includes(task.status) ? (
+                <DeliveryCountdown kind="t1" createdAt={task.created_at} deadlineAt={task.deadline_at} compact />
+              ) : undefined
+            }
             workspaceId={workspaceId}
             manualTaskId={task.id}
             video={task.status === 'succeeded' ? task.outputs?.find((output) => output.type === 'video') : undefined}
@@ -144,7 +161,7 @@ export default function ManualVideoHistory({
           </button>
         </span>
       )}
-      {tasks.map((task) => (
+      {visibleTasks.map((task) => (
         <button key={task.id} type="button" onClick={() => onOpen(task.id)}>
           任务 #{task.id} ·{' '}
           {(
@@ -156,6 +173,9 @@ export default function ManualVideoHistory({
               cancelled: '已取消',
             } as Record<string, string>
           )[task.status] || task.status}
+          {['awaiting_manual', 'manual_processing'].includes(task.status) && (
+            <DeliveryCountdown kind="t1" createdAt={task.created_at} deadlineAt={task.deadline_at} compact />
+          )}
         </button>
       ))}
       {hasMore && (

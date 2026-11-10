@@ -145,7 +145,7 @@ test('创意无需附件也可提交，并支持拖放与移除', async ({ page 
   await page.getByLabel('故事创意').fill('故事')
   await expect(page.getByText('这份附件要写什么？')).toHaveCount(0)
   await expect(page.getByRole('link', { name: '下载创意模板' })).toBeVisible()
-  await expect(page.locator('.si-upload a[download]')).toHaveCount(0)
+  await expect(page.locator('.si-upload').getByRole('link', { name: '下载创意提交模板' })).toBeVisible()
   await page.locator('.si-upload-drop').evaluate((element) => {
     const data = new DataTransfer()
     data.items.add(new File(['内容'], '拖放.txt', { type: 'text/plain' }))

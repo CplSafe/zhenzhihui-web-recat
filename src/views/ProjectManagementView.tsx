@@ -85,6 +85,7 @@ import {
 import { useDeliveryProjectItems } from '@/composables/useDeliveryProjectItems'
 import { rememberTask } from '@/components/smart/refine/ManualVideoFlow'
 import DeliveryProjectCover from '@/components/task/DeliveryProjectCover'
+import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 
 /** 成员权限尚未加载时复用的稳定空数组。 */
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
@@ -2120,6 +2121,18 @@ export default function ProjectManagementView() {
                                       {!manual && record.is_overdue ? '已逾期' : labels[record.status] || record.status}
                                     </span>
                                   </div>
+                                  {(manual
+                                    ? ['awaiting_manual', 'manual_processing'].includes(record.status)
+                                    : !record.first_delivered_at &&
+                                      ['pending', 'producing', 'overdue'].includes(record.status)) && (
+                                    <DeliveryCountdown
+                                      kind={manual ? 't1' : 't5'}
+                                      createdAt={record.created_at}
+                                      deadlineAt={record.deadline_at}
+                                      promisedDate={record.promised_date}
+                                      compact
+                                    />
+                                  )}
                                   <div className="pm2-pcard-foot">
                                     <span className="pm2-pcard-avatar">{manual ? '精' : '宣'}</span>
                                     <span className="pm2-pcard-time">{relativeUpdated(item.updatedAt)}</span>
