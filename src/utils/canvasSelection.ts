@@ -69,9 +69,3 @@ export function saveMinimapVisible(visible: boolean): void {
     // 隐私模式/存储写满时忽略：记不住偏好不影响画布本身可用
   }
 }
-
-/** Only direct inputs of one selected node are visible; group/box selection stays quiet. */
-export function visibleReferenceTarget(nodes: ReadonlyArray<{ id: string; selected?: boolean }>): string | undefined {
-  const selected = nodes.filter((node) => node.selected)
-  return selected.length === 1 ? selected[0].id : undefined
-}
