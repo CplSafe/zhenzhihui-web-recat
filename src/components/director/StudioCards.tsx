@@ -449,6 +449,7 @@ export function EventCard({
       className={`${styles.event} ${event.kind === 'user' ? styles.userMessage : event.kind === 'error' ? styles.errorMessage : styles.assistantMessage}`}
     >
       <Markdown>{event.text}</Markdown>
+      {event.kind === 'user' && data.delivery === 'sending' && <small role="status">发送中…</small>}
       {event.data && event.kind !== 'inspection' && <Media canvas={canvas} data={event.data} />}
       {['user', 'assistant'].includes(event.kind) && <CopyMessage text={event.text} />}
     </article>

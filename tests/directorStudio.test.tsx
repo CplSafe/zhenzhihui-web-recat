@@ -49,6 +49,7 @@ class Socket {
   }
 }
 beforeEach(() => {
+  sessionStorage.clear()
   resetSharedSessionRefreshForTests()
   Socket.instances = []
   vi.stubGlobal('WebSocket', Socket)
@@ -64,6 +65,7 @@ beforeEach(() => {
     http.get('*/agent-studio/api/state', () =>
       HttpResponse.json({
         connected: true,
+        session_scope: 'account-1',
         workspace_id: 54,
         runs: [{ id: 'run1', title: '第一集测试', status: 'complete' }],
       }),
@@ -1225,4 +1227,173 @@ it('keeps previous messages and media through live updates and clears them only 
   expect(screen.getByText('正在继续')).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
   expect(screen.queryByText('已记住海棠')).not.toBeInTheDocument()
+})
+
+
+it('sends on Enter immediately, keeps prior messages and prevents duplicate submission while acknowledgement is pending', async () => {
+  let acknowledge!: () => void
+  const pending = new Promise<void>((resolve) => { acknowledge = resolve })
+  const starts: unknown[] = []
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ events: [{ id: 'old', kind: 'assistant', text: '此前的回复' }] }))),
+    http.post('*/agent-studio/api/runs', async ({ request }) => {
+      starts.push(await request.json())
+      await pending
+      return HttpResponse.json({ id: 'run2' })
+    }),
+    http.get('*/agent-studio/api/runs/run2', () => HttpResponse.json(snapshot({ id: 'run2', status: 'running', history_events: [{ id: 'history:old', kind: 'assistant', text: '此前的回复' }], events: [{ id: 'user', kind: 'user', text: '继续这段对话' }] }))),
+  )
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const input = screen.getByRole('textbox', { name: '创作要求' })
+  fireEvent.change(input, { target: { value: '继续这段对话' } })
+  for (const options of [{ shiftKey: true }, { isComposing: true }, { keyCode: 229 }, { repeat: true }])
+    fireEvent.keyDown(input, { key: 'Enter', ...options })
+  expect(starts).toHaveLength(0)
+  expect(input).toHaveValue('继续这段对话')
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(screen.getByText('继续这段对话')).toBeVisible()
+  expect(screen.getByText('此前的回复')).toBeVisible()
+  expect(screen.getByText('发送中…')).toBeVisible()
+  expect(input).toHaveValue('')
+  fireEvent.keyDown(input, { key: 'Enter' })
+  await waitFor(() => expect(starts).toHaveLength(1))
+  acknowledge()
+  await waitFor(() => expect(screen.queryByText('发送中…')).not.toBeInTheDocument())
+  expect(screen.getAllByText('继续这段对话')).toHaveLength(1)
+  expect(screen.getByText('此前的回复')).toBeVisible()
+})
+
+it('restores the draft after rejection without leaving a fake sent message', async () => {
+  server.use(http.post('*/agent-studio/api/runs', () => HttpResponse.json({ detail: '余额不足' }, { status: 400 })))
+  render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '保留我的草稿' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  expect(screen.getByText('保留我的草稿')).toBeVisible()
+  await screen.findByText('余额不足')
+  expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('保留我的草稿')
+  expect(screen.queryByText('发送中…')).not.toBeInTheDocument()
+})
+
+
+it('discards the old optimistic conversation and ignores its response when the host changes canvas', async () => {
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  let posts = 0
+  const oldSnapshot = vi.fn(() => HttpResponse.json(snapshot({ id: 'old-canvas-run' })))
+  server.use(
+    http.post('*/agent-studio/api/runs', async () => { posts++; await pending; return HttpResponse.json({ id: 'old-canvas-run' }) }),
+    http.get('*/agent-studio/api/runs/old-canvas-run', oldSnapshot),
+  )
+  const view = render(<DeepAgentStudio authMode="oauth" canvasId={1} />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '旧画布的请求' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await waitFor(() => expect(posts).toBe(1))
+  expect(screen.getByText('发送中…')).toBeVisible()
+  view.rerender(<DeepAgentStudio authMode="oauth" canvasId={2} />)
+  await waitFor(() => expect(screen.queryByText('发送中…')).not.toBeInTheDocument())
+  expect(screen.queryByText('旧画布的请求')).not.toBeInTheDocument()
+  await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+  expect(oldSnapshot).not.toHaveBeenCalled()
+  expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('')
+  expect(posts).toBe(1)
+})
+
+
+it('ignores a late history refresh from the previous canvas after the send was accepted', async () => {
+  let release!: () => void
+  const delayed = new Promise<void>((resolve) => { release = resolve })
+  let historyCalls = 0
+  server.use(
+    http.post('*/agent-studio/api/runs', () => HttpResponse.json({ id: 'run1' })),
+    http.get('*/agent-studio/api/state', async () => {
+      const call = ++historyCalls
+      if (call === 2) await delayed
+      return HttpResponse.json({ connected: true, workspace_id: 54, runs: call === 1 ? [] : [{
+        id: call === 2 ? 'old-history' : 'new-history', title: call === 2 ? '旧画布历史' : '新画布历史', status: 'complete',
+      }] })
+    }),
+  )
+  const view = render(<DeepAgentStudio authMode="oauth" canvasId={1} />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '发送测试' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await waitFor(() => expect(historyCalls).toBe(2))
+  view.rerender(<DeepAgentStudio authMode="oauth" canvasId={2} />)
+  await waitFor(() => expect(historyCalls).toBe(3))
+  await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+  fireEvent.click(screen.getByRole('button', { name: '新对话' }))
+  expect(screen.getByRole('button', { name: /新画布历史/ })).toBeVisible()
+  expect(screen.queryByRole('button', { name: /旧画布历史/ })).not.toBeInTheDocument()
+})
+
+
+describe('conversation refresh', () => {
+  it('restores the active conversation and its history without submitting work; New remains empty on refresh', async () => {
+    let posts = 0
+    server.use(
+      http.post('*/agent-studio/api/runs', () => { posts++; return HttpResponse.json({ id: 'unexpected' }) }),
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({
+        status: 'running', events: [{ id: 1, kind: 'user', text: '保留这段剧本', at: 1 }],
+      }))),
+    )
+    const first = render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await openHistory()
+    await screen.findByText('保留这段剧本')
+    first.unmount()
+    const second = render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await screen.findByText('保留这段剧本')
+    await waitFor(() => expect(Socket.instances.length).toBeGreaterThan(1))
+    expect(posts).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+    expect(screen.queryByText('保留这段剧本')).not.toBeInTheDocument()
+    second.unmount()
+    render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+    expect(screen.queryByText('保留这段剧本')).not.toBeInTheDocument()
+    expect(posts).toBe(0)
+  })
+
+  it('isolates restoration by account and canvas, and clears an inaccessible saved run', async () => {
+    const key = 'dodo-conversation:' + JSON.stringify(['/agent-studio', 'account-1', null])
+    sessionStorage.setItem(key, 'gone')
+    let reads = 0
+    server.use(http.get('*/agent-studio/api/runs/gone', () => { reads++; return HttpResponse.json({ detail: 'Not found' }, { status: 404 }) }))
+    const otherCanvas = render(<DeepAgentStudio apiBase="/agent-studio" canvasId={20} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+    expect(reads).toBe(0)
+    otherCanvas.unmount()
+    const missing = render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await screen.findByText('原会话已不可访问，可以新建对话或从历史记录中选择。')
+    expect(sessionStorage.getItem(key)).toBeNull()
+    missing.unmount()
+    sessionStorage.setItem(key, 'gone')
+    const oldReads = reads
+    server.use(http.get('*/agent-studio/api/state', () => HttpResponse.json({ connected: true, session_scope: 'account-2', workspace_id: 54, runs: [] })))
+    render(<DeepAgentStudio apiBase="/agent-studio" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+    expect(reads).toBe(oldReads)
+  })
+})
+
+it('New clicked during delayed connection prevents saved conversation restoration', async () => {
+  const key = 'dodo-conversation:' + JSON.stringify(['/agent-studio', 'account-1', null])
+  sessionStorage.setItem(key, 'run1')
+  let release!: () => void
+  const ready = new Promise<void>(resolve => { release = resolve })
+  const requested = vi.fn()
+  server.use(http.get('*/agent-studio/api/state', async () => {
+    requested()
+    await ready
+    return HttpResponse.json({ connected: true, session_scope: 'account-1', workspace_id: 54, runs: [] })
+  }))
+  render(<DeepAgentStudio apiBase="/agent-studio" />)
+  await waitFor(() => expect(requested).toHaveBeenCalled())
+  fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+  release()
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  expect(sessionStorage.getItem(key)).toBeNull()
+  expect(Socket.instances).toHaveLength(0)
 })

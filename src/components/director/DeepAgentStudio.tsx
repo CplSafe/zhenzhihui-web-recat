@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
 import { defaultModel, StudioHTTPError, contextInfo } from './studio'
-import type { Data, StudioAttachment, StudioDocument } from './studio'
+import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
@@ -34,7 +34,15 @@ export default function DeepAgentStudio({
   const business =
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
   const studio = useStudio(apiBase, workspaceId, canvasId, business)
-  const { api, state, catalog, current, run, loading, mismatch } = studio
+  const { api, state, catalog, current, run: serverRun, loading, mismatch } = studio
+  const [pendingSend, setPendingSend] = useState<{ run: StudioRun; target?: string; api: typeof api } | null>(null)
+  const activeAPI = useRef(api)
+  activeAPI.current = api
+  const run = pendingSend?.api === api && (!pendingSend.target || serverRun?.id !== pendingSend.target)
+    ? pendingSend.run : serverRun
+  useEffect(() => {
+    if (pendingSend?.target && serverRun?.id === pendingSend.target) setPendingSend(null)
+  }, [pendingSend, serverRun?.id])
   const mediaService = useMemo(
     () => ({ refresh: (assetId: number) => api.request<Data>(`/api/runs/${current}/assets/${assetId}`) }),
     [api, current],
@@ -64,7 +72,7 @@ export default function DeepAgentStudio({
   const uploadLock = useRef(false)
   const scroll = useRef<HTMLDivElement>(null)
   const followUpdates = useRef(true)
-  const actionLock = useRef(false),
+  const actionLock = useRef<symbol | null>(null),
     files = useRef<HTMLInputElement>(null),
     prompt = useRef<HTMLTextAreaElement>(null)
   const threadRef = useRef(current),
@@ -123,31 +131,43 @@ export default function DeepAgentStudio({
   useEffect(() => {
     if (runCursor != null && !results && followUpdates.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight
-  }, [runCursor, results])
+  }, [runCursor, results, pendingSend])
   useEffect(() => {
     if (results && scroll.current) scroll.current.scrollTop = 0
   }, [results])
 
+  useEffect(() => {
+    setPendingSend(null)
+    setMessage('')
+    setUncertain(false)
+    actionLock.current = null
+    setActionBusy(false)
+  }, [api])
+
   async function action(fn: () => Promise<void>) {
     if (actionLock.current) return
-    actionLock.current = true
+    const operation = Symbol('action')
+    actionLock.current = operation
     setActionBusy(true)
     studio.setError('')
     try {
       await fn()
       return true
     } catch (e) {
-      studio.setError(e instanceof Error ? e.message : '操作未完成，请稍后重试。')
+      if (activeAPI.current === api) studio.setError(e instanceof Error ? e.message : '操作未完成，请稍后重试。')
       return false
     } finally {
-      actionLock.current = false
-      setActionBusy(false)
+      if (actionLock.current === operation) {
+        actionLock.current = null
+        setActionBusy(false)
+      }
     }
   }
   function newConversation() {
     if (actionLock.current || uploading) return
     followUpdates.current = true
     setShowBottom(false)
+    setPendingSend(null)
     studio.setCurrent(null)
     setMessage('')
     setAttachments([])
@@ -169,6 +189,16 @@ export default function DeepAgentStudio({
     )
       return
     await action(async () => {
+      const draft = message
+      const optimistic: StudioRun = {
+        ...(run || { id: 'pending', cursor: 0, title: '新对话', events: [] }),
+        status: 'complete',
+        events: [...(run?.events || []), { id: 'pending-send', kind: 'user', text: draft.trim() || '已添加附件', data: { delivery: 'sending' } }],
+      }
+      setPendingSend({ api, run: optimistic })
+      setMessage('')
+      setResults(false)
+      followUpdates.current = true
       let response: { id: string }
       try {
         response = await api.request('/api/runs', {
@@ -180,12 +210,19 @@ export default function DeepAgentStudio({
           ...(canvasId ? { canvas_id: canvasId } : {}),
         })
       } catch (e) {
+        if (activeAPI.current !== api) return
+        setPendingSend(null)
+        setMessage(draft)
         if (!(e instanceof StudioHTTPError) || e.status >= 500) {
           setUncertain(true)
           throw new Error('发送结果尚未确认。请先刷新历史会话查找已开始的创作，避免重复生成。')
         }
         throw e
       }
+      if (activeAPI.current !== api) return
+      setPendingSend({ api, target: response.id, run: { ...optimistic, id: response.id, status: 'running',
+        events: optimistic.events.map((event) => event.id === 'pending-send' ? { ...event, data: undefined } : event),
+      } })
       studio.setCurrent(response.id)
       setMessage('')
       setAttachments([])
@@ -344,6 +381,7 @@ export default function DeepAgentStudio({
                     onClick={() => {
                       followUpdates.current = true
                       setShowBottom(false)
+                      setPendingSend(null)
                       studio.setCurrent(item.id)
                       setHistory(false)
                       setUncertain(false)
@@ -743,6 +781,11 @@ export default function DeepAgentStudio({
               maxLength={12000}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+                e.preventDefault()
+                if (!e.repeat) void send()
+              }}
               disabled={disabled || unfinished}
               onPaste={(e) => {
                 if (e.clipboardData.files.length) {
