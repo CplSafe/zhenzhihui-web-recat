@@ -5,6 +5,7 @@ for (const source of ['cloud', 'draft']) {
   for (const status of ['processing', 'failed', 'missing']) {
     test(`reopening a canvas verifies ${source} failure before displaying ${status}`, async ({ page }) => {
       const api = await installStrictAuthenticatedApp(page)
+      await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { code: 0, data: [] } }))
       const cachedError = 'read google image response: context canceled'
       const latestError = 'Latest confirmed provider error'
       let taskQueries = 0
@@ -35,7 +36,7 @@ for (const source of ['cloud', 'draft']) {
       if (source === 'draft') {
         await page.addInitScript((savedNode) => {
           localStorage.setItem(
-            'zzh_canvas_draft_p110',
+            'zzh_canvas_draft_u7_w21_p110',
             JSON.stringify({
               nodes: [savedNode],
               edges: [],
@@ -77,18 +78,18 @@ for (const source of ['cloud', 'draft']) {
       await expect(page.getByRole('button', { name: '图片 · Restored image' })).toBeVisible()
       try {
         await expect(page.getByText(cachedError, { exact: false })).toHaveCount(0)
-        await expect(page.getByText('正在核对任务状态', { exact: true })).toBeVisible()
+        await expect(page.getByRole('status', { name: '正在恢复任务' })).toBeVisible()
         await expect.poll(() => taskQueries).toBe(1)
       } finally {
         release?.()
       }
       if (status === 'missing') {
-        await expect(page.getByText('上次生成失败：任务记录已不存在，请重新生成', { exact: true })).toBeVisible()
-        await expect(page.getByText('正在核对任务状态', { exact: true })).toHaveCount(0)
+        await expect(page.getByRole('alert', { name: /任务记录已不存在，请重新生成/ })).toBeVisible()
+        await expect(page.getByRole('status', { name: '正在恢复任务' })).toHaveCount(0)
       } else if (status === 'failed') {
-        await expect(page.getByText(`上次生成失败：${latestError}`, { exact: true })).toBeVisible()
+        await expect(page.getByRole('alert', { name: `生成失败：${latestError}` })).toBeVisible()
       } else {
-        await expect(page.getByText('正在生成内容', { exact: true })).toBeVisible()
+        await expect(page.getByRole('status', { name: '生成中' })).toBeVisible()
         await expect(page.getByText(latestError, { exact: false })).toHaveCount(0)
       }
       await expect(page.getByText(cachedError, { exact: false })).toHaveCount(0)

@@ -39,8 +39,14 @@ export function clearCanvasScriptCreationPending(canvasId: string | number) {
 }
 
 /** 按项目 id 生成隔离的草稿存储键：不同画布项目互不覆盖 */
-function draftKey(projectId?: string | number): string {
+export interface CanvasDraftScope {
+  userId: number
+  workspaceId: number
+}
+
+function draftKey(projectId?: string | number, scope?: CanvasDraftScope): string {
   const id = String(projectId ?? '').trim()
+  if (scope) return `${DRAFT_KEY_PREFIX}_u${scope.userId}_w${scope.workspaceId}_p${encodeURIComponent(id)}`
   return id ? `${DRAFT_KEY_PREFIX}_p${encodeURIComponent(id)}` : DRAFT_KEY_PREFIX
 }
 
@@ -74,9 +80,9 @@ interface CanvasDraft {
 }
 
 /** 读取草稿绑定的画布 id（无草稿或未绑定时返回 0）。 */
-export function readDraftBoundCanvasId(projectId?: string | number): number {
+export function readDraftBoundCanvasId(projectId?: string | number, scope?: CanvasDraftScope): number {
   try {
-    const raw = localStorage.getItem(draftKey(projectId))
+    const raw = localStorage.getItem(draftKey(projectId, scope))
     if (!raw) return 0
     const parsed = JSON.parse(raw) as { boundCanvasId?: number }
     return Number(parsed?.boundCanvasId || 0) || 0
@@ -86,7 +92,13 @@ export function readDraftBoundCanvasId(projectId?: string | number): number {
 }
 
 /** 保存草稿（仅保留可序列化字段）；projectId 用于按项目隔离，canvasId 用于把草稿绑定到画布 */
-export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string | number, boundCanvasId?: number) {
+export function saveCanvasDraft(
+  nodes: Node[],
+  edges: Edge[],
+  projectId?: string | number,
+  boundCanvasId?: number,
+  scope?: CanvasDraftScope,
+) {
   const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
   const textContents: Record<string, string> = {}
   if (textMap) {
@@ -117,16 +129,20 @@ export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string
     boundCanvasId: Number(boundCanvasId || 0) || 0,
   }
   try {
-    localStorage.setItem(draftKey(projectId), JSON.stringify(draft))
+    localStorage.setItem(draftKey(projectId, scope), JSON.stringify(draft))
   } catch {
     // localStorage 配额满或其他异常，静默跳过
   }
 }
 
 /** 将画布级的一次性脚本引导状态写入当前画布的本地草稿。 */
-export function saveCanvasScriptCreationHandled(projectId: string | number | undefined, handled: boolean) {
+export function saveCanvasScriptCreationHandled(
+  projectId: string | number | undefined,
+  handled: boolean,
+  scope?: CanvasDraftScope,
+) {
   try {
-    const draft = loadCanvasDraft(projectId)
+    const draft = loadCanvasDraft(projectId, scope)
     const next = draft || {
       nodes: [],
       edges: [],
@@ -134,16 +150,16 @@ export function saveCanvasScriptCreationHandled(projectId: string | number | und
       updatedAt: Date.now(),
       boundCanvasId: Number(projectId || 0) || 0,
     }
-    localStorage.setItem(draftKey(projectId), JSON.stringify({ ...next, scriptCreationHandled: handled }))
+    localStorage.setItem(draftKey(projectId, scope), JSON.stringify({ ...next, scriptCreationHandled: handled }))
   } catch {
     // localStorage 不可用时由云端 state 保存。
   }
 }
 
 /** 读取草稿，无草稿或解析失败返回 null */
-export function loadCanvasDraft(projectId?: string | number): CanvasDraft | null {
+export function loadCanvasDraft(projectId?: string | number, scope?: CanvasDraftScope): CanvasDraft | null {
   try {
-    const raw = localStorage.getItem(draftKey(projectId))
+    const raw = localStorage.getItem(draftKey(projectId, scope))
     if (!raw) return null
     return JSON.parse(raw) as CanvasDraft
   } catch {
@@ -152,9 +168,9 @@ export function loadCanvasDraft(projectId?: string | number): CanvasDraft | null
 }
 
 /** 清除指定项目的草稿 */
-export function clearCanvasDraft(projectId?: string | number) {
+export function clearCanvasDraft(projectId?: string | number, scope?: CanvasDraftScope) {
   try {
-    localStorage.removeItem(draftKey(projectId))
+    localStorage.removeItem(draftKey(projectId, scope))
   } catch {
     // 静默
   }

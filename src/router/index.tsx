@@ -23,6 +23,7 @@ import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 import { PROMO_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
+import CanvasAccessRoute from './CanvasAccessRoute'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -106,7 +107,6 @@ const DistributionView = lazy(() => import('../views/DistributionView'))
 /** AI 创作台（图片 / 视频生成 + 智能分镜）路由组件。 */
 const StudioCreateView = lazy(routeImporters.studio)
 /** 创意画布路由组件。 */
-const CanvasView = lazy(routeImporters.canvas)
 /** 无限画布列表路由组件。 */
 const CanvasListView = lazy(routeImporters.canvasList)
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
@@ -374,7 +374,7 @@ export const router = createBrowserRouter([
        * requiresAuth:false —— 分享的意义就是拿到链接的人不必有账号。
        */
       { path: 'canvas/share/:token', element: lazyPage(<CanvasShareView />), handle: { requiresAuth: false } },
-      { path: 'canvas/:id', element: lazyPage(<CanvasView />) },
+      { path: 'canvas/:id', element: <CanvasAccessRoute /> },
       { path: '*', element: <Navigate to={APP_HOME_PATH} replace />, handle: { requiresAuth: false } },
     ],
   },

@@ -43,6 +43,9 @@ export interface CanvasResultHistoryEntry {
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
   /** Agent 制作关联及旧版字段：移动/保存节点时必须保留，不能静默抹掉。 */
+  production_input_assets?: Array<{ asset_id: number; role?: string }>
+  production_stage?: string
+  production_order?: number
   production_run_id?: string
   production_node_id?: string
   document_id?: string
@@ -163,6 +166,9 @@ interface SerializableNodeData {
  * realPerson 和 timeline 都踩过。下面的 exhaustive 断言让漏字段在 tsc 阶段就报错。
  */
 export const PERSISTED_NODE_DATA_FIELDS = [
+  'production_input_assets',
+  'production_stage',
+  'production_order',
   'production_run_id',
   'production_node_id',
   'document_id',

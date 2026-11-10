@@ -28,7 +28,7 @@ export default function CanvasNavigationStatus({ saveStatus, cloudStatus, cloudM
         </svg>
       </button>
       <div className="canvas-save-status">
-        <DraftSaveIndicator status={saveStatus} />
+        {cloudStatus === 'online' && <DraftSaveIndicator status={saveStatus} />}
         {cloudStatus !== 'online' && (
           <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
             {cloudMessage}
