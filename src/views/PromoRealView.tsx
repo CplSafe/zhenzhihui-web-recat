@@ -322,6 +322,12 @@ export default function PromoRealView() {
     setForm((old) => ({ ...old, [key]: value }))
     setQuote(null)
   }
+  const returnTo = (target: 'form' | 'materials') => {
+    if (busy || busyRef.current) return
+    setQuote(null)
+    setError('')
+    setStage(target)
+  }
   const getQuote = () =>
     void guarded(async () => {
       if (!config || !token) return
@@ -515,7 +521,7 @@ export default function PromoRealView() {
                   !restoreLoading &&
                   !restoreError && (
                     <>
-                      <div className={`smart__progress ${styles.steps}`}>
+                      <div className={styles.steps}>
                         <StepProgress
                           steps={[
                             { key: 'material', label: '需求与素材' },
@@ -524,6 +530,9 @@ export default function PromoRealView() {
                             { key: 'delivery', label: '交付验收' },
                           ]}
                           current={stage === 'order' ? 1 : 0}
+                          onStepClick={(index) => {
+                            if (index === 0 && stage === 'order') returnTo('form')
+                          }}
                         />
                       </div>
                       {stage === 'form' && (
@@ -844,7 +853,7 @@ export default function PromoRealView() {
                               className={styles.secondary}
                               type="button"
                               disabled={busy}
-                              onClick={() => setStage('form')}
+                              onClick={() => returnTo('form')}
                             >
                               上一步
                             </button>
@@ -964,7 +973,7 @@ export default function PromoRealView() {
                               className={styles.secondary}
                               type="button"
                               disabled={busy}
-                              onClick={() => setStage('materials')}
+                              onClick={() => returnTo('materials')}
                             >
                               上一步
                             </button>

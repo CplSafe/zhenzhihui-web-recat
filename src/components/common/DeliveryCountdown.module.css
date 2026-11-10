@@ -1,0 +1,49 @@
+.countdown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #354255;
+  font-size: 14px;
+}
+.units {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.number {
+  display: inline-block;
+  min-width: 36px;
+  padding: 0 4px;
+  border: 1px solid #f4f4f4;
+  border-radius: 4px;
+  background: #f4f4f4;
+  color: #1b2333;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.deadline {
+  flex-basis: 100%;
+  color: #69778a;
+  font-size: 12px;
+}
+.overdue {
+  color: #c43d3d;
+  font-weight: 600;
+}
+.pending {
+  color: #69778a;
+  font-size: 12px;
+}
+.compact {
+  font-size: 12px;
+  gap: 4px;
+  justify-content: flex-start;
+}
+.compact .number {
+  min-width: 24px;
+  font-size: 12px;
+}

@@ -17,6 +17,7 @@ export interface ManualVideoTask {
   estimated_cost?: number
   actual_cost?: number
   created_at?: string
+  deadline_at?: string | null
   parent_task_id?: number | null
   outputs?: Array<{ type: string; asset_id?: number; url?: string }>
   error_message?: string

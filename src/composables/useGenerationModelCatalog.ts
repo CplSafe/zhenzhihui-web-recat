@@ -32,6 +32,8 @@ export { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCat
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
 import { readModelPresentation } from '@/utils/modelPresentation'
 import { isHiddenCreativeVideoModel } from '@/utils/creativeVideoModelKind'
+import { getManualVideoOperation, type ManualVideoModel } from '@/api/manualVideo'
+import { MANUAL_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 
 /** 各 operation 的用户可读名称；这里只描述业务能力，不包含任何具体模型名称。 */
 const OPERATION_LABELS: Record<GenerationOperationCode, string> = {
@@ -251,6 +253,13 @@ async function loadGenerationModelCatalog(
       // 目录以后端为权威：后端新增/开通的模型无需改前端即可展示。
       // 只保留一条屏蔽规则：全流程屏蔽 HappyHorse 图生视频 / 文生视频。
       return list
+        .filter(
+          (model) =>
+            MANUAL_DELIVERY_ENABLED ||
+            !model ||
+            typeof model !== 'object' ||
+            !getManualVideoOperation(model as ManualVideoModel),
+        )
         .map((model) => bindQueriedOperation(model, operationCode))
         .filter((model): model is BackendGenerationModel => Boolean(model) && !isHiddenCreativeVideoModel(model))
     }),

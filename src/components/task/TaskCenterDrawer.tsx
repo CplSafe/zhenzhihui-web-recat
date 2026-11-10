@@ -878,7 +878,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
       (task) =>
         task.ownerId === currentUserId &&
         task.workspaceId === Number(workspaceId) &&
-        ['待交接', '制作中', '返工中', '逾期'].includes(task.status),
+        ['待交接', '制作中', '逾期'].includes(task.status),
     )
   // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
   const isTeamSpace = isTeamWorkspace(currentWorkspace)
@@ -1155,7 +1155,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const [hasManualTasks, setHasManualTasks] = useState(false)
   const showManualTasks =
     MANUAL_DELIVERY_ENABLED &&
-    activeScope === 'smart' &&
+    (activeScope === 'smart' || activeScope === 'generating') &&
     (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId))
   /** 创作者展示名：任务自带（后端 creator_nickname）优先，否则按 ID 从成员列表查。 */
   const creatorLabelFor = (task: TaskCenterTask): string => {
@@ -1379,21 +1379,22 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 : `${getScopeLabel(activeScope)}任务`
           }
         >
-          {PROMO_DELIVERY_ENABLED && activeScope === 'generating' && (
+          {PROMO_DELIVERY_ENABLED && (activeScope === 'generating' || activeScope === 'promo') && (
             <PromoTaskList
-              key={`${currentUserId}.${workspaceId}`}
+              key={`promo.${currentUserId}.${workspaceId}.${activeScope}`}
               ownerId={currentUserId}
               workspaceId={Number(workspaceId)}
-              activeOnly
+              activeOnly={activeScope === 'generating'}
               onPresenceChange={setHasRealPromo}
             />
           )}
           {showManualTasks && (
             <ManualVideoHistory
-              key={`${currentUserId}.${workspaceId}`}
+              key={`manual.${currentUserId}.${workspaceId}.${activeScope}`}
               ownerId={currentUserId}
               workspaceId={Number(workspaceId)}
               includeLocal
+              taskGroup={activeScope === 'generating' ? 'active' : 'history'}
               presentation="cards"
               showEmpty={false}
               onPresenceChange={setHasManualTasks}
@@ -1404,13 +1405,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
             />
           )}
           {hasVisibleRefineTasks && <RefineTaskList ownerId={currentUserId} workspaceId={Number(workspaceId)} />}
-          {activeScope === 'promo' ? (
-            <PromoTaskList
-              key={`${currentUserId}.${workspaceId}`}
-              ownerId={currentUserId}
-              workspaceId={Number(workspaceId)}
-            />
-          ) : visibleTasks.length ? (
+          {activeScope === 'promo' ? null : visibleTasks.length ? (
             <div className={cx(styles.taskList, showManualTasks && hasManualTasks && styles.taskListAfterDelivery)}>
               {displayedTasks.map((task) => {
                 const record = task as TaskRecord

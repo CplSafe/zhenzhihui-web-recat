@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from 'antd'
+import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 import StepProgress from '@/components/smart/StepProgress'
 import { ensureAssetId } from '@/api/smartShotImage'
 import {
@@ -643,10 +644,13 @@ export default function ManualVideoFlow(props: Props) {
                 : labels[task.status] || task.status}
             </h1>
             <p className={manualStyles.waitSummary}>
-              任务编号：{task.id} · 交付日期待确认。
+              任务编号：{task.id}
               <br />
               积分先冻结，成片交付时结算。
             </p>
+            {['awaiting_manual', 'manual_processing'].includes(task.status) && (
+              <DeliveryCountdown kind="t1" createdAt={task.created_at} deadlineAt={task.deadline_at} />
+            )}
             {task.error_message && <p role="alert">{task.error_message}</p>}
             <ol className={manualStyles.phase}>
               <li>已提交</li>

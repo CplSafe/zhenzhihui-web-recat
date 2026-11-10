@@ -4,6 +4,7 @@ import { getWorkspacePromoOrderIds, listPromoOrders, promoOrderBelongsToWorkspac
 import { promoCredits, usePromoDemoStore } from '@/stores/promoDemo'
 import styles from './PromoTaskList.module.css'
 import DeliveryTaskCard from './DeliveryTaskCard'
+import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 
 export default function PromoTaskList({
   ownerId,
@@ -59,17 +60,23 @@ export default function PromoTaskList({
       })
     return () => controller.abort()
   }, [ownerId, workspaceId, attempt, offset])
+  useEffect(() => {
+    if (offset !== 0) return
+    const timer = window.setInterval(() => setAttempt((value) => value + 1), 30_000)
+    return () => window.clearInterval(timer)
+  }, [offset])
   const visible = tasks.filter(
     (task) =>
       ownerId > 0 &&
       workspaceId > 0 &&
       task.ownerId === ownerId &&
       task.workspaceId === workspaceId &&
-      (!activeOnly || ['待交接', '制作中', '返工中', '逾期'].includes(task.status)),
+      activeOnly === ['待交接', '制作中', '逾期'].includes(task.status),
   )
-  const real = activeOnly
-    ? orders.filter((order) => ['pending', 'producing', 'reworking', 'overdue'].includes(order.status))
-    : orders
+  const real = orders.filter((order) => {
+    const active = !order.first_delivered_at && ['pending', 'producing', 'overdue'].includes(order.status)
+    return activeOnly === active
+  })
   const present = !!(visible.length || real.length || loading || error || offset + 20 < total)
   useEffect(() => {
     onPresenceChange?.(present)
@@ -114,6 +121,17 @@ export default function PromoTaskList({
                 )[order.status] || order.status
           }
           meta={`T+5 · ${order.promised_date ? `承诺交付 ${order.promised_date}` : `订单 #${order.id}`}`}
+          countdown={
+            !order.first_delivered_at && ['pending', 'producing', 'overdue'].includes(order.status) ? (
+              <DeliveryCountdown
+                kind="t5"
+                createdAt={order.created_at}
+                deadlineAt={order.deadline_at}
+                promisedDate={order.promised_date}
+                compact
+              />
+            ) : undefined
+          }
           onOpen={() => navigate(`/promo?order=${order.id}`)}
         />
       ))}

@@ -39,6 +39,8 @@ export interface PromoOrder {
   task_id: number
   company?: string
   workspace_id?: number
+  created_at?: string | null
+  deadline_at?: string | null
   delivered_at?: string | null
   duration_seconds?: number
   resolution?: string

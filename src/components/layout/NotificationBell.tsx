@@ -243,10 +243,7 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
           MANUAL_DELIVERY_ENABLED
             ? withRequestTimeout(
                 (requestSignal) => loadManualDeliveryNotifications(workspaceId, requestSignal, Number(userKey) || 0),
-                {
-                  signal,
-                  timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS,
-                },
+                { signal, timeoutMs: NOTIFICATION_LOAD_TIMEOUT_MS },
               )
             : Promise.resolve([]),
           PROMO_DELIVERY_ENABLED

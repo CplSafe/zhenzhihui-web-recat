@@ -14,6 +14,7 @@ import {
 } from '@/api/promo'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
+import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 import styles from './PromoOrders.module.css'
 
 const labels: Record<string, string> = {
@@ -163,7 +164,7 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
   return (
     <section className={selected === null ? styles.panel : styles.workflow} aria-label="真实宣传片订单">
       {selected !== null && (
-        <div className={`smart__progress ${styles.steps}`}>
+        <div className={styles.steps}>
           <StepProgress
             steps={[
               { key: 'material', label: '需求与素材' },
@@ -335,7 +336,14 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
               <br />
               积分状态：{billing[order.billing_status] || order.billing_status}
             </p>
-            {order.rework_status && <p>修改状态：{rework[order.rework_status] || order.rework_status}</p>}
+            {!order.first_delivered_at && ['pending', 'producing', 'overdue'].includes(order.status) && (
+              <DeliveryCountdown
+                kind="t5"
+                createdAt={order.created_at}
+                deadlineAt={order.deadline_at}
+                promisedDate={order.promised_date}
+              />
+            )}
             {order.rework_text && <p>修改意见：{order.rework_text}</p>}
             {order.rework_reply && <p>回复：{order.rework_reply}</p>}
             {order.status !== 'cancelled' && (

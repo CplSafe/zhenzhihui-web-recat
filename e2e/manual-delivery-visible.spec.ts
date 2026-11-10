@@ -33,11 +33,22 @@ for (const width of [1440, 390]) {
       }),
     )
     await page.route('**/api/v1/ai/models**', (route) => {
-      if (new URL(route.request().url()).searchParams.get('capability') !== 'video') return route.fallback()
+      const query = new URL(route.request().url()).searchParams
+      if (query.get('capability') !== 'video' && query.get('operation_code') !== 'video.generate')
+        return route.fallback()
       return route.fulfill({
         json: {
           code: 0,
-          data: [{ id: 77, provider: 'manual-video', enabled: true, operation_codes: ['video.t1'] }],
+          data: [
+            {
+              id: 77,
+              model: 'video.t1',
+              display_name: '人工精制模型',
+              provider: 'manual-video',
+              enabled: true,
+              operation_codes: ['video.generate'],
+            },
+          ],
         },
       })
     })
@@ -47,6 +58,7 @@ for (const width of [1440, 390]) {
     if (await settings.isVisible()) await settings.click()
     await page.getByRole('button', { name: /生成模型/ }).click()
     await expect(page.getByRole('option', { name: /T\+1/ })).toHaveCount(0)
+    await expect(page.getByText('人工精制模型')).toHaveCount(0)
     await expect(page.getByText('定制宣传片', { exact: true })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath(`t1-entry-${width}.png`) })
     await page.goto('/promo')
