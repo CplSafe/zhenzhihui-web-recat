@@ -243,7 +243,7 @@ export default function DeepAgentStudio({
       for (const file of list) {
         let entry: StudioAttachment = { name: file.name }
         try {
-          if (!file.size || file.size > 10 * 1024 * 1024) throw new Error('单个文件须为 1 字节至 10 MB。')
+          if (!file.size || file.size > 50 * 1024 * 1024) throw new Error('单个文件须为 1 字节至 50 MB。')
           entry = await api.upload(file)
         } catch (e) {
           entry.error = e instanceof Error ? e.message : '上传失败'

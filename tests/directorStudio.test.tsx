@@ -1125,6 +1125,29 @@ it('local upload remains available from the attachment menu', async () => {
   await waitFor(() => expect(uploaded).toHaveBeenCalledExactlyOnceWith('scene'))
 })
 
+it('uploads a screenplay over 10 MiB and blocks files beyond 50 MiB without submitting a run', async () => {
+  const uploaded = vi.fn()
+  server.use(
+    http.post('*/agent-studio/api/attachments', async ({ request }) => {
+      uploaded((await request.arrayBuffer()).byteLength)
+      return HttpResponse.json({ id: 'long-script', type: 'prompt', characters: 100_001 })
+    }),
+  )
+  const { container } = render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+  const size = 11 * 1024 * 1024
+  fireEvent.change(input, { target: { files: [new NodeFile([new Uint8Array(size)], 'long.docx')] } })
+  await waitFor(() => expect(uploaded).toHaveBeenCalledExactlyOnceWith(size))
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  const oversized = new NodeFile(['x'], 'large.docx')
+  Object.defineProperty(oversized, 'size', { value: 50 * 1024 * 1024 + 1 })
+  fireEvent.change(input, { target: { files: [oversized] } })
+  expect(await screen.findByText('单个文件须为 1 字节至 50 MB。')).toBeInTheDocument()
+  expect(uploaded).toHaveBeenCalledOnce()
+  expect(Socket.instances).toHaveLength(0)
+})
+
 it('closing library registration ignores its late response without attaching or generating', async () => {
   let finish!: () => void
   const registered = vi.fn()
