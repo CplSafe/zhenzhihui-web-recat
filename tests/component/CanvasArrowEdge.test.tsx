@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react'
-import { Position } from '@xyflow/react'
+import { Position, ReactFlowProvider } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
 import CanvasArrowEdge, {
   canvasConnectionDisplayRole,
@@ -15,20 +15,22 @@ import CanvasArrowEdge, {
  */
 function renderEdge(props: Record<string, unknown>) {
   return render(
-    <svg>
-      <CanvasArrowEdge
-        id="e1"
-        source="a"
-        target="b"
-        sourceX={0}
-        sourceY={0}
-        targetX={100}
-        targetY={50}
-        sourcePosition={Position.Right}
-        targetPosition={Position.Left}
-        {...(props as any)}
-      />
-    </svg>,
+    <ReactFlowProvider>
+      <svg>
+        <CanvasArrowEdge
+          id="e1"
+          source="a"
+          target="b"
+          sourceX={0}
+          sourceY={0}
+          targetX={100}
+          targetY={50}
+          sourcePosition={Position.Right}
+          targetPosition={Position.Left}
+          {...(props as any)}
+        />
+      </svg>
+    </ReactFlowProvider>,
   )
 }
 
