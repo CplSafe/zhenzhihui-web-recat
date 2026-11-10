@@ -21,7 +21,7 @@ export function ScriptAttachmentPicker({
   onFiles: (files: File[]) => void
 }) {
   const id = useId()
-  const [name] = templates[stage]
+  const [name, file] = templates[stage]
   const atLimit = count >= 30
   const unavailable = disabled || atLimit
   return (
@@ -64,6 +64,13 @@ export function ScriptAttachmentPicker({
           />
           <p>按《{name}》准备文档，Word 或 PDF 均可</p>
           <small>支持 doc、docx、pdf、txt、md、ppt、pptx · 单个不超过 500 MiB · 最多 30 个</small>
+          {stage !== 'final' && (
+            <div className="si-upload-template">
+              <a href={`/script-idea-templates/${file}`} download aria-label={`下载${name}`}>
+                下载模板
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </div>

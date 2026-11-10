@@ -2187,6 +2187,7 @@
   margin-bottom: 10px;
 }
 .si-upload-drop {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 16px;
@@ -2219,6 +2220,8 @@
 }
 .si-upload-input {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px !important;
   height: 1px;
   opacity: 0;
@@ -2237,6 +2240,13 @@
 }
 .si-upload-drop small {
   color: #8794a7;
+}
+.si-upload-template {
+  margin-top: 10px;
+}
+.si-upload-template a {
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .si-identity-field {
