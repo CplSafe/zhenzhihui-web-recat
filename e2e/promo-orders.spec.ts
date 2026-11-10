@@ -16,7 +16,7 @@ test('真实宣传片订单详情、免费修改及退款条件使用后端状�
     first_delivered_at: status === 'overdue' ? null : '2026-11-04T00:00:00+08:00',
     can_rework: status === 'delivered',
     delivered_material_id: status === 'delivered' ? 42 : null,
-    rework_status: status === 'reworking' ? 'requested' : null,
+    rework_status: status === 'reworking' ? 'requested' : 'unused',
   })
   await page.route('**/api/v1/promo/orders**', async (route) => {
     const path = new URL(route.request().url()).pathname
@@ -53,12 +53,14 @@ test('真实宣传片订单详情、免费修改及退款条件使用后端状�
     .getByRole('dialog')
     .getByRole('button', { name: /确\s*认/ })
     .click()
-  await expect(page.getByText('待受理')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '修改制作中' })).toBeVisible()
+  await expect(page.getByText('修改状态：', { exact: false })).toHaveCount(0)
   expect(reworkCount).toBe(1)
   await page.screenshot({ path: testInfo.outputPath('promo-orders-rework.png'), fullPage: true })
   await page.getByRole('button', { name: '返回订单列表' }).click()
   status = 'overdue'
   await page.getByRole('button', { name: /订单 #10/ }).click()
+  await expect(page.getByText('修改状态：', { exact: false })).toHaveCount(0)
   await page.getByRole('button', { name: '申请退回积分' }).click()
   await expect(page.getByRole('dialog')).toContainText('全额退回积分并终止制作')
   await page

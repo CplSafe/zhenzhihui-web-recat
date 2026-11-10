@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 test('人工视频估价后提交，失败重试保留请求并恢复任务', async ({ page }, testInfo) => {
+  const createdAt = new Date().toISOString()
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   await page.addInitScript(() => window.localStorage.setItem('zzh_guide_seen_smart_u7', '1'))
   const requests: string[] = []
@@ -47,7 +48,10 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
       else await route.fulfill({ json: { code: 0, data: { id: 91, status: 'awaiting_manual', poll_after_ms: 15000 } } })
     } else if (url.pathname === '/api/v1/ai/tasks/91') {
       await route.fulfill({
-        json: { code: 0, data: { id: 91, status: 'awaiting_manual', poll_after_ms: 15000, estimated_cost: 123 } },
+        json: {
+          code: 0,
+          data: { id: 91, status: 'awaiting_manual', poll_after_ms: 15000, estimated_cost: 123, created_at: createdAt },
+        },
       })
     } else return route.fallback()
   })
@@ -85,6 +89,7 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
   await expect(page.getByRole('alert')).toContainText('余额不足')
   await page.getByRole('button', { name: '重试原请求' }).click()
   await expect(page.getByText('任务编号：91')).toBeVisible()
+  await expect(page.getByRole('timer')).toContainText('成片将于')
   expect(requests).toHaveLength(4)
   expect(requests[1]).toBe(requests[2])
   expect(requests[1]).toBe(requests[3])

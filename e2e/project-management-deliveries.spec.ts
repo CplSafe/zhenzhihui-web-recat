@@ -140,3 +140,62 @@ test('项目管理展示当前空间真实 T+5 订单并打开交付', async ({ 
   await expect(page).toHaveURL(/\/promo\?order=31/)
   await expect(page.getByRole('heading', { name: '宣传片订单 #31' })).toBeVisible()
 })
+
+test('项目列表显示进行中交付任务的倒计时', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-11-10T07:30:00Z'))
+  await installDeliveryData(page)
+  await page.route('**/api/v1/ai/tasks**', (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/v1/ai/tasks' && url.searchParams.get('operation_code') === 'video.t1')
+      return route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            items: [
+              {
+                id: 91,
+                operation_code: 'video.t1',
+                status: 'awaiting_manual',
+                prompt: '待交付精制',
+                created_at: '2026-11-10T07:30:00Z',
+              },
+            ],
+            total: 1,
+          },
+        },
+      })
+    return route.fallback()
+  })
+  await page.route('**/api/v1/promo/orders**', (route) => {
+    if (new URL(route.request().url()).pathname === '/api/v1/promo/orders')
+      return route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            items: [
+              {
+                id: 31,
+                task_id: 32,
+                workspace_id: 21,
+                company: '待交付宣传片',
+                status: 'pending',
+                created_at: '2026-11-10T07:30:00Z',
+                promised_date: '2026-11-15',
+                first_delivered_at: null,
+                is_overdue: false,
+                billing_status: 'frozen',
+                can_rework: false,
+              },
+            ],
+            total: 1,
+          },
+        },
+      })
+    return route.fallback()
+  })
+  await page.goto('/projects')
+  await expect(page.getByRole('button', { name: '打开精制任务 待交付精制' }).getByRole('timer')).toContainText('24:00')
+  await expect(page.getByRole('button', { name: '打开宣传片订单 待交付宣传片' }).getByRole('timer')).toContainText(
+    '05天00',
+  )
+})

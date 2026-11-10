@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 const config = {
@@ -19,6 +19,21 @@ const config = {
   authorization_text: '素材授权声明',
   acknowledgement_text: '制作须知',
   authorization_version: 'v1',
+}
+
+async function expectFullWidthSteps(page: Page) {
+  const main = page.locator('[data-promo-real] main')
+  const bar = main.getByRole('list').filter({ hasText: '确认并提交' }).locator('..')
+  const bounds = await bar.boundingBox()
+  const contentBounds = await main.boundingBox()
+  expect(bounds).not.toBeNull()
+  expect(contentBounds).not.toBeNull()
+  expect(Math.abs(bounds!.x - contentBounds!.x)).toBeLessThan(1)
+  expect(Math.abs(bounds!.width - contentBounds!.width)).toBeLessThan(1)
+  await bar.getByText('需求与素材').scrollIntoViewIfNeeded()
+  await expect(bar.getByText('需求与素材')).toBeInViewport()
+  await bar.getByText('交付验收').scrollIntoViewIfNeeded()
+  await expect(bar.getByText('交付验收')).toBeInViewport()
 }
 
 test('宣传片关闭时显示服务未开放，并保留订单入口', async ({ page }, testInfo) => {
@@ -62,6 +77,7 @@ for (const width of [1440, 390]) {
 }
 
 test('宣传片素材完成后报价，下单失败后使用原请求重试', async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-11-05T07:30:00Z'))
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   const bodies: string[] = []
   let uploaded = false
@@ -127,6 +143,7 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
           can_rework: orderStatus === 'delivered',
           rework_status: orderStatus === 'reworking' ? 'requested' : null,
           promised_date: '2026-11-10',
+          created_at: '2026-11-05T07:30:00Z',
         },
         materials: [],
       }
@@ -142,6 +159,7 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await expect(page.getByRole('button', { name: '提交需求，进入制作排期' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('promo-intro.png'), fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
+  await expectFullWidthSteps(page)
   await page.getByLabel('单位 / 公司名称').fill('测试公司')
   await page.getByLabel('联系人', { exact: true }).fill('李先生')
   await page.getByLabel('联系电话').fill('13800000000')
@@ -159,8 +177,23 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await page.getByLabel('制作须知').check()
   await page.screenshot({ path: testInfo.outputPath('promo-materials.png'), fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '下一步：确认并提交' }).click()
+  await expectFullWidthSteps(page)
   await expect(page.getByText('150 积分', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('promo-quote.png'), fullPage: true, animations: 'disabled' })
+  await page.getByRole('list').filter({ hasText: '确认并提交' }).getByText('需求与素材').click()
+  await expect(page.getByRole('heading', { name: '定制宣传片 · 需求填写' })).toBeVisible()
+  await expect(page.getByLabel('制作需求', { exact: true })).toHaveValue('介绍产品')
+  await page.getByLabel('制作需求', { exact: true }).fill('介绍更新后的产品')
+  await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  await expect(page.getByText(/素材.png · 已就绪/)).toBeVisible()
+  await page.getByRole('button', { name: '下一步：确认并提交' }).click()
+  await expect(page.getByText('介绍更新后的产品')).toBeVisible()
+  await page.getByRole('button', { name: '上一步' }).click()
+  await expect(page.getByRole('heading', { name: '上传素材' })).toBeVisible()
+  await page.getByRole('button', { name: '上一步' }).click()
+  await expect(page.getByLabel('制作需求', { exact: true })).toHaveValue('介绍更新后的产品')
+  await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  await page.getByRole('button', { name: '下一步：确认并提交' }).click()
   await page.getByRole('button', { name: '提交宣传片任务（T+5）' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确认提交' }).click()
   await expect(page.getByRole('alert')).toContainText('余额不足')
@@ -170,11 +203,14 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await expect(page.getByRole('button', { name: '重试原请求' })).toBeVisible()
   await page.getByRole('button', { name: '重试原请求' }).click()
   await expect(page.getByRole('heading', { name: '宣传片订单 #31' })).toBeVisible()
+  await expectFullWidthSteps(page)
+  await expect(page.getByRole('timer')).toContainText('成片将于05天00之内完成交付')
   expect(bodies).toHaveLength(3)
   expect(bodies[1]).toBe(bodies[2])
   expect(JSON.parse(bodies[0]).idempotency_key).not.toBe(JSON.parse(bodies[1]).idempotency_key)
   expect(JSON.parse(bodies[1])).toMatchObject({
     intake_token: 'intake-1',
+    brief: '介绍更新后的产品',
     config_hash: 'hash1',
     authorized: true,
     acknowledged: true,
@@ -226,6 +262,7 @@ test('窄屏可填写宣传片需求并进入素材步骤', async ({ page }, tes
   )
   await page.goto('/promo')
   await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
+  await expectFullWidthSteps(page)
   await page.getByLabel('单位 / 公司名称').fill('公司')
   await page.getByLabel('联系人', { exact: true }).fill('联系人')
   await page.getByLabel('联系电话').fill('13800000000')

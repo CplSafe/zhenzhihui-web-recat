@@ -411,7 +411,7 @@ test.describe('已认证关键路由与读取链路', () => {
           .getByRole('option', { name: 'E2E 文生图模型', exact: true })
           .click()
         const entryParamsTrigger = page.getByRole('button', { name: /^创作参数，当前/ })
-        await entryParamsTrigger.click()
+        await expect(entryParamsTrigger).toHaveAttribute('aria-expanded', 'true')
         await page.getByRole('dialog', { name: '创作参数' }).getByRole('button', { name: '3', exact: true }).click()
         await entryParamsTrigger.click()
         const input = page.getByRole('textbox', { name: '创作需求' })
