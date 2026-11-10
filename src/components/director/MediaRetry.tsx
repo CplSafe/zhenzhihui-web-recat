@@ -45,8 +45,8 @@ function RetryForm({
         await api.request(`/api/runs/${runId}/media-retries/${draft.id}/decision`, {
           decision: 'approve',
           decision_id: draft.decision_id,
+          start: true,
         })
-        await api.request(`/api/runs/${runId}/resume`, {})
         await onDone()
       } else {
         setDraft(

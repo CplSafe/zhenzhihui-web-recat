@@ -82,6 +82,29 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it('keeps recovery usable when desktop notifications throw and never asks permission automatically', async () => {
+    const notify = vi.fn(() => { throw new Error('desktop notifications unavailable') })
+    const permission = vi.fn()
+    class NotificationStub {
+      static permission = 'granted'
+      static requestPermission = permission
+      constructor() { notify() }
+    }
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    vi.stubGlobal('Notification', NotificationStub)
+    server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error' }))))
+    try {
+      render(<DeepAgentStudio />)
+      await openHistory()
+      expect(await screen.findByText('浏览器通知暂不可用，失败信息已保留在页面中')).toBeVisible()
+      expect(screen.getByRole('button', { name: /恢复执行/ })).toBeVisible()
+      expect(notify).toHaveBeenCalledTimes(1)
+      expect(permission).not.toHaveBeenCalled()
+    } finally {
+      hidden.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
   it('canvas dock opens with business identity and collapse retains the draft without triggering canvas input', async () => {
     const canvasKey = vi.fn(),
       seen = vi.fn()

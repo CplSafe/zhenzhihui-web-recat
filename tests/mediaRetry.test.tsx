@@ -47,7 +47,7 @@ beforeEach(() => {
   }
 })
 
-it('switches model with fresh parameters, quotes then confirms once before resume', async () => {
+it('switches model with fresh parameters and atomically confirms and starts', async () => {
   const calls: string[] = [],
     reload = vi.fn().mockResolvedValue(undefined)
   server.use(
@@ -59,7 +59,8 @@ it('switches model with fresh parameters, quotes then confirms once before resum
       calls.push('quote')
       return HttpResponse.json(draft)
     }),
-    http.post('*/api/runs/r/media-retries/proposal/decision', () => {
+    http.post('*/api/runs/r/media-retries/proposal/decision', async ({ request }) => {
+      expect(await request.json()).toMatchObject({ decision: 'approve', start: true })
       calls.push('approve')
       return HttpResponse.json({ ...draft, status: 'approved' })
     }),
@@ -76,7 +77,7 @@ it('switches model with fresh parameters, quotes then confirms once before resum
   expect(calls).toEqual(['quote'])
   fireEvent.click(screen.getByText('确认重试一次'))
   await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
-  expect(calls).toEqual(['quote', 'approve', 'resume'])
+  expect(calls).toEqual(['quote', 'approve'])
 })
 
 it('reopens the actual approved model and prompt, not the failed original parameters', async () => {

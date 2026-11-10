@@ -36,6 +36,19 @@ export default function DeepAgentStudio({
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
   const studio = useStudio(apiBase, workspaceId, canvasId, business)
   const { api, state, catalog, current, run: serverRun, loading, mismatch } = studio
+  const notifiedFailure = useRef<string | null>(null)
+  const [notificationMessage, setNotificationMessage] = useState('')
+  useEffect(() => {
+    if (serverRun?.status !== 'error') { notifiedFailure.current = null; return }
+    if (notifiedFailure.current === serverRun.id) return
+    notifiedFailure.current = serverRun.id
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        const notice = new Notification('DoDo Agent 需要你处理', { body: '制作已暂停，成功素材已保留。请返回页面检查原因或更换模型重试。', tag: 'dodo-' + serverRun.id })
+        notice.onclick = () => { window.focus(); notice.close() }
+      } catch { setNotificationMessage('浏览器通知暂不可用，失败信息已保留在页面中') }
+    }
+  }, [serverRun?.id, serverRun?.status])
   const [pendingSend, setPendingSend] = useState<{ run: StudioRun; target?: string; api: typeof api } | null>(null)
   const activeAPI = useRef(api)
   activeAPI.current = api
@@ -621,6 +634,11 @@ export default function DeepAgentStudio({
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
+                  {run.status === 'error' && <p role="alert">制作已暂停，成功素材已保留。请检查失败原因，或更换模型重试。</p>}
+                  {'Notification' in window && Notification.permission !== 'granted' && <button type="button" onClick={() => {
+                    void Notification.requestPermission().then(permission => setNotificationMessage(permission === 'granted' ? '已开启浏览器提醒' : '未开启浏览器通知，失败时仍会在页面内提醒')).catch(() => setNotificationMessage('浏览器通知暂不可用，失败时仍会在页面内提醒'))
+                  }}>开启浏览器提醒</button>}
+                  {notificationMessage && <p role="status">{notificationMessage}</p>}
                   {!run.pending && <MediaRetry key={run.id} api={api} runId={run.id} models={catalog.models} reload={studio.reload} />}
                   <p>已成功的素材会保留。恢复会先查询已提交任务；失败素材重试需要单独确认。</p>
                   <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
