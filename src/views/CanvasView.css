@@ -580,6 +580,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .react-flow__edge.selected .canvas-edge-flow-light {
   stroke: #779f91;
   stroke-width: 3.8;
+  --canvas-edge-flow-period: 46;
   stroke-dasharray: 18 28;
   stroke-dashoffset: 0;
   stroke-linecap: round;
@@ -590,7 +591,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 @keyframes canvas-edge-flow {
   to {
-    stroke-dashoffset: -42;
+    stroke-dashoffset: calc(-1 * var(--canvas-edge-flow-period));
   }
 }
 
@@ -3172,6 +3173,7 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 .canvas-view .react-flow__edge:is(.is-focused, .selected) .canvas-edge-flow-light {
   stroke: var(--canvas-brand);
   stroke-width: 2.5;
+  --canvas-edge-flow-period: 12;
   stroke-dasharray: 6 6;
   filter: drop-shadow(0 0 8px rgb(0 229 190 / 60%));
   animation-duration: 1.2s;
