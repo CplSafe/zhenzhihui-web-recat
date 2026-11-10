@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearLastSelectedNodeId,
+  visibleReferenceTarget,
   loadLastSelectedNodeId,
   loadMinimapVisible,
   saveLastSelectedNodeId,
@@ -79,5 +80,21 @@ describe('小地图显示偏好', () => {
 
     expect(() => saveMinimapVisible(false)).not.toThrow()
     expect(loadMinimapVisible()).toBe(true)
+  })
+})
+
+describe('reference wire focus', () => {
+  it('shows no wires for no selection or a whole group', () => {
+    expect(visibleReferenceTarget([{ id: 'a' }])).toBeUndefined()
+    expect(
+      visibleReferenceTarget([
+        { id: 'a', selected: true },
+        { id: 'b', selected: true },
+      ]),
+    ).toBeUndefined()
+  })
+  it('follows the actual selected node and clears on deselection', () => {
+    expect(visibleReferenceTarget([{ id: 'a' }, { id: 'b', selected: true }])).toBe('b')
+    expect(visibleReferenceTarget([{ id: 'a' }, { id: 'b', selected: false }])).toBeUndefined()
   })
 })

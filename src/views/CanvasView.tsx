@@ -164,6 +164,7 @@ import {
 } from '@/utils/canvasDraft'
 import { humanizeCanvasTaskError, isCanvasProviderServiceError } from '@/utils/canvasTaskError'
 import {
+  visibleReferenceTarget,
   loadLastSelectedNodeId,
   loadMinimapVisible,
   saveLastSelectedNodeId,
@@ -10615,6 +10616,8 @@ function CanvasInner() {
         assetId: (node.data as any)?.assetId,
         text: (node.data as any)?.text,
         prompt: (node.data as any)?.prompt,
+        operationCode: (node.data as any)?.operationCode,
+        params: (node.data as any)?.params,
       })
     },
     [isPickingRef, getSourceRefs],
@@ -10805,6 +10808,7 @@ function CanvasInner() {
 
   // 为所有来源的连线换上带箭头的边型：包含历史恢复、协作增量同步和本次新建的连线。
   // 历史数据里可能残留 markerEnd（旧的 marker 引用方案），一并去掉，避免两套箭头叠加。
+  const referenceTargetId = visibleReferenceTarget(nodes)
   const displayEdges = useMemo(
     () =>
       edges.map((edge) => {
@@ -10849,13 +10853,14 @@ function CanvasInner() {
           data: displayRole ? { ...data, displayRole } : data,
           type: CANVAS_ARROW_EDGE_TYPE,
           ...(edgeData.hdLineage ? { style: { ...edge.style, stroke: '#35a66f', strokeDasharray: '6 4' } } : {}),
-          hidden: edgesHidden || touchesHiddenAudioNode,
+          hidden: Boolean(edge.hidden) || edgesHidden || touchesHiddenAudioNode || edge.target !== referenceTargetId,
           className: className || undefined,
         }
       }),
     [
       edges,
       edgesHidden,
+      referenceTargetId,
       flashEdgeId,
       focusedNodeIds,
       generatingNodeIds,
@@ -11035,6 +11040,12 @@ function CanvasInner() {
           const target = event.target as HTMLElement
           pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
+          // Production frames organize outputs; clicking a member inspects that shot.
+          // Group headers still select/move the whole frame.
+          const clickedNode = latestRef.current.nodes.find((node) => node.id === nodeId)
+          if (!isPickingRef && clickedNode?.data?.production_run_id && !event.ctrlKey && !event.metaKey) {
+            setEditingGroup(getNodeGroupId(clickedNode as GroupableNode))
+          }
           nodePointerSelectionRef.current = nodeId
             ? {
                 id: nodeId,
