@@ -1,0 +1,144 @@
+.page {
+  min-height: 100dvh;
+  color: #f2f3f2;
+  background-color: #1d1e1d;
+  background-image: radial-gradient(#ffffff14 1px, transparent 1px);
+  background-size: 20px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  min-height: 68px;
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #ffffff0f;
+  background: #1d1e1d;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e5e9e7;
+}
+
+.brand svg {
+  color: #43d0ac;
+}
+.topbarLabel {
+  font-size: 13px;
+  color: #9ba39f;
+}
+
+.content {
+  width: min(100% - 40px, 520px);
+  margin: auto;
+  padding: 36px 0 104px;
+  text-align: center;
+}
+
+.canvasMark {
+  width: 112px;
+  height: 88px;
+  margin: 0 auto 30px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  color: #aab6b0;
+  background: #252725;
+  border: 1px solid #424943;
+  border-radius: 10px;
+}
+
+.canvasMarkLine {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  border-top: 1px solid #ffffff16;
+}
+
+.title {
+  margin: 0;
+  color: #f2f4f2;
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.description {
+  max-width: 410px;
+  margin: 12px auto 0;
+  color: #aab2ad;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 28px;
+}
+.actions button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 17px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.actions button:focus-visible {
+  outline: 3px solid #a5f3dc;
+  outline-offset: 3px;
+}
+.primary {
+  color: #102d24;
+  background: #65d5b1;
+  border: 1px solid #65d5b1;
+}
+.primary:hover {
+  background: #81e1c2;
+  border-color: #81e1c2;
+}
+.secondary {
+  color: #e0e5e2;
+  background: #292b29;
+  border: 1px solid #505652;
+}
+.secondary:hover {
+  background: #353935;
+  border-color: #818b84;
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    min-height: 60px;
+    padding: 0 20px;
+  }
+  .content {
+    padding-bottom: 76px;
+  }
+  .title {
+    font-size: 21px;
+  }
+  .actions {
+    flex-direction: column;
+  }
+  .actions button {
+    width: 100%;
+  }
+}

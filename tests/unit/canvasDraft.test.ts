@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Edge, Node } from '@xyflow/react'
-import { clearCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId, saveCanvasDraft } from '@/utils/canvasDraft'
+import {
+  clearCanvasDraft,
+  loadCanvasDraft,
+  readDraftBoundCanvasId,
+  saveCanvasDraft,
+  saveCanvasScriptCreationHandled,
+  markCanvasScriptCreationPending,
+  hasCanvasScriptCreationPending,
+  clearCanvasScriptCreationPending,
+} from '@/utils/canvasDraft'
 
 describe('canvasDraft', () => {
   beforeEach(() => {
@@ -54,5 +63,31 @@ describe('canvasDraft', () => {
 
     expect(loadCanvasDraft('broken')).toBeNull()
     expect(readDraftBoundCanvasId('broken')).toBe(0)
+  })
+
+  it('隔离账号和空间，并不自动读取归属不明的旧草稿', () => {
+    const first = { userId: 7, workspaceId: 21 }
+    const second = { userId: 7, workspaceId: 22 }
+    const otherUser = { userId: 8, workspaceId: 21 }
+    saveCanvasDraft([], [], 10, 10)
+    expect(loadCanvasDraft(10, first)).toBeNull()
+    saveCanvasDraft([], [], 10, 10, first)
+    expect(readDraftBoundCanvasId(10, first)).toBe(10)
+    expect(loadCanvasDraft(10, second)).toBeNull()
+    expect(loadCanvasDraft(10, otherUser)).toBeNull()
+    saveCanvasScriptCreationHandled(10, true, second)
+    expect(loadCanvasDraft(10, second)?.scriptCreationHandled).toBe(true)
+    expect(loadCanvasDraft(10, first)?.scriptCreationHandled).toBeUndefined()
+    clearCanvasDraft(10, first)
+    expect(loadCanvasDraft(10, first)).toBeNull()
+    expect(loadCanvasDraft(10, second)).not.toBeNull()
+  })
+
+  it('单次脚本引导只在标记的画布生效', () => {
+    markCanvasScriptCreationPending(10)
+    expect(hasCanvasScriptCreationPending(10)).toBe(true)
+    expect(hasCanvasScriptCreationPending(11)).toBe(false)
+    clearCanvasScriptCreationPending(10)
+    expect(hasCanvasScriptCreationPending(10)).toBe(false)
   })
 })

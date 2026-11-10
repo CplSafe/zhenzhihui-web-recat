@@ -2523,8 +2523,9 @@ const nodeTypes: NodeTypes = {
 
 /** 无限画布入口页（提供 ReactFlowProvider 上下文） */
 export default function CanvasView() {
+  const { id } = useParams()
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={id}>
       <CanvasInner />
     </ReactFlowProvider>
   )
@@ -2664,6 +2665,10 @@ function CanvasInner() {
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  const draftScope = useMemo(
+    () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
+    [currentUserId, workspaceId],
+  )
   const showCanvasDirector = true
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
@@ -2922,11 +2927,11 @@ function CanvasInner() {
     if (scriptCreationHandledRef.current) return
     scriptCreationHandledRef.current = true
     setScriptCreationHandled(true)
-    saveCanvasScriptCreationHandled(canvasId, true)
+    saveCanvasScriptCreationHandled(canvasId, true, draftScope)
     clearCanvasScriptCreationPending(canvasId)
     pendingCanvasStateRef.current.script_creation_handled = true
     scheduleSyncRef.current(true)
-  }, [canvasId])
+  }, [canvasId, draftScope])
   const dismissGuide = useCallback(() => {
     setGuideRequested(false)
   }, [])
@@ -5163,10 +5168,8 @@ function CanvasInner() {
       })
   }, [setEdges, setNodes, workspaceId])
   // 初始化：云端优先（复用画布或新建），失败回退 localStorage 草稿
-  const draftLoadedRef = useRef(false)
   useEffect(() => {
-    if (draftLoadedRef.current) return
-    draftLoadedRef.current = true
+    let cancelled = false
     // 画布 ID 唯一真相源 = 路由参数；缺失或非合法数字 → 跳回列表页，杜绝隐式新建造成画布重复
     const projectIdNum = Number(routeProjectId)
     const hasProjectId = Number.isSafeInteger(projectIdNum) && projectIdNum > 0
@@ -5179,8 +5182,8 @@ function CanvasInner() {
 
     const applyLocalDraft = () => {
       // 云端失败回退本地草稿：同样校验草稿绑定当前画布，防止展示/上传其他画布的内容
-      const draft = loadCanvasDraft(routeProjectId)
-      const draftBoundId = readDraftBoundCanvasId(routeProjectId)
+      const draft = loadCanvasDraft(routeProjectId, draftScope)
+      const draftBoundId = readDraftBoundCanvasId(routeProjectId, draftScope)
       if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
         // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
         const restoredNodes = (draft.nodes as Node[]).map((n) => {
@@ -5220,8 +5223,12 @@ function CanvasInner() {
      * 也不建 syncRef 快照，云端回来后整体替换，不会把草稿当成已同步内容而漏传。
      */
     let paintedDraft = false
-    const draftForPaint = loadCanvasDraft(routeProjectId)
-    if (draftForPaint && draftForPaint.nodes.length > 0 && readDraftBoundCanvasId(routeProjectId) === canvasId) {
+    const draftForPaint = loadCanvasDraft(routeProjectId, draftScope)
+    if (
+      draftForPaint &&
+      draftForPaint.nodes.length > 0 &&
+      readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId
+    ) {
       const draftNodes = (draftForPaint.nodes as Node[]).map((n) => {
         const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
         return normalizeNodeMedia({ ...cleaned, data: restoreCanvasTaskState(cleaned.data) }, workspaceId)
@@ -5241,6 +5248,7 @@ function CanvasInner() {
       try {
         // 1) 全量加载元素；只有全部分页成功后才推进 revision，避免大画布被截断。
         const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+        if (cancelled) return
         // 新建空画布直接展示完整节点入口。清理旧版本遗留的一次性剧本引导标记，
         // 避免已有用户仍被锁定在「从剧本开始创作」的单一入口。
         const remoteHandled = Boolean(page.state?.script_creation_handled)
@@ -5248,7 +5256,7 @@ function CanvasInner() {
         scriptCreationHandledRef.current = handled
         setScriptCreationHandled(handled)
         clearCanvasScriptCreationPending(canvasId)
-        if (remoteHandled) saveCanvasScriptCreationHandled(canvasId, true)
+        if (remoteHandled) saveCanvasScriptCreationHandled(canvasId, true, draftScope)
         syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
         const { nodes: rawCloudNodes, edges: cloudEdges } = elementsToGraph(page.elements)
         // 旧数据可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址，避免刷新后破图
@@ -5259,14 +5267,14 @@ function CanvasInner() {
           if (!handled) {
             scriptCreationHandledRef.current = true
             setScriptCreationHandled(true)
-            saveCanvasScriptCreationHandled(canvasId, true)
+            saveCanvasScriptCreationHandled(canvasId, true, draftScope)
             clearCanvasScriptCreationPending(canvasId)
           }
           if (
             paintedDraft &&
             draftForPaint &&
             draftForPaint.nodes.length > 0 &&
-            readDraftBoundCanvasId(routeProjectId) === canvasId
+            readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId
           ) {
             const draftNodes = (draftForPaint.nodes as Node[]).map((node) =>
               normalizeNodeMedia({ ...node, data: restoreCanvasTaskState(node.data) }, workspaceId),
@@ -5313,12 +5321,12 @@ function CanvasInner() {
           setCloudStatus('online')
           setCloudMessage('已保存')
           // 把恢复出的已保存版本写回本机，后续启动即可直接使用，无须反复比较旧草稿。
-          saveCanvasDraft(cloudNodes, cloudEdges, routeProjectId, canvasId)
+          saveCanvasDraft(cloudNodes, cloudEdges, routeProjectId, canvasId, draftScope)
           fitCanvasView()
         } else {
           // 云端空画布：仅当本地草稿绑定当前画布时才恢复并上传（保证画布唯一，防止把其他画布内容复制进来）
-          const draft = loadCanvasDraft(routeProjectId)
-          const draftBoundId = readDraftBoundCanvasId(routeProjectId)
+          const draft = loadCanvasDraft(routeProjectId, draftScope)
+          const draftBoundId = readDraftBoundCanvasId(routeProjectId, draftScope)
           if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
             const restoredNodes = (draft.nodes as Node[]).map((n) => {
               const cleaned = String(n.className || '').includes('is-node-entering')
@@ -5355,13 +5363,25 @@ function CanvasInner() {
           fitCanvasView()
         }
       } catch (error: any) {
+        if (cancelled) return
         // 云端不可用时静默回退本地草稿，保证画布可用
         cloudErrorRef.current = String(error?.message || '云端画布加载失败')
         setCloudStatus(navigator.onLine ? 'error' : 'offline')
-        setCloudMessage(navigator.onLine ? '暂时无法读取已保存内容，当前显示本机草稿' : '网络已断开，当前显示本机草稿')
-        const draftHandled = loadCanvasDraft(routeProjectId)
+        if ([403, 404].includes(Number(error?.status))) {
+          setNodes([])
+          setEdges([])
+          setCloudMessage('画布不存在或当前账号无权访问，请返回画布列表')
+          return
+        }
+        const hasDraft = Boolean(
+          draftForPaint?.nodes.length && readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId,
+        )
+        setCloudMessage(
+          hasDraft ? '暂时无法读取云端，显示本机草稿；修改不会保存，请返回后重试' : '暂时无法读取画布，请返回后重试',
+        )
+        const draftHandled = loadCanvasDraft(routeProjectId, draftScope)
         const handled = Boolean(
-          draftHandled?.scriptCreationHandled && readDraftBoundCanvasId(routeProjectId) === canvasId,
+          draftHandled?.scriptCreationHandled && readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId,
         )
         scriptCreationHandledRef.current = handled
         setScriptCreationHandled(handled)
@@ -5369,7 +5389,10 @@ function CanvasInner() {
         if (!paintedDraft) applyLocalDraft()
       }
     })()
-  }, [setNodes, setEdges, setSelectedNode, fitView, routeProjectId, navigate, workspaceId])
+    return () => {
+      cancelled = true
+    }
+  }, [setNodes, setEdges, setSelectedNode, fitView, routeProjectId, navigate, workspaceId, draftScope])
 
   // 增量保存调度：防抖 1 秒后统一执行（本地草稿 + 云端），支持立即 flush
   const saveTimerRef = useRef<number | null>(null)
@@ -5379,17 +5402,18 @@ function CanvasInner() {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
     // 草稿必须绑定当前画布 id：所有数据保存都对应画布，防止串画布
     const boundId = canvasIdRef.current ?? 0
+    // 未取得云端基线时，卸载或异步操作不能用空画布覆盖已存在的本机草稿。
+    if (!cloudLoadedRef.current) return
     if (immediate) {
       const latest = latestRef.current
-      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId)
+      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope)
       pushCanvasMutations()
       return
     }
-    if (!cloudLoadedRef.current) return
     saveTimerRef.current = window.setTimeout(() => {
       const latest = latestRef.current
       // 本地草稿同步落盘兜底（云端失败时仍可恢复）
-      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId)
+      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope)
       pushCanvasMutations()
     }, 1000)
   }
