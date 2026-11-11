@@ -96,7 +96,7 @@ describe('Studio transport', () => {
     await openHistory()
     await waitFor(() => expect(queries).toHaveBeenCalledTimes(1))
     expect(screen.getByRole('button', { name: /恢复执行/ })).toBeVisible()
-    expect(screen.queryByRole('button', { name: '重试失败素材 / 更换模型' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看失败原因与处理方案' })).not.toBeInTheDocument()
     expect(screen.getByText('执行已暂停，进度已保留。请查看上方的具体原因。')).toBeVisible()
   })
 
@@ -107,8 +107,34 @@ describe('Studio transport', () => {
     )
     render(<DeepAgentStudio />)
     await openHistory()
-    expect(await screen.findByRole('button', { name: '重试失败素材 / 更换模型' })).toBeVisible()
+    expect(await screen.findByRole('button', { name: '查看失败原因与处理方案' })).toBeVisible()
   })
+  it('explains review rejection before retry and never posts when opening the batch failure', async () => {
+    const posts = vi.fn()
+    const candidate = { task_id: 7, title: 'Evening reference', tool: 'model.generate_image',
+      before: { model_version_id: 29, prompt: 'Original fictional character', operation_code: 'image.text_to_image', params: {} },
+      failure: { advice: { category: 'REVIEW_REJECTED', error_message: '安全审核拒绝' },
+        explanation: '供应商未提供具体命中原因', actual_credits: 0,
+        references: [{ asset_id: 8, origin: 'generated_in_session', title: 'Original portrait' }],
+        assessment: { reason: '授权尚未明确', source_context_included: false } } }
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error', active_batch: 'batch-1',
+        batches: [{ id: 'batch-1', revision: 1, nodes: { a: { id: 'a', title: 'Evening reference', status: 'failed', attempt: 1, task_id: 7 } } }] }))),
+      http.get('*/agent-studio/api/runs/run1/media-retries', () => HttpResponse.json({ items: [], candidates: [candidate] })),
+      http.post('*/agent-studio/api/runs/run1/*', () => { posts(); return HttpResponse.json({}) }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    fireEvent.click(await screen.findByRole('button', { name: '查看原因与处理方案' }))
+    expect(await screen.findByText('供应商未提供具体命中原因')).toBeVisible()
+    expect(screen.getByText(/本会话生成 · Original portrait/)).toBeVisible()
+    expect(screen.getByText(/这次判断未结合参考素材来源/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制核查信息' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '查看预计积分' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '提示词' })).not.toBeInTheDocument()
+    expect(posts).not.toHaveBeenCalled()
+  })
+
   it('keeps recovery usable when desktop notifications throw and never asks permission automatically', async () => {
     const notify = vi.fn(() => { throw new Error('desktop notifications unavailable') })
     const permission = vi.fn()
