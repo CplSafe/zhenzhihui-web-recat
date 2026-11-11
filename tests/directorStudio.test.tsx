@@ -82,6 +82,29 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it('keeps recovery usable when desktop notifications throw and never asks permission automatically', async () => {
+    const notify = vi.fn(() => { throw new Error('desktop notifications unavailable') })
+    const permission = vi.fn()
+    class NotificationStub {
+      static permission = 'granted'
+      static requestPermission = permission
+      constructor() { notify() }
+    }
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    vi.stubGlobal('Notification', NotificationStub)
+    server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error' }))))
+    try {
+      render(<DeepAgentStudio />)
+      await openHistory()
+      expect(await screen.findByText('浏览器通知暂不可用，失败信息已保留在页面中')).toBeVisible()
+      expect(screen.getByRole('button', { name: /恢复执行/ })).toBeVisible()
+      expect(notify).toHaveBeenCalledTimes(1)
+      expect(permission).not.toHaveBeenCalled()
+    } finally {
+      hidden.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
   it('canvas dock opens with business identity and collapse retains the draft without triggering canvas input', async () => {
     const canvasKey = vi.fn(),
       seen = vi.fn()
@@ -1123,6 +1146,29 @@ it('local upload remains available from the attachment menu', async () => {
   fireEvent.change(input, { target: { files: [new NodeFile(['scene'], 'story.txt', { type: 'text/plain' })] } })
   expect(await screen.findByRole('button', { name: '移除 story.txt' })).toBeInTheDocument()
   await waitFor(() => expect(uploaded).toHaveBeenCalledExactlyOnceWith('scene'))
+})
+
+it('uploads a screenplay over 10 MiB and blocks files beyond 50 MiB without submitting a run', async () => {
+  const uploaded = vi.fn()
+  server.use(
+    http.post('*/agent-studio/api/attachments', async ({ request }) => {
+      uploaded((await request.arrayBuffer()).byteLength)
+      return HttpResponse.json({ id: 'long-script', type: 'prompt', characters: 100_001 })
+    }),
+  )
+  const { container } = render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+  const size = 11 * 1024 * 1024
+  fireEvent.change(input, { target: { files: [new NodeFile([new Uint8Array(size)], 'long.docx')] } })
+  await waitFor(() => expect(uploaded).toHaveBeenCalledExactlyOnceWith(size))
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  const oversized = new NodeFile(['x'], 'large.docx')
+  Object.defineProperty(oversized, 'size', { value: 50 * 1024 * 1024 + 1 })
+  fireEvent.change(input, { target: { files: [oversized] } })
+  expect(await screen.findByText('单个文件须为 1 字节至 50 MB。')).toBeInTheDocument()
+  expect(uploaded).toHaveBeenCalledOnce()
+  expect(Socket.instances).toHaveLength(0)
 })
 
 it('closing library registration ignores its late response without attaching or generating', async () => {

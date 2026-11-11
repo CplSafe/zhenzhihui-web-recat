@@ -223,7 +223,6 @@ import {
   resolveVerifiedImageResultAssetIds,
 } from '@/utils/taskMedia'
 import CanvasGeneratedImageGroup from '@/components/canvas/CanvasGeneratedImageGroup'
-import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import {
   canvasImageResultIds,
   canvasImageResultSize,
@@ -10615,6 +10614,8 @@ function CanvasInner() {
         assetId: (node.data as any)?.assetId,
         text: (node.data as any)?.text,
         prompt: (node.data as any)?.prompt,
+        operationCode: (node.data as any)?.operationCode,
+        params: (node.data as any)?.params,
       })
     },
     [isPickingRef, getSourceRefs],
@@ -10849,7 +10850,7 @@ function CanvasInner() {
           data: displayRole ? { ...data, displayRole } : data,
           type: CANVAS_ARROW_EDGE_TYPE,
           ...(edgeData.hdLineage ? { style: { ...edge.style, stroke: '#35a66f', strokeDasharray: '6 4' } } : {}),
-          hidden: edgesHidden || touchesHiddenAudioNode,
+          hidden: Boolean(edge.hidden) || edgesHidden || touchesHiddenAudioNode,
           className: className || undefined,
         }
       }),
@@ -11035,6 +11036,12 @@ function CanvasInner() {
           const target = event.target as HTMLElement
           pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
+          // Production frames organize outputs; clicking a member inspects that shot.
+          // Group headers still select/move the whole frame.
+          const clickedNode = latestRef.current.nodes.find((node) => node.id === nodeId)
+          if (!isPickingRef && clickedNode?.data?.production_run_id && !event.ctrlKey && !event.metaKey) {
+            setEditingGroup(getNodeGroupId(clickedNode as GroupableNode))
+          }
           nodePointerSelectionRef.current = nodeId
             ? {
                 id: nodeId,
@@ -11104,7 +11111,7 @@ function CanvasInner() {
           !drawerPanel &&
           !scriptImportOpen &&
           !guideRequested &&
-          !canvasModalOpen && <CanvasEmptyStateActions />}
+          !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
 
         {shareOpen && canvasId > 0 && workspaceId > 0 && (
           <CanvasShareDialog

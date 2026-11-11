@@ -181,7 +181,7 @@ Agent 每次请求/长连接周期检查都将当前业务登录交给固定 MCP
 
 组件回归测试：`tests/directorStudio.test.tsx`。本次实测使用已有会话和媒体，不重新付费生成。独立预览页与嵌入模式共用同一组件；原 `/agent` 功能保持独立。
 
-pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入口 `/director`。线上代理必须保持业务 Cookie、Host/Origin 与 `/agent-studio` 路径，普通请求128KiB、附件10MiB。HTTPS下Studio Cookie为Secure且限定mount路径。测试服务单进程、状态独立持久化，不复制本地账号token。
+pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入口 `/director`。线上代理必须保持业务 Cookie、Host/Origin 与 `/agent-studio` 路径，普通请求128KiB、附件50MiB。HTTPS下Studio Cookie为Secure且限定mount路径。测试服务单进程、状态独立持久化，不复制本地账号token。
 
 ### 豆豆状态与动效
 
@@ -198,6 +198,7 @@ pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入�
 
 - 用户界面统一使用 `DoDo Agent`；模型仍在“模型”面板选择，输入区不重复展示图片/视频模型标签。
 - 输入框“＋”打开本地上传/素材库菜单。本地上传仍走原附件接口；素材库按图片、视频、音频分页读取当前绑定空间，选择后复用原资产 ID，不重新上传或生成。文档继续使用本地上传解析。
+- 长剧本：单文件 50 MiB，单文档 100 万字符、会话附件合计 400 万字符，最多 8 个附件，文字版 PDF 最多 1000 页。前端仅传文件及附件 ID，不把全文塞进发送消息。后端完整保存原文，Agent 按需分页或按集名关键词定位；恢复会话沿用原附件和审批记录。
 - `GET /agent-studio/api/library?type=image&offset=0` 返回 `{items,total}`，每页 30 项；`POST /agent-studio/api/attachments/library` 接收 `{asset_ids:[...]}`，返回 `{attachments:[...]}`，最多 8 项。组件继续发送业务空间/画布请求头及同源会话，外部连接继续使用既有 OAuth 会话。
 - 服务端逐项执行 MCP `asset.get` 校验后整体登记附件；以账号、空间、资产派生稳定附件 ID。附件在送入模型前按资产 ID 去重，上传和素材库选择同一图片也只引用一次。
 - 模型、Skill、模式及附件菜单的 body portal 层级为 1600，高于画布面板 1200 和底部菜单 1450。宿主调整层级时必须同时检查这些弹层；原生 dialog 使用浏览器顶层。关闭弹层不丢草稿，取消素材选择后迟到响应不会回填。

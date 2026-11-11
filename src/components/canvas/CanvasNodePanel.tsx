@@ -971,12 +971,19 @@ export default function CanvasNodePanel({
   const sourceRefs = useMemo(() => {
     const seen = new Set<string>()
 
-    return (node?.sourceRefs || []).filter((ref) => {
-      if (seen.has(ref.edgeId)) return false
-      seen.add(ref.edgeId)
-      return true
-    })
-  }, [node?.sourceRefs])
+    return (node?.sourceRefs || [])
+      .filter((ref) => {
+        if (seen.has(ref.edgeId)) return false
+        seen.add(ref.edgeId)
+        return true
+      })
+      .map((ref) => ({
+        ...ref,
+        thumbnailUrl:
+          ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : undefined),
+      }))
+  }, [node?.sourceRefs, workspaceId])
+
   const requiredAudioVideoDurationSec = useMemo(
     () =>
       kind === 'video'
