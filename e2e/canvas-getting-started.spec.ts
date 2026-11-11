@@ -29,7 +29,7 @@ for (const width of [1440, 390]) {
       })
     })
     await page.goto('/canvas/142')
-    await expect(page.getByRole('button', { name: /DoDo Agent/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '打开 DoDo Agent' })).toBeVisible()
     const hint = page.getByText('点击下方「+」创建新节点')
     await expect(hint).toBeVisible()
     await expect(page.getByRole('region', { name: '开始创作' })).toHaveCount(0)
