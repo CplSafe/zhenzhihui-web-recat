@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Dialog } from './StudioCards'
 import type { createStudioAPI, Data, StudioModel } from './studio'
 import styles from './DeepAgentStudio.module.css'
@@ -179,27 +179,42 @@ export function MediaRetry({
   reload: () => Promise<void>
 }) {
   const [result, setResult] = useState<Data>()
+  const [visible, setVisible] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    let active = true
+    setResult(undefined)
+    setVisible(false)
+    setError('')
+    void api.request<Data>(`/api/runs/${runId}/media-retries`).then(data => {
+      if (active) setResult(data)
+    }).catch(e => {
+      if (active) setError(e instanceof Error ? e.message : '读取失败素材失败')
+    })
+    return () => { active = false }
+  }, [api, runId])
   async function open() {
     setBusy(true)
     setError('')
     try {
       setResult(await api.request<Data>(`/api/runs/${runId}/media-retries`))
+      setVisible(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : '读取失败素材失败')
     } finally {
       setBusy(false)
     }
   }
+  if (!visible && !error && !result?.candidates.length) return null
   return (
     <div className={styles.recovery}>
       <button type="button" disabled={busy} onClick={() => void open()}>
-        重试失败素材 / 更换模型
+        {error ? '重新查询失败素材' : '重试失败素材 / 更换模型'}
       </button>
       {error && <p role="alert">{error}</p>}
-      {result && (
-        <Dialog title="重试失败素材" onClose={() => setResult(undefined)}>
+      {visible && result && (
+        <Dialog title="重试失败素材" onClose={() => setVisible(false)}>
           {!result.candidates.length && <p>没有可重试的失败素材。结果未知的任务请先恢复查询。</p>}
           {result.candidates.map((candidate: Data) => (
             <RetryForm
@@ -212,7 +227,7 @@ export function MediaRetry({
                 (p: Data) => p.status === 'approved' && p.source.task_id === candidate.task_id,
               )}
               onDone={async () => {
-                setResult(undefined)
+                setVisible(false)
                 await reload()
               }}
             />

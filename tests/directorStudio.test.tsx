@@ -72,6 +72,7 @@ beforeEach(() => {
     ),
     http.get('*/agent-studio/api/catalog', () => HttpResponse.json(catalog)),
     http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot())),
+    http.get('*/agent-studio/api/runs/run1/media-retries', () => HttpResponse.json({ items: [], candidates: [] })),
   )
 })
 async function openHistory() {
@@ -82,6 +83,32 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it('does not offer model switching for a context lookup failure without failed media', async () => {
+    const queries = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error' }))),
+      http.get('*/agent-studio/api/runs/run1/media-retries', () => {
+        queries()
+        return HttpResponse.json({ items: [], candidates: [] })
+      }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    await waitFor(() => expect(queries).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: /恢复执行/ })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '重试失败素材 / 更换模型' })).not.toBeInTheDocument()
+    expect(screen.getByText('执行已暂停，进度已保留。请查看上方的具体原因。')).toBeVisible()
+  })
+
+  it('offers media retry only when the server reports a failed media candidate', async () => {
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error' }))),
+      http.get('*/agent-studio/api/runs/run1/media-retries', () => HttpResponse.json({ items: [], candidates: [{ task_id: 7 }] })),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    expect(await screen.findByRole('button', { name: '重试失败素材 / 更换模型' })).toBeVisible()
+  })
   it('keeps recovery usable when desktop notifications throw and never asks permission automatically', async () => {
     const notify = vi.fn(() => { throw new Error('desktop notifications unavailable') })
     const permission = vi.fn()

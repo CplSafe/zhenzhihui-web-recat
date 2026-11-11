@@ -44,7 +44,7 @@ export default function DeepAgentStudio({
     notifiedFailure.current = serverRun.id
     if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
       try {
-        const notice = new Notification('DoDo Agent 需要你处理', { body: '制作已暂停，成功素材已保留。请返回页面检查原因或更换模型重试。', tag: 'dodo-' + serverRun.id })
+        const notice = new Notification('DoDo Agent 需要你处理', { body: '执行已暂停，进度已保留。请返回会话查看具体原因。', tag: 'dodo-' + serverRun.id })
         notice.onclick = () => { window.focus(); notice.close() }
       } catch { setNotificationMessage('浏览器通知暂不可用，失败信息已保留在页面中') }
     }
@@ -634,7 +634,7 @@ export default function DeepAgentStudio({
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
-                  {run.status === 'error' && <p role="alert">制作已暂停，成功素材已保留。请检查失败原因，或更换模型重试。</p>}
+                  {run.status === 'error' && <p role="alert">执行已暂停，进度已保留。请查看上方的具体原因。</p>}
                   {'Notification' in window && Notification.permission !== 'granted' && <button type="button" onClick={() => {
                     void Notification.requestPermission().then(permission => setNotificationMessage(permission === 'granted' ? '已开启浏览器提醒' : '未开启浏览器通知，失败时仍会在页面内提醒')).catch(() => setNotificationMessage('浏览器通知暂不可用，失败时仍会在页面内提醒'))
                   }}>开启浏览器提醒</button>}
