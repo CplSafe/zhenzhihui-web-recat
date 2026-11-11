@@ -238,6 +238,58 @@ describe('Studio transport', () => {
       }
     },
   )
+  it.each(['send', 'upload'])(
+    'renews an expired access token after a day before %s, submitting only once',
+    async (action) => {
+      const now = vi.spyOn(Date, 'now')
+      let expires = 1_000 + 60 * 60 * 1000
+      let refreshes = 0,
+        writes = 0
+      now.mockReturnValue(1_000)
+      server.use(
+        http.get('*/agent-studio/api/state', () =>
+          Date.now() >= expires ? HttpResponse.json({}, { status: 401 }) : HttpResponse.json({ connected: true }),
+        ),
+        http.post('*/api/v1/auth/refresh', () => {
+          refreshes++
+          expires = Date.now() + 60 * 60 * 1000
+          return HttpResponse.json({})
+        }),
+        http.post('*/agent-studio/api/runs', () => {
+          writes++
+          return Date.now() >= expires ? HttpResponse.json({}, { status: 401 }) : HttpResponse.json({ id: 'next' })
+        }),
+        http.post('*/agent-studio/api/attachments', () => {
+          writes++
+          return Date.now() >= expires ? HttpResponse.json({}, { status: 401 }) : HttpResponse.json({ id: 'file' })
+        }),
+      )
+      try {
+        const api = createStudioAPI('/agent-studio', { workspaceId: 54, canvasId: 40 })
+        await api.request('/api/state')
+        now.mockReturnValue(1_000 + 24 * 60 * 60 * 1000 - 1)
+        if (action === 'send')
+          await expect(api.request('/api/runs', { message: 'continue' })).resolves.toEqual({ id: 'next' })
+        else await expect(api.upload(new File(['script'], 'script.txt'))).resolves.toMatchObject({ id: 'file' })
+        expect([refreshes, writes]).toEqual([1, 1])
+      } finally {
+        now.mockRestore()
+      }
+    },
+  )
+  it('does not submit work when login renewal is revoked or unavailable', async () => {
+    const writes = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/state', () => HttpResponse.json({}, { status: 401 })),
+      http.post('*/agent-studio/api/runs', () => {
+        writes()
+        return HttpResponse.json({ id: 'unexpected' })
+      }),
+    )
+    const api = createStudioAPI('/agent-studio', { workspaceId: 54, canvasId: 40 })
+    await expect(api.request('/api/runs', { message: 'continue' })).rejects.toMatchObject({ status: 401 })
+    expect(writes).not.toHaveBeenCalled()
+  })
   it('renews business login and only replays safe reads, never generation', async () => {
     let reads = 0,
       writes = 0,
@@ -258,7 +310,7 @@ describe('Studio transport', () => {
     const api = createStudioAPI('/agent-studio', { workspaceId: 54, canvasId: 40 })
     expect(await api.request('/api/state')).toEqual({ connected: true })
     await expect(api.request('/api/runs', { message: 'generate' })).rejects.toMatchObject({ status: 401 })
-    expect([reads, writes, refreshes]).toEqual([2, 1, 1])
+    expect([reads, writes, refreshes]).toEqual([3, 1, 1])
   })
   it('revalidates with current browser cookies and reconnects at the saved cursor after old handshake expires', async () => {
     render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
@@ -316,7 +368,7 @@ describe('Studio transport', () => {
     await api.request('/api/state')
     await api.request('/api/runs', { message: 'test' })
     await api.upload(new File(['text'], 'script.txt'))
-    expect(seen).toHaveLength(3)
+    expect(seen).toHaveLength(5)
     for (const request of seen) {
       expect(request.credentials).toBe('same-origin')
       expect(request.headers.get('X-Agent-Auth')).toBe('business')

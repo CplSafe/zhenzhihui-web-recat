@@ -45,13 +45,20 @@ export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
   if (inFlight) return inFlight
   const request = withRequestTimeout(
     async (signal) => {
-      const response = await fetch(AUTH_REFRESH_PATH, {
-        method: 'POST',
-        credentials: 'include',
-        ...(signal ? { signal } : {}),
-      })
-      const payload = await readJsonResponse(response)
-      return { ok: response.ok, status: response.status, payload, error: null, abortCause: null }
+      const refresh = async (): Promise<SessionRefreshOutcome> => {
+        const response = await fetch(AUTH_REFRESH_PATH, {
+          method: 'POST',
+          credentials: 'include',
+          ...(signal ? { signal } : {}),
+        })
+        const payload = await readJsonResponse(response)
+        return { ok: response.ok, status: response.status, payload, error: null, abortCause: null }
+      }
+      // Cookies are shared by tabs, module single-flight is not. Serialize token
+      // rotation across the origin; lock waiting shares the request timeout.
+      return typeof navigator !== 'undefined' && navigator.locks
+        ? navigator.locks.request('zzh.auth.refresh', { signal }, refresh)
+        : refresh()
     },
     { defaultTimeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS },
   ).catch(

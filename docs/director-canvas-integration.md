@@ -219,3 +219,13 @@ pro 测试站：`https://zzh-dev.zhongdahengrui.com/canvas`；独立 OAuth 入�
 页面在当前浏览器标签页的 `sessionStorage` 中只记录当前会话 ID。`GET /api/state` 返回的 `session_scope` 由服务端依据已认证的账号、工作空间、MCP 资源和站内画布生成；它只是界面隔离标识，不是授权凭证。React 组件额外按 API 地址与画布隔离。
 
 刷新后读取原会话快照并重新订阅已有进度，不调用发送、恢复执行或生成接口。点击“新建会话”移除当前选择，再刷新仍为空白；历史会话继续保留。不可访问的会话（403/404）会移除本地选择，暂时的网络错误保留选择供刷新重连。浏览器禁用存储时聊天仍可用，但不能记住选择。此功能不在浏览器存放消息正文、素材或 token；关闭标签页后的跨设备恢复请使用历史记录。
+
+## 24-hour business login renewal
+
+The TEST identity service issues login sessions for 86400 seconds (24 hours), verified against actual session records. Access tokens keep their shorter issuer-defined lifetime; expired tokens are never accepted. Logout, revocation, and account suspension still take effect.
+
+Before a first-party Agent send, approval, resume, or upload, the client checks the read-only Agent state endpoint. An expired business login is renewed through the existing shared refresh flow before submitting the operation once. Failed or uncertain generation responses are never replayed by renewal. External OAuth connections retain their existing flow.
+
+Browsers supporting Web Locks serialize refresh-token rotation across same-origin tabs using `zzh.auth.refresh`. Lock waiting and network work share the request timeout. Older browsers retain per-tab single-flight refresh. Refresh credentials remain in HttpOnly cookies, never browser storage or Agent prompts.
+
+Regression tests advance a controlled clock to just before 24 hours, expire the access token, and verify renewal before sending/uploading, one mutation only, and no mutation when renewal is denied. These tests make no paid model calls; they do not claim a completed real-time 24-hour browser soak test.
