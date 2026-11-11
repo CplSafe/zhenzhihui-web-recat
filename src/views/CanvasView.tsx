@@ -223,7 +223,6 @@ import {
   resolveVerifiedImageResultAssetIds,
 } from '@/utils/taskMedia'
 import CanvasGeneratedImageGroup from '@/components/canvas/CanvasGeneratedImageGroup'
-import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import {
   canvasImageResultIds,
   canvasImageResultSize,
@@ -11112,7 +11111,7 @@ function CanvasInner() {
           !drawerPanel &&
           !scriptImportOpen &&
           !guideRequested &&
-          !canvasModalOpen && <CanvasEmptyStateActions />}
+          !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
 
         {shareOpen && canvasId > 0 && workspaceId > 0 && (
           <CanvasShareDialog
