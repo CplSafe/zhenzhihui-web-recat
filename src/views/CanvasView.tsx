@@ -2668,7 +2668,7 @@ function CanvasInner() {
     () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
     [currentUserId, workspaceId],
   )
-  const showCanvasDirector: boolean = false
+  const showCanvasDirector: boolean = true
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
   const directorOpen = showCanvasDirector && openDirectorBinding === directorBindingKey

@@ -232,7 +232,7 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
     .getByRole('dialog')
     .getByRole('button', { name: /确\s*认/ })
     .click()
-  await expect(page.getByText('待受理')).toBeVisible()
+  await expect(page.getByText('返工中', { exact: true })).toBeVisible()
   expect(reworkRequests).toBe(1)
 })
 
