@@ -95,9 +95,7 @@ test('实拍素材少于最少条数时阻断报价并明确提示', async ({ pa
   await uploadFootage(page)
   await page.getByLabel('素材授权声明').check()
   await page.getByLabel('制作须知').check()
-  await page.getByRole('button', { name: '下一步：确认并提交' }).click()
-
-  await expect(page.getByRole('alert')).toContainText('至少上传 3 条实拍素材')
+  await expect(page.getByRole('button', { name: '下一步：确认并提交' })).toBeDisabled()
   expect(capture.quotes).toHaveLength(0)
   expect(capture.orders).toHaveLength(0)
   await page.screenshot({

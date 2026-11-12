@@ -7,34 +7,16 @@ function timestamp(value?: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function shanghaiDate(ms: number): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(ms)
-  const get = (type: string) => parts.find((part) => part.type === type)?.value || ''
-  return `${get('year')}-${get('month')}-${get('day')}`
-}
-
 export function deliveryDeadline(
   kind: DeliveryKind,
   createdAt?: string | null,
-  deadlineAt?: string | null,
-  promisedDate?: string | null,
+  _deadlineAt?: string | null,
+  _promisedDate?: string | null,
 ): number | null {
   const created = timestamp(createdAt)
-  const provided = timestamp(deadlineAt)
-  if (deadlineAt && provided === null) return null
-  const calculated = created === null ? null : created + (kind === 't1' ? 1 : 5) * 24 * 60 * 60 * 1000
-  if (provided !== null && calculated !== null && provided !== calculated) return null
-  const deadline = provided ?? calculated
-  if (deadline === null) return null
-  if (kind === 't5' && promisedDate) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(promisedDate) || shanghaiDate(deadline) !== promisedDate) return null
-  }
-  return deadline
+  if (created === null) return null
+  // 按提交时刻计算，不用改期字段覆盖固定的 24 小时 / 5 自然日倒计时。
+  return created + (kind === 't1' ? 1 : 5) * 24 * 60 * 60 * 1000
 }
 
 export function deliveryTimeParts(deadline: number, now: number) {

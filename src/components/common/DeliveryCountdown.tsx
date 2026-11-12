@@ -56,6 +56,9 @@ export function DeliveryCountdown({
       </span>
       {!time.overdue && <span>之内完成交付</span>}
       {!compact && <span className={styles.deadline}>截止时间：{date}（北京时间）</span>}
+      {!compact && time.overdue && kind === 't1' && (
+        <span className={styles.deadline}>制作中，如有疑问请联系客服。</span>
+      )}
     </span>
   )
 }

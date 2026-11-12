@@ -448,17 +448,26 @@ export async function installStrictAuthenticatedApp(
       await json(route, { available: 9000, balance: 9000 })
       return
     }
+    if (method === 'GET' && path === '/api/v1/template-categories') {
+      await json(route, [{ id: 1, name: '精选', position: 1 }])
+      return
+    }
     if (method === 'GET' && path === '/api/v1/templates') {
-      await json(route, [
-        {
-          id: 1,
-          title: 'E2E 在线模板',
-          video_url: `/api/v1/assets/603/download?workspace_id=${WORKSPACE_ID}`,
-          ratio: '16:9',
-          style: '写实',
-          created_at: '2026-07-20T00:00:00.000Z',
-        },
-      ])
+      await json(route, {
+        items: [
+          {
+            id: 1,
+            title: 'E2E 在线模板',
+            category_id: 1,
+            media_type: 'video',
+            media_url: `/api/v1/assets/603/download?workspace_id=${WORKSPACE_ID}`,
+            cover_url: '',
+            description: '',
+          },
+        ],
+        next_cursor: '',
+        has_more: false,
+      })
       return
     }
     if (method === 'GET' && path === '/api/v1/creative/projects') {

@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { getManualDurationSpec, getManualParamOptions } from '@/utils/manualVideoParams'
 
 describe('人工视频模型参数', () => {
-  it('使用模型范围验证任意整数时长', () => {
+  it('在模型范围内选择精制时长档位', () => {
     const model = { params_schema: { fields: [{ name: 'duration', min: 20, max: 90, default: 40 }] } }
     const spec = getManualDurationSpec(model)
-    expect([spec.min, spec.max, spec.fallback]).toEqual([20, 90, 40])
-    expect(spec.valid(47)).toBe(true)
+    expect([spec.min, spec.max, spec.fallback]).toEqual([20, 90, 30])
+    expect(spec.options).toEqual([30, 45, 60])
+    expect(spec.valid(47)).toBe(false)
     expect(spec.valid(19)).toBe(false)
     expect(spec.valid(47.5)).toBe(false)
   })

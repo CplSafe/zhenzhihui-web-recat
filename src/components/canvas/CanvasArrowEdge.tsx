@@ -12,10 +12,9 @@
  * 「引用时定义在不在」这个时序问题——无论边是新建、历史恢复还是增量同步进来的，
  * 它渲染出来的那一刻箭头就在。
  */
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { BaseEdge, getBezierPath, Position, useStore, useStoreApi, type EdgeProps } from '@xyflow/react'
 import type { CanvasConnectionRole } from '@/utils/canvasGeneration'
-import { routeCanvasReference } from '@/utils/canvasEdgeRouting'
 
 /** 箭头配色，与画布连线同色系；边自带 stroke 时以边为准。 */
 const CANVAS_EDGE_ARROW_COLOR = '#079b7d'
@@ -135,9 +134,7 @@ export default function CanvasArrowEdge({
   selected,
 }: EdgeProps) {
   const [hovered, setHovered] = useState(false)
-  const nodes = useStore((state) => state.nodes)
-  const store = useStoreApi()
-  const [bezier] = getBezierPath({
+  const [path] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -145,20 +142,6 @@ export default function CanvasArrowEdge({
     targetY,
     targetPosition,
   })
-  const path = useMemo(() => {
-    if (!id.startsWith('studio-ref-') || sourcePosition !== Position.Right || targetPosition !== Position.Left)
-      return bezier
-    const obstacles = Array.from(store.getState().nodeLookup.values())
-      .filter((node) => !node.hidden && node.type !== 'group')
-      .map((node) => ({
-        ...node.internals.positionAbsolute,
-        width: node.measured.width || node.width || 0,
-        height: node.measured.height || node.height || 0,
-      }))
-    const route = routeCanvasReference({ x: sourceX + 24, y: sourceY }, { x: targetX - 24, y: targetY }, obstacles)
-    if (!route) return bezier
-    return `M ${sourceX} ${sourceY} ` + route.map((p) => `L ${p.x} ${p.y}`).join(' ') + ` L ${targetX} ${targetY}`
-  }, [id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, bezier, nodes, store])
   const color = (style?.stroke as string) || CANVAS_EDGE_ARROW_COLOR
   const rotation = ARROW_ROTATION[targetPosition] ?? 0
   const roleLabel = data?.hdLineage ? '高清处理' : canvasConnectionRoleLabel(data?.displayRole || data?.role)

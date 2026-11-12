@@ -42,7 +42,7 @@ for (const width of [1440, 390]) {
       expect(route.request().postDataJSON()).toMatchObject({
         model_version_id: 78,
         operation_code: 'video.t1',
-        params: { duration: 47, ratio: '9:16', resolution: '480p' },
+        params: { duration: 60, ratio: '9:16', resolution: '480p' },
       })
       return route.fulfill({
         json: { code: 0, data: { estimated_cost: 123, balance: 1000, frozen: 0, can_afford: true } },
@@ -53,18 +53,17 @@ for (const width of [1440, 390]) {
     const settings = page.getByRole('button', { name: '生成设置' })
     if (await settings.isVisible()) await settings.click()
     await page.getByRole('button', { name: /生成模型/ }).click()
-    await expect(page.getByRole('option', { name: '人工模型甲 · T+1' })).toBeVisible()
-    await expect(page.getByRole('option', { name: '人工模型乙 · T+1' })).toBeVisible()
+    await expect(page.getByRole('option', { name: '精制交付 · 人工模型甲 · T+1' })).toBeVisible()
+    await expect(page.getByRole('option', { name: '精制交付 · 人工模型乙 · T+1' })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`model-picker-${width}.png`), animations: 'disabled' })
-    await page.getByRole('option', { name: '人工模型乙 · T+1' }).click()
+    await page.getByRole('option', { name: '精制交付 · 人工模型乙 · T+1' }).click()
     await expect(page.getByRole('button', { name: /生成模型，人工模型乙 · T\+1/ })).toBeVisible()
-    const duration = page.getByLabel('视频时长（秒）')
-    await expect(duration).toHaveAttribute('min', '20')
-    await expect(duration).toHaveAttribute('max', '90')
-    await duration.fill('47')
+    const duration = page.getByRole('slider', { name: '视频时长' })
+    await duration.focus()
+    await duration.press('End')
+    await expect(duration).toHaveAttribute('aria-valuetext', '60s')
     await page.screenshot({ path: testInfo.outputPath(`manual-params-${width}.png`), animations: 'disabled' })
     await page.getByRole('button', { name: '去制作' }).click()
-    await page.getByRole('button', { name: '查看订单 →' }).click()
     await expect(page.getByText('123 积分（交付时结算）', { exact: true })).toBeVisible()
   })
 }

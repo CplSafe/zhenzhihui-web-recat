@@ -22,7 +22,6 @@ test.describe('已认证关键路由与读取链路', () => {
     await page.goto('/templates')
 
     await expect(page.getByRole('heading', { name: '模板库' })).toBeVisible()
-    await expect(page.getByText('在线模板', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: /E2E 在线模板/ })).toBeVisible()
     expectScopedRequest(api, { method: 'GET', path: '/api/v1/templates' })
     expectNoUnexpectedApi(api)

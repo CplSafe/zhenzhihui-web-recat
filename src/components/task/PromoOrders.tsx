@@ -18,7 +18,7 @@ import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 import styles from './PromoOrders.module.css'
 
 const labels: Record<string, string> = {
-  pending: '团队制作中',
+  pending: '等待制作',
   producing: '团队制作中',
   reworking: '返工中',
   overdue: '制作中，顾问会主动联系你',
@@ -39,10 +39,19 @@ interface Props {
   onClose: () => void
   initialOrderId?: number
   serviceTel?: string
+  reworkDays?: number
+  reworkWindowDays?: number
 }
 
 /** 真实宣传片订单；服务端是状态、费用与操作权限的唯一来源。 */
-export default function PromoOrders({ workspaceId, onClose, initialOrderId, serviceTel }: Props) {
+export default function PromoOrders({
+  workspaceId,
+  onClose,
+  initialOrderId,
+  serviceTel,
+  reworkDays,
+  reworkWindowDays,
+}: Props) {
   const [items, setItems] = useState<PromoOrder[]>([])
   const [offset, setOffset] = useState(0)
   const [total, setTotal] = useState(0)
@@ -166,6 +175,7 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
       {selected !== null && (
         <div className={styles.steps}>
           <StepProgress
+            theme="delivery"
             steps={[
               { key: 'material', label: '需求与素材' },
               { key: 'confirm', label: '确认并提交' },
@@ -200,7 +210,11 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
         items.map((item) => (
           <button className={styles.row} type="button" key={item.id} onClick={() => setSelected(item.id)}>
             <span>订单 #{item.id}</span>
-            <span>{item.is_overdue ? labels.overdue : labels[item.status] || item.status}</span>
+            <span>
+              {item.is_overdue && !['delivered', 'completed', 'cancelled'].includes(item.status)
+                ? labels.overdue
+                : labels[item.status] || item.status}
+            </span>
           </button>
         ))}
       {selected === null && total > 20 && (
@@ -222,7 +236,6 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
         (['delivered', 'completed'].includes(order.status) ? (
           <div className={styles.delivery}>
             <div>
-              {order.is_overdue && <p role="status">制作中，顾问会主动联系你</p>}
               {videoUrl ? (
                 <video
                   className={styles.video}
@@ -270,7 +283,7 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
                 </div>
                 <div>
                   <dt>修改权益</dt>
-                  <dd>{order.can_rework ? '可申请修改' : '以订单状态为准'}</dd>
+                  <dd>{order.can_rework ? '可申请修改' : '当前不可申请修改，详情请联系客服'}</dd>
                 </div>
               </dl>
             </div>
@@ -279,6 +292,8 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
                 <section className={styles.sidePanel}>
                   <h2>不满意？提 1 次修改</h2>
                   <p>可申请一次免费修改，提交后等待受理。</p>
+                  {reworkWindowDays != null && <p>请在交付后 {reworkWindowDays} 天内申请。</p>}
+                  {reworkDays != null && <p>修改交付时间参考 {reworkDays} 天，具体以订单状态为准。</p>}
                   <label htmlFor="promo-rework-note">修改意见</label>
                   <textarea id="promo-rework-note" value={note} onChange={(event) => setNote(event.target.value)} />
                   <button
@@ -291,7 +306,13 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
                   </button>
                 </section>
               )}
-              {order.rework_status && (
+              {!order.can_rework && (
+                <section className={styles.sidePanel}>
+                  <h2>修改权益</h2>
+                  <p>当前订单无法申请修改，具体原因请联系客服。</p>
+                </section>
+              )}
+              {order.rework_status && order.rework_status !== 'unused' && (
                 <section className={styles.sidePanel}>
                   <h2>修改状态</h2>
                   <p>{rework[order.rework_status] || order.rework_status}</p>
@@ -321,56 +342,79 @@ export default function PromoOrders({ workspaceId, onClose, initialOrderId, serv
               {['pending', 'producing', 'reworking', 'overdue'].includes(order.status) && (
                 <span className={styles.spinner} aria-hidden="true" />
               )}
-              <strong>{order.is_overdue ? labels.overdue : labels[order.status] || order.status}</strong>
+              <strong>
+                {order.is_overdue && order.status !== 'cancelled'
+                  ? labels.overdue
+                  : labels[order.status] || order.status}
+              </strong>
               <span>订单编号 {order.id}</span>
             </div>
             <h2>
               {order.status === 'cancelled'
                 ? '订单已取消'
-                : order.status === 'reworking'
-                  ? '修改制作中'
-                  : '宣传片制作中'}
+                : order.status === 'pending'
+                  ? '订单已提交，等待制作'
+                  : order.status === 'reworking'
+                    ? '修改制作中'
+                    : '宣传片制作中'}
             </h2>
-            <p>
-              承诺交付日期：{order.promised_date || '待确定'}
-              <br />
-              积分状态：{billing[order.billing_status] || order.billing_status}
-            </p>
-            {!order.first_delivered_at && ['pending', 'producing', 'overdue'].includes(order.status) && (
-              <DeliveryCountdown
-                kind="t5"
-                createdAt={order.created_at}
-                deadlineAt={order.deadline_at}
-                promisedDate={order.promised_date}
-              />
-            )}
-            {order.rework_text && <p>修改意见：{order.rework_text}</p>}
-            {order.rework_reply && <p>回复：{order.rework_reply}</p>}
-            {order.status !== 'cancelled' && (
-              <div className={styles.phase}>
-                <span>已提交</span>
-                <span>制作中</span>
-                <span>交付</span>
-              </div>
-            )}
-            {serviceTel && (
-              <p className={styles.hotline}>
-                联系客服：<a href={`tel:${serviceTel}`}>{serviceTel}</a>
+            <section className={styles.waitSection}>
+              <h3>交付时间</h3>
+              <p>
+                承诺交付日期：{order.promised_date || '待确定'}
+                <br />
+                积分状态：{billing[order.billing_status] || order.billing_status}
               </p>
-            )}
-            <div className={styles.waitActions}>
-              <button type="button" onClick={() => setReload((v) => v + 1)}>
-                刷新状态
-              </button>
-              {canRefundPromoOrder(order) && (
-                <button type="button" disabled={busy} onClick={() => setConfirm('refund')}>
-                  申请退回积分
-                </button>
+              {!order.first_delivered_at && ['pending', 'producing', 'overdue'].includes(order.status) && (
+                <DeliveryCountdown
+                  kind="t5"
+                  createdAt={order.created_at}
+                  deadlineAt={order.deadline_at}
+                  promisedDate={order.promised_date}
+                />
               )}
-            </div>
+              {order.rework_text && <p>修改意见：{order.rework_text}</p>}
+              {order.rework_reply && <p>回复：{order.rework_reply}</p>}
+              {order.status === 'reworking' && (
+                <p>
+                  修改申请已提交，{reworkDays != null ? `修改交付时间参考 ${reworkDays} 天，` : ''}
+                  具体进度以订单状态为准。
+                </p>
+              )}
+            </section>
+            {order.status !== 'cancelled' && (
+              <section className={styles.waitSection}>
+                <h3>制作进度</h3>
+                <div className={styles.phase}>
+                  <span>已提交</span>
+                  <span>需求对齐</span>
+                  <span>制作中</span>
+                  <span>交付</span>
+                </div>
+              </section>
+            )}
+            <section className={styles.waitSection}>
+              <h3>需要帮忙？</h3>
+              {serviceTel && (
+                <p className={styles.hotline}>
+                  联系客服：<a href={`tel:${serviceTel}`}>{serviceTel}</a>
+                </p>
+              )}
+              <div className={styles.waitActions}>
+                <button type="button" onClick={() => setReload((v) => v + 1)}>
+                  刷新状态
+                </button>
+                {canRefundPromoOrder(order) && (
+                  <button type="button" disabled={busy} onClick={() => setConfirm('refund')}>
+                    申请退回积分
+                  </button>
+                )}
+              </div>
+            </section>
           </div>
         ))}
       <Modal
+        className={styles.confirmModal}
         open={confirm !== null}
         title={confirm === 'refund' ? '确认退回积分？' : '确认申请修改？'}
         okText="确认"

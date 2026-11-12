@@ -106,7 +106,13 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
         'X-Agent-Canvas-Id': String(business.canvasId),
       }
     : {}
+  async function ensureBusinessLogin(signal?: AbortSignal) {
+    if (business) await request('/api/state', undefined, signal)
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  }
   async function request<T>(path: string, data?: unknown, signal?: AbortSignal, renewed = false): Promise<T> {
+    // Renew through a read before submitting work; never replay a paid mutation.
+    if (data !== undefined) await ensureBusinessLogin(signal)
     const response = await fetch(prefix + path, {
       credentials: 'same-origin',
       signal,
@@ -148,6 +154,7 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
       if (!response.ok) throw new StudioHTTPError('暂时无法连接创作服务，请稍后重试。', response.status)
     },
     async upload(file: File): Promise<StudioAttachment> {
+      await ensureBusinessLogin()
       const response = await fetch(prefix + '/api/attachments?name=' + encodeURIComponent(file.name), {
         method: 'POST',
         credentials: 'same-origin',

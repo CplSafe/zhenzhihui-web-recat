@@ -64,6 +64,46 @@ describe('shared session refresh single-flight', () => {
     expect(refreshCalls[0]![1]).toMatchObject({ method: 'POST', credentials: 'include' })
   })
 
+  it('serializes rotating refresh tokens across independent tabs', async () => {
+    let queue = Promise.resolve()
+    const lock = vi.fn((_name: string, _options: unknown, callback: () => Promise<unknown>) => {
+      const next = queue.then(callback)
+      queue = next.then(
+        () => undefined,
+        () => undefined,
+      )
+      return next
+    })
+    vi.stubGlobal('navigator', { locks: { request: lock } })
+    const firstGate = deferred<Response>()
+    let active = 0,
+      maximum = 0,
+      calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        active++
+        maximum = Math.max(maximum, active)
+        const result = ++calls === 1 ? await firstGate.promise : jsonResponse({ data: {} })
+        active--
+        return result
+      }),
+    )
+    // Each tab has its own module-level single-flight; the origin lock is shared.
+    vi.resetModules()
+    const tab1 = await import('@/api/sessionRefresh')
+    vi.resetModules()
+    const tab2 = await import('@/api/sessionRefresh')
+    const first = tab1.runSharedSessionRefresh()
+    const second = tab2.runSharedSessionRefresh()
+    await Promise.resolve()
+    await Promise.resolve()
+    firstGate.resolve(jsonResponse({ data: {} }))
+    await expect(first).resolves.toMatchObject({ ok: true })
+    await expect(second).resolves.toMatchObject({ ok: true })
+    expect(maximum).toBe(1)
+    expect(lock).toHaveBeenCalledTimes(2)
+  })
   it('allows a new refresh once the previous one settled', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ data: { ok: true } }))
     vi.stubGlobal('fetch', fetchMock)

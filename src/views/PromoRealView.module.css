@@ -63,9 +63,38 @@
 }
 .introColumns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-items: start;
+}
+
+.intro {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.intro .plain {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.intro .introActions {
+  justify-content: flex-end;
+  padding-top: 14px;
+}
+.introColumns > div,
+.introColumns > aside {
+  background: #fff;
+  border: 1px solid #e7eaee;
+  border-radius: 12px;
+  padding: 24px;
+}
+.introFacts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.introActions {
+  justify-content: flex-end;
 }
 .intro h2 {
   margin: 0 0 10px;
@@ -290,9 +319,19 @@
   font-size: 13px;
 }
 .uploadBox input {
-  width: 100%;
-  max-width: 100%;
-  font-size: 12px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.uploadBox {
+  cursor: pointer;
+}
+.uploadBox:focus-within {
+  outline: 2px solid #73c9bb;
+  outline-offset: 2px;
 }
 .material {
   display: flex;
@@ -312,6 +351,23 @@
 .material button {
   padding: 4px 8px;
   font-size: 12px;
+}
+.materialFailed {
+  border: 1px solid #efb3b3;
+  background: #fff5f5;
+  color: #a92f2f;
+}
+.confirmModal :global(.ant-modal-content) {
+  border-radius: 12px;
+}
+.confirmModal :global(.ant-btn-primary) {
+  background: #1c1c1e;
+  border-color: #1c1c1e;
+  box-shadow: none;
+}
+.confirmModal :global(.ant-btn-primary:not(:disabled):hover) {
+  background: #000;
+  border-color: #000;
 }
 .consent {
   display: grid;
@@ -457,4 +513,126 @@
 .fields input[aria-invalid='true'],
 .fields textarea[aria-invalid='true'] {
   border-color: #c93232;
+}
+
+/* 原型 v2.2/v2.5 的最终覆盖层。 */
+.main {
+  background: #f5f6f8;
+}
+.heroTitle {
+  font-size: 26px;
+  letter-spacing: 0.01em;
+}
+.introFacts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.panel {
+  border-radius: 12px;
+  box-shadow: 0 1px 6px rgb(16 24 40 / 3%);
+}
+.intro {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.primary {
+  background: #1c1c1e;
+  border-color: #1c1c1e;
+  border-radius: 8px;
+  font-weight: 500;
+}
+.primary:hover:not(:disabled) {
+  background: #000;
+}
+.secondary,
+.material button {
+  border-radius: 8px;
+}
+.pill {
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.fields input,
+.fields select,
+.fields textarea {
+  border-color: #e7eaee;
+  border-radius: 6px;
+}
+.materialCard {
+  border-color: #e7eaee;
+  border-radius: 12px;
+}
+.requiredMaterial {
+  background: #fafcfb;
+  border-color: #cfe9e2;
+}
+.order {
+  background: #fafcfb;
+  border-color: #cfe9e2;
+  border-radius: 12px;
+}
+.order .plain {
+  background: #fff;
+  border: 1px solid #e7eaee;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 6px rgb(16 24 40 / 3%);
+}
+.table th {
+  background: #fafbfc;
+}
+.materialIndex {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  margin-right: 7px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #202329;
+  color: #fff;
+  font-size: 11px;
+}
+.materialReady,
+.materialPending {
+  display: inline-block;
+  padding: 3px 9px;
+  border: 1px solid #cfe9e2;
+  border-radius: 4px;
+  background: #e9f8f4;
+  color: #009f89;
+  white-space: nowrap;
+}
+.materialPending {
+  border-color: #e5e8ec;
+  background: #f1f3f5;
+  color: #77808e;
+}
+.orderGrid > div:first-child dd,
+.orderGrid > div:nth-child(3) dd {
+  color: #202329;
+}
+.steps {
+  background: transparent;
+  border-bottom: 0;
+}
+.actions > span:first-child {
+  margin-right: auto;
+}
+.uploadBox {
+  align-items: center;
+  text-align: center;
+}
+.materialHelp {
+  background: #fff;
+  border: 1px solid #e7eaee;
+  border-radius: 12px;
+  box-shadow: 0 1px 6px rgb(16 24 40 / 3%);
+}
+@media (max-width: 600px) {
+  .introFacts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

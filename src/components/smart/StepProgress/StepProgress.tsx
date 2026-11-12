@@ -20,12 +20,20 @@ interface StepProgressProps {
   onStepClick?: (index: number) => void
   /** 已到达的最远步索引:≤ 此索引的步都可点(即使正在进行中,如「镜头编排中」也能回跳)。-1=不启用 */
   clickableMax?: number
+  theme?: 'default' | 'delivery'
 }
 
 /** 展示创作流程状态，并只允许跳转到已完成、当前或曾经到达的步骤。 */
-export default function StepProgress({ steps, current, statuses, onStepClick, clickableMax = -1 }: StepProgressProps) {
+export default function StepProgress({
+  steps,
+  current,
+  statuses,
+  onStepClick,
+  clickableMax = -1,
+  theme = 'default',
+}: StepProgressProps) {
   return (
-    <div className={styles.stepProgress} role="list">
+    <div className={`${styles.stepProgress} ${theme === 'delivery' ? styles.delivery : ''}`} role="list">
       {steps.map((s, i) => {
         const state = i < current ? 'done' : i === current ? 'active' : 'todo'
         const sub = statuses?.[i] ?? (state === 'done' ? '已完成' : state === 'active' ? '进行中' : '待生成')

@@ -41,12 +41,7 @@ for (const width of [1440, 390]) {
       await expect(page.locator('label').filter({ has: page.getByLabel(name, { exact: true }) })).toContainText('*')
     }
     await page.getByLabel('单位 / 公司名称', { exact: true }).fill('   ')
-    await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
-    for (const name of names) {
-      await expect(page.getByLabel(name, { exact: true })).toHaveAttribute('aria-invalid', 'true')
-      await expect(page.getByText(`请填写${name}`, { exact: true })).toBeVisible()
-    }
-    await expect(page.getByLabel(names[0], { exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: '下一步：上传素材 →' })).toBeDisabled()
     await page.screenshot({
       path: testInfo.outputPath(`promo-required-${width}.png`),
       fullPage: true,
@@ -54,8 +49,6 @@ for (const width of [1440, 390]) {
     })
     for (const name of names) {
       await page.getByLabel(name, { exact: true }).fill('测试内容')
-      await expect(page.getByLabel(name, { exact: true })).toHaveAttribute('aria-invalid', 'false')
-      await expect(page.getByText(`请填写${name}`, { exact: true })).toHaveCount(0)
     }
     await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
     await expect(page.getByRole('heading', { name: '上传素材' })).toBeVisible()

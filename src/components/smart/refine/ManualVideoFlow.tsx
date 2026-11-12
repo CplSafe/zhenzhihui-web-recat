@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from 'antd'
 import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 import StepProgress from '@/components/smart/StepProgress'
+import ManualVideoHistory from './ManualVideoHistory'
 import { ensureAssetId } from '@/api/smartShotImage'
 import {
-  cancelManualVideoTask,
   createManualVideoTask,
   estimateManualVideoTask,
   getManualVideoDownloadUrl,
@@ -24,7 +24,6 @@ import { getModelParamFields, getModelParamOptionValues } from '@/utils/modelSch
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
 import { getManualDurationSpec } from '@/utils/manualVideoParams'
 import { isDefiniteSubmissionRejection } from '@/utils/submissionRecovery'
-import ManualVideoHistory from './ManualVideoHistory'
 import styles from './RefineDemo.module.less'
 import manualStyles from './ManualVideoFlow.module.css'
 
@@ -93,24 +92,19 @@ export default function ManualVideoFlow(props: Props) {
   const [modelLoading, setModelLoading] = useState(true)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [estimate, setEstimate] = useState<ManualVideoEstimate | null>(null)
-  const [screen, setScreen] = useState<'preparing' | 'order'>('preparing')
   const [snapshot, setSnapshot] = useState<ManualVideoInput | null>(null)
   const [task, setTask] = useState<ManualVideoTask | null>(null)
   const [video, setVideo] = useState('')
   const [instruction, setInstruction] = useState('')
+  const [reviewRevision, setReviewRevision] = useState(false)
   const [showSupport, setShowSupport] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [confirm, setConfirm] = useState<'create' | 'revision' | 'cancel' | null>(null)
+  const [confirm, setConfirm] = useState<'create' | 'revision' | null>(null)
   const [reload, setReload] = useState(0)
-  const previousTasks = useMemo(() => {
-    try {
-      const value = JSON.parse(localStorage.getItem(storage.tasks) || '[]')
-      return Array.isArray(value) ? value.filter((id): id is number => Number.isSafeInteger(id) && id > 0) : []
-    } catch {
-      return []
-    }
-  }, [storage.tasks])
+  const [autoQuote, setAutoQuote] = useState(false)
+  const quoteRef = useRef<() => Promise<void>>(async () => {})
+  const initialQuoteRequested = useRef(false)
   const busy = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
@@ -125,6 +119,8 @@ export default function ManualVideoFlow(props: Props) {
   useEffect(() => {
     if (taskId || !ownerId || !workspaceId) return
     const controller = new AbortController()
+    initialQuoteRequested.current = false
+    setConfirm(null)
     setError('')
     setModelLoading(true)
     setEstimate(null)
@@ -235,6 +231,7 @@ export default function ManualVideoFlow(props: Props) {
       return
     }
     busy.current = true
+    setConfirm(null)
     setLoading(true)
     setError('')
     setEstimate(null)
@@ -252,7 +249,6 @@ export default function ManualVideoFlow(props: Props) {
       const result = await estimateManualVideoTask(input)
       setSnapshot(input)
       setEstimate(result)
-      setScreen('order')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '估价失败')
     } finally {
@@ -260,6 +256,22 @@ export default function ManualVideoFlow(props: Props) {
       setLoading(false)
     }
   }
+  quoteRef.current = quote
+  useEffect(() => {
+    if (taskId || pending || modelLoading || !model || initialQuoteRequested.current || !Object.keys(values).length)
+      return
+    if (fields.some((field) => field.required && values[field.name] === undefined)) return
+    initialQuoteRequested.current = true
+    void quoteRef.current()
+  }, [taskId, pending, modelLoading, model, values, fields])
+  useEffect(() => {
+    if (!autoQuote) return
+    const timer = window.setTimeout(() => {
+      setAutoQuote(false)
+      void quoteRef.current()
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [autoQuote, values])
   const send = async (request: Pending) => {
     if (busy.current) return
     const previouslyUncertain = pending !== null
@@ -297,23 +309,6 @@ export default function ManualVideoFlow(props: Props) {
       setLoading(false)
     }
   }
-  const doCancel = async () => {
-    if (!task || busy.current) return
-    busy.current = true
-    setLoading(true)
-    setError('')
-    try {
-      await cancelManualVideoTask(workspaceId, task.id)
-      setConfirm(null)
-      setReload((value) => value + 1)
-      void refreshWallet({ force: true })
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '取消失败')
-    } finally {
-      busy.current = false
-      setLoading(false)
-    }
-  }
   const labels: Record<string, string> = {
     awaiting_manual: '待制作',
     manual_processing: '精制中',
@@ -328,12 +323,13 @@ export default function ManualVideoFlow(props: Props) {
     { key: 'accept', label: '你验收成片' },
   ]
   const delivered = task?.status === 'succeeded'
-  const step = taskId ? (delivered ? 3 : 2) : screen === 'order' ? 1 : 0
+  const revisionUnavailable = task?.can_rework === false || (task?.rework_count != null && task.rework_count >= 1)
+  const step = taskId ? (delivered ? 3 : 2) : 1
   const invalidFields = fields.some((field) => field.required && values[field.name] === undefined)
   return (
     <main className={`${styles.page} ${manualStyles.page}`} data-refine-demo data-manual-refine>
       <div className={`smart__progress ${styles.stepFrame}`}>
-        <StepProgress steps={steps} current={step} />
+        <StepProgress steps={steps} current={step} theme="delivery" />
       </div>
       <div className={`${styles.content} ${manualStyles.content}`}>
         <div className={manualStyles.projectTitle}>精制成片</div>
@@ -371,111 +367,44 @@ export default function ManualVideoFlow(props: Props) {
                 </div>
               </div>
             </section>
-            {screen === 'preparing' && (
-              <>
-                <section className={manualStyles.preparation} aria-labelledby="manual-preparation-title">
-                  <div>
-                    <h2 id="manual-preparation-title">核对制作需求</h2>
-                    <p>确认上方描述和素材后，查看订单即可获取本次报价。</p>
-                  </div>
-                  <p className={manualStyles.preparationStatus} role="status">
-                    {modelLoading
-                      ? '正在加载模型…'
-                      : loading
-                        ? '正在获取报价…'
-                        : model
-                          ? '准备就绪，尚未提交任务'
-                          : '模型尚未就绪，请查看上方提示'}
-                  </p>
-                </section>
-                <div className={manualStyles.plain}>
-                  <b>精制成片</b>
-                  <ul>
-                    <li>提交后按你的需求制作成片。</li>
-                    <li>做好后可在任务中查看、播放和下载。</li>
-                    <li>本次积分先冻结，交付时结算；失败或取消将退回本次费用。</li>
-                  </ul>
-                </div>
-                <div className={manualStyles.actions}>
+            <>
+              <section className={manualStyles.parameterCard} aria-labelledby="manual-parameters-title">
+                <div className={manualStyles.parameterHeading}>
+                  <h2 id="manual-parameters-title">本次生成参数</h2>
                   <button className={manualStyles.secondary} type="button" disabled={loading} onClick={onEdit}>
-                    ← 返回修改需求
-                  </button>
-                  <button
-                    className={manualStyles.primary}
-                    type="button"
-                    disabled={!model || loading || invalidFields}
-                    onClick={() => void quote()}
-                  >
-                    {loading ? '正在获取报价…' : '查看订单 →'}
+                    修改
                   </button>
                 </div>
-                <ManualVideoHistory
-                  key={`${ownerId}.${workspaceId}`}
-                  ownerId={ownerId}
-                  workspaceId={workspaceId}
-                  onOpen={(id) => {
-                    rememberTask(ownerId, workspaceId, id)
-                    onTask(id, false)
-                  }}
-                />
-                {previousTasks.length > 0 && (
-                  <div className={manualStyles.knownTasks}>
-                    <b>本设备的历史精制任务</b>
-                    <span>点击任务编号可查看之前的任务，与你当前的需求分开。</span>
-                    {previousTasks.map((id) => (
-                      <button key={id} type="button" disabled={loading} onClick={() => onTask(id, false)}>
-                        任务 #{id}
-                      </button>
-                    ))}
+                <dl className={manualStyles.grid}>
+                  <div>
+                    <dt>制作方式</dt>
+                    <dd>精制交付</dd>
                   </div>
-                )}
-              </>
-            )}
-            {screen === 'order' && (
-              <>
-                <section className={manualStyles.parameterCard} aria-labelledby="manual-parameters-title">
-                  <div className={manualStyles.parameterHeading}>
-                    <h2 id="manual-parameters-title">本次生成参数</h2>
-                    <button className={manualStyles.secondary} type="button" disabled={loading} onClick={onEdit}>
-                      修改
-                    </button>
+                  <div>
+                    <dt>爆款脚本</dt>
+                    <dd>{script || '不使用脚本'}</dd>
                   </div>
-                  <dl className={manualStyles.grid}>
-                    <div>
-                      <dt>制作方式</dt>
-                      <dd>精制交付</dd>
-                    </div>
-                    <div>
-                      <dt>爆款脚本</dt>
-                      <dd>{script || '不使用脚本'}</dd>
-                    </div>
-                    <div>
-                      <dt>画面比例 / 分辨率</dt>
-                      <dd>
-                        {String(values.ratio ?? '—')} · {String(values.resolution ?? '—')}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>成片时长</dt>
-                      <dd>{String(values.duration ?? '—')} 秒</dd>
-                    </div>
-                    <div>
-                      <dt>制作模型</dt>
-                      <dd>{model?.display_name || model?.model || '精制交付'}</dd>
-                    </div>
-                    <div>
-                      <dt>生成条数</dt>
-                      <dd>1 条</dd>
-                    </div>
-                    <div>
-                      <dt>交付时间</dt>
-                      <dd>待确认</dd>
-                    </div>
-                    <div>
-                      <dt>本次预计冻结</dt>
-                      <dd>{estimate ? `${estimate.estimated_cost.toLocaleString('zh-CN')} 积分` : '请重新获取报价'}</dd>
-                    </div>
-                  </dl>
+                  <div>
+                    <dt>画面比例 / 分辨率</dt>
+                    <dd>
+                      {String(values.ratio ?? '—')} · {String(values.resolution ?? '—')}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>成片时长</dt>
+                    <dd>{String(values.duration ?? '—')} 秒</dd>
+                  </div>
+                  <div>
+                    <dt>制作模型</dt>
+                    <dd>{model?.display_name || model?.model || '精制交付'}</dd>
+                  </div>
+                  <div>
+                    <dt>生成条数</dt>
+                    <dd>1 条</dd>
+                  </div>
+                </dl>
+                <details>
+                  <summary>调整生成参数</summary>
                   <div className={manualStyles.modelFields}>
                     {fields.map((field) => {
                       const options = getModelParamOptionValues(field)
@@ -484,6 +413,7 @@ export default function ManualVideoFlow(props: Props) {
                         setValues((old) => ({ ...old, [field.name]: value }))
                         setEstimate(null)
                         setSnapshot(null)
+                        setAutoQuote(true)
                       }
                       if (field.name === 'duration')
                         if (getManualDurationSpec(model).hasOptions)
@@ -556,73 +486,87 @@ export default function ManualVideoFlow(props: Props) {
                       ) : null
                     })}
                   </div>
-                </section>
-                <section className={manualStyles.order} aria-labelledby="manual-order-title">
-                  <div className={manualStyles.orderHeading}>
-                    <span className={manualStyles.pill}>T+1 交付</span>
-                    <h2 id="manual-order-title">精制成片 · 交付时间待确认</h2>
-                    <span>提交后进入精制排期</span>
+                </details>
+              </section>
+              <section className={manualStyles.order} aria-labelledby="manual-order-title">
+                <div className={manualStyles.orderHeading}>
+                  <span className={manualStyles.pill}>T+1 交付</span>
+                  <h2 id="manual-order-title">精制成片 · 提交后 24 小时内交</h2>
+                  <span>提交后进入精制排期</span>
+                </div>
+                <dl className={manualStyles.grid}>
+                  <div>
+                    <dt>成片时长</dt>
+                    <dd className={manualStyles.accent}>{String(values.duration ?? '—')} 秒</dd>
                   </div>
-                  <dl className={manualStyles.grid}>
-                    <div>
-                      <dt>成片时长</dt>
-                      <dd className={manualStyles.accent}>{String(values.duration ?? '—')} 秒</dd>
-                    </div>
-                    <div>
-                      <dt>交付时间</dt>
-                      <dd className={manualStyles.accent}>待确认</dd>
-                    </div>
-                    <div>
-                      <dt>制作方式</dt>
-                      <dd>系统精制</dd>
-                    </div>
-                    <div>
-                      <dt>本次消耗</dt>
-                      <dd>
-                        {estimate
-                          ? `${estimate.estimated_cost.toLocaleString('zh-CN')} 积分（交付时结算）`
+                  <div>
+                    <dt>交付时间</dt>
+                    <dd className={manualStyles.accent}>提交后 24 小时内</dd>
+                  </div>
+                  <div>
+                    <dt>制作方式</dt>
+                    <dd>系统精制</dd>
+                  </div>
+                  <div>
+                    <dt>本次消耗</dt>
+                    <dd>
+                      {estimate
+                        ? `${estimate.estimated_cost.toLocaleString('zh-CN')} 积分（交付时结算）`
+                        : modelLoading || loading
+                          ? '正在获取报价…'
                           : '请重新获取报价'}
-                      </dd>
-                    </div>
-                  </dl>
-                  {estimate && (
-                    <p className={manualStyles.balance}>
-                      可用余额：{estimate.balance} 积分 · 已冻结：{estimate.frozen} 积分
-                    </p>
+                    </dd>
+                  </div>
+                </dl>
+                {estimate && (
+                  <p className={manualStyles.balance}>
+                    可用余额：{estimate.balance} 积分 · 已冻结：{estimate.frozen} 积分
+                  </p>
+                )}
+                {estimate && !estimate.can_afford && <p role="alert">余额不足</p>}
+                <div className={manualStyles.plain}>
+                  <b>提交后会发生什么</b>
+                  <ul>
+                    <li>成片交付后出现在任务里，可播放和下载。</li>
+                    <li>如需修改，可按原任务报价申请修改。</li>
+                    <li>任务失败或取消时退回本次积分。</li>
+                  </ul>
+                </div>
+                <div className={manualStyles.submit}>
+                  {estimate ? (
+                    <button
+                      className={manualStyles.primary}
+                      type="button"
+                      disabled={!estimate.can_afford || !snapshot || loading}
+                      onClick={() => setConfirm('create')}
+                    >
+                      提交精制任务（T+1）
+                    </button>
+                  ) : (
+                    <button
+                      className={manualStyles.primary}
+                      type="button"
+                      disabled={!model || loading || invalidFields}
+                      onClick={() => void quote()}
+                    >
+                      {modelLoading || loading ? '正在获取报价…' : '重新获取报价'}
+                    </button>
                   )}
-                  {estimate && !estimate.can_afford && <p role="alert">余额不足</p>}
-                  <div className={manualStyles.plain}>
-                    <b>提交后会发生什么</b>
-                    <ul>
-                      <li>成片交付后出现在任务里，可播放和下载。</li>
-                      <li>如需修改，可按原任务报价申请修改。</li>
-                      <li>任务失败或取消时退回本次积分。</li>
-                    </ul>
-                  </div>
-                  <div className={manualStyles.submit}>
-                    {estimate ? (
-                      <button
-                        className={manualStyles.primary}
-                        type="button"
-                        disabled={!estimate.can_afford || loading}
-                        onClick={() => setConfirm('create')}
-                      >
-                        提交精制任务（T+1）
-                      </button>
-                    ) : (
-                      <button
-                        className={manualStyles.primary}
-                        type="button"
-                        disabled={!model || loading || invalidFields}
-                        onClick={() => void quote()}
-                      >
-                        重新获取报价
-                      </button>
-                    )}
-                  </div>
-                </section>
-              </>
-            )}
+                </div>
+              </section>
+              <details>
+                <summary>查看历史精制任务</summary>
+                <ManualVideoHistory
+                  key={`${ownerId}.${workspaceId}`}
+                  ownerId={ownerId}
+                  workspaceId={workspaceId}
+                  onOpen={(id) => {
+                    rememberTask(ownerId, workspaceId, id)
+                    onTask(id, false)
+                  }}
+                />
+              </details>
+            </>
           </>
         )}
         {taskId > 0 && !knownManualTask(ownerId, workspaceId, taskId) && (
@@ -640,47 +584,85 @@ export default function ManualVideoFlow(props: Props) {
             </div>
             <h1>
               {task.status === 'awaiting_manual' || task.status === 'manual_processing'
-                ? '任务已提交，等待精制成片'
+                ? task.parent_task_id
+                  ? '第 1 次修改已提交，等待精制成片'
+                  : '任务已提交，等待精制成片'
                 : labels[task.status] || task.status}
             </h1>
-            <p className={manualStyles.waitSummary}>
-              任务编号：{task.id}
-              <br />
-              积分先冻结，成片交付时结算。
-            </p>
-            {['awaiting_manual', 'manual_processing'].includes(task.status) && (
-              <DeliveryCountdown kind="t1" createdAt={task.created_at} deadlineAt={task.deadline_at} />
+            {(task.prompt || task.params || task.estimated_cost != null) && (
+              <div className={`${manualStyles.plain} ${manualStyles.waitDetails}`}>
+                <b>任务详情</b>
+                <ul>
+                  {task.prompt && <li>制作需求：{task.prompt}</li>}
+                  {task.params?.duration != null && <li>成片时长：{task.params.duration} 秒</li>}
+                  {task.params?.ratio && <li>画面比例：{task.params.ratio}</li>}
+                  {task.params?.resolution && <li>分辨率：{task.params.resolution}</li>}
+                  {task.estimated_cost != null && <li>预计冻结：{task.estimated_cost} 积分</li>}
+                </ul>
+              </div>
             )}
             {task.error_message && <p role="alert">{task.error_message}</p>}
-            <ol className={manualStyles.phase}>
-              <li>已提交</li>
-              <li>{labels[task.status] || task.status}</li>
-              <li>等待交付</li>
-            </ol>
-            <div className={manualStyles.waitActions}>
-              {['awaiting_manual', 'manual_processing'].includes(task.status) && (
-                <button
-                  className={manualStyles.secondary}
-                  type="button"
-                  disabled={loading || !!pending}
-                  onClick={() => setConfirm('cancel')}
-                >
-                  取消任务
+            {['awaiting_manual', 'manual_processing'].includes(task.status) && (
+              <section className={manualStyles.waitSection}>
+                <h2>交付时间</h2>
+                <DeliveryCountdown kind="t1" createdAt={task.created_at} deadlineAt={task.deadline_at} />
+              </section>
+            )}
+            <section className={manualStyles.waitSection}>
+              <h2>制作进度</h2>
+              <ol className={manualStyles.phase}>
+                <li>制作画面</li>
+                <li>成片精修</li>
+                <li>等待你验收</li>
+              </ol>
+            </section>
+            <section className={manualStyles.waitSection}>
+              <h2>需要帮忙？</h2>
+              <div className={manualStyles.waitActions}>
+                <button className={manualStyles.primary} type="button" onClick={() => setReload((v) => v + 1)}>
+                  刷新状态
                 </button>
-              )}
-              <button className={manualStyles.primary} type="button" onClick={() => setReload((v) => v + 1)}>
-                刷新状态
-              </button>
+              </div>
+              <div className={manualStyles.support}>
+                <p>临时要改需求、不想做了、或者内容很急，可以联系客服。</p>
+                <a href="tel:13681065734">136 8106 5734</a>
+                <p>工作日 9:00-18:00 · 电话/微信同码</p>
+              </div>
+            </section>
+          </section>
+        )}
+        {task && delivered && reviewRevision && (
+          <section className={manualStyles.order} aria-label="第 1 次修改确认">
+            <div className={manualStyles.orderHeading}>
+              <span className={manualStyles.pill}>第 1 次修改</span>
+              <h2>核对修改需求</h2>
+              <span>确认需求和参数后提交，将重新排期。</span>
             </div>
-            <div className={manualStyles.support}>
-              <h2>有问题？</h2>
-              <p>临时要改需求、不想做了、或者内容很急，可以联系客服。</p>
-              <a href="tel:13681065734">136 8106 5734</a>
-              <p>工作日 9:00-18:00 · 电话/微信同码</p>
+            <div className={manualStyles.plain}>
+              <b>修改意见</b>
+              <p>{instruction}</p>
+              {task.prompt && <p>原制作需求：{task.prompt}</p>}
+              {task.params?.duration != null && <p>原成片时长：{task.params.duration} 秒</p>}
+              {task.params?.ratio && <p>画面比例：{task.params.ratio}</p>}
+              {task.params?.resolution && <p>分辨率：{task.params.resolution}</p>}
+              <p>预计冻结：{task.estimated_cost ?? '待确认'} 积分，交付时结算。</p>
+            </div>
+            <div className={manualStyles.actions}>
+              <button className={manualStyles.secondary} type="button" onClick={() => setReviewRevision(false)}>
+                返回修改意见
+              </button>
+              <button
+                className={manualStyles.primary}
+                type="button"
+                disabled={loading || !!pending}
+                onClick={() => setConfirm('revision')}
+              >
+                提交第 1 次修改
+              </button>
             </div>
           </section>
         )}
-        {task && delivered && (
+        {task && delivered && !reviewRevision && (
           <div className={manualStyles.delivery}>
             <section>
               <h1 className={manualStyles.deliveryTitle}>精修成片</h1>
@@ -706,7 +688,11 @@ export default function ManualVideoFlow(props: Props) {
                 </div>
                 <div>
                   <span>交付时间</span>
-                  <b>—</b>
+                  <b>
+                    {task.delivered_at && !Number.isNaN(Date.parse(task.delivered_at))
+                      ? new Date(task.delivered_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+                      : '—'}
+                  </b>
                 </div>
                 <div>
                   <span>消耗积分</span>
@@ -735,6 +721,7 @@ export default function ManualVideoFlow(props: Props) {
                   这条片子想改？ <span className={manualStyles.pill}>T+1</span>
                 </h2>
                 <p>写下要改的地方，重新提交精制。</p>
+                {revisionUnavailable && <p role="status">本订单当前无法申请修改，请联系客服。</p>}
                 <label htmlFor="manual-instruction">修改意见</label>
                 <textarea
                   id="manual-instruction"
@@ -750,8 +737,10 @@ export default function ManualVideoFlow(props: Props) {
                   <button
                     className={manualStyles.primary}
                     type="button"
-                    disabled={!instruction.trim() || task.estimated_cost == null || loading || !!pending}
-                    onClick={() => setConfirm('revision')}
+                    disabled={
+                      revisionUnavailable || !instruction.trim() || task.estimated_cost == null || loading || !!pending
+                    }
+                    onClick={() => setReviewRevision(true)}
                   >
                     申请付费修改
                   </button>
@@ -767,19 +756,29 @@ export default function ManualVideoFlow(props: Props) {
         )}
       </div>
       <Modal
+        className={manualStyles.confirmModal}
         open={confirm !== null}
+        centered
+        width={520}
         title={
-          confirm === 'cancel' ? '确认取消任务？' : confirm === 'revision' ? '确认付费修改？' : '确认提交精制任务？'
+          <span className={manualStyles.confirmTitle}>
+            <span aria-hidden="true" className={manualStyles.confirmIcon}>
+              ?
+            </span>
+            {confirm === 'revision' ? '确认提交第 1 次修改？' : '确认提交精制任务？'}
+          </span>
         }
-        okText="确认"
-        cancelText="取消"
+        okText={confirm === 'revision' ? '确认修改' : '确认提交'}
+        cancelText="再想想"
         confirmLoading={loading}
-        closable={!loading}
+        okButtonProps={{
+          disabled: confirm === 'create' && (!estimate || !snapshot || loading || !estimate.can_afford),
+        }}
+        closable={false}
         maskClosable={!loading}
         onCancel={() => !loading && setConfirm(null)}
         onOk={() => {
-          if (confirm === 'cancel') void doCancel()
-          else if (confirm === 'create' && snapshot)
+          if (confirm === 'create' && snapshot && estimate && estimate.can_afford && !loading)
             void send({ kind: 'create', body: { ...snapshot, idempotency_key: crypto.randomUUID() } })
           else if (confirm === 'revision' && task)
             void send({
@@ -793,13 +792,31 @@ export default function ManualVideoFlow(props: Props) {
             })
         }}
       >
-        <p>
-          {confirm === 'cancel'
-            ? '取消后退回本次任务积分。'
-            : confirm === 'revision'
-              ? `本次按原报价冻结 ${task?.estimated_cost} 积分。`
-              : `本次预计冻结 ${estimate?.estimated_cost} 积分，交付时结算。`}
-        </p>
+        {confirm === 'revision' ? (
+          <p>本次按原报价冻结 {task?.estimated_cost} 积分。</p>
+        ) : (
+          <>
+            <p className={manualStyles.confirmDescription}>
+              预计 <strong>提交后 24 小时内</strong> 交付成片，到时在任务里点开就能看。
+            </p>
+            <dl className={manualStyles.confirmDetails}>
+              <div>
+                <dt>本次冻结</dt>
+                <dd>
+                  {estimate ? `${estimate.estimated_cost.toLocaleString('zh-CN')} 积分` : '报价已失效，请重新获取'}
+                </dd>
+              </div>
+              <div>
+                <dt>什么时候扣</dt>
+                <dd>交付成片时</dd>
+              </div>
+              <div>
+                <dt>未交付</dt>
+                <dd>积分处理以订单状态为准</dd>
+              </div>
+            </dl>
+          </>
+        )}
         {error && <p role="alert">{error}</p>}
       </Modal>
     </main>

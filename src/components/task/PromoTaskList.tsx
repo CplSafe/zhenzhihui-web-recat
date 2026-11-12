@@ -106,11 +106,11 @@ export default function PromoTaskList({
           key={`order-${order.id}`}
           title={order.company || `宣传片订单 #${order.id}`}
           status={
-            order.is_overdue
+            order.is_overdue && !['delivered', 'completed', 'cancelled'].includes(order.status)
               ? '制作中，顾问会主动联系你'
               : (
                   {
-                    pending: '团队制作中',
+                    pending: '等待制作',
                     producing: '团队制作中',
                     reworking: '返工中',
                     overdue: '制作中，顾问会主动联系你',
