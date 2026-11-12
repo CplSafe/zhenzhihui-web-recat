@@ -23,7 +23,7 @@ interface TemplateCardProps {
   onUseTemplate: (tpl: TemplateItem) => void
 }
 
-const TemplateCard = memo(function TemplateCard({
+export const TemplateCard = memo(function TemplateCard({
   tpl,
   favorite,
   onPreview,

@@ -11,6 +11,9 @@ export interface TemplateItem {
   /** 做同款的入口提示词；缺省时清空旧输入。 */
   prompt?: string
   id: number
+  /** 仅在目录接口明确返回时使用，缺失时不推断归类。 */
+  categoryId?: number
+  industryCode?: string
   title: string
   /** 首帧缩略图 */
   thumbnailUrl: string
@@ -374,6 +377,8 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
       const style = String(t?.style || '').trim()
       return {
         id: Number(t?.id || 0),
+        categoryId: Number(t?.category_id || 0) || undefined,
+        industryCode: String(t?.industry_code || '').trim() || undefined,
         title: String(t?.title || '').trim(),
         prompt: pickFirstText(t?.prompt, t?.prompt_text),
         thumbnailUrl: isSafeMediaUrl(thumbnailUrl) ? thumbnailUrl : '',

@@ -12,6 +12,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }))
 vi.mock('@/auth/useAuth', () => ({ useAuth: () => mocks.auth }))
 vi.mock('@/components/home/AppSidebar', () => ({ default: () => <nav aria-label="应用侧边栏" /> }))
+vi.mock('@/components/hotcopy/HotCopyShowcase/HotCopyTemplateGallery', () => ({
+  TemplateCard: () => <div>爆款模板</div>,
+}))
+vi.mock('@/utils/templateCatalog', () => ({
+  loadTemplateCatalog: () => Promise.resolve({ items: [], source: 'backend', notice: '' }),
+}))
 vi.mock('@/composables/useSidebarNavigate', () => ({ useSidebarNavigate: () => vi.fn() }))
 vi.mock('@/api/templateLibrary', () => ({
   listLibraryTemplates: mocks.list,
@@ -42,10 +48,22 @@ it('按分类查询并从模板详情接口读取详情', async () => {
   render(<TemplatesView />)
   await user.click(await screen.findByRole('button', { name: /产品展示/ }))
   expect(await screen.findByText('详情说明')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '做同款' })).not.toBeInTheDocument()
   expect(mocks.detail).toHaveBeenCalledWith(11)
   await user.click(screen.getByRole('button', { name: 'Close' }))
   await user.click(await screen.findByRole('button', { name: /^产品$/ }))
   await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(7, '', expect.any(AbortSignal)))
+})
+
+it('视频详情可带入爆款复刻', async () => {
+  const user = userEvent.setup()
+  const video = { ...template, mediaType: 'video', mediaUrl: '/sample.mp4' }
+  mocks.list.mockResolvedValue({ items: [video], nextCursor: '', hasMore: false })
+  mocks.detail.mockResolvedValue(video)
+  render(<TemplatesView />)
+  await user.click(await screen.findByRole('button', { name: /产品展示/ }))
+  await user.click(await screen.findByRole('button', { name: '做同款' }))
+  expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', { state: { carryVideo: { url: '/sample.mp4' } } })
 })
 
 it('游客显示登录入口且不请求模板', () => {

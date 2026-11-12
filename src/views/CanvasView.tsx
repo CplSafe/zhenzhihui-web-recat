@@ -1744,7 +1744,18 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         ? /\.[a-z0-9]{1,8}$/i.test(audioName)
           ? audioName
           : `${audioName}.wav`
-        : buildDownloadName(kind === 'image' ? '画布图片' : '画布视频', new Date(), kind === 'image' ? 'jpg' : 'mp4')
+        : kind === 'video'
+          ? `${
+              headerTitle
+                .replace(/[\\/:*?"<>|]/g, '_')
+                .split('')
+                .map((character) => (character.charCodeAt(0) < 32 ? '_' : character))
+                .join('')
+                .replace(/[. ]+$/g, '')
+                .replace(/\.mp4$/i, '')
+                .trim() || '视频'
+            }.mp4`
+          : buildDownloadName('画布图片', new Date(), 'jpg')
     try {
       const result = await downloadToDisk({
         fileName,
