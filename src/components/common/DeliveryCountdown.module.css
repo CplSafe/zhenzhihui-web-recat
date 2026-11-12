@@ -47,3 +47,18 @@
   min-width: 24px;
   font-size: 12px;
 }
+.countdown:not(.compact) .units {
+  color: #0a8f7c;
+  font-size: 30px;
+  font-weight: 600;
+  gap: 2px;
+}
+.countdown:not(.compact) .number {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}

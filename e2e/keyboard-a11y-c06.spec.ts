@@ -147,9 +147,8 @@ test('精制确认弹窗可纯键盘取消，且不会误提交付费任务', as
   const settings = page.getByRole('button', { name: '生成设置' })
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('button', { name: /精制交付 · T\+1/ }).click()
+  await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
-  await page.getByRole('button', { name: '查看订单 →' }).click()
   await expect(page.getByRole('heading', { name: '本次生成参数' })).toBeVisible()
 
   await page.getByRole('button', { name: '提交精制任务（T+1）' }).click()

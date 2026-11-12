@@ -72,10 +72,8 @@ async function openManualOrderScreen(page: Page, prompt: string) {
   const settings = page.getByRole('button', { name: '生成设置' })
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('button', { name: /精制交付 · T\+1/ }).click()
+  await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
-  await expect(page.getByRole('heading', { name: '核对制作需求' })).toBeVisible()
-  await page.getByRole('button', { name: '查看订单 →' }).click()
   await expect(page.getByRole('heading', { name: '本次生成参数' })).toBeVisible()
 }
 
@@ -85,6 +83,7 @@ test('精制时长越界或非整数时明确提示且不发起估价', async ({
   const capture = await mockManualVideo(page)
   await openManualOrderScreen(page, '时长越界精制需求')
 
+  await page.getByText('调整生成参数').click()
   const duration = page.getByLabel('时长（秒）')
   await expect(duration).toHaveAttribute('min', '15')
   await expect(duration).toHaveAttribute('max', '300')
@@ -119,6 +118,7 @@ test('精制时长 15 与 300 边界可估价并按整数秒原样下发', async
   const capture = await mockManualVideo(page)
   await openManualOrderScreen(page, '时长边界精制需求')
 
+  await page.getByText('调整生成参数').click()
   const duration = page.getByLabel('时长（秒）')
 
   const parameterCard = page.getByLabel('本次生成参数')

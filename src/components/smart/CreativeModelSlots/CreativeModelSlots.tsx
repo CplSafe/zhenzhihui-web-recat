@@ -268,8 +268,8 @@ export default function CreativeModelSlots({
                         )}
                       </span>
                       <span className={styles.optionBody}>
-                        <span className={styles.optionName}>{model.name} · T+1</span>
-                        {model.description && <span className={styles.optionDesc}>{model.description}</span>}
+                        <span className={styles.optionName}>精制交付 · {model.name} · T+1</span>
+                        <span className={styles.optionDesc}>按需求精制为一条完整成片，提交后 24 小时内交付。</span>
                       </span>
                       {refineSelected && model.id === refineModelId && (
                         <span className={styles.check} aria-hidden="true">

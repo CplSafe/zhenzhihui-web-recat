@@ -118,7 +118,7 @@ export default function ManualVideoHistory({
         {visibleTasks.map((task) => (
           <DeliveryTaskCard
             key={task.id}
-            title={String((task as ManualVideoTask & { prompt?: string }).prompt || `精制任务 #${task.id}`)}
+            title={task.prompt || `精制任务 #${task.id}`}
             status={
               (
                 {
@@ -130,7 +130,15 @@ export default function ManualVideoHistory({
                 } as Record<string, string>
               )[task.status] || task.status
             }
-            meta={`T+1 · 任务 #${task.id}`}
+            meta={[
+              'T+1',
+              `任务 #${task.id}`,
+              task.params?.duration != null ? `${task.params.duration} 秒` : '',
+              task.params?.ratio || '',
+              task.estimated_cost != null ? `预计 ${task.estimated_cost} 积分` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
             countdown={
               ['awaiting_manual', 'manual_processing'].includes(task.status) ? (
                 <DeliveryCountdown kind="t1" createdAt={task.created_at} deadlineAt={task.deadline_at} compact />

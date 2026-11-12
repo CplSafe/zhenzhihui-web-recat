@@ -83,7 +83,7 @@ export default function PromoRealView() {
   const [formValidated, setFormValidated] = useState(false)
   const [draftScope, setDraftScope] = useState('')
   const [authorized, setAuthorized] = useState(false)
-  const [acknowledged, setAcknowledged] = useState(false)
+  const [acknowledged, setAcknowledged] = useState(true)
   const [quote, setQuote] = useState<PromoQuote | null>(null)
   const [pending, setPending] = useState<PromoOrderInput | null>(null)
   const [busy, setBusy] = useState(false)
@@ -92,6 +92,7 @@ export default function PromoRealView() {
   const [confirm, setConfirm] = useState(false)
   const [uploadStage, setUploadStage] = useState<Record<number, 'uploading' | 'uploaded' | 'failed'>>({})
   const [uploadingName, setUploadingName] = useState('')
+  const [copyNotice, setCopyNotice] = useState('')
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -154,6 +155,8 @@ export default function PromoRealView() {
     setToken('')
     setMaterials([])
     setOffline(false)
+    setAuthorized(false)
+    setAcknowledged(true)
     setStarted(false)
     setQuote(null)
     setPending(null)
@@ -333,7 +336,7 @@ export default function PromoRealView() {
       if (!config || !token) return
       if (!form.company.trim() || !form.contact.trim() || !form.phone.trim() || !form.brief.trim())
         throw new Error('请填写公司、联系人、电话和制作需求')
-      if (materials.some((item) => item.status !== 'active')) throw new Error('请完成或删除未完成的素材')
+      if (!offline && materials.some((item) => item.status !== 'active')) throw new Error('请完成或删除未完成的素材')
       if (
         !offline &&
         materials.filter((item) => item.role === 'footage' && item.status === 'active').length <
@@ -391,6 +394,16 @@ export default function PromoRealView() {
       event.target.value = ''
       if (file) addFile(file, role, existing)
     }
+  const dropFile = (role: 'footage' | 'logo' | 'supplement') => (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    if (busy) return
+    const files = event.dataTransfer.files
+    if (files.length > 1) {
+      setError('请每次拖入一个文件，等待上传完成后再添加其他素材。')
+      return
+    }
+    if (files[0]) addFile(files[0], role)
+  }
   return (
     <div className={styles.shell} data-promo-real>
       <AppSidebar activeKey="promo" onNavigate={navigate} open={sidebar} onClose={() => setSidebar(false)} />
@@ -405,6 +418,8 @@ export default function PromoRealView() {
                 workspaceId={workspace}
                 initialOrderId={orderId || undefined}
                 serviceTel={config?.service_tel}
+                reworkDays={config?.rework_days}
+                reworkWindowDays={config?.rework_window_days}
                 onClose={() => {
                   setOrders(false)
                   setQuery({})
@@ -446,7 +461,7 @@ export default function PromoRealView() {
                 {(!started || stage === 'intro' || !config?.enabled || !PROMO_DELIVERY_CREATE_ENABLED) && !pending && (
                   <>
                     <h1 className={styles.heroTitle}>{config?.entry_name || '定制宣传片'}</h1>
-                    <p className={styles.heroSubtitle}>实拍＋AI 混剪 · 每单交付 1 条成片</p>
+                    <p className={styles.heroSubtitle}>实拍＋AI 混剪 · 每单交付 1 条成片 · 提交后 5 天内交付</p>
                     <section className={`${styles.panel} ${styles.intro}`}>
                       <div className={styles.introColumns}>
                         <div>
@@ -473,6 +488,12 @@ export default function PromoRealView() {
                           <h2>怎么交付</h2>
                           <div className={styles.plain}>
                             提交需求与素材后进入制作排期，交付后可在订单中播放和下载。修改与交付时间以订单详情为准。
+                            {config?.rework_window_days != null && config?.rework_days != null && (
+                              <p>
+                                交付后 {config.rework_window_days} 天内可申请修改，修改交付时间参考 {config.rework_days}{' '}
+                                天。
+                              </p>
+                            )}
                           </div>
                           <dl className={styles.introFacts}>
                             <div>
@@ -496,20 +517,20 @@ export default function PromoRealView() {
                               <dd>提交前获取报价</dd>
                             </div>
                           </dl>
+                          {config && (!config.enabled || !PROMO_DELIVERY_CREATE_ENABLED) && (
+                            <p className={styles.notice}>新建服务暂未开放，已有订单仍可查看。</p>
+                          )}
+                          <div className={styles.introActions}>
+                            {config?.enabled && PROMO_DELIVERY_CREATE_ENABLED && (
+                              <button className={styles.primary} type="button" disabled={busy} onClick={start}>
+                                提交需求，进入制作排期
+                              </button>
+                            )}
+                            <button className={styles.secondary} type="button" onClick={() => setOrders(true)}>
+                              查看我的订单
+                            </button>
+                          </div>
                         </aside>
-                      </div>
-                      {config && (!config.enabled || !PROMO_DELIVERY_CREATE_ENABLED) && (
-                        <p className={styles.notice}>新建服务暂未开放，已有订单仍可查看。</p>
-                      )}
-                      <div className={styles.introActions}>
-                        {config?.enabled && PROMO_DELIVERY_CREATE_ENABLED && (
-                          <button className={styles.primary} type="button" disabled={busy} onClick={start}>
-                            提交需求，进入制作排期
-                          </button>
-                        )}
-                        <button className={styles.secondary} type="button" onClick={() => setOrders(true)}>
-                          查看我的订单
-                        </button>
                       </div>
                     </section>
                   </>
@@ -523,6 +544,7 @@ export default function PromoRealView() {
                     <>
                       <div className={styles.steps}>
                         <StepProgress
+                          theme="delivery"
                           steps={[
                             { key: 'material', label: '需求与素材' },
                             { key: 'confirm', label: '确认并提交' },
@@ -695,13 +717,20 @@ export default function PromoRealView() {
                           </fieldset>
                           <div className={styles.plain}>
                             <b>接下来：</b>填写需求后上传素材，交付日期以报价和订单详情为准。
+                            <p>预计消耗以提交前报价为准。</p>
                           </div>
                           <div className={styles.actions}>
                             <span>第 1 步 / 共 2 步：需求</span>
                             <button
                               className={styles.primary}
                               type="button"
-                              disabled={busy}
+                              disabled={
+                                busy ||
+                                !form.company.trim() ||
+                                !form.contact.trim() ||
+                                !form.phone.trim() ||
+                                !form.brief.trim()
+                              }
                               onClick={() => {
                                 setFormValidated(true)
                                 const missing = (['company', 'contact', 'phone', 'brief'] as const).find(
@@ -742,8 +771,16 @@ export default function PromoRealView() {
                                       ? '图片文件，透明底优先'
                                       : '补充文件可选传'}
                                 </p>
-                                <label className={styles.uploadBox}>
-                                  {role === 'footage' ? '上传实拍素材' : role === 'logo' ? '上传 LOGO' : '上传补充文件'}
+                                <label
+                                  className={styles.uploadBox}
+                                  onDragOver={(event) => event.preventDefault()}
+                                  onDrop={dropFile(role)}
+                                >
+                                  {role === 'footage'
+                                    ? '拖拽或点击上传实拍素材'
+                                    : role === 'logo'
+                                      ? '拖拽或点击上传 LOGO'
+                                      : '拖拽或点击上传补充文件'}
                                   <input
                                     type="file"
                                     disabled={busy}
@@ -754,7 +791,10 @@ export default function PromoRealView() {
                                 {materials
                                   .filter((item) => item.role === role)
                                   .map((item) => (
-                                    <div className={styles.material} key={item.id}>
+                                    <div
+                                      className={`${styles.material} ${uploadStage[item.id] === 'failed' ? styles.materialFailed : ''}`}
+                                      key={item.id}
+                                    >
                                       <span>
                                         {item.name || `素材 #${item.id}`} ·{' '}
                                         {item.status === 'active'
@@ -766,8 +806,9 @@ export default function PromoRealView() {
                                               : uploadStage[item.id] === 'failed'
                                                 ? '上传失败'
                                                 : '未完成'}
+                                        {item.size_bytes != null &&
+                                          ` · ${(item.size_bytes / 1024 / 1024).toFixed(1)} MB`}
                                       </span>
-                                      {item.low_resolution && <span>清晰度较低</span>}
                                       {item.status !== 'active' && (
                                         <>
                                           <button type="button" disabled={busy} onClick={() => complete(item.id)}>
@@ -793,7 +834,7 @@ export default function PromoRealView() {
                               </section>
                             ))}
                           </div>
-                          <div className={styles.plain}>
+                          <div className={`${styles.plain} ${styles.materialHelp}`}>
                             <b>传不上来怎么办？</b>{' '}
                             {config.offline_fallback
                               ? '可以登记线下交接，由顾问联系你。'
@@ -816,7 +857,33 @@ export default function PromoRealView() {
                               素材我线下交给顾问
                             </button>
                           )}
-                          {offline && <p>已登记线下交接，具体交付日期以报价为准。</p>}
+                          {offline && (
+                            <p>
+                              已登记线下交接，具体交付日期以报价为准。
+                              {config.service_tel && (
+                                <>
+                                  {' '}
+                                  顾问电话：<a href={`tel:${config.service_tel}`}>{config.service_tel}</a>{' '}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!navigator.clipboard) {
+                                        setCopyNotice('复制不可用，请手动选择号码')
+                                        return
+                                      }
+                                      void navigator.clipboard
+                                        .writeText(config.service_tel)
+                                        .then(() => setCopyNotice('电话号码已复制'))
+                                        .catch(() => setCopyNotice('复制失败，请手动选择号码'))
+                                    }}
+                                  >
+                                    复制
+                                  </button>
+                                </>
+                              )}
+                              {copyNotice && <span role="status">{copyNotice}</span>}
+                            </p>
+                          )}
                           <fieldset className={styles.consent} disabled={busy}>
                             <label>
                               <input
@@ -848,7 +915,7 @@ export default function PromoRealView() {
                             </p>
                           )}
                           <div className={styles.actions}>
-                            <span>第 2 步 / 共 2 步：素材</span>
+                            <span>预计消耗以提交前报价为准</span>
                             <button
                               className={styles.secondary}
                               type="button"
@@ -864,6 +931,10 @@ export default function PromoRealView() {
                                 busy ||
                                 !authorized ||
                                 !acknowledged ||
+                                (!offline &&
+                                  (materials.some((item) => item.status !== 'active') ||
+                                    materials.filter((item) => item.role === 'footage' && item.status === 'active')
+                                      .length < config.footage_min_count)) ||
                                 !config.price_show ||
                                 config.manual_quote_required
                               }
@@ -876,7 +947,9 @@ export default function PromoRealView() {
                       )}
                       {stage === 'order' && quote && (
                         <section className={styles.panel}>
-                          <h1 className={styles.projectTitle}>需求与素材已收齐</h1>
+                          <h1 className={styles.projectTitle}>
+                            {offline ? '需求已填写，素材线下交接' : '需求与素材已收齐'}
+                          </h1>
                           <div className={styles.block}>
                             <b>核心信息：</b>
                             <p>{form.brief}</p>
@@ -889,14 +962,16 @@ export default function PromoRealView() {
                                   <tr>
                                     <th>素材</th>
                                     <th>文件</th>
+                                    <th>规格</th>
                                     <th>状态</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {materials.length ? (
-                                    materials.map((item) => (
+                                    materials.map((item, index) => (
                                       <tr key={item.id}>
                                         <td>
+                                          <span className={styles.materialIndex}>{index + 1}</span>
                                           {item.role === 'footage'
                                             ? '实拍素材'
                                             : item.role === 'logo'
@@ -904,12 +979,29 @@ export default function PromoRealView() {
                                               : '补充文件'}
                                         </td>
                                         <td>{item.name || `素材 #${item.id}`}</td>
-                                        <td>{item.status === 'active' ? '已就绪' : '未完成'}</td>
+                                        <td>
+                                          {item.size_bytes != null
+                                            ? `${(item.size_bytes / 1024 / 1024).toFixed(1)} MB`
+                                            : '—'}
+                                        </td>
+                                        <td>
+                                          <span
+                                            className={
+                                              item.status === 'active' ? styles.materialReady : styles.materialPending
+                                            }
+                                          >
+                                            {item.status === 'active'
+                                              ? '已就绪'
+                                              : offline
+                                                ? '未上传，将线下交接'
+                                                : '未完成'}
+                                          </span>
+                                        </td>
                                       </tr>
                                     ))
                                   ) : (
                                     <tr>
-                                      <td colSpan={3}>{offline ? '线下交接' : '暂无素材'}</td>
+                                      <td colSpan={4}>{offline ? '线下交接' : '暂无素材'}</td>
                                     </tr>
                                   )}
                                 </tbody>
@@ -919,7 +1011,7 @@ export default function PromoRealView() {
                           <div className={styles.order}>
                             <div className={styles.orderHeading}>
                               <h2>宣传片制作订单</h2>
-                              <span className={styles.pill}>T+5 定制</span>
+                              <span className={styles.pill}>T+5 人工交付</span>
                               <span>提交后进入制作排期</span>
                             </div>
                             <dl className={styles.orderGrid}>
@@ -946,21 +1038,36 @@ export default function PromoRealView() {
                             </dl>
                             <div className={styles.plain}>
                               <b>出片规格：</b>
-                              {form.ratio} · {form.resolution} ·{' '}
+                              {form.duration_seconds >= 60
+                                ? `${form.duration_seconds / 60} 分钟`
+                                : `${form.duration_seconds} 秒`}{' '}
+                              · {form.ratio} · {form.resolution} ·{' '}
                               {form.narration === 'both'
                                 ? '旁白及字幕'
                                 : form.narration === 'subtitles'
                                   ? '仅字幕'
                                   : form.narration === 'narration'
                                     ? '仅旁白'
-                                    : '均不需要'}
+                                    : '均不需要'}{' '}
+                              · 交付 1 条
                             </div>
                             <div className={styles.plain}>
                               <b>提交前请确认：</b>
                               <ul>
+                                <li>本片由团队按你的需求和素材制作，提交后进入制作排期。</li>
                                 <li>提交时冻结积分，首次交付时结算。</li>
-                                <li>普通取消请联系顾问，退款资格以订单状态为准。</li>
-                                <li>交付后的修改权限以订单详情为准。</li>
+                                <li>
+                                  普通取消请联系客服电话{' '}
+                                  <a href={`tel:${config.service_tel || '13681065734'}`}>
+                                    {config.service_tel || '13681065734'}
+                                  </a>
+                                  ，退款资格以订单状态为准。
+                                </li>
+                                <li>
+                                  交付后可申请一次修改，权限以订单详情为准。
+                                  {config.rework_window_days != null &&
+                                    `请在交付后 ${config.rework_window_days} 天内申请。`}
+                                </li>
                               </ul>
                             </div>
                           </div>
@@ -1002,10 +1109,11 @@ export default function PromoRealView() {
         </div>
       </div>
       <Modal
+        className={styles.confirmModal}
         open={confirm}
-        title="确认提交宣传片订单？"
+        title="确认提交宣传片任务？"
         okText="确认提交"
-        cancelText="取消"
+        cancelText="再想想"
         confirmLoading={busy}
         closable={!busy}
         maskClosable={!busy}
@@ -1029,6 +1137,8 @@ export default function PromoRealView() {
           </p>
         )}
         <p>提交后将冻结 {quote?.total_cost} 积分，首次交付时结算。</p>
+        <p>提交后 5 天内交付；承诺交付日期：{quote?.promised_date || '待确认'}。</p>
+        {config?.service_tel && <p>客服电话：{config.service_tel}。</p>}
         {error && <p role="alert">{error}</p>}
       </Modal>
     </div>

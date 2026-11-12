@@ -160,15 +160,18 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await page.screenshot({ path: testInfo.outputPath('promo-intro.png'), fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
   await expectFullWidthSteps(page)
+  await expect(page.getByRole('button', { name: '下一步：上传素材 →' })).toBeDisabled()
   await page.getByLabel('单位 / 公司名称').fill('测试公司')
   await page.getByLabel('联系人', { exact: true }).fill('李先生')
   await page.getByLabel('联系电话').fill('13800000000')
   await page.getByLabel('制作需求', { exact: true }).fill('介绍产品')
   await page.screenshot({ path: testInfo.outputPath('promo-form.png'), fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
-  await page
-    .getByLabel('上传实拍素材')
-    .setInputFiles({ name: '素材.png', mimeType: 'image/png', buffer: Buffer.from('abc') })
+  await page.getByLabel('上传实拍素材').evaluate((input) => {
+    const data = new DataTransfer()
+    data.items.add(new File(['abc'], '素材.png', { type: 'image/png' }))
+    input.parentElement?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }))
+  })
   await expect(page.getByRole('status').filter({ hasText: '正在处理素材：素材.png' })).toBeVisible()
   await expect(page.getByText(/素材.png · 上传中/)).toBeVisible()
   releaseUpload()
@@ -216,7 +219,7 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
     acknowledged: true,
     authorization_version: 'v1',
   })
-  await expect(page.getByText('团队制作中', { exact: true })).toBeVisible()
+  await expect(page.getByText('等待制作', { exact: true })).toBeVisible()
   orderStatus = 'delivered'
   await page.getByRole('button', { name: '刷新状态' }).click()
   await expect(page.getByLabel('宣传片成片')).toBeVisible()
@@ -335,3 +338,59 @@ for (const enabled of [true, false]) {
     else await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
   })
 }
+
+test('素材上传失败后登记线下交接可继续并保留未上传提示', async ({ page }, testInfo) => {
+  await installStrictAuthenticatedApp(page, { preserveStorage: true })
+  let quotes = 0
+  await page.route('**/api/v1/promo/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    let data: unknown = {}
+    if (path.endsWith('/config')) data = config
+    else if (path.endsWith('/intakes')) data = { token: 'offline-intake' }
+    else if (path.endsWith('/uploads'))
+      data = {
+        material: {
+          id: 5,
+          role: 'footage',
+          status: 'pending',
+          name: '素材.png',
+          size_bytes: 3,
+          mime_type: 'image/png',
+        },
+        url: 'https://bucket.aliyuncs.com/upload',
+        form_fields: { key: 'sample' },
+        expires_at: '2027-01-01',
+      }
+    else if (path.endsWith('/offline')) data = {}
+    else if (path.endsWith('/quote')) {
+      quotes++
+      data = { base_cost: 100, service_cost: 50, total_cost: 150, config_hash: 'hash1', promised_date: '2026-11-16' }
+    } else return route.fallback()
+    await route.fulfill({ json: { code: 0, data } })
+  })
+  await page.route('https://bucket.aliyuncs.com/upload', (route) =>
+    route.fulfill({ status: 500, headers: { 'access-control-allow-origin': '*' } }),
+  )
+  await page.goto('/promo')
+  await page.getByRole('button', { name: '提交需求，进入制作排期' }).click()
+  await page.getByLabel('单位 / 公司名称').fill('测试公司')
+  await page.getByLabel('联系人', { exact: true }).fill('测试')
+  await page.getByLabel('联系电话').fill('13800000000')
+  await page.getByLabel('制作需求', { exact: true }).fill('介绍产品')
+  await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  await page
+    .getByLabel('上传实拍素材')
+    .setInputFiles({ name: '素材.png', mimeType: 'image/png', buffer: Buffer.from('abc') })
+  await expect(page.getByText(/素材.png · 上传失败/)).toBeVisible()
+  await page.getByLabel('素材授权声明').check()
+  await page.getByLabel('制作须知').check()
+  await expect(page.getByRole('button', { name: '下一步：确认并提交' })).toBeDisabled()
+  expect(quotes).toBe(0)
+  await page.getByRole('button', { name: '素材我线下交给顾问' }).click()
+  await expect(page.getByText('已登记线下交接，具体交付日期以报价为准。')).toBeVisible()
+  await page.getByRole('button', { name: '下一步：确认并提交' }).click()
+  await expect(page.getByRole('heading', { name: '需求已填写，素材线下交接' })).toBeVisible()
+  await expect(page.getByText('未上传，将线下交接')).toBeVisible()
+  expect(quotes).toBe(1)
+  await page.screenshot({ path: testInfo.outputPath('offline-failed-material.png') })
+})

@@ -12,7 +12,7 @@ test('真实宣传片订单详情、免费修改及退款条件使用后端状�
     status,
     billing_status: status === 'overdue' ? 'frozen' : 'settled',
     promised_date: '2026-11-10',
-    is_overdue: status === 'overdue',
+    is_overdue: status === 'overdue' || status === 'delivered',
     first_delivered_at: status === 'overdue' ? null : '2026-11-04T00:00:00+08:00',
     can_rework: status === 'delivered',
     delivered_material_id: status === 'delivered' ? 42 : null,
@@ -45,6 +45,7 @@ test('真实宣传片订单详情、免费修改及退款条件使用后端状�
   await page.getByRole('button', { name: /订单 #10/ }).click()
   await expect(page.getByText('2026-11-10')).toBeVisible()
   await expect(page.getByLabel('宣传片成片')).toBeVisible()
+  await expect(page.getByText('制作中，顾问会主动联系你')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('promo-delivery.png'), fullPage: true, animations: 'disabled' })
   await expect(page.getByRole('button', { name: '申请退回积分' })).toHaveCount(0)
   await page.getByLabel('修改意见').fill('调整片尾')

@@ -17,10 +17,15 @@ export interface ManualVideoTask {
   estimated_cost?: number
   actual_cost?: number
   created_at?: string
+  delivered_at?: string | null
   deadline_at?: string | null
   parent_task_id?: number | null
+  rework_count?: number | null
+  can_rework?: boolean | null
   outputs?: Array<{ type: string; asset_id?: number; url?: string }>
   error_message?: string
+  prompt?: string
+  params?: { duration?: number; ratio?: string; resolution?: string }
 }
 
 export interface ManualVideoEstimate {

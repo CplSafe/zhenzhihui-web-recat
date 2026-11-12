@@ -62,12 +62,9 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
   await page.getByRole('button', { name: /生成模型/ }).click()
   await page.getByRole('option', { name: /人工制作 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
-  await expect(page.getByRole('heading', { name: '核对制作需求' })).toBeVisible()
-  await expect(page.getByText('准备就绪，尚未提交任务')).toBeVisible()
-  await expect(page.getByRole('listitem').filter({ hasText: '核对需求' })).toHaveAttribute('aria-current', 'step')
+  await expect(page.getByRole('listitem').filter({ hasText: '提交精制任务' })).toHaveAttribute('aria-current', 'step')
   await expect(page.getByText('提交精制任务', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('manual-preparing.png'), animations: 'disabled' })
-  await page.getByRole('button', { name: '查看订单 →' }).click()
   await expect(page.getByRole('heading', { name: '本次生成参数' })).toBeVisible()
   await expect(page.getByText('123 积分（交付时结算）', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('manual-quote.png'), animations: 'disabled' })
@@ -88,7 +85,7 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
   await expect(page.getByRole('button', { name: '重试原请求' })).toBeVisible()
   await expect(page.getByRole('alert')).toContainText('余额不足')
   await page.getByRole('button', { name: '重试原请求' }).click()
-  await expect(page.getByText('任务编号：91')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '任务已提交，等待精制成片' })).toBeVisible()
   await expect(page.getByRole('timer')).toContainText('成片将于')
   expect(requests).toHaveLength(4)
   expect(requests[1]).toBe(requests[2])
@@ -102,11 +99,11 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
     input_assets: [],
   })
   await page.reload()
-  await expect(page.getByText('任务编号：91')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '任务已提交，等待精制成片' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '任务已提交，等待精制成片' })).toBeVisible()
 })
 
-test('窄屏精制准备页说明下一步及本设备历史任务', async ({ page }, testInfo) => {
+test('窄屏精制确认页展示自动报价', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   await page.addInitScript(() => {
@@ -139,16 +136,12 @@ test('窄屏精制准备页说明下一步及本设备历史任务', async ({ pa
   await page.getByRole('button', { name: /生成模型/ }).click()
   await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
-  await expect(page.getByText('准备就绪，尚未提交任务')).toBeVisible()
-  await expect(page.getByText('点击任务编号可查看之前的任务，与你当前的需求分开。')).toBeVisible()
-  await expect(page.getByRole('button', { name: '任务 #4272' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({
     path: testInfo.outputPath('manual-preparing-mobile.png'),
     fullPage: true,
     animations: 'disabled',
   })
-  await page.getByRole('button', { name: '查看订单 →' }).click()
   await expect(page.getByRole('heading', { name: '本次生成参数' })).toBeVisible()
 })
 
@@ -195,11 +188,15 @@ test('已知人工任务的付费修改创建新任务，原任务不被覆盖',
   await expect(page.getByText(/再冻结 123 积分/)).toBeVisible()
   await page.getByLabel('修改意见').fill('调整片尾')
   await page.getByRole('button', { name: '申请付费修改' }).click()
+  await expect(page.getByRole('heading', { name: '核对修改需求' })).toBeVisible()
+  await expect(page.getByText('调整片尾', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '提交第 1 次修改' }).click()
   await page
     .getByRole('dialog')
     .getByRole('button', { name: /确\s*认/ })
     .click()
-  await expect(page.getByText('任务编号：92')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '第 1 次修改已提交，等待精制成片' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '第 1 次修改已提交，等待精制成片' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   expect(revision).toMatchObject({ workspace_id: 21, instruction: '调整片尾', idempotency_key: expect.any(String) })
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('zzh.manual.tasks.7.21') || '[]'))).toEqual([92, 91])
@@ -271,6 +268,7 @@ test('仅展示明确标识为 T+1 的服务端历史任务', async ({ page }, t
   await page.getByRole('button', { name: /生成模型/ }).click()
   await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
   await page.getByRole('button', { name: '去制作' }).click()
+  await page.getByText('查看历史精制任务').click()
   await expect(page.getByRole('button', { name: /任务 #901/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /任务 #902/ })).toHaveCount(0)
   await page.getByRole('button', { name: '加载更多精制任务' }).click()
@@ -281,5 +279,5 @@ test('仅展示明确标识为 T+1 的服务端历史任务', async ({ page }, t
   expect(secondPageAttempts).toBe(2)
   await page.screenshot({ path: testInfo.outputPath('manual-history.png'), animations: 'disabled' })
   await page.getByRole('button', { name: /任务 #901/ }).click()
-  await expect(page.getByText('任务编号：901')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '任务已提交，等待精制成片' })).toBeVisible()
 })

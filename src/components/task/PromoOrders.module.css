@@ -73,6 +73,32 @@
     grid-template-columns: 95px 1fr;
   }
 }
+.steps {
+  background: transparent;
+  border-bottom: 0;
+}
+.waitSection .phase {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.waitSection .phase span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.waitSection .phase span::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #b9c2cc;
+  flex: none;
+}
+.waitSection .hotline {
+  background: transparent;
+  border: 0;
+}
 .workflow {
   min-width: 0;
   color: #1f2329;
@@ -129,6 +155,18 @@
   font-weight: 600;
   text-decoration: none;
 }
+.confirmModal :global(.ant-modal-content) {
+  border-radius: 12px;
+}
+.confirmModal :global(.ant-btn-primary) {
+  background: #1c1c1e;
+  border-color: #1c1c1e;
+  box-shadow: none;
+}
+.confirmModal :global(.ant-btn-primary:not(:disabled):hover) {
+  background: #000;
+  border-color: #000;
+}
 .workflow .heading {
   margin-bottom: 18px;
 }
@@ -171,6 +209,61 @@
 .wait h2 {
   margin: 22px 0 8px;
   font-size: 22px;
+}
+.waitSection {
+  margin: 14px auto 0;
+  padding: 18px;
+  border: 1px solid #eceef2;
+  border-radius: 14px;
+  background: #fff;
+}
+.waitSection h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.workflow .heading button,
+.waitActions button,
+.downloadBar button,
+.sidePanel button {
+  border-radius: 8px;
+}
+.video,
+.videoPlaceholder,
+.downloadBar,
+.sidePanel {
+  border-radius: 12px;
+}
+.phase {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.hotline {
+  border: 0;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+.waitSection p {
+  color: #6b7280;
+  line-height: 1.7;
+}
+.waitSection .phase {
+  margin-top: 8px;
+}
+.workflow .primary {
+  background: #1c1c1e;
+  border-color: #1c1c1e;
+  border-radius: 8px;
+}
+.waitVisual {
+  background: #141a20;
+  min-height: 260px;
+  border-radius: 12px;
+}
+.waitSection h3 {
+  text-align: left;
+  color: #9aa1ac;
+  font-size: 12.5px;
 }
 .wait > p {
   color: #6b7280;
