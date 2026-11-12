@@ -1,6 +1,6 @@
 import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
-import { canvasReferenceFromNode, type CanvasReference } from '@/components/director/canvasReference'
+import { canvasReferenceFromNode, isCanvasReferenceTarget, type CanvasReference } from '@/components/director/canvasReference'
 import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
@@ -11484,7 +11484,7 @@ function CanvasInner() {
                 return
               }
               if (directorOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
-                  !(event.target as Element).closest('button, a, input, textarea, video, audio, [contenteditable="true"]')) {
+                  isCanvasReferenceTarget(event.target as Element)) {
                 const reference = canvasReferenceFromNode(node)
                 if (reference) {
                   setDirectorReference({ binding: directorBindingKey, reference })

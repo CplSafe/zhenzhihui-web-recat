@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canvasReferenceFromNode } from '@/components/director/canvasReference'
+import { canvasReferenceFromNode, isCanvasReferenceTarget } from '@/components/director/canvasReference'
 
 describe('canvas node reference', () => {
   it('keeps identity and a bounded label, without uploading or copying private node data', () => {
@@ -12,4 +12,13 @@ describe('canvas node reference', () => {
     expect(canvasReferenceFromNode({ id: 'group', type:'group', data:{ kind:'group' } })).toBeUndefined()
     expect(canvasReferenceFromNode({ id: 'text', data:{ kind:'text' } })?.id).toBe('text')
   })
+})
+
+it('references a video surface while preserving player controls and editable inputs', () => {
+  const node = document.createElement('div')
+  node.innerHTML = '<video></video><div class="canvas-node-video-bar"><span>seek</span></div><button><span>play</span></button><input/><video controls></video>'
+  expect(isCanvasReferenceTarget(node.querySelector('video')!)).toBe(true)
+  for (const target of node.querySelectorAll('.canvas-node-video-bar span, button span, input, video[controls]')) {
+    expect(isCanvasReferenceTarget(target)).toBe(false)
+  }
 })

@@ -12,3 +12,8 @@ export function canvasReferenceFromNode(
   if (!['text', 'image', 'video', 'audio'].includes(kind)) return
   return { id: node.id, title: String(node.data?.title || node.data?.label || '未命名节点').slice(0, 120), kind }
 }
+
+/** Media surfaces can be referenced; their explicit controls keep their own actions. */
+export function isCanvasReferenceTarget(target: Element): boolean {
+  return !target.closest('button, a, input, textarea, video[controls], audio[controls], .canvas-node-video-bar, [contenteditable="true"]')
+}
