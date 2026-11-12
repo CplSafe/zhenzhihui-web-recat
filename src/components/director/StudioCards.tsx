@@ -450,6 +450,13 @@ export function EventCard({
     >
       <Markdown>{event.text}</Markdown>
       {event.kind === 'user' && data.delivery === 'sending' && <small role="status">发送中…</small>}
+      {event.kind === 'user' && Array.isArray(data.canvas_references) && (
+        <div className={styles.chips} aria-label="本条消息引用的节点">
+          {data.canvas_references.slice(0, 8).map((item: Data) => (
+            <span key={String(item.id)}>引用 · {String(item.title || '画布节点').slice(0, 120)}</span>
+          ))}
+        </div>
+      )}
       {event.data && event.kind !== 'inspection' && <Media canvas={canvas} data={event.data} />}
       {['user', 'assistant'].includes(event.kind) && <CopyMessage text={event.text} />}
     </article>

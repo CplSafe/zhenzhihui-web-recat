@@ -11,6 +11,7 @@ import { DoudouMascot } from './DoudouMascot'
 import { MediaRetry } from './MediaRetry'
 import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
+import type { CanvasReference } from './canvasReference'
 
 export interface DeepAgentStudioProps {
   apiBase?: string
@@ -20,6 +21,7 @@ export interface DeepAgentStudioProps {
   onCanvasChange?: (canvas: Data) => void
   onCollapse?: () => void
   className?: string
+  canvasReference?: CanvasReference
 }
 /** Embeddable Studio: the host owns placement; the service owns auth, tools, billing and execution. */
 export default function DeepAgentStudio({
@@ -30,6 +32,7 @@ export default function DeepAgentStudio({
   onCanvasChange,
   onCollapse,
   className = '',
+  canvasReference,
 }: DeepAgentStudioProps) {
   const tooltipScope = useRef<HTMLElement>(null)
   const business =
@@ -76,6 +79,8 @@ export default function DeepAgentStudio({
     [results, setResults] = useState(false)
   const [attachments, setAttachments] = useState<StudioAttachment[]>([]),
     [uploading, setUploading] = useState(false)
+  const [canvasReferences, setCanvasReferences] = useState<CanvasReference[]>([])
+  const consumedCanvasReference = useRef<CanvasReference>()
   const [stopping, setStopping] = useState(false)
   const stopLock = useRef(false)
   const [actionBusy, setActionBusy] = useState(false),
@@ -108,6 +113,7 @@ export default function DeepAgentStudio({
     if (threadRef.current !== current) {
       threadRef.current = current
       setAttachments([])
+      setCanvasReferences([])
       setMessage('')
       setResults(false)
       setSelectedDocument('')
@@ -119,6 +125,14 @@ export default function DeepAgentStudio({
       setSkill(run.skill_name || '')
     }
   }, [current, run?.selection, run?.skill_name])
+  useEffect(() => {
+    if (!canvasReference || !canvasId || actionBusy || consumedCanvasReference.current === canvasReference) return
+    consumedCanvasReference.current = canvasReference
+    setCanvasReferences((old) => {
+      if (old.some((item) => item.id === canvasReference.id)) return old
+      return old.length < 8 ? [...old, canvasReference] : old
+    })
+  }, [canvasReference, canvasId, actionBusy])
   useEffect(() => {
     if (run?.canvas && run.canvas !== lastCanvas.current) {
       lastCanvas.current = run.canvas
@@ -155,6 +169,7 @@ export default function DeepAgentStudio({
     setPendingSend(null)
     setMessage('')
     setUncertain(false)
+    setCanvasReferences([])
     actionLock.current = null
     setActionBusy(false)
   }, [api])
@@ -186,6 +201,7 @@ export default function DeepAgentStudio({
     studio.setCurrent(null)
     setMessage('')
     setAttachments([])
+    setCanvasReferences([])
     setSkill('')
     setHistory(false)
     setResults(false)
@@ -208,7 +224,7 @@ export default function DeepAgentStudio({
       const optimistic: StudioRun = {
         ...(run || { id: 'pending', cursor: 0, title: '新对话', events: [] }),
         status: 'complete',
-        events: [...(run?.events || []), { id: 'pending-send', kind: 'user', text: draft.trim() || '已添加附件', data: { delivery: 'sending' } }],
+        events: [...(run?.events || []), { id: 'pending-send', kind: 'user', text: draft.trim() || '已添加附件', data: { delivery: 'sending', canvas_references: canvasReferences } }],
       }
       setPendingSend({ api, run: optimistic })
       setMessage('')
@@ -221,6 +237,7 @@ export default function DeepAgentStudio({
           selection: { image, video, mode },
           skill,
           attachments: attachments.map((a) => a.id),
+          canvas_references: canvasReferences.map((item) => item.id),
           previous: run?.status === 'complete' ? current : null,
           ...(canvasId ? { canvas_id: canvasId } : {}),
         })
@@ -236,11 +253,12 @@ export default function DeepAgentStudio({
       }
       if (activeAPI.current !== api) return
       setPendingSend({ api, target: response.id, run: { ...optimistic, id: response.id, status: 'running',
-        events: optimistic.events.map((event) => event.id === 'pending-send' ? { ...event, data: undefined } : event),
+        events: optimistic.events.map((event) => event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event),
       } })
       studio.setCurrent(response.id)
       setMessage('')
       setAttachments([])
+      setCanvasReferences([])
       setResults(false)
       await studio.refreshHistory()
     })
@@ -778,6 +796,26 @@ export default function DeepAgentStudio({
                       disabled={uploading}
                       onClick={() => setAttachments((old) => old.filter((_, i) => i !== index))}
                     >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {canvasId && (
+              <div className={styles.referenceHint}>
+                点击画布节点添加引用{canvasReferences.length > 0 ? ` · ${canvasReferences.length}/8` : ''}
+                {canvasReferences.length === 8 ? '，移除后可添加其他节点' : ''}
+              </div>
+            )}
+            {!!canvasReferences.length && (
+              <div className={styles.attachments} aria-label="画布引用">
+                {canvasReferences.map((item) => (
+                  <div key={item.id}>
+                    <StudioIcon name="file" size={18} />
+                    <span>{item.title}<small>画布节点引用</small></span>
+                    <button type="button" aria-label={`移除引用 ${item.title}`} disabled={actionBusy}
+                      onClick={() => setCanvasReferences((old) => old.filter((entry) => entry.id !== item.id))}>
                       <X size={16} />
                     </button>
                   </div>

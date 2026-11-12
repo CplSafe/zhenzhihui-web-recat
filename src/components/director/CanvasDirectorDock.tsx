@@ -11,8 +11,9 @@ export default function CanvasDirectorDock({
   onCanvasChange,
   opened,
   onCollapse,
+  canvasReference,
 }: Required<Pick<DeepAgentStudioProps, 'workspaceId' | 'canvasId' | 'onCollapse'>> &
-  Pick<DeepAgentStudioProps, 'onCanvasChange'> & { opened: boolean }) {
+  Pick<DeepAgentStudioProps, 'onCanvasChange' | 'canvasReference'> & { opened: boolean }) {
   const [mounted, setMounted] = useState(opened)
   useEffect(() => {
     if (opened) setMounted(true)
@@ -35,6 +36,7 @@ export default function CanvasDirectorDock({
               authMode="business"
               onCanvasChange={onCanvasChange}
               onCollapse={onCollapse}
+              canvasReference={canvasReference}
             />
           </Suspense>
         </div>

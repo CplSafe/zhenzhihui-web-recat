@@ -1548,3 +1548,42 @@ it('New clicked during delayed connection prevents saved conversation restoratio
   expect(sessionStorage.getItem(key)).toBeNull()
   expect(Socket.instances).toHaveLength(0)
 })
+
+it('adds clicked canvas references without sending, deduplicates and submits only node IDs', async () => {
+  const starts: unknown[] = []
+  server.use(http.post('*/agent-studio/api/runs', async ({ request }) => {
+    starts.push(await request.json())
+    return HttpResponse.json({ detail: 'fixture rejected' }, { status: 400 })
+  }))
+  const { rerender } = render(<DeepAgentStudio canvasId={57} />)
+  await openHistory()
+  rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'episode-1', title: '第一集字幕版', kind: 'video' }} />)
+  expect(await screen.findByRole('button', { name: '移除引用 第一集字幕版' })).toBeVisible()
+  rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'episode-1', title: '第一集字幕版', kind: 'video' }} />)
+  expect(screen.getAllByRole('button', { name: '移除引用 第一集字幕版' })).toHaveLength(1)
+  expect(starts).toHaveLength(0)
+  fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '查看这个节点，不生成' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await waitFor(() => expect(starts).toHaveLength(1))
+  expect(starts[0]).toMatchObject({ canvas_id: 57, canvas_references: ['episode-1'], message: '查看这个节点，不生成' })
+  expect(await screen.findByRole('button', { name: '移除引用 第一集字幕版' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: '移除引用 第一集字幕版' }))
+  expect(screen.queryByRole('button', { name: '移除引用 第一集字幕版' })).not.toBeInTheDocument()
+})
+
+it('limits references to eight and clears them for a new conversation', async () => {
+  const { rerender } = render(<DeepAgentStudio canvasId={57} />)
+  await openHistory()
+  for (let i = 0; i < 9; i++) {
+    rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: `node-${i}`, title: `节点 ${i}`, kind: 'text' }} />)
+  }
+  expect(screen.getAllByRole('button', { name: /^移除引用/ })).toHaveLength(8)
+  expect(screen.queryByRole('button', { name: '移除引用 节点 8' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
+  expect(screen.queryByRole('button', { name: /^移除引用/ })).not.toBeInTheDocument()
+})
+
+it('shows submitted node references in the conversation without embedding the full node', () => {
+  render(<EventCard event={{ id:'referenced', kind:'user', text:'查看这一集', data:{ canvas_references:[{ id:'n1', title:'第一集字幕版' }] } }} />)
+  expect(screen.getByLabelText('本条消息引用的节点')).toHaveTextContent('引用 · 第一集字幕版')
+})

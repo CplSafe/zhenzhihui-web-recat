@@ -1429,3 +1429,8 @@
 }
 
 .contextButton:focus-visible { outline: 2px solid #b8b8b8; outline-offset: 2px; border-radius: 8px; }
+.referenceHint {
+  padding: 6px 10px;
+  color: #777;
+  font-size: 12px;
+}
