@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
-import { getCanvasShare, createCanvasShare, type CanvasShareState } from '@/api/canvasShare'
+import {
+  getCanvasShare,
+  createCanvasShare,
+  updateCanvasShareCopy,
+  listCanvasShareActivity,
+  type CanvasShareState,
+} from '@/api/canvasShare'
 
 vi.mock('@/api/canvasShare', () => ({
   getCanvasShare: vi.fn().mockResolvedValue({ token: '', url: '', expiresAt: '' }),
@@ -9,6 +15,8 @@ vi.mock('@/api/canvasShare', () => ({
     state.url || (state.token ? `https://example.invalid/canvas/share/${state.token}` : ''),
   createCanvasShare: vi.fn(),
   deleteCanvasShare: vi.fn(),
+  updateCanvasShareCopy: vi.fn(),
+  listCanvasShareActivity: vi.fn().mockResolvedValue({ items: [], has_more: false }),
 }))
 
 beforeEach(() => {
@@ -60,4 +68,45 @@ it('分享弹窗限制焦点，Esc关闭并恢复触发器焦点', async () => {
   view.unmount()
   expect(trigger).toHaveFocus()
   trigger.remove()
+})
+
+it('persists copy permission without rotating an existing link and displays activity', async () => {
+  vi.mocked(getCanvasShare).mockResolvedValue({
+    token: '',
+    url: '',
+    expiresAt: '',
+    status: '',
+    enabled: true,
+    allowCopy: false,
+  })
+  vi.mocked(updateCanvasShareCopy).mockResolvedValue({
+    token: '',
+    url: '',
+    expiresAt: '',
+    status: '',
+    enabled: true,
+    allowCopy: true,
+  })
+  vi.mocked(listCanvasShareActivity).mockResolvedValue({
+    items: [
+      {
+        id: 1,
+        user_id: 42,
+        user_name: '小明',
+        action: 'copy',
+        target_workspace_name: '设计空间',
+        created_at: '2026-11-12T09:00:00Z',
+      },
+    ],
+    has_more: false,
+  })
+  render(<CanvasShareDialog workspaceId={1} canvasId={2} onClose={vi.fn()} />)
+  expect(await screen.findByText(/小明.*设计空间/)).toBeInTheDocument()
+  const toggle = await screen.findByRole('switch')
+  await waitFor(() => expect(toggle).toBeEnabled())
+  fireEvent.click(toggle)
+  await waitFor(() => expect(toggle).toBeChecked())
+  expect(updateCanvasShareCopy).toHaveBeenCalledWith(1, 2, true)
+  expect(createCanvasShare).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: '关闭分享' })).toBeInTheDocument()
 })

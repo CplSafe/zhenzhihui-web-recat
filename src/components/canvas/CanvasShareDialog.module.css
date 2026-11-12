@@ -199,3 +199,42 @@
   color: var(--canvas-text, #e5e7eb);
   border-color: var(--canvas-border, rgb(255 255 255 / 12%));
 }
+
+.permission {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 14px;
+  cursor: pointer;
+}
+.permission input {
+  accent-color: #0e8f75;
+  width: 18px;
+  height: 18px;
+}
+.activity {
+  margin: 16px 0;
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 14px;
+}
+.activityList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.activityList li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+.activityList time {
+  color: var(--canvas-text-muted, #a9b1c2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

@@ -131,3 +131,45 @@
   opacity: 0;
   pointer-events: none;
 }
+
+.share-topbar {
+  flex-wrap: wrap;
+}
+.share-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 12px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.share-apply select,
+.share-apply button {
+  max-width: 100%;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid #7b8494;
+  border-radius: 8px;
+  font: inherit;
+}
+.share-apply button {
+  background: #08715d;
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+.share-apply button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.share-apply button:focus-visible,
+.share-apply select:focus-visible {
+  outline: 2px solid #08715d;
+  outline-offset: 2px;
+}

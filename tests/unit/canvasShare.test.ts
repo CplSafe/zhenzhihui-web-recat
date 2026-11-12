@@ -12,6 +12,8 @@ describe('parseCanvasShareState', () => {
       data: { token: 'abc123', url: 'https://zzh.example.com/c/abc123', expires_at: '2026-09-01T00:00:00Z' },
     })
     expect(state).toEqual({
+      enabled: true,
+      allowCopy: false,
       token: 'abc123',
       url: 'https://zzh.example.com/c/abc123',
       expiresAt: '2026-09-01T00:00:00Z',
@@ -54,4 +56,13 @@ describe('buildCanvasShareUrl', () => {
   it('未开启分享时不给出任何链接', () => {
     expect(buildCanvasShareUrl({ token: '', url: '', expiresAt: '', status: '' }, 'https://app.example.com')).toBe('')
   })
+})
+
+it('retains enabled and allow_copy without needing a plaintext token', () => {
+  expect(parseCanvasShareState({ data: { enabled: true, allow_copy: true } })).toMatchObject({
+    enabled: true,
+    allowCopy: true,
+    token: '',
+  })
+  expect(parseCanvasShareState({ data: { allow_copy: 'true' } }).allowCopy).toBe(false)
 })

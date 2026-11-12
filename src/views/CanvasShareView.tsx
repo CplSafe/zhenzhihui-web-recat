@@ -6,8 +6,8 @@
  * 为只读再往里加分支，等于给全仓库最复杂的文件继续加负担。访客要的只有「看清这块画布画了什么」，
  * 因此节点在这里退化成一张卡片：图片/视频直接播放，文本原样展示。
  */
-import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   ReactFlow,
   Background,
@@ -27,7 +27,14 @@ import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
 import { elementsToGraph } from '@/utils/canvasElements'
 import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia } from '@/utils/canvasShareMedia'
 import type { CanvasElementMutation } from '@/api/canvasApi'
-import { fetchAllPublicCanvasElements, fetchPublicCanvas, type PublicCanvasShare } from '@/api/canvasShare'
+import {
+  copySharedCanvas,
+  fetchAllPublicCanvasElements,
+  fetchPublicCanvas,
+  type PublicCanvasShare,
+} from '@/api/canvasShare'
+
+import { useAllWorkspaces, useCurrentUser } from '@/stores/workspaceSession'
 
 const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
 const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
@@ -127,6 +134,36 @@ type LoadState = 'loading' | 'ready' | 'missing' | 'error'
 
 export default function CanvasShareView() {
   const { token = '' } = useParams()
+  const navigate = useNavigate()
+  const workspaces = useAllWorkspaces()
+  const user = useCurrentUser()
+  const [targetWorkspace, setTargetWorkspace] = useState('')
+  const [copyBusy, setCopyBusy] = useState(false)
+  const [copyMessage, setCopyMessage] = useState('')
+  const [copied, setCopied] = useState(false)
+  const copyKeys = useRef<Record<string, string>>({})
+  useEffect(() => {
+    setCopied(false)
+    setCopyMessage('')
+    setTargetWorkspace('')
+  }, [token, user?.id])
+
+  const handleApply = async () => {
+    if (copyBusy || copied) return
+    setCopyBusy(true)
+    setCopyMessage('')
+    try {
+      const key = `${token}:${targetWorkspace}`
+      copyKeys.current[key] ||= crypto.randomUUID()
+      await copySharedCanvas(token, Number(targetWorkspace), copyKeys.current[key])
+      setCopied(true)
+      setCopyMessage('已复制到所选空间，可返回首页进入该空间查看。')
+    } catch (err) {
+      setCopyMessage(String((err as Error)?.message || '复制失败，请重试'))
+    } finally {
+      setCopyBusy(false)
+    }
+  }
   const [state, setState] = useState<LoadState>('loading')
   const [message, setMessage] = useState('')
   const [share, setShare] = useState<PublicCanvasShare | null>(null)
@@ -196,6 +233,50 @@ export default function CanvasShareView() {
       <div className="share-topbar">
         <span className="share-title">{share?.title || '共享画布'}</span>
         <span className="share-badge">只读查看</span>
+        <div className="share-apply">
+          <span>查看和复制会向分享者留记录，未登录时记为匿名访客。</span>
+          {state === 'ready' &&
+            (share?.allowCopy ? (
+              user ? (
+                <>
+                  <select
+                    aria-label="复制到哪个空间"
+                    value={targetWorkspace}
+                    disabled={copyBusy}
+                    onChange={(event) => {
+                      setTargetWorkspace(event.target.value)
+                      setCopied(false)
+                      setCopyMessage('')
+                    }}
+                  >
+                    <option value="">请选择目标空间</option>
+                    {workspaces.map((workspace) => (
+                      <option key={workspace.id} value={workspace.id}>
+                        {workspace.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={copyBusy || !targetWorkspace || copied}
+                    onClick={() => void handleApply()}
+                  >
+                    {copyBusy ? '复制中…' : copied ? '已应用' : '应用此画布'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate('/login', { state: { returnTo: `/canvas/share/${token}` } })}
+                >
+                  登录后应用此画布
+                </button>
+              )
+            ) : (
+              <span>分享者未允许复制</span>
+            ))}
+          {copyMessage && <span role="status">{copyMessage}</span>}
+        </div>
       </div>
 
       {state === 'ready' ? (

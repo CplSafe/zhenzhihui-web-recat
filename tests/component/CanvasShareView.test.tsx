@@ -2,10 +2,16 @@ import { createElement } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasShareView from '@/views/CanvasShareView'
-import { fetchAllPublicCanvasElements, fetchPublicCanvas } from '@/api/canvasShare'
+import { copySharedCanvas, fetchAllPublicCanvasElements, fetchPublicCanvas } from '@/api/canvasShare'
 
-vi.mock('react-router-dom', () => ({ useParams: () => ({ token: 'shared-token' }) }))
+vi.mock('@/stores/workspaceSession', () => ({
+  useAllWorkspaces: () => [{ id: 17, name: '创作空间' }],
+  useCurrentUser: () => ({ id: 8 }),
+}))
+
+vi.mock('react-router-dom', () => ({ useParams: () => ({ token: 'shared-token' }), useNavigate: () => vi.fn() }))
 vi.mock('@/api/canvasShare', () => ({
+  copySharedCanvas: vi.fn().mockResolvedValue({ id: 99 }),
   fetchPublicCanvas: vi.fn(),
   fetchAllPublicCanvasElements: vi.fn(),
 }))
@@ -88,4 +94,38 @@ it('lets visitors expand every image through share-scoped URLs without changing 
   expect(screen.queryByRole('button', { name: /设为主图/ })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '收起组图' }))
   expect(screen.getByRole('img', { name: '生成图片 2（主图）' })).toBeInTheDocument()
+})
+
+it('applies only into the chosen workspace when copying is allowed', async () => {
+  vi.mocked(fetchPublicCanvas).mockResolvedValue({ title: '可复制画布', allowCopy: true } as any)
+  vi.mocked(fetchAllPublicCanvasElements).mockResolvedValue([])
+  render(<CanvasShareView />)
+  const button = await screen.findByRole('button', { name: '应用此画布' })
+  expect(button).toBeDisabled()
+  fireEvent.change(screen.getByRole('combobox', { name: '复制到哪个空间' }), { target: { value: '17' } })
+  fireEvent.click(button)
+  expect(await screen.findByText(/已复制到所选空间/)).toBeInTheDocument()
+  expect(copySharedCanvas).toHaveBeenCalledWith('shared-token', 17, expect.any(String))
+  expect(screen.getByRole('button', { name: '已应用' })).toBeDisabled()
+})
+
+it('does not offer copying when the owner has disabled it', async () => {
+  vi.mocked(fetchPublicCanvas).mockResolvedValue({ title: '只读画布', allowCopy: false } as any)
+  vi.mocked(fetchAllPublicCanvasElements).mockResolvedValue([])
+  render(<CanvasShareView />)
+  expect(await screen.findByText('分享者未允许复制')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '应用此画布' })).not.toBeInTheDocument()
+})
+
+it('shows copy failure and permits retry without claiming success', async () => {
+  vi.mocked(fetchPublicCanvas).mockResolvedValue({ title: '可复制画布', allowCopy: true } as any)
+  vi.mocked(fetchAllPublicCanvasElements).mockResolvedValue([])
+  vi.mocked(copySharedCanvas).mockRejectedValueOnce(new Error('分享者未允许复制此画布'))
+  render(<CanvasShareView />)
+  const button = await screen.findByRole('button', { name: '应用此画布' })
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: '17' } })
+  fireEvent.click(button)
+  expect(await screen.findByText('分享者未允许复制此画布')).toBeInTheDocument()
+  expect(screen.queryByText(/已复制到所选空间/)).not.toBeInTheDocument()
+  expect(button).toBeEnabled()
 })
