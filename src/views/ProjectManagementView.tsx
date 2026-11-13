@@ -30,7 +30,15 @@ import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatal
 import { getBackendGenerationModelName } from '@/utils/generationModelCatalog'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
 import { pageCacheKey, readPageCache, writePageCache } from '@/utils/pageDataCache'
-import { deleteCanvas, fetchAllCanvasElements, listCanvases, patchCanvas, type CanvasSummary } from '@/api/canvasApi'
+import {
+  deleteCanvas,
+  duplicateCanvas,
+  fetchAllCanvasElements,
+  listCanvases,
+  patchCanvas,
+  type CanvasSummary,
+} from '@/api/canvasApi'
+import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { collectCanvasElementAssetIds } from '@/utils/canvasElements'
 import { collectClassifiedKeys, videoSourceKeyCandidates } from '@/utils/unclassifiedVideos'
@@ -520,6 +528,10 @@ export default function ProjectManagementView() {
   const [canvasRenameName, setCanvasRenameName] = useState('')
   const [canvasRenaming, setCanvasRenaming] = useState(false)
   const [canvasDeletingId, setCanvasDeletingId] = useState(0)
+  const [canvasDuplicatingId, setCanvasDuplicatingId] = useState(0)
+  const canvasDuplicateBusy = useRef(false)
+  const canvasDuplicateWorkspace = useRef(workspaceId)
+  canvasDuplicateWorkspace.current = workspaceId
   const canvasCoverLoadedRef = useRef(new Set<string>())
   // 生成模型筛选:'' = 全部。按模型展示名筛(用户看到的是名字;同名不同版本自然合并),项目下任一视频用了该模型即显示。
   const [modelFilter, setModelFilter] = useState('')
@@ -649,6 +661,41 @@ export default function ProjectManagementView() {
       }
     },
     [canDeleteCanvas, canvasDeletingId, requestConfirm, showToast, workspaceId],
+  )
+  const handleCanvasDuplicate = useCallback(
+    async (canvas: CanvasSummary) => {
+      const wsId = Number(workspaceId || 0)
+      if (!wsId || !canvas.id || canvasDuplicateBusy.current) return
+      canvasDuplicateBusy.current = true
+      setCanvasDuplicatingId(canvas.id)
+      setOpenMenuId(0)
+      const title = buildCanvasCopyTitle(
+        canvas.title,
+        canvasItems.map((item) => item.title),
+      )
+      try {
+        const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: canvas.id, title })
+        if (Number(canvasDuplicateWorkspace.current) !== wsId) return
+        setCanvasItems((items) => [
+          {
+            ...created,
+            title: created.title || title,
+            userId: created.userId || currentUserId || undefined,
+            updated_at: created.updated_at || new Date().toISOString(),
+          },
+          ...items,
+        ])
+        setCanvasCovers((covers) => ({ ...covers, [created.id]: covers[canvas.id] ?? null }))
+        showToast(`已创建副本「${title}」`, 'success')
+      } catch (error) {
+        if (Number(canvasDuplicateWorkspace.current) === wsId)
+          showToast(getBusinessErrorMessage(error, '创建副本失败，请稍后重试'), 'error')
+      } finally {
+        canvasDuplicateBusy.current = false
+        setCanvasDuplicatingId(0)
+      }
+    },
+    [canvasItems, currentUserId, showToast, workspaceId],
   )
 
   // 创建项目弹窗
@@ -2028,6 +2075,14 @@ export default function ProjectManagementView() {
                                       }}
                                     >
                                       重命名
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="pm2-folder-menu-item"
+                                      disabled={Boolean(canvasDuplicatingId)}
+                                      onClick={() => void handleCanvasDuplicate(canvas)}
+                                    >
+                                      {canvasDuplicatingId === canvas.id ? '创建中…' : '创建副本'}
                                     </button>
                                     {canDeleteCanvas(canvas) && (
                                       <button
