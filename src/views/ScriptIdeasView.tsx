@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isValidMobile } from '@/utils/formValidation'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
@@ -563,7 +564,7 @@ export default function ScriptIdeasView() {
         Array.from(name).length > 80 ||
         (creator.profile.student_status !== 'graduated' && !school) ||
         Array.from(school).length > 200 ||
-        !/^[\d+()\s-]{7,25}$/.test(phone)
+        !isValidMobile(phone)
       ) {
         setSubmissionError('入驻资料不完整或格式有误，请先在入驻信息中检查姓名、电话和学校。')
         return
@@ -641,7 +642,7 @@ export default function ScriptIdeasView() {
             ![form.name, form.phone, form.school, form.creative, ideaFields.title, ideaFields.genre].every((value) =>
               value.trim(),
             ) ||
-            !/^[\d+()\s-]{7,25}$/.test(form.phone.trim()) ||
+            !isValidMobile(form.phone) ||
             Array.from(ideaFields.title.trim()).length > 200 ||
             Array.from(ideaFields.genre.trim()).length > 80 ||
             [form.creative, ideaFields.ep1Plot, ideaFields.characters].some(exceedsTextLimit)
@@ -1609,6 +1610,15 @@ export default function ScriptIdeasView() {
                                         </span>
                                         <input
                                           required
+                                          type={key === 'phone' ? 'tel' : 'text'}
+                                          inputMode={key === 'phone' ? 'numeric' : undefined}
+                                          maxLength={key === 'phone' ? 11 : undefined}
+                                          aria-invalid={key === 'phone' && !!form.phone && !isValidMobile(form.phone)}
+                                          aria-describedby={
+                                            key === 'phone' && !!form.phone && !isValidMobile(form.phone)
+                                              ? 'si-edit-phone-error'
+                                              : undefined
+                                          }
                                           value={form[key]}
                                           disabled={busy || !!pending}
                                           onChange={(event) => {
@@ -1616,6 +1626,11 @@ export default function ScriptIdeasView() {
                                             setForm({ ...form, [key]: event.target.value })
                                           }}
                                         />
+                                        {key === 'phone' && !!form.phone && !isValidMobile(form.phone) && (
+                                          <small className="si-field-error" id="si-edit-phone-error">
+                                            请输入正确的 11 位手机号码
+                                          </small>
+                                        )}
                                       </label>
                                     ))}
                                     {(['title', 'genre'] as const).map((key) => (

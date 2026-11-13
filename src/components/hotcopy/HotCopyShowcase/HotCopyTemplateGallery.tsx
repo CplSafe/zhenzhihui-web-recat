@@ -6,8 +6,10 @@
  */
 import { memo, useCallback, useEffect, useState } from 'react'
 import { type TemplateItem } from '@/api/templates'
+import { listLibraryCategories, type LibraryCategory } from '@/api/templateLibrary'
 import { DEMO_TEMPLATES } from '@/data/demoTemplates'
-import { loadTemplateCatalog } from '@/utils/templateCatalog'
+import { loadTemplateCatalog, type TemplateCatalogSource } from '@/utils/templateCatalog'
+import { builtinIndustryCode, FALLBACK_INDUSTRIES } from '@/utils/templateIndustries'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
@@ -23,7 +25,7 @@ interface TemplateCardProps {
   onUseTemplate: (tpl: TemplateItem) => void
 }
 
-const TemplateCard = memo(function TemplateCard({
+export const TemplateCard = memo(function TemplateCard({
   tpl,
   favorite,
   onPreview,
@@ -114,25 +116,52 @@ const TemplateCard = memo(function TemplateCard({
 interface HotCopyTemplateGalleryProps {
   /** 「做同款」：把模板视频作为源爆款视频回填到上方入口。 */
   onUseTemplate: (tpl: TemplateItem) => void
+  title?: string
+  showSourceNotice?: boolean
 }
 
 /** 爆款复刻入口页的模板库区块。 */
-export default function HotCopyTemplateGallery({ onUseTemplate }: HotCopyTemplateGalleryProps) {
+export default function HotCopyTemplateGallery({
+  onUseTemplate,
+  title = '模板库',
+  showSourceNotice = false,
+}: HotCopyTemplateGalleryProps) {
   const workspaceId = useWorkspaceId()
   const currentUserId = resolveUserId(useCurrentUser())
   // 先用内置目录保证首屏有内容，共享目录加载器回来后再替换（失败时它自己回退内置目录）。
   const [templates, setTemplates] = useState<TemplateItem[]>(DEMO_TEMPLATES)
+  const [source, setSource] = useState<TemplateCatalogSource>('builtin')
+  const [categories, setCategories] = useState<LibraryCategory[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<LibraryCategory | null>(null)
+  const [categoryError, setCategoryError] = useState(false)
+  const [categoryRetry, setCategoryRetry] = useState(0)
+  const [notice, setNotice] = useState('正在加载模板目录，当前展示内置精选模板')
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
     void loadTemplateCatalog().then((catalog) => {
-      if (!cancelled) setTemplates(catalog.items)
+      if (!cancelled) {
+        setTemplates(catalog.items)
+        setSource(catalog.source)
+        setNotice(catalog.notice)
+      }
     })
     return () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setCategoryError(false)
+    void listLibraryCategories(controller.signal)
+      .then(setCategories)
+      .catch(() => {
+        if (!controller.signal.aborted) setCategoryError(true)
+      })
+    return () => controller.abort()
+  }, [categoryRetry])
 
   // 收藏按工作空间保存到 localStorage；切换用户或工作空间时重新读取，避免收藏状态串用。
   const [favKeys, setFavKeys] = useState<Set<string>>(new Set())
@@ -165,14 +194,62 @@ export default function HotCopyTemplateGallery({ onUseTemplate }: HotCopyTemplat
 
   const preview = useCallback((url: string, poster: string) => setWatching({ url, poster }), [])
 
+  const displayCategories = categories.length ? categories : FALLBACK_INDUSTRIES
+  const activeCategory = selectedCategory
+    ? displayCategories.find(
+        (category) =>
+          category.id === selectedCategory.id ||
+          Boolean(category.code && category.code === selectedCategory.code) ||
+          category.name === selectedCategory.name,
+      ) || null
+    : null
+  const visibleTemplates = activeCategory
+    ? templates.filter((template) => {
+        const code =
+          activeCategory.code || FALLBACK_INDUSTRIES.find((industry) => industry.name === activeCategory.name)?.code
+        if (source === 'builtin') return builtinIndustryCode(template.id) === code
+        return template.categoryId === activeCategory.id || Boolean(code && template.industryCode === code)
+      })
+    : templates
+
   return (
     <section className="hotcopy-tpl" aria-labelledby="hotcopy-tpl-title" data-guide="hotcopy-templates">
       <h2 className="hotcopy-tpl__title" id="hotcopy-tpl-title">
-        模板库
+        {title}
       </h2>
-      {templates.length ? (
+      {showSourceNotice && notice && <p className="hotcopy-tpl__notice">{notice}</p>}
+      {categoryError && (
+        <div className="hotcopy-tpl__category-error" role="alert">
+          分类加载失败
+          <button type="button" onClick={() => setCategoryRetry((value) => value + 1)}>
+            重试
+          </button>
+        </div>
+      )}
+      <nav className="hotcopy-tpl__categories" aria-label="模板分类">
+        <button
+          type="button"
+          className={!activeCategory ? 'is-active' : ''}
+          aria-pressed={!activeCategory}
+          onClick={() => setSelectedCategory(null)}
+        >
+          全部
+        </button>
+        {displayCategories.map((category) => (
+          <button
+            type="button"
+            key={category.id}
+            className={activeCategory?.id === category.id ? 'is-active' : ''}
+            aria-pressed={activeCategory?.id === category.id}
+            onClick={() => setSelectedCategory(category)}
+          >
+            {category.name}
+          </button>
+        ))}
+      </nav>
+      {visibleTemplates.length ? (
         <div className="hotcopy-tpl__grid">
-          {templates.map((tpl, index) => (
+          {visibleTemplates.map((tpl, index) => (
             <TemplateCard
               key={`${tpl.id}-${index}`}
               tpl={tpl}

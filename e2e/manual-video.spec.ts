@@ -61,7 +61,7 @@ test('人工视频估价后提交，失败重试保留请求并恢复任务', as
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
   await page.getByRole('option', { name: /人工制作 · T\+1/ }).click()
-  await page.getByRole('button', { name: '去制作' }).click()
+  await page.getByRole('button', { name: '提交精制需求' }).click()
   await expect(page.getByRole('listitem').filter({ hasText: '提交精制任务' })).toHaveAttribute('aria-current', 'step')
   await expect(page.getByText('提交精制任务', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('manual-preparing.png'), animations: 'disabled' })
@@ -135,7 +135,7 @@ test('窄屏精制确认页展示自动报价', async ({ page }, testInfo) => {
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
   await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
-  await page.getByRole('button', { name: '去制作' }).click()
+  await page.getByRole('button', { name: '提交精制需求' }).click()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({
     path: testInfo.outputPath('manual-preparing-mobile.png'),
@@ -153,6 +153,7 @@ test('已知人工任务的付费修改创建新任务，原任务不被覆盖',
     localStorage.setItem('zzh.manual.tasks.7.21', JSON.stringify([91]))
   })
   let revision: unknown
+  let revisionDone = false
   await page.route('**/api/v1/ai/tasks/**', async (route) => {
     const path = new URL(route.request().url()).pathname
     if (path === '/api/v1/ai/tasks/91/revisions') {
@@ -173,7 +174,16 @@ test('已知人工任务的付费修改创建新任务，原任务不被覆盖',
       })
     } else if (path === '/api/v1/ai/tasks/92') {
       await route.fulfill({
-        json: { code: 0, data: { id: 92, status: 'awaiting_manual', poll_after_ms: 15000, parent_task_id: 91 } },
+        json: {
+          code: 0,
+          data: {
+            id: 92,
+            status: revisionDone ? 'succeeded' : 'awaiting_manual',
+            poll_after_ms: 0,
+            parent_task_id: 91,
+            estimated_cost: 123,
+          },
+        },
       })
     } else return route.fallback()
   })
@@ -198,6 +208,11 @@ test('已知人工任务的付费修改创建新任务，原任务不被覆盖',
   await expect(page.getByRole('heading', { name: '第 1 次修改已提交，等待精制成片' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '第 1 次修改已提交，等待精制成片' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  revisionDone = true
+  await page.getByRole('button', { name: '刷新状态' }).click()
+  await expect(page.getByText('本订单当前无法申请修改，请联系客服。')).toBeVisible()
+  await page.getByLabel('修改意见').fill('再次修改')
+  await expect(page.getByRole('button', { name: '申请付费修改' })).toBeDisabled()
   expect(revision).toMatchObject({ workspace_id: 21, instruction: '调整片尾', idempotency_key: expect.any(String) })
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('zzh.manual.tasks.7.21') || '[]'))).toEqual([92, 91])
 })
@@ -267,7 +282,7 @@ test('仅展示明确标识为 T+1 的服务端历史任务', async ({ page }, t
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
   await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
-  await page.getByRole('button', { name: '去制作' }).click()
+  await page.getByRole('button', { name: '提交精制需求' }).click()
   await page.getByText('查看历史精制任务').click()
   await expect(page.getByRole('button', { name: /任务 #901/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /任务 #902/ })).toHaveCount(0)

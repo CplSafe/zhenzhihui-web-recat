@@ -72,12 +72,12 @@ async function openManualOrderScreen(page: Page, prompt: string) {
   const settings = page.getByRole('button', { name: '生成设置' })
   if (await settings.isVisible()) await settings.click()
   await page.getByRole('button', { name: /生成模型/ }).click()
-  await page.getByRole('option', { name: /精制交付 · T\+1/ }).click()
-  await page.getByRole('button', { name: '去制作' }).click()
+  await page.getByRole('option', { name: /精制交付.*T\+1/ }).click()
+  await page.getByRole('button', { name: '提交精制需求' }).click()
   await expect(page.getByRole('heading', { name: '本次生成参数' })).toBeVisible()
 }
 
-test('精制时长越界或非整数时明确提示且不发起估价', async ({ page }, testInfo) => {
+test('精制时长仅提供合法档位，异常值不能触发报价', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   await page.addInitScript(() => window.localStorage.setItem('zzh_guide_seen_smart_u7', '1'))
   const capture = await mockManualVideo(page)
@@ -85,26 +85,34 @@ test('精制时长越界或非整数时明确提示且不发起估价', async ({
 
   await page.getByText('调整生成参数').click()
   const duration = page.getByLabel('时长（秒）')
-  await expect(duration).toHaveAttribute('min', '15')
-  await expect(duration).toHaveAttribute('max', '300')
-  await expect(duration).toHaveAttribute('step', '1')
-  expect(capture.estimates).toHaveLength(1)
+  await expect(duration.locator('option')).toHaveText([
+    '15 秒',
+    '30 秒',
+    '45 秒',
+    '60 秒',
+    '120 秒',
+    '180 秒',
+    '300 秒',
+  ])
+  await expect.poll(() => capture.estimates.length).toBe(1)
   expect(capture.estimates[0]).toMatchObject({ operation_code: 'video.t1', model_version_id: 77 })
   expect(capture.estimates[0].params.duration).toBe(30)
   expect(Number.isInteger(capture.estimates[0].params.duration)).toBe(true)
 
-  // 14 / 301 越界，30.5 非整数：三者都必须停在提示上，不能进入估价
+  // 模拟被篡改的下拉值，确认前端校验不会发起报价。
   for (const invalid of ['14', '301', '30.5']) {
-    await duration.fill(invalid)
-    const requote = page.getByRole('button', { name: '重新获取报价' })
-    await expect(requote).toBeVisible()
-    await requote.click()
-    await expect(page.getByRole('alert').filter({ hasText: '时长须为 15 至 300 秒的整数' })).toBeVisible()
+    await duration.evaluate((element: HTMLSelectElement, value) => {
+      element.add(new Option(value, value))
+      element.value = value
+      element.dispatchEvent(new Event('change', { bubbles: true }))
+    }, invalid)
+    await page.getByRole('button', { name: '重新获取报价' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '请选择模型支持的时长' })).toBeVisible()
     expect(capture.estimates).toHaveLength(1)
     expect(capture.creates).toHaveLength(0)
   }
 
-  await page.getByRole('alert').filter({ hasText: '时长须为 15 至 300 秒的整数' }).scrollIntoViewIfNeeded()
+  await page.getByRole('alert').filter({ hasText: '请选择模型支持的时长' }).scrollIntoViewIfNeeded()
   await page.screenshot({
     path: testInfo.outputPath('manual-duration-rejected.png'),
     fullPage: true,
@@ -124,17 +132,19 @@ test('精制时长 15 与 300 边界可估价并按整数秒原样下发', async
   const parameterCard = page.getByLabel('本次生成参数')
 
   // 下边界 15 秒
-  await duration.fill('15')
-  await page.getByRole('button', { name: '重新获取报价' }).click()
-  await expect(parameterCard.getByText('15 秒', { exact: true })).toBeVisible()
+  await duration.selectOption('15')
+  await expect.poll(() => capture.estimates.length).toBe(2)
+  await expect(page.getByRole('button', { name: '提交精制任务（T+1）' })).toBeEnabled()
+  await expect(parameterCard.locator('dd').filter({ hasText: /^15 秒$/ })).toBeVisible()
   expect(capture.estimates).toHaveLength(2)
   expect(capture.estimates[1].params.duration).toBe(15)
   expect(Number.isInteger(capture.estimates[1].params.duration)).toBe(true)
 
   // 上边界 300 秒
-  await duration.fill('300')
-  await page.getByRole('button', { name: '重新获取报价' }).click()
-  await expect(parameterCard.getByText('300 秒', { exact: true })).toBeVisible()
+  await duration.selectOption('300')
+  await expect.poll(() => capture.estimates.length).toBe(3)
+  await expect(page.getByRole('button', { name: '提交精制任务（T+1）' })).toBeEnabled()
+  await expect(parameterCard.locator('dd').filter({ hasText: /^300 秒$/ })).toBeVisible()
   expect(capture.estimates).toHaveLength(3)
   expect(capture.estimates[2].params.duration).toBe(300)
   expect(Number.isInteger(capture.estimates[2].params.duration)).toBe(true)
@@ -147,7 +157,7 @@ test('精制时长 15 与 300 边界可估价并按整数秒原样下发', async
     .getByRole('dialog')
     .getByRole('button', { name: /确\s*认/ })
     .click()
-  await expect(page.getByText('任务编号：91')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '任务已提交，等待精制成片' })).toBeVisible()
   expect(capture.creates).toHaveLength(1)
   const createBody = JSON.parse(capture.creates[0])
   expect(createBody).toMatchObject({
@@ -171,25 +181,33 @@ test('精制任务提交进行中不暴露重复提交入口且只创建一个�
     .getByRole('button', { name: /确\s*认/ })
     .click()
 
-  // 创建请求挂在飞行中：此刻再次确认也不能产生第二个付费任务
+  // 创建请求挂在飞行中，确认按钮必须禁用，不能发出第二个请求。
   await expect.poll(() => capture.creates.length, { timeout: 5000 }).toBe(1)
   const repeatedConfirm = page.getByRole('dialog').getByRole('button', { name: /确\s*认/ })
-  if (await repeatedConfirm.count()) {
-    await repeatedConfirm
-      .first()
-      .click({ timeout: 1500, force: true })
-      .catch(() => {})
-    await page.waitForTimeout(500)
-  }
-  const idempotencyKeys = capture.creates.map((body) => JSON.parse(body).idempotency_key)
-  expect(idempotencyKeys.length).toBeGreaterThanOrEqual(1)
-  expect(new Set(idempotencyKeys).size).toBe(1)
+  await expect(repeatedConfirm).toBeDisabled()
   await page.screenshot({
     path: testInfo.outputPath('manual-submit-locked.png'),
     fullPage: true,
     animations: 'disabled',
   })
 
-  await expect(page.getByText('任务编号：91')).toBeVisible({ timeout: 15000 })
-  await expect(page.getByText('任务编号：91')).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: '任务已提交，等待精制成片' })).toBeVisible({ timeout: 15000 })
+  expect(capture.creates).toHaveLength(1)
+  expect(JSON.parse(capture.creates[0]).idempotency_key).toBeTruthy()
+})
+
+test('窄屏精制时长选项与报价可用', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installStrictAuthenticatedApp(page, { preserveStorage: true })
+  await page.addInitScript(() => window.localStorage.setItem('zzh_guide_seen_smart_u7', '1'))
+  const capture = await mockManualVideo(page)
+  await openManualOrderScreen(page, '窄屏精制需求')
+  await page.getByText('调整生成参数').click()
+  const duration = page.getByLabel('时长（秒）')
+  await duration.selectOption('60')
+  await expect.poll(() => capture.estimates.at(-1)?.params.duration).toBe(60)
+  await expect(page.getByRole('button', { name: '提交精制任务（T+1）' })).toBeEnabled()
+  await duration.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('manual-mobile.png'), animations: 'disabled' })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })

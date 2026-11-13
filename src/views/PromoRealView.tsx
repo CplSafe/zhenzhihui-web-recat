@@ -1,4 +1,5 @@
 import { isDefiniteSubmissionRejection } from '@/utils/submissionRecovery'
+import { isValidMobile, isValidOptionalHttpUrl } from '@/utils/formValidation'
 import { useEffect, useRef, useState } from 'react'
 import { Modal } from 'antd'
 import { useSearchParams } from 'react-router-dom'
@@ -9,7 +10,9 @@ import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import StepProgress from '@/components/smart/StepProgress'
 import PromoOrders from '@/components/task/PromoOrders'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
+import { useToast } from '@/composables/useToast'
 import { useCurrentUser, useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { BusinessApiError } from '@/api/business'
 import {
   completePromoUpload,
   createPromoIntake,
@@ -20,7 +23,6 @@ import {
   getPromoIntake,
   quotePromo,
   registerPromoOffline,
-  retryPromoUpload,
   uploadPromoFile,
   type PromoConfig,
   type PromoMaterial,
@@ -56,8 +58,34 @@ const initial: Form = {
 }
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : '请求失败，请重试')
 
+const VIDEO_FORMAT_LABELS: Record<string, string> = {
+  'video/mp4': 'MP4',
+  'video/quicktime': 'MOV',
+  'video/webm': 'WebM',
+}
+
+function formatUploadLimit(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${Math.floor(value * 100) / 100} ${units[unit]}`
+}
+
+function videoUploadHint(config: PromoConfig): string {
+  const formats = config.allowed_mime
+    .filter((mime) => mime.startsWith('video/'))
+    .map((mime) => VIDEO_FORMAT_LABELS[mime] || mime)
+  if (!formats.length) return '当前不支持上传视频'
+  return `视频支持 ${formats.join('、')}，单个文件不超过 ${formatUploadLimit(config.max_file_bytes)}`
+}
+
 export default function PromoRealView() {
   const navigate = useSidebarNavigate()
+  const { showToast } = useToast()
   const [query, setQuery] = useSearchParams()
   const currentUser = useCurrentUser() as { id?: number; user_id?: number } | null
   const owner = Number(currentUser?.id || currentUser?.user_id || 0)
@@ -83,7 +111,7 @@ export default function PromoRealView() {
   const [formValidated, setFormValidated] = useState(false)
   const [draftScope, setDraftScope] = useState('')
   const [authorized, setAuthorized] = useState(false)
-  const [acknowledged, setAcknowledged] = useState(true)
+  const [acknowledged, setAcknowledged] = useState(false)
   const [quote, setQuote] = useState<PromoQuote | null>(null)
   const [pending, setPending] = useState<PromoOrderInput | null>(null)
   const [busy, setBusy] = useState(false)
@@ -92,7 +120,6 @@ export default function PromoRealView() {
   const [confirm, setConfirm] = useState(false)
   const [uploadStage, setUploadStage] = useState<Record<number, 'uploading' | 'uploaded' | 'failed'>>({})
   const [uploadingName, setUploadingName] = useState('')
-  const [copyNotice, setCopyNotice] = useState('')
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -120,7 +147,6 @@ export default function PromoRealView() {
           !Array.isArray(value.resolution_options) ||
           !value.resolution_options.length ||
           !Array.isArray(value.allowed_mime) ||
-          !Number.isFinite(value.footage_min_count) ||
           !value.authorization_text ||
           !value.acknowledgement_text ||
           !value.authorization_version ||
@@ -156,7 +182,7 @@ export default function PromoRealView() {
     setMaterials([])
     setOffline(false)
     setAuthorized(false)
-    setAcknowledged(true)
+    setAcknowledged(false)
     setStarted(false)
     setQuote(null)
     setPending(null)
@@ -188,6 +214,20 @@ export default function PromoRealView() {
       setRestoreToken(saved)
     }
   }, [scope, owner, workspace])
+
+  useEffect(() => {
+    if (!config?.enabled || draftScope !== scope) return
+    setForm((old) => ({
+      ...old,
+      duration_seconds: config.duration_options_seconds.includes(old.duration_seconds)
+        ? old.duration_seconds
+        : config.duration_options_seconds[0] || 0,
+      ratio: config.ratio_options.includes(old.ratio) ? old.ratio : config.ratio_options[0] || '',
+      resolution: config.resolution_options.includes(old.resolution)
+        ? old.resolution
+        : config.resolution_options[0] || '',
+    }))
+  }, [config, draftScope, scope])
 
   useEffect(() => {
     if (!restoreToken) return
@@ -237,6 +277,10 @@ export default function PromoRealView() {
   const start = () =>
     void guarded(async () => {
       if (!config?.enabled || !owner || !workspace) throw new Error('请先登录并选择工作空间')
+      if (token) {
+        setStage('form')
+        return
+      }
       const intake = await createPromoIntake(workspace)
       if (!intake.token) throw new Error('上传会话未返回有效编号')
       localStorage.setItem(`zzh.promo.intake.${scope}`, intake.token)
@@ -246,6 +290,23 @@ export default function PromoRealView() {
         setStage('form')
       }
     })
+  const confirmMaterial = async (id: number): Promise<PromoMaterial> => {
+    try {
+      return await completePromoUpload(id)
+    } catch (reason) {
+      if (!(reason instanceof BusinessApiError) || (reason as BusinessApiError & { status?: number }).status !== 409)
+        throw reason
+      // 确认响应丢失后再次确认可能冲突；仅在服务端明确返回 active 时认定完成。
+      try {
+        const latest = await getPromoIntake(token)
+        const material = latest.materials.find((item) => item.id === id)
+        if (material?.status === 'active') return material
+      } catch {
+        // 状态读取失败时保持原素材和重试入口，不推断上传结果。
+      }
+      throw new Error('素材确认失败，状态可能已变化。可重试确认，或选择原文件重试，上传成功后替换该素材。')
+    }
+  }
   const addFile = (file: File, role: 'footage' | 'logo' | 'supplement', existing?: PromoMaterial) =>
     void guarded(async () => {
       if (!config || !token || pending) return
@@ -262,29 +323,24 @@ export default function PromoRealView() {
       )
         throw new Error('请选择与原素材名称、大小及格式一致的文件')
       if (file.size > config.max_file_bytes) throw new Error('文件超过单文件大小限制')
-      if (!existing && materials.length >= config.max_files) throw new Error('文件数量已达上限')
-      if (
-        !existing &&
-        materials.reduce((sum, item) => sum + (item.size_bytes || 0), 0) + file.size > config.max_total_bytes
-      )
+      if (materials.length >= config.max_files) throw new Error('文件数量已达上限，请删除不需要的素材后再重新上传')
+      if (materials.reduce((sum, item) => sum + (item.size_bytes || 0), 0) + file.size > config.max_total_bytes)
         throw new Error('素材总大小超出限制')
       setUploadingName(file.name)
       try {
-        const ticket = existing
-          ? await retryPromoUpload(existing.id)
-          : await createPromoUpload({
-              intake_token: token,
-              role,
-              name: file.name,
-              mime_type: file.type,
-              size_bytes: file.size,
-            })
-        if (!existing) setMaterials((list) => [...list, ticket.material])
+        const ticket = await createPromoUpload({
+          intake_token: token,
+          role,
+          name: file.name,
+          mime_type: file.type,
+          size_bytes: file.size,
+        })
+        setMaterials((list) => [...list, ticket.material])
         setUploadStage((old) => ({ ...old, [ticket.material.id]: 'uploading' }))
         try {
           await uploadPromoFile(ticket, file)
           setUploadStage((old) => ({ ...old, [ticket.material.id]: 'uploaded' }))
-          const material = await completePromoUpload(ticket.material.id)
+          const material = await confirmMaterial(ticket.material.id)
           if (material.status !== 'active') throw new Error('素材尚未完成，请重试确认')
           setMaterials((list) => list.map((item) => (item.id === material.id ? material : item)))
           setUploadStage((old) => {
@@ -299,6 +355,23 @@ export default function PromoRealView() {
           }))
           throw reason
         }
+        if (existing) {
+          if (ticket.material.id === existing.id)
+            throw new Error('新素材已上传，但服务端返回了原素材编号，请检查后再操作')
+          try {
+            const latest = await getPromoIntake(token)
+            const oldMaterial = latest.materials.find((item) => item.id === existing.id)
+            if (oldMaterial?.status === 'active') {
+              setMaterials((list) => list.map((item) => (item.id === existing.id ? oldMaterial : item)))
+              throw new Error('新素材已上传，原素材也已就绪，请检查后自行删除不需要的记录')
+            }
+            if (oldMaterial) await deletePromoMaterial(existing.id)
+            setMaterials((list) => list.filter((item) => item.id !== existing.id))
+          } catch (reason) {
+            if (reason instanceof Error && reason.message.startsWith('新素材已上传')) throw reason
+            throw new Error('新素材已上传，但旧素材未能清理，请检查后自行删除旧的未完成记录')
+          }
+        }
         setQuote(null)
       } finally {
         if (alive.current) setUploadingName('')
@@ -306,7 +379,7 @@ export default function PromoRealView() {
     })
   const complete = (id: number) =>
     void guarded(async () => {
-      const material = await completePromoUpload(id)
+      const material = await confirmMaterial(id)
       if (material.status !== 'active') throw new Error('素材尚未完成，请稍后重试')
       setMaterials((list) => list.map((item) => (item.id === id ? material : item)))
       setUploadStage((old) => {
@@ -324,8 +397,9 @@ export default function PromoRealView() {
   const setField = <K extends keyof Form>(key: K, value: Form[K]) => {
     setForm((old) => ({ ...old, [key]: value }))
     setQuote(null)
+    setError('')
   }
-  const returnTo = (target: 'form' | 'materials') => {
+  const returnTo = (target: 'intro' | 'form' | 'materials') => {
     if (busy || busyRef.current) return
     setQuote(null)
     setError('')
@@ -336,19 +410,29 @@ export default function PromoRealView() {
       if (!config || !token) return
       if (!form.company.trim() || !form.contact.trim() || !form.phone.trim() || !form.brief.trim())
         throw new Error('请填写公司、联系人、电话和制作需求')
-      if (!offline && materials.some((item) => item.status !== 'active')) throw new Error('请完成或删除未完成的素材')
+      if (!isValidMobile(form.phone)) throw new Error('请输入正确的 11 位手机号码')
+      if (!isValidOptionalHttpUrl(form.reference_url))
+        throw new Error('请输入以 http:// 或 https:// 开头的有效参考链接')
       if (
-        !offline &&
-        materials.filter((item) => item.role === 'footage' && item.status === 'active').length <
-          config.footage_min_count
-      )
-        throw new Error(`至少上传 ${config.footage_min_count} 条实拍素材`)
-      const result = await quotePromo({
-        intake_token: token,
-        duration_seconds: form.duration_seconds,
-        ratio: form.ratio,
-        resolution: form.resolution,
-      })
+        !config.duration_options_seconds.includes(form.duration_seconds) ||
+        !config.ratio_options.includes(form.ratio) ||
+        !config.resolution_options.includes(form.resolution)
+      ) {
+        setStage('form')
+        throw new Error('制作规格已变化，请检查期望时长、画面比例和分辨率后重试')
+      }
+      if (!offline && materials.some((item) => item.status !== 'active')) throw new Error('请完成或删除未完成的素材')
+      let result: PromoQuote
+      try {
+        result = await quotePromo({
+          intake_token: token,
+          duration_seconds: form.duration_seconds,
+          ratio: form.ratio,
+          resolution: form.resolution,
+        })
+      } catch (reason) {
+        throw new Error(`${errorMessage(reason)}。请返回上一步检查制作规格；如仍失败，请联系客服。`)
+      }
       if (!result.config_hash || !Number.isFinite(result.total_cost)) throw new Error('报价信息不完整，请重试')
       setQuote(result)
       setStage('order')
@@ -461,7 +545,7 @@ export default function PromoRealView() {
                 {(!started || stage === 'intro' || !config?.enabled || !PROMO_DELIVERY_CREATE_ENABLED) && !pending && (
                   <>
                     <h1 className={styles.heroTitle}>{config?.entry_name || '定制宣传片'}</h1>
-                    <p className={styles.heroSubtitle}>实拍＋AI 混剪 · 每单交付 1 条成片 · 提交后 5 天内交付</p>
+                    <p className={styles.heroSubtitle}>每单交付 1 条成片 · 提交后 5 天内交付</p>
                     <section className={`${styles.panel} ${styles.intro}`}>
                       <div className={styles.introColumns}>
                         <div>
@@ -475,10 +559,7 @@ export default function PromoRealView() {
                           <div className={styles.plain}>
                             <ul>
                               <li>
-                                <b>实拍素材</b>：
-                                {config?.footage_min_count != null
-                                  ? `至少 ${config.footage_min_count} 条图片或视频。`
-                                  : '图片或视频素材，具体要求以服务开放后的配置为准。'}
+                                <b>实拍素材</b>： 尽可能上传图片或视频素材。
                               </li>
                               <li>LOGO、VI、口播稿和音乐要求可选传。</li>
                             </ul>
@@ -538,6 +619,7 @@ export default function PromoRealView() {
                 {config?.enabled &&
                   PROMO_DELIVERY_CREATE_ENABLED &&
                   started &&
+                  stage !== 'intro' &&
                   !pending &&
                   !restoreLoading &&
                   !restoreError && (
@@ -619,15 +701,23 @@ export default function PromoRealView() {
                               <input
                                 id="promo-phone"
                                 aria-label="联系电话"
+                                type="tel"
+                                inputMode="numeric"
+                                maxLength={11}
+                                placeholder="请输入 11 位手机号码"
                                 required
-                                aria-invalid={formValidated && !form.phone.trim()}
-                                aria-describedby={formValidated && !form.phone.trim() ? 'promo-phone-error' : undefined}
+                                aria-invalid={(formValidated || !!form.phone) && !isValidMobile(form.phone)}
+                                aria-describedby={
+                                  (formValidated || !!form.phone) && !isValidMobile(form.phone)
+                                    ? 'promo-phone-error'
+                                    : undefined
+                                }
                                 value={form.phone}
                                 onChange={(e) => setField('phone', e.target.value)}
                               />
-                              {formValidated && !form.phone.trim() && (
+                              {(formValidated || !!form.phone) && !isValidMobile(form.phone) && (
                                 <span id="promo-phone-error" className={styles.fieldError}>
-                                  请填写联系电话
+                                  {form.phone.trim() ? '请输入正确的 11 位手机号码' : '请填写联系电话'}
                                 </span>
                               )}
                             </label>
@@ -710,9 +800,23 @@ export default function PromoRealView() {
                             <label className={styles.wide}>
                               参考链接（选填）
                               <input
+                                id="promo-reference_url"
+                                type="url"
+                                placeholder="请输入以 http:// 或 https:// 开头的链接"
+                                aria-invalid={!!form.reference_url && !isValidOptionalHttpUrl(form.reference_url)}
+                                aria-describedby={
+                                  !!form.reference_url && !isValidOptionalHttpUrl(form.reference_url)
+                                    ? 'promo-reference-error'
+                                    : undefined
+                                }
                                 value={form.reference_url}
                                 onChange={(e) => setField('reference_url', e.target.value)}
                               />
+                              {!!form.reference_url && !isValidOptionalHttpUrl(form.reference_url) && (
+                                <span id="promo-reference-error" className={styles.fieldError}>
+                                  请输入以 http:// 或 https:// 开头的有效参考链接
+                                </span>
+                              )}
                             </label>
                           </fieldset>
                           <div className={styles.plain}>
@@ -721,6 +825,14 @@ export default function PromoRealView() {
                           </div>
                           <div className={styles.actions}>
                             <span>第 1 步 / 共 2 步：需求</span>
+                            <button
+                              className={styles.secondary}
+                              type="button"
+                              disabled={busy}
+                              onClick={() => returnTo('intro')}
+                            >
+                              上一步
+                            </button>
                             <button
                               className={styles.primary}
                               type="button"
@@ -739,6 +851,16 @@ export default function PromoRealView() {
                                 if (missing) {
                                   setError('请填写必填项')
                                   document.getElementById(`promo-${missing}`)?.focus()
+                                  return
+                                }
+                                if (!isValidMobile(form.phone)) {
+                                  setError('请输入正确的 11 位手机号码')
+                                  document.getElementById('promo-phone')?.focus()
+                                  return
+                                }
+                                if (!isValidOptionalHttpUrl(form.reference_url)) {
+                                  setError('请输入以 http:// 或 https:// 开头的有效参考链接')
+                                  document.getElementById('promo-reference_url')?.focus()
                                   return
                                 }
                                 setError('')
@@ -762,15 +884,20 @@ export default function PromoRealView() {
                               >
                                 <h2>
                                   {role === 'footage' ? '实拍素材' : role === 'logo' ? 'LOGO' : 'VI / 口播稿 / 音乐'}{' '}
-                                  <span className={styles.pill}>{role === 'footage' ? '必传' : '选传'}</span>
+                                  <span className={styles.pill}>{role === 'footage' ? '尽可能上传' : '选传'}</span>
                                 </h2>
                                 <p>
                                   {role === 'footage'
-                                    ? `至少 ${config.footage_min_count} 条图片或视频`
+                                    ? '图片或视频'
                                     : role === 'logo'
                                       ? '图片文件，透明底优先'
                                       : '补充文件可选传'}
                                 </p>
+                                {role === 'footage' && (
+                                  <p id="promo-video-upload-hint" className={styles.uploadHint}>
+                                    {videoUploadHint(config)}
+                                  </p>
+                                )}
                                 <label
                                   className={styles.uploadBox}
                                   onDragOver={(event) => event.preventDefault()}
@@ -785,6 +912,7 @@ export default function PromoRealView() {
                                     type="file"
                                     disabled={busy}
                                     accept={config.allowed_mime.join(',')}
+                                    aria-describedby={role === 'footage' ? 'promo-video-upload-hint' : undefined}
                                     onChange={selectFile(role)}
                                   />
                                 </label>
@@ -805,7 +933,7 @@ export default function PromoRealView() {
                                               ? '已上传，待确认'
                                               : uploadStage[item.id] === 'failed'
                                                 ? '上传失败'
-                                                : '未完成'}
+                                                : '未完成，上传状态未知'}
                                         {item.size_bytes != null &&
                                           ` · ${(item.size_bytes / 1024 / 1024).toFixed(1)} MB`}
                                       </span>
@@ -814,16 +942,15 @@ export default function PromoRealView() {
                                           <button type="button" disabled={busy} onClick={() => complete(item.id)}>
                                             重试确认
                                           </button>
-                                          {uploadStage[item.id] !== 'uploaded' && (
-                                            <label>
-                                              选择原文件重试
-                                              <input
-                                                type="file"
-                                                disabled={busy}
-                                                onChange={selectFile(item.role || 'footage', item)}
-                                              />
-                                            </label>
-                                          )}
+                                          <label>
+                                            选择原文件重试
+                                            <input
+                                              type="file"
+                                              disabled={busy}
+                                              aria-label={`选择原文件重试 ${item.name || `素材 ${item.id}`}`}
+                                              onChange={selectFile(item.role || 'footage', item)}
+                                            />
+                                          </label>
                                         </>
                                       )}
                                       <button type="button" disabled={busy} onClick={() => remove(item.id)}>
@@ -835,10 +962,35 @@ export default function PromoRealView() {
                             ))}
                           </div>
                           <div className={`${styles.plain} ${styles.materialHelp}`}>
-                            <b>传不上来怎么办？</b>{' '}
-                            {config.offline_fallback
-                              ? '可以登记线下交接，由顾问联系你。'
-                              : '请检查素材后重试，或联系客服。'}
+                            <span>
+                              <b>传不上来怎么办？</b>{' '}
+                              {config.offline_fallback
+                                ? '可以登记线下交接，由顾问联系你。'
+                                : '请检查素材后重试，或联系客服。'}
+                            </span>
+                            {offline && config.service_tel && (
+                              <span className={styles.advisorContact}>
+                                <span>顾问电话：</span>
+                                <span>{config.service_tel}</span>
+                                <button
+                                  type="button"
+                                  className={styles.copyPhone}
+                                  aria-label={`复制顾问电话 ${config.service_tel}`}
+                                  onClick={() => {
+                                    if (!navigator.clipboard) {
+                                      showToast('复制不可用，请手动选择号码', 'error')
+                                      return
+                                    }
+                                    void navigator.clipboard
+                                      .writeText(config.service_tel)
+                                      .then(() => showToast('复制成功', 'success'))
+                                      .catch(() => showToast('复制失败，请手动选择号码', 'error'))
+                                  }}
+                                >
+                                  复制
+                                </button>
+                              </span>
+                            )}
                           </div>
                           {config.offline_fallback && !offline && (
                             <button
@@ -856,33 +1008,6 @@ export default function PromoRealView() {
                             >
                               素材我线下交给顾问
                             </button>
-                          )}
-                          {offline && (
-                            <p>
-                              已登记线下交接，具体交付日期以报价为准。
-                              {config.service_tel && (
-                                <>
-                                  {' '}
-                                  顾问电话：<a href={`tel:${config.service_tel}`}>{config.service_tel}</a>{' '}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!navigator.clipboard) {
-                                        setCopyNotice('复制不可用，请手动选择号码')
-                                        return
-                                      }
-                                      void navigator.clipboard
-                                        .writeText(config.service_tel)
-                                        .then(() => setCopyNotice('电话号码已复制'))
-                                        .catch(() => setCopyNotice('复制失败，请手动选择号码'))
-                                    }}
-                                  >
-                                    复制
-                                  </button>
-                                </>
-                              )}
-                              {copyNotice && <span role="status">{copyNotice}</span>}
-                            </p>
                           )}
                           <fieldset className={styles.consent} disabled={busy}>
                             <label>
@@ -902,6 +1027,12 @@ export default function PromoRealView() {
                               {config.acknowledgement_text}
                             </label>
                           </fieldset>
+                          {!offline && materials.some((item) => item.status !== 'active') && (
+                            <p className={styles.notice}>
+                              存在未完成的素材，请重试确认、重新上传或删除后继续
+                              {config.offline_fallback ? '；也可登记线下交接。' : '。'}
+                            </p>
+                          )}
                           {(!config.price_show || config.manual_quote_required) && (
                             <p className={styles.notice}>
                               当前规格需要顾问核价，请联系 {config.service_tel}。{' '}
@@ -931,10 +1062,7 @@ export default function PromoRealView() {
                                 busy ||
                                 !authorized ||
                                 !acknowledged ||
-                                (!offline &&
-                                  (materials.some((item) => item.status !== 'active') ||
-                                    materials.filter((item) => item.role === 'footage' && item.status === 'active')
-                                      .length < config.footage_min_count)) ||
+                                (!offline && materials.some((item) => item.status !== 'active')) ||
                                 !config.price_show ||
                                 config.manual_quote_required
                               }
@@ -1122,6 +1250,8 @@ export default function PromoRealView() {
           if (quote && config && !pending)
             submit({
               ...form,
+              phone: form.phone.trim(),
+              reference_url: form.reference_url.trim(),
               intake_token: token,
               config_hash: quote.config_hash,
               idempotency_key: crypto.randomUUID(),
@@ -1138,7 +1268,6 @@ export default function PromoRealView() {
         )}
         <p>提交后将冻结 {quote?.total_cost} 积分，首次交付时结算。</p>
         <p>提交后 5 天内交付；承诺交付日期：{quote?.promised_date || '待确认'}。</p>
-        {config?.service_tel && <p>客服电话：{config.service_tel}。</p>}
         {error && <p role="alert">{error}</p>}
       </Modal>
     </div>

@@ -76,6 +76,7 @@ const GROUPS: SidebarGroup[] = [
   {
     title: '集市',
     items: [
+      { key: 'templates', label: '模板库', icon: ecommerceIcon, activeIcon: ecommerceActiveIcon, iconSize: 16 },
       // 原首页的「IP / 需求市场」两个标签，收进独立页面 /market
       { key: 'market', label: '供需商单', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
       { key: 'script-ideas', label: '剧本创意', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },

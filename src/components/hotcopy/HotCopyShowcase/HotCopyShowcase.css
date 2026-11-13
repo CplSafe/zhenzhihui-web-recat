@@ -11,6 +11,67 @@
   font-weight: 600;
   color: #333;
 }
+.hotcopy-tpl__notice {
+  margin: 0 0 14px 4px;
+  color: #63756c;
+  font-size: 13px;
+}
+.hotcopy-tpl__category-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  color: #a53632;
+  font-size: 13px;
+}
+.hotcopy-tpl__category-error button {
+  padding: 4px 10px;
+  border: 1px solid #c9ddd4;
+  border-radius: 6px;
+  background: #fff;
+  color: #08745e;
+  cursor: pointer;
+}
+.hotcopy-tpl__categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+.hotcopy-tpl__categories button {
+  min-height: 38px;
+  padding: 8px 17px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #596662;
+  font-size: 14px;
+  cursor: pointer;
+}
+.hotcopy-tpl__categories button:hover {
+  background: #eef4f1;
+  color: #087d66;
+}
+.hotcopy-tpl__categories button.is-active {
+  background: #dff3eb;
+  color: #086f59;
+  font-weight: 600;
+}
+.hotcopy-tpl__categories button:focus-visible {
+  outline: 3px solid #188c70;
+  outline-offset: 2px;
+}
+@container (max-width: 600px) {
+  .hotcopy-tpl__categories {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .hotcopy-tpl__categories button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
 /*
  * 瀑布流(与原首页模板库一致):分栏而非网格。每张卡按视频自身比例(卡片上的内联 aspect-ratio)
  * 展示,各列独立往下排,竖屏卡与横屏卡混排时不会被同一行最高的那张撑出空白。

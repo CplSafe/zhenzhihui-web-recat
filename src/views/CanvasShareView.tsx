@@ -78,6 +78,7 @@ function ShareNode({ id, data }: NodeProps<Node>) {
         </div>
       ) : resultUrl && !mediaFailed && kind === 'audio' ? (
         <audio
+          className="share-node-audio nodrag nopan nowheel"
           src={resultUrl}
           controls
           preload="metadata"
@@ -87,10 +88,11 @@ function ShareNode({ id, data }: NodeProps<Node>) {
       ) : resultUrl && !mediaFailed && isVideo ? (
         // 访客可能只想确认成片效果，给原生控件即可，不再搬运画布那套自定义播放器
         <video
-          className="share-node-media"
+          className="share-node-media nodrag nopan nowheel"
           src={resultUrl}
           poster={posterUrl || undefined}
           controls
+          playsInline
           preload="metadata"
           aria-label={`${title}预览`}
           onError={() => setFailedUrl(resultUrl)}
@@ -286,6 +288,10 @@ export default function CanvasShareView() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
+          minZoom={0.01}
+          maxZoom={10}
+          fitViewOptions={{ padding: 0.2, minZoom: 0.01, maxZoom: 1 }}
+          zoomOnDoubleClick={false}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}

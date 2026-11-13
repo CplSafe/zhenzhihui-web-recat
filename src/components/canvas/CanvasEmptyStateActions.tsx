@@ -1,12 +1,20 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { deleteCanvas, fetchAllCanvasElements, listCanvases, patchCanvas, type CanvasSummary } from '@/api/canvasApi'
+import {
+  deleteCanvas,
+  duplicateCanvas,
+  fetchAllCanvasElements,
+  listCanvases,
+  patchCanvas,
+  type CanvasSummary,
+} from '@/api/canvasApi'
 import { getBusinessErrorMessage } from '@/api/business'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
+import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
 import styles from './CanvasEmptyStateActions.module.css'
 
 type Action = {
@@ -30,6 +38,10 @@ export default function CanvasEmptyStateActions() {
   const [renameName, setRenameName] = useState('')
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState(0)
+  const [duplicatingId, setDuplicatingId] = useState(0)
+  const duplicateBusy = useRef(false)
+  const workspaceIdRef = useRef(workspaceId)
+  workspaceIdRef.current = workspaceId
   useEffect(() => {
     if (!workspaceId) {
       setRecent([])
@@ -148,6 +160,40 @@ export default function CanvasEmptyStateActions() {
       showToast(getBusinessErrorMessage(error, '删除失败,请稍后重试'), 'error')
     } finally {
       setDeletingId(0)
+    }
+  }
+  const handleDuplicate = async (item: CanvasSummary) => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId || !item.id || duplicateBusy.current) return
+    duplicateBusy.current = true
+    setDuplicatingId(item.id)
+    setOpenMenuId(0)
+    const title = buildCanvasCopyTitle(
+      item.title,
+      recent.map((canvas) => canvas.title),
+    )
+    try {
+      const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: item.id, title })
+      if (Number(workspaceIdRef.current) !== wsId) return
+      setRecent((items) =>
+        [
+          {
+            ...created,
+            title: created.title || title,
+            userId: created.userId || currentUserId || undefined,
+            updated_at: created.updated_at || new Date().toISOString(),
+          },
+          ...items,
+        ].slice(0, 10),
+      )
+      setCovers((current) => ({ ...current, [created.id]: current[item.id] ?? null }))
+      showToast(`已创建副本「${title}」`, 'success')
+    } catch (error) {
+      if (Number(workspaceIdRef.current) === wsId)
+        showToast(getBusinessErrorMessage(error, '创建副本失败,请稍后重试'), 'error')
+    } finally {
+      duplicateBusy.current = false
+      setDuplicatingId(0)
     }
   }
   const actions: Action[] = [
@@ -304,6 +350,13 @@ export default function CanvasEmptyStateActions() {
                           重命名
                         </button>
                       )}
+                      <button
+                        type="button"
+                        disabled={Boolean(duplicatingId)}
+                        onClick={() => void handleDuplicate(item)}
+                      >
+                        {duplicatingId === item.id ? '创建中…' : '创建副本'}
+                      </button>
                       {item.userId && currentUserId && item.userId === currentUserId && (
                         <button type="button" disabled={deletingId === item.id} onClick={() => void handleDelete(item)}>
                           {deletingId === item.id ? '删除中…' : '删除画布'}

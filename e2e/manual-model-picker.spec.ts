@@ -63,7 +63,7 @@ for (const width of [1440, 390]) {
     await duration.press('End')
     await expect(duration).toHaveAttribute('aria-valuetext', '60s')
     await page.screenshot({ path: testInfo.outputPath(`manual-params-${width}.png`), animations: 'disabled' })
-    await page.getByRole('button', { name: '去制作' }).click()
+    await page.getByRole('button', { name: '提交精制需求' }).click()
     await expect(page.getByText('123 积分（交付时结算）', { exact: true })).toBeVisible()
   })
 }

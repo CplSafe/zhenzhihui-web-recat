@@ -5,6 +5,7 @@ export interface LibraryCategory {
   id: number
   name: string
   position: number
+  code?: string
 }
 export interface LibraryTemplate {
   id: number
@@ -41,7 +42,12 @@ export async function listLibraryCategories(signal?: AbortSignal): Promise<Libra
   const data = await requestBusinessJson<unknown>('/api/v1/template-categories', { signal })
   if (!Array.isArray(data)) throw new Error('分类数据格式错误')
   return data
-    .map((v: any) => ({ id: Number(v.id), name: String(v.name || ''), position: Number(v.position || 0) }))
+    .map((v: any) => ({
+      id: Number(v.id),
+      name: String(v.name || ''),
+      position: Number(v.position || 0),
+      code: String(v.code || '').trim() || undefined,
+    }))
     .filter((v) => v.id > 0 && v.name)
 }
 

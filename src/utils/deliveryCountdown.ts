@@ -34,7 +34,7 @@ export function deliveryTimeParts(deadline: number, now: number) {
 export function formatDeliveryTime(kind: DeliveryKind, parts: ReturnType<typeof deliveryTimeParts>): string[] {
   const pad = (value: number) => String(value).padStart(2, '0')
   const totalHours = parts.days * 24 + parts.hours
-  if (kind === 't5' && parts.days >= 1) return [pad(parts.days), '天', pad(parts.hours)]
-  if (totalHours >= 1) return [pad(totalHours), ':', pad(parts.minutes)]
-  return [pad(totalHours), ':', pad(parts.minutes), ':', pad(parts.seconds)]
+  if (kind === 't5' && parts.days >= 1) return [pad(parts.days), '天', pad(parts.hours), '小时']
+  if (totalHours >= 1) return [pad(totalHours), '小时', pad(parts.minutes), '分']
+  return [pad(parts.minutes), '分', pad(parts.seconds), '秒']
 }

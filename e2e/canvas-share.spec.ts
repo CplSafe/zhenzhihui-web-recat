@@ -26,6 +26,8 @@ test('免登录分享页展示公开素材与历史连线', async ({ page }) => 
                 publicResultUrl: '/shared/image.svg',
               }),
               node('text', 'text', 480, { text: '分享的画布文字' }),
+              node('video', 'video', 880, { publicResultUrl: '/t1test.mp4' }),
+              node('audio', 'audio', 1280, { publicResultUrl: '/shared/audio.wav' }),
               {
                 element_id: 'edge-1',
                 kind: 'edge',
@@ -50,6 +52,24 @@ test('免登录分享页展示公开素材与历史连线', async ({ page }) => 
     }),
   )
   await page.route('**/api/v1/assets/12/download**', (route) => route.fulfill({ status: 403 }))
+  await page.route('**/shared/audio.wav', (route) => {
+    const samples = 8000
+    const wav = Buffer.alloc(44 + samples)
+    wav.write('RIFF', 0)
+    wav.writeUInt32LE(36 + samples, 4)
+    wav.write('WAVEfmt ', 8)
+    wav.writeUInt32LE(16, 16)
+    wav.writeUInt16LE(1, 20)
+    wav.writeUInt16LE(1, 22)
+    wav.writeUInt32LE(8000, 24)
+    wav.writeUInt32LE(8000, 28)
+    wav.writeUInt16LE(1, 32)
+    wav.writeUInt16LE(8, 34)
+    wav.write('data', 36)
+    wav.writeUInt32LE(samples, 40)
+    wav.fill(128, 44)
+    return route.fulfill({ contentType: 'audio/wav', body: wav })
+  })
 
   await page.goto('/canvas/share/shared-token', { waitUntil: 'domcontentloaded' })
 
@@ -58,6 +78,25 @@ test('免登录分享页展示公开素材与历史连线', async ({ page }) => 
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
   await expect(page.locator('.react-flow__edge-path')).toHaveAttribute('d', /[MLC]/)
   await expect(page.getByText('分享的画布文字')).toBeVisible()
+  const viewport = page.locator('.react-flow__viewport')
+  const initialTransform = await viewport.evaluate((el) => getComputedStyle(el).transform)
+  await page.getByRole('button', { name: 'zoom in' }).click()
+  await expect.poll(() => viewport.evaluate((el) => getComputedStyle(el).transform)).not.toBe(initialTransform)
+  const zoomedTransform = await viewport.evaluate((el) => getComputedStyle(el).transform)
+  await page.getByRole('button', { name: 'zoom out' }).click()
+  await expect.poll(() => viewport.evaluate((el) => getComputedStyle(el).transform)).not.toBe(zoomedTransform)
+  const video = page.locator('video[aria-label="视频预览"]')
+  const audio = page.locator('audio[aria-label="音频试听"]')
+  for (const media of [video, audio]) {
+    await expect(media).toHaveAttribute('controls', '')
+    await expect.poll(() => media.evaluate((el: HTMLMediaElement) => el.readyState)).toBeGreaterThan(0)
+    await media.evaluate(async (el: HTMLMediaElement) => {
+      el.muted = true
+      await el.play()
+    })
+    await expect.poll(() => media.evaluate((el: HTMLMediaElement) => el.currentTime)).toBeGreaterThan(0)
+    await media.evaluate((el: HTMLMediaElement) => el.pause())
+  }
 })
 
 test('新分享默认设置有限期并可由所有者作废', async ({ page }) => {

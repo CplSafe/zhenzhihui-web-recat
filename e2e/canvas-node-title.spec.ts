@@ -49,8 +49,22 @@ for (const width of [1440, 760]) {
     await expect(page.locator('.canvas-node-header__label').filter({ hasText: 'image生成结果' })).toBeVisible()
     await expect(page.locator('.canvas-node-header__label').filter({ hasText: 'video生成结果' })).toBeVisible()
     await expect(page.locator('.canvas-node-header__done')).toHaveCount(0)
-    const zoomControl = page.getByRole('combobox', { name: '画布缩放' })
-    await zoomControl.selectOption('25')
+    const viewport = page.locator('.react-flow__viewport')
+    const flow = page.locator('.react-flow')
+    const flowBox = await flow.boundingBox()
+    if (!flowBox) throw new Error('画布缺少可视区域')
+    await page.mouse.move(flowBox.x + flowBox.width / 2, flowBox.y + flowBox.height / 2)
+    await page.keyboard.down('Control')
+    for (let step = 0; step < 20; step++) {
+      const zoom = await viewport.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)
+      if (zoom <= 0.2501) break
+      const delta = Math.min(80, Math.log2(zoom / 0.25) / 0.002)
+      await page.mouse.wheel(0, delta)
+      await expect
+        .poll(() => viewport.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a))
+        .toBeLessThan(zoom)
+    }
+    await page.keyboard.up('Control')
     await expect
       .poll(() =>
         page

@@ -1957,16 +1957,22 @@ export default function SmartEntry({
                     data-guide={resumeMode ? 'smart-regen' : 'smart-next'}
                     disabled={!canSubmit || submitting}
                     onClick={() => void submit()}
-                    aria-label={submitting ? '正在准备创作' : '去制作'}
+                    aria-label={
+                      submitting ? '正在准备创作' : refineSelected && !isRealPersonVariant ? '提交精制需求' : '去制作'
+                    }
                     title={
                       submitting
                         ? '正在准备创作'
                         : isRealPersonVariant && !hasRequiredRealPerson
                           ? '请先从真人素材库选择一张已认证真人图片'
-                          : '去制作'
+                          : refineSelected && !isRealPersonVariant
+                            ? '提交精制需求'
+                            : '去制作'
                     }
                   >
-                    <span className={styles.sendPlainText}>{submitting ? '准备中…' : '去制作'}</span>
+                    <span className={styles.sendPlainText}>
+                      {submitting ? '准备中…' : refineSelected && !isRealPersonVariant ? '提交精制需求' : '去制作'}
+                    </span>
                   </button>
                 </div>
               </div>
