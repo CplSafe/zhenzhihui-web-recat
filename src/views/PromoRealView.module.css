@@ -626,6 +626,10 @@
   text-align: center;
 }
 .materialHelp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
   background: #fff;
   border: 1px solid #e7eaee;
   border-radius: 12px;
@@ -635,4 +639,33 @@
   .introFacts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+.copyPhone {
+  padding: 3px 10px;
+  border: 1px solid #b5dcd2;
+  border-radius: 6px;
+  background: #f2faf7;
+  color: #087d66;
+  cursor: pointer;
+}
+
+.copyPhone:focus-visible {
+  outline: 2px solid #087d66;
+  outline-offset: 3px;
+}
+
+.advisorContact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0 4px;
+  margin-left: auto;
+  text-align: right;
+}
+
+.materialCard .uploadHint {
+  color: #667585;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }

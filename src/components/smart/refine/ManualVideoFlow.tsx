@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from 'antd'
 import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 import StepProgress from '@/components/smart/StepProgress'
-import ManualVideoHistory from './ManualVideoHistory'
 import { ensureAssetId } from '@/api/smartShotImage'
 import {
   createManualVideoTask,
@@ -18,6 +17,8 @@ import {
   type ManualVideoModel,
   type ManualVideoTask,
 } from '@/api/manualVideo'
+import { useToast } from '@/composables/useToast'
+import { downloadToDisk } from '@/utils/downloadToDisk'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
 import { getModelParamFields, getModelParamOptionValues } from '@/utils/modelSchema'
@@ -26,13 +27,6 @@ import { getManualDurationSpec } from '@/utils/manualVideoParams'
 import { isDefiniteSubmissionRejection } from '@/utils/submissionRecovery'
 import styles from './RefineDemo.module.less'
 import manualStyles from './ManualVideoFlow.module.css'
-
-const fieldLabels: Record<string, string> = {
-  duration: '时长（秒）',
-  ratio: '画面比例',
-  resolution: '分辨率',
-  generate_audio: '生成音频',
-}
 
 interface Props {
   ownerId: number
@@ -102,7 +96,6 @@ export default function ManualVideoFlow(props: Props) {
   const [loading, setLoading] = useState(false)
   const [confirm, setConfirm] = useState<'create' | 'revision' | null>(null)
   const [reload, setReload] = useState(0)
-  const [autoQuote, setAutoQuote] = useState(false)
   const quoteRef = useRef<() => Promise<void>>(async () => {})
   const initialQuoteRequested = useRef(false)
   const busy = useRef(false)
@@ -113,6 +106,17 @@ export default function ManualVideoFlow(props: Props) {
       mounted.current = false
     }
   }, [])
+  const { showToast } = useToast()
+  const copyPhone = () => {
+    if (!navigator.clipboard) {
+      showToast('复制不可用，请手动选择号码', 'error')
+      return
+    }
+    void navigator.clipboard
+      .writeText('13681065734')
+      .then(() => showToast('复制成功', 'success'))
+      .catch(() => showToast('复制失败，请手动选择号码', 'error'))
+  }
   const refreshWallet = useWorkspaceSessionStore((state) => state.loadSubscriptionLabel)
   const fields = useMemo(() => getModelParamFields(model), [model])
 
@@ -195,9 +199,12 @@ export default function ManualVideoFlow(props: Props) {
   }, [ownerId, workspaceId, taskId, reload, refreshWallet])
 
   useEffect(() => {
-    setVideo('')
     const output = task?.outputs?.find((item) => item.type === 'video')
-    if (!output) return
+    if (!output) {
+      setVideo('')
+      return
+    }
+    setVideo(sanitizeMediaUrl(output.url))
     if (!output.asset_id) {
       setVideo(sanitizeMediaUrl(output.url))
       return
@@ -264,14 +271,6 @@ export default function ManualVideoFlow(props: Props) {
     initialQuoteRequested.current = true
     void quoteRef.current()
   }, [taskId, pending, modelLoading, model, values, fields])
-  useEffect(() => {
-    if (!autoQuote) return
-    const timer = window.setTimeout(() => {
-      setAutoQuote(false)
-      void quoteRef.current()
-    }, 400)
-    return () => window.clearTimeout(timer)
-  }, [autoQuote, values])
   const send = async (request: Pending) => {
     if (busy.current) return
     const previouslyUncertain = pending !== null
@@ -323,7 +322,10 @@ export default function ManualVideoFlow(props: Props) {
     { key: 'accept', label: '你验收成片' },
   ]
   const delivered = task?.status === 'succeeded'
-  const revisionUnavailable = task?.can_rework === false || (task?.rework_count != null && task.rework_count >= 1)
+  const revisionUnavailable =
+    Number(task?.parent_task_id || 0) > 0 ||
+    task?.can_rework === false ||
+    (task?.rework_count != null && task.rework_count >= 1)
   const step = taskId ? (delivered ? 3 : 2) : 1
   const invalidFields = fields.some((field) => field.required && values[field.name] === undefined)
   return (
@@ -332,7 +334,9 @@ export default function ManualVideoFlow(props: Props) {
         <StepProgress steps={steps} current={step} theme="delivery" />
       </div>
       <div className={`${styles.content} ${manualStyles.content}`}>
-        <div className={manualStyles.projectTitle}>精制成片</div>
+        <div className={`${manualStyles.projectTitle} ${task && !delivered ? manualStyles.waitTitle : ''}`}>
+          精制成片
+        </div>
         {error && (
           <div className={styles.notice} role="alert">
             {error}{' '}
@@ -403,90 +407,6 @@ export default function ManualVideoFlow(props: Props) {
                     <dd>1 条</dd>
                   </div>
                 </dl>
-                <details>
-                  <summary>调整生成参数</summary>
-                  <div className={manualStyles.modelFields}>
-                    {fields.map((field) => {
-                      const options = getModelParamOptionValues(field)
-                      const label = fieldLabels[field.name] || String(field.label || field.title || field.name)
-                      const update = (value: unknown) => {
-                        setValues((old) => ({ ...old, [field.name]: value }))
-                        setEstimate(null)
-                        setSnapshot(null)
-                        setAutoQuote(true)
-                      }
-                      if (field.name === 'duration')
-                        if (getManualDurationSpec(model).hasOptions)
-                          return (
-                            <label key={field.name}>
-                              时长（秒）
-                              <select
-                                disabled={loading}
-                                value={String(values.duration ?? '')}
-                                onChange={(event) => update(Number(event.target.value))}
-                              >
-                                {getManualDurationSpec(model).options.map((option) => (
-                                  <option key={option} value={option}>
-                                    {option} 秒
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          )
-                      if (field.name === 'duration')
-                        return (
-                          <label key={field.name}>
-                            时长（秒）
-                            <input
-                              type="number"
-                              disabled={loading}
-                              min={getManualDurationSpec(model).min}
-                              max={getManualDurationSpec(model).max}
-                              step="1"
-                              value={String(values.duration ?? '')}
-                              onChange={(event) => update(Number(event.target.value))}
-                            />
-                          </label>
-                        )
-                      if (options.length)
-                        return (
-                          <label key={field.name}>
-                            {label}
-                            <select
-                              disabled={loading}
-                              value={String(values[field.name] ?? '')}
-                              onChange={(event) =>
-                                update(options.find((option) => String(option) === event.target.value))
-                              }
-                            >
-                              {options.map((option) => (
-                                <option key={String(option)} value={String(option)}>
-                                  {option === true ? '是' : option === false ? '否' : String(option)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        )
-                      if (field.type === 'boolean')
-                        return (
-                          <label key={field.name}>
-                            <input
-                              type="checkbox"
-                              disabled={loading}
-                              checked={values[field.name] === true}
-                              onChange={(event) => update(event.target.checked)}
-                            />
-                            {label}
-                          </label>
-                        )
-                      return field.required && values[field.name] === undefined ? (
-                        <p role="alert" key={field.name}>
-                          模型必填参数 {label} 未提供可用默认值
-                        </p>
-                      ) : null
-                    })}
-                  </div>
-                </details>
               </section>
               <section className={manualStyles.order} aria-labelledby="manual-order-title">
                 <div className={manualStyles.orderHeading}>
@@ -554,18 +474,6 @@ export default function ManualVideoFlow(props: Props) {
                   )}
                 </div>
               </section>
-              <details>
-                <summary>查看历史精制任务</summary>
-                <ManualVideoHistory
-                  key={`${ownerId}.${workspaceId}`}
-                  ownerId={ownerId}
-                  workspaceId={workspaceId}
-                  onOpen={(id) => {
-                    rememberTask(ownerId, workspaceId, id)
-                    onTask(id, false)
-                  }}
-                />
-              </details>
             </>
           </>
         )}
@@ -601,7 +509,25 @@ export default function ManualVideoFlow(props: Props) {
                 </ul>
               </div>
             )}
-            {task.error_message && <p role="alert">{task.error_message}</p>}
+            {task.status === 'cancelled' ? (
+              <section
+                className={`${manualStyles.plain} ${manualStyles.waitDetails} ${manualStyles.feedback}`}
+                aria-labelledby="manual-feedback-title"
+              >
+                <b id="manual-feedback-title">任务反馈</b>
+                <p>已取消当前订单</p>
+              </section>
+            ) : task.status === 'failed' && task.error_message ? (
+              <section
+                className={`${manualStyles.plain} ${manualStyles.waitDetails} ${manualStyles.feedback}`}
+                aria-labelledby="manual-feedback-title"
+              >
+                <b id="manual-feedback-title">平台反馈</b>
+                <p>{task.error_message}</p>
+              </section>
+            ) : task.error_message ? (
+              <p role="alert">{task.error_message}</p>
+            ) : null}
             {['awaiting_manual', 'manual_processing'].includes(task.status) && (
               <section className={manualStyles.waitSection}>
                 <h2>交付时间</h2>
@@ -609,23 +535,13 @@ export default function ManualVideoFlow(props: Props) {
               </section>
             )}
             <section className={manualStyles.waitSection}>
-              <h2>制作进度</h2>
-              <ol className={manualStyles.phase}>
-                <li>制作画面</li>
-                <li>成片精修</li>
-                <li>等待你验收</li>
-              </ol>
-            </section>
-            <section className={manualStyles.waitSection}>
-              <h2>需要帮忙？</h2>
-              <div className={manualStyles.waitActions}>
-                <button className={manualStyles.primary} type="button" onClick={() => setReload((v) => v + 1)}>
-                  刷新状态
-                </button>
-              </div>
+              <h2 className={manualStyles.supportTitle}>需要帮忙？</h2>
               <div className={manualStyles.support}>
                 <p>临时要改需求、不想做了、或者内容很急，可以联系客服。</p>
-                <a href="tel:13681065734">136 8106 5734</a>
+                <span className={manualStyles.phone}>136 8106 5734</span>{' '}
+                <button className={manualStyles.copyPhone} type="button" onClick={copyPhone}>
+                  复制
+                </button>
                 <p>工作日 9:00-18:00 · 电话/微信同码</p>
               </div>
             </section>
@@ -665,7 +581,6 @@ export default function ManualVideoFlow(props: Props) {
         {task && delivered && !reviewRevision && (
           <div className={manualStyles.delivery}>
             <section>
-              <h1 className={manualStyles.deliveryTitle}>精修成片</h1>
               {video ? (
                 <video
                   className={styles.video}
@@ -691,7 +606,7 @@ export default function ManualVideoFlow(props: Props) {
                   <b>
                     {task.delivered_at && !Number.isNaN(Date.parse(task.delivered_at))
                       ? new Date(task.delivered_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
-                      : '—'}
+                      : '待确认'}
                   </b>
                 </div>
                 <div>
@@ -701,13 +616,24 @@ export default function ManualVideoFlow(props: Props) {
               </div>
               <div className={manualStyles.actions}>
                 {video && (
-                  <a className={manualStyles.download} href={video} download>
+                  <button
+                    className={manualStyles.download}
+                    type="button"
+                    onClick={() => {
+                      const output = task.outputs?.find((item) => item.type === 'video')
+                      void downloadToDisk({
+                        fileName: `精制成片_${task.id}.mp4`,
+                        preserveResponseMediaType: true,
+                        resolveUrl: async () =>
+                          output?.asset_id
+                            ? (await getManualVideoDownloadUrl(workspaceId, output.asset_id)).download_url
+                            : video,
+                      }).catch(() => showToast('视频下载失败，请稍后重试', 'error'))
+                    }}
+                  >
                     ⬇ 下载视频
-                  </a>
+                  </button>
                 )}
-                <button className={manualStyles.secondary} type="button" onClick={() => setReload((v) => v + 1)}>
-                  刷新视频地址
-                </button>
               </div>
             </section>
             <aside>
@@ -746,8 +672,12 @@ export default function ManualVideoFlow(props: Props) {
                   </button>
                 </div>
                 {showSupport && (
-                  <p>
-                    客服电话：<a href="tel:13681065734">136 8106 5734</a>（工作日 9:00-18:00）
+                  <p className={manualStyles.supportContact}>
+                    客服电话：<span className={manualStyles.phone}>136 8106 5734</span>{' '}
+                    <button className={manualStyles.copyPhone} type="button" onClick={copyPhone}>
+                      复制
+                    </button>
+                    （工作日 9:00-18:00）
                   </p>
                 )}
               </section>
@@ -780,7 +710,7 @@ export default function ManualVideoFlow(props: Props) {
         onOk={() => {
           if (confirm === 'create' && snapshot && estimate && estimate.can_afford && !loading)
             void send({ kind: 'create', body: { ...snapshot, idempotency_key: crypto.randomUUID() } })
-          else if (confirm === 'revision' && task)
+          else if (confirm === 'revision' && task && !revisionUnavailable && !loading && !pending)
             void send({
               kind: 'revision',
               taskId: task.id,

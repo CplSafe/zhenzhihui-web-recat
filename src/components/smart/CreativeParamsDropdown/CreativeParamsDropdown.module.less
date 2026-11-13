@@ -105,9 +105,12 @@
 @media (max-width: 520px) {
   .popover {
     position: fixed;
-    bottom: 84px;
+    top: 68px;
+    bottom: auto;
     left: 14px;
     width: min(390px, calc(100vw - 28px));
+    max-height: calc(100dvh - 136px);
+    overflow-y: auto;
   }
 }
 

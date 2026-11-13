@@ -72,7 +72,7 @@ type TaskRecord = TaskCenterTask & Record<string, unknown>
 type TaskTone = 'active' | 'queued' | 'failed' | 'completed'
 
 /** 业务类型页签之外，补充跨业务汇总的“正在生成”状态页签。 */
-type TaskCenterTab = TaskCenterScope | 'generating' | 'promo'
+type TaskCenterTab = TaskCenterScope | 'generating' | 'promo' | 'refine'
 
 /** 项目草稿中可用于任务中心恢复封面的稳定源视频信息。 */
 interface TaskThumbnailSource {
@@ -123,6 +123,7 @@ export function deduplicateTaskCenterRecords(tasks: TaskCenterTask[]): TaskCente
 const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
   { value: 'generating', label: '正在生成' },
   { value: 'smart', label: '爆款成片' },
+  ...(MANUAL_DELIVERY_ENABLED ? [{ value: 'refine' as const, label: '精制任务' }] : []),
   { value: 'hot-copy', label: '爆款复刻' },
   { value: 'image', label: '图片' },
   ...(PROMO_DELIVERY_ENABLED ? [{ value: 'promo' as const, label: '宣传片' }] : []),
@@ -846,7 +847,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const promoOpenRequest = usePromoDemoStore((state) => state.openRequest)
   const promoTasks = usePromoDemoStore((state) => state.tasks)
   useEffect(() => {
-    if (MANUAL_DELIVERY_ENABLED && refineOpenRequest > 0) setActiveScope('smart')
+    if (MANUAL_DELIVERY_ENABLED && refineOpenRequest > 0) setActiveScope('refine')
   }, [refineOpenRequest])
   useEffect(() => {
     if (PROMO_DELIVERY_ENABLED && promoOpenRequest > 0 && window.location.pathname === '/promo') setActiveScope('promo')
@@ -1112,7 +1113,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   ])
 
   // 「正在生成」全是本会话发起的任务，必然是自己的，不给成员筛选
-  const showOwnerFilter = isTeamSpace && activeScope !== 'generating' && activeScope !== 'promo'
+  const showOwnerFilter =
+    isTeamSpace && activeScope !== 'generating' && activeScope !== 'promo' && activeScope !== 'refine'
   /** 与项目管理同口径：「我」按后端 mine 集合；本会话刚发起、项目还没进 mine 集合的任务也算我的。 */
   const matchesTaskOwner = useCallback(
     (task: TaskCenterTask, filter: string) => {
@@ -1149,13 +1151,13 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   )
   const hasVisibleRefineTasks =
     MANUAL_DELIVERY_ENABLED &&
-    activeScope === 'smart' &&
+    activeScope === 'refine' &&
     (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId)) &&
     refineTasks.some((task) => task.ownerId === currentUserId && task.workspaceId === Number(workspaceId))
   const [hasManualTasks, setHasManualTasks] = useState(false)
   const showManualTasks =
     MANUAL_DELIVERY_ENABLED &&
-    (activeScope === 'smart' || activeScope === 'generating') &&
+    (activeScope === 'refine' || activeScope === 'generating') &&
     (!effectiveOwnerFilter || effectiveOwnerFilter === String(currentUserId))
   /** 创作者展示名：任务自带（后端 creator_nickname）优先，否则按 ID 从成员列表查。 */
   const creatorLabelFor = (task: TaskCenterTask): string => {
@@ -1322,7 +1324,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               tabIndex={activeScope === tab.value ? 0 : -1}
               onClick={() => {
                 setActiveScope(tab.value)
-                if (tab.value !== 'generating' && tab.value !== 'promo') onScopeChange?.(tab.value)
+                if (tab.value !== 'generating' && tab.value !== 'promo' && tab.value !== 'refine')
+                  onScopeChange?.(tab.value)
               }}
               onKeyDown={(event) => {
                 const currentIndex = SCOPE_TABS.findIndex((candidate) => candidate.value === tab.value)
@@ -1336,7 +1339,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 event.preventDefault()
                 const nextScope = SCOPE_TABS[nextIndex].value
                 setActiveScope(nextScope)
-                if (nextScope !== 'generating' && nextScope !== 'promo') onScopeChange?.(nextScope)
+                if (nextScope !== 'generating' && nextScope !== 'promo' && nextScope !== 'refine')
+                  onScopeChange?.(nextScope)
                 scopeTabRefs.current[nextScope]?.focus()
               }}
             >
@@ -1376,7 +1380,9 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               ? '正在生成任务'
               : activeScope === 'promo'
                 ? '宣传片任务'
-                : `${getScopeLabel(activeScope)}任务`
+                : activeScope === 'refine'
+                  ? '精制任务'
+                  : `${getScopeLabel(activeScope)}任务`
           }
         >
           {PROMO_DELIVERY_ENABLED && (activeScope === 'generating' || activeScope === 'promo') && (

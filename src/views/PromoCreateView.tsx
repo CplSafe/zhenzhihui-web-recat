@@ -5,6 +5,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import PromoOrders from '@/components/task/PromoOrders'
 import PromoRealView from './PromoRealView'
+import { isValidMobile, isValidOptionalHttpUrl } from '@/utils/formValidation'
 import StepProgress from '@/components/smart/StepProgress'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
@@ -130,6 +131,14 @@ function PromoDemoView() {
     event.preventDefault()
     if (!form.org.trim() || !form.contact.trim() || !form.phone.trim() || !form.core.trim()) {
       setMessage('请填写所有必填项。')
+      return
+    }
+    if (!isValidMobile(form.phone)) {
+      setMessage('请输入正确的 11 位手机号码。')
+      return
+    }
+    if (!isValidOptionalHttpUrl(form.reference)) {
+      setMessage('请输入以 http:// 或 https:// 开头的有效参考链接。')
       return
     }
     goto('materials')
@@ -275,7 +284,7 @@ function PromoDemoView() {
                       </div>
                       <span>约需 3 分钟</span>
                     </header>
-                    <form onSubmit={submitForm}>
+                    <form onSubmit={submitForm} noValidate>
                       <div className={styles.formGrid}>
                         <label>
                           单位 / 公司名称 <em>*</em>
@@ -299,9 +308,12 @@ function PromoDemoView() {
                           联系方式 <em>*</em>
                           <input
                             required
+                            type="tel"
+                            inputMode="numeric"
+                            maxLength={11}
                             value={form.phone}
                             onChange={(e) => patchForm('phone', e.target.value)}
-                            placeholder="手机号或其他联系方式"
+                            placeholder="请输入 11 位手机号码"
                           />
                         </label>
                         <label>
@@ -359,6 +371,7 @@ function PromoDemoView() {
                         <label className={styles.full}>
                           参考片链接（选填）
                           <input
+                            type="url"
                             value={form.reference}
                             onChange={(e) => patchForm('reference', e.target.value)}
                             placeholder="粘贴参考片链接"

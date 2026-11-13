@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCreator, saveCreator, type CreatorResponse } from '@/api/studentApplications'
 import { scriptIdeaGenres } from '@/utils/scriptIdeaGenres'
+import { isValidMobile } from '@/utils/formValidation'
 import creatorRegions from '@/data/creatorRegions.json'
 
 // 大陆数据以 2023 年快照为基础，并与民政部 2025 年地级区划核对；港澳台另行补充。
@@ -299,6 +300,10 @@ export function JoinPreview({ user }: { user: any }) {
               setSaveError('请填写完整的必填信息。')
               return
             }
+            if (!isValidMobile(next['联系手机'] || '')) {
+              setSaveError('请输入正确的 11 位手机号码。')
+              return
+            }
             if (!agreed || !creator?.agreement_version) {
               setSaveError('请阅读并同意入驻协议，确认协议版本后提交。')
               return
@@ -325,7 +330,7 @@ export function JoinPreview({ user }: { user: any }) {
                 grade_major: expectedGradeMajor,
                 province,
                 city,
-                phone: next['联系手机'],
+                phone: next['联系手机'].trim(),
                 email: next['联系邮箱'],
                 contact_im: next['微信 / QQ'] || '',
                 specialties: nextGenres,
@@ -633,7 +638,15 @@ export function JoinPreview({ user }: { user: any }) {
                         ) : (
                           <input
                             required={required}
-                            type={label === '联系邮箱' ? 'email' : 'text'}
+                            type={label === '联系邮箱' ? 'email' : label === '联系手机' ? 'tel' : 'text'}
+                            inputMode={label === '联系手机' ? 'numeric' : undefined}
+                            maxLength={label === '联系手机' ? 11 : undefined}
+                            aria-invalid={label === '联系手机' && !!profile[label] && !isValidMobile(profile[label])}
+                            aria-describedby={
+                              label === '联系手机' && !!profile[label] && !isValidMobile(profile[label])
+                                ? 'si-join-phone-error'
+                                : undefined
+                            }
                             value={profile[label] || ''}
                             placeholder={
                               label === '学校 / 机构' && profile['学生状态'] === '已毕业'
@@ -642,6 +655,11 @@ export function JoinPreview({ user }: { user: any }) {
                             }
                             onChange={(e) => setProfile({ ...profile, [label]: e.target.value })}
                           />
+                        )}
+                        {label === '联系手机' && !!profile[label] && !isValidMobile(profile[label]) && (
+                          <small className="si-field-error" id="si-join-phone-error">
+                            请输入正确的 11 位手机号码
+                          </small>
                         )}
                         {label === '真实姓名' && <small className="si-field-hint">与后续署名、结算一致</small>}
                         {label === '学校 / 机构' && profile['学生状态'] === '已毕业' && (

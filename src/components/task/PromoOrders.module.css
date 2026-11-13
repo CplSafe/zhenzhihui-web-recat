@@ -430,3 +430,16 @@
     align-items: flex-start;
   }
 }
+
+.phone {
+  color: #8a94a6;
+  font-size: 12px;
+}
+.copyPhone {
+  margin-left: 8px;
+}
+.workflow .downloadBar .primary {
+  background: #1c1c1e;
+  color: #fff;
+  border-color: #1c1c1e;
+}

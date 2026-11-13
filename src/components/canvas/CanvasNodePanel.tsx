@@ -2491,45 +2491,48 @@ export default function CanvasNodePanel({
       </div>
 
       {supportsMask && (
-        <div>
-          <label>
-            编辑蒙版（可选）
-            <input
-              type="file"
-              accept="image/png"
-              aria-label="上传编辑蒙版"
-              disabled={taskRunning || maskUploading}
-              onChange={async (event) => {
-                const file = event.target.files?.[0]
-                event.target.value = ''
-                if (!file) return
-                if (file.type !== 'image/png' || file.size >= 4 * 1024 * 1024) {
-                  showToast('请使用小于 4 MB 的 PNG 蒙版', 'error')
-                  return
-                }
-                const targetNode = node?.id
-                setMaskUploading(true)
-                try {
-                  const uploaded = await uploadAssetFile({ workspaceId, file })
-                  if (activeNodeId.current === targetNode)
-                    onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: uploaded.asset.id })
-                } catch {
-                  showToast('蒙版上传失败，请重试', 'error')
-                } finally {
-                  setMaskUploading(false)
-                }
-              }}
-            />
-          </label>
-          <small>透明区域将被修改；尺寸须与第一张参考图一致。</small>
+        <div className={styles.maskField}>
+          <div className={styles.maskHeading}>
+            <span className={styles.maskTitle}>
+              编辑蒙版 <span>（可选）</span>
+            </span>
+            <label className={`${styles.maskUpload} ${taskRunning || maskUploading ? styles.maskUploadDisabled : ''}`}>
+              <span aria-hidden="true">{maskUploading ? '上传中…' : maskAssetId > 0 ? '更换蒙版' : '上传 PNG'}</span>
+              <input
+                className={styles.maskInput}
+                type="file"
+                accept="image/png"
+                aria-label="上传编辑蒙版"
+                disabled={taskRunning || maskUploading}
+                onChange={async (event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (!file) return
+                  if (file.type !== 'image/png' || file.size >= 4 * 1024 * 1024) {
+                    showToast('请使用小于 4 MB 的 PNG 蒙版', 'error')
+                    return
+                  }
+                  const targetNode = node?.id
+                  setMaskUploading(true)
+                  try {
+                    const uploaded = await uploadAssetFile({ workspaceId, file })
+                    if (activeNodeId.current === targetNode)
+                      onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: uploaded.asset.id })
+                  } catch {
+                    showToast('蒙版上传失败，请重试', 'error')
+                  } finally {
+                    setMaskUploading(false)
+                  }
+                }}
+              />
+            </label>
+          </div>
+          <small className={styles.maskHint}>透明区域将被修改；尺寸须与第一张参考图一致，PNG 小于 4 MB。</small>
           {maskUploading && <span role="status">蒙版上传中…</span>}
           {maskAssetId > 0 && (
-            <div>
-              <img
-                src={assetStreamUrl(maskAssetId, workspaceId)}
-                alt="编辑蒙版"
-                style={{ width: 48, height: 48, objectFit: 'contain' }}
-              />
+            <div className={styles.maskPreview}>
+              <img src={assetStreamUrl(maskAssetId, workspaceId)} alt="编辑蒙版" />
+              <span>已上传蒙版</span>
               <button
                 type="button"
                 disabled={taskRunning || maskUploading}

@@ -350,29 +350,42 @@ export interface ListTemplatesResult {
  * 返回标准业务信封 { code, data: Template[] }。失败/空时返回空数组,调用方自行决定是否用 demo 兜底。
  */
 export async function listBackendTemplates(): Promise<TemplateItem[]> {
-  let res: Response
-  try {
-    res = await fetch('/api/v1/templates', {
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-    })
-  } catch {
-    return []
-  }
-  if (!res.ok) return []
-  let payload: any
-  try {
-    payload = await res.json()
-  } catch {
-    return []
-  }
-  const list = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : []
+  const list: any[] = []
+  const seenCursors = new Set<string>()
+  let cursor = ''
+  do {
+    let payload: any
+    try {
+      const params = new URLSearchParams()
+      if (cursor) params.set('cursor', cursor)
+      const res = await fetch(`/api/v1/templates${cursor ? `?${params}` : ''}`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) return []
+      payload = await res.json()
+    } catch {
+      return []
+    }
+    const data = payload?.data ?? payload
+    if (Array.isArray(data)) {
+      list.push(...data)
+      break
+    }
+    if (!Array.isArray(data?.items) || typeof data.has_more !== 'boolean') return []
+    list.push(...data.items)
+    if (!data.has_more) break
+    const next = String(data.next_cursor || '')
+    if (!next || seenCursors.has(next)) return []
+    seenCursors.add(next)
+    cursor = next
+  } while (cursor)
   return list
     .map((t: any, i: number): TemplateItem => {
       const w = Number(t?.width || 0)
       const h = Number(t?.height || 0)
       const ratio = normalizeRatio(String(t?.ratio || '').trim() || (w && h ? `${w} / ${h}` : '9 / 16'))
-      const thumbnailUrl = String(t?.thumbnail_url || '').trim()
+      const thumbnailUrl = String(t?.thumbnail_url || t?.cover_url || '').trim()
       const videoAssetId = toNumber(t?.video_asset_id ?? t?.videoAssetId)
       const style = String(t?.style || '').trim()
       return {
@@ -382,7 +395,7 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
         title: String(t?.title || '').trim(),
         prompt: pickFirstText(t?.prompt, t?.prompt_text),
         thumbnailUrl: isSafeMediaUrl(thumbnailUrl) ? thumbnailUrl : '',
-        videoUrl: String(t?.video_url || '').trim(),
+        videoUrl: String(t?.video_url || (t?.media_type === 'video' ? t?.media_url : '') || '').trim(),
         videoAssetId: videoAssetId || undefined,
         ratio,
         width: w || undefined,

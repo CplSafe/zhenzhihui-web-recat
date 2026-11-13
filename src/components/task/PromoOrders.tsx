@@ -14,6 +14,8 @@ import {
 } from '@/api/promo'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
+import { useToast } from '@/composables/useToast'
+import { downloadToDisk } from '@/utils/downloadToDisk'
 import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 import styles from './PromoOrders.module.css'
 
@@ -67,6 +69,18 @@ export default function PromoOrders({
   const busyRef = useRef(false)
   const [confirm, setConfirm] = useState<'refund' | 'rework' | null>(null)
   const [reload, setReload] = useState(0)
+  const { showToast } = useToast()
+  const copyPhone = () => {
+    if (!serviceTel) return
+    if (!navigator.clipboard) {
+      showToast('复制不可用，请手动选择号码', 'error')
+      return
+    }
+    void navigator.clipboard
+      .writeText(serviceTel)
+      .then(() => showToast('复制成功', 'success'))
+      .catch(() => showToast('复制失败，请手动选择号码', 'error'))
+  }
   const refreshWallet = useWorkspaceSessionStore((state) => state.loadSubscriptionLabel)
 
   useEffect(() => {
@@ -188,9 +202,11 @@ export default function PromoOrders({
       )}
       <div className={styles.heading}>
         <h1>{selected === null ? '宣传片订单' : `宣传片订单 #${selected}`}</h1>
-        <button type="button" onClick={selected === null ? onClose : () => setSelected(null)}>
-          {selected === null ? '返回' : '返回订单列表'}
-        </button>
+        {selected === null && (
+          <button type="button" onClick={onClose}>
+            返回
+          </button>
+        )}
       </div>
       {actionNotice && <p role="status">{actionNotice}</p>}
       {loading && <p role="status">正在加载订单…</p>}
@@ -256,13 +272,28 @@ export default function PromoOrders({
                   </p>
                 </div>
                 {videoUrl && (
-                  <a className={styles.primary} href={videoUrl} download>
+                  <button
+                    className={styles.primary}
+                    type="button"
+                    onClick={() => {
+                      void downloadToDisk({
+                        fileName: `宣传片_${order.id}.mp4`,
+                        preserveResponseMediaType: true,
+                        resolveUrl: async () =>
+                          order.delivered_material_id
+                            ? (await getPromoMaterialDownload(order.delivered_material_id)).download_url
+                            : videoUrl,
+                      }).catch(() => showToast('视频下载失败，请稍后重试', 'error'))
+                    }}
+                  >
                     下载视频
-                  </a>
+                  </button>
                 )}
-                <button type="button" onClick={() => void loadVideo()}>
-                  {videoUrl ? '刷新视频地址' : '加载成片'}
-                </button>
+                {!videoUrl && (
+                  <button type="button" onClick={() => void loadVideo()}>
+                    加载成片
+                  </button>
+                )}
               </div>
               <dl className={styles.deliveryInfo}>
                 <div>
@@ -330,7 +361,10 @@ export default function PromoOrders({
               {serviceTel && (
                 <section className={styles.sidePanel}>
                   <h2>联系客服</h2>
-                  <a href={`tel:${serviceTel}`}>{serviceTel}</a>
+                  <span className={styles.phone}>{serviceTel}</span>{' '}
+                  <button className={styles.copyPhone} type="button" onClick={copyPhone}>
+                    复制
+                  </button>
                 </section>
               )}
             </aside>
@@ -397,7 +431,10 @@ export default function PromoOrders({
               <h3>需要帮忙？</h3>
               {serviceTel && (
                 <p className={styles.hotline}>
-                  联系客服：<a href={`tel:${serviceTel}`}>{serviceTel}</a>
+                  联系客服：<span className={styles.phone}>{serviceTel}</span>{' '}
+                  <button className={styles.copyPhone} type="button" onClick={copyPhone}>
+                    复制
+                  </button>
                 </p>
               )}
               <div className={styles.waitActions}>

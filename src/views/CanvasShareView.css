@@ -97,8 +97,14 @@
   display: block;
   width: 100%;
   height: calc(100% - 22px);
-  object-fit: cover;
+  object-fit: contain;
   background: #f1f3f6;
+}
+
+.share-node-audio {
+  display: block;
+  width: 100%;
+  max-width: 100%;
 }
 
 .share-node-text {

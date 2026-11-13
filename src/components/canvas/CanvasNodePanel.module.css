@@ -101,6 +101,96 @@
   flex-wrap: wrap;
 }
 
+.maskField {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 10px;
+  background: rgb(255 255 255 / 3%);
+}
+.maskHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.maskTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+.maskTitle span {
+  color: #9299a4;
+  font-weight: 400;
+}
+.maskUpload {
+  position: relative;
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid rgb(0 203 169 / 45%);
+  border-radius: 7px;
+  color: #42d6bb;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.maskUpload:hover {
+  background: rgb(0 203 169 / 10%);
+}
+.maskUpload:focus-within {
+  outline: 2px solid #42d6bb;
+  outline-offset: 2px;
+}
+.maskUploadDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.maskInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.maskHint {
+  color: #a3a9b2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.maskPreview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #c7cdd2;
+  font-size: 12px;
+}
+.maskPreview img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #161a1c;
+}
+.maskPreview button {
+  margin-left: auto;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: #aeb7bd;
+  cursor: pointer;
+}
+.maskPreview button:hover {
+  color: #fff;
+}
+.maskPreview button:focus-visible {
+  outline: 2px solid #42d6bb;
+  border-radius: 4px;
+}
+.maskPreview button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .refThumb {
   width: 50px;
   height: 50px;
