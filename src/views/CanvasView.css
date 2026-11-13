@@ -1674,7 +1674,15 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 /* 整片缓冲提示：跳转落不住时切本地整片，期间给个可见反馈 */
 .canvas-node-video-hint {
-  flex: none;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
   color: rgba(255, 255, 255, 0.85);
   font-size: calc(11px * var(--canvas-readable-text-scale));
   line-height: calc(16px * var(--canvas-readable-text-scale));
@@ -1683,10 +1691,16 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-node-video-retry {
-  padding: 0;
   color: #ffe0a3;
-  background: transparent;
   border: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.canvas-node-video-cancel {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #d1e7e2;
   cursor: pointer;
   pointer-events: auto;
 }

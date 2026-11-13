@@ -407,11 +407,24 @@
   max-width: min(360px, 85vw);
   max-height: 320px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #697477 transparent;
+  color-scheme: dark;
   padding: 5px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: var(--canvas-surface-raised);
   box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+.modelMenu::-webkit-scrollbar {
+  width: 6px;
+}
+.modelMenu::-webkit-scrollbar-track {
+  background: transparent;
+}
+.modelMenu::-webkit-scrollbar-thumb {
+  background: #697477;
+  border-radius: 999px;
 }
 .modelOption {
   display: flex;
