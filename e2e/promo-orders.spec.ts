@@ -40,9 +40,7 @@ test('真实宣传片订单详情、免费修改及退款条件使用后端状�
   await page.route('**/api/v1/promo/materials/42/download', (route) =>
     route.fulfill({ json: { code: 0, data: { download_url: '/tutorials/smart-create.mp4' } } }),
   )
-  await page.goto('/promo')
-  await page.getByRole('button', { name: '查看我的订单' }).click()
-  await page.getByRole('button', { name: /订单 #10/ }).click()
+  await page.goto('/promo?order=10')
   await expect(page.getByText('2026-11-10')).toBeVisible()
   await expect(page.getByLabel('宣传片成片')).toBeVisible()
   await expect(page.getByText('制作中，顾问会主动联系你')).toHaveCount(0)
@@ -58,9 +56,8 @@ test('真实宣传片订单详情、免费修改及退款条件使用后端状�
   await expect(page.getByText('修改状态：', { exact: false })).toHaveCount(0)
   expect(reworkCount).toBe(1)
   await page.screenshot({ path: testInfo.outputPath('promo-orders-rework.png'), fullPage: true })
-  await page.getByRole('button', { name: '返回订单列表' }).click()
   status = 'overdue'
-  await page.getByRole('button', { name: /订单 #10/ }).click()
+  await page.reload()
   await expect(page.getByText('修改状态：', { exact: false })).toHaveCount(0)
   await page.getByRole('button', { name: '申请退回积分' }).click()
   await expect(page.getByRole('dialog')).toContainText('全额退回积分并终止制作')

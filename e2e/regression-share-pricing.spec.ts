@@ -24,49 +24,25 @@ test('创作入口的视频模型保持后台顺序', async ({ page }, testInfo)
   expectNoUnexpectedApi(api)
 })
 
-test('分享链接只返回URL也可重开回显，查询失败必须重试', async ({ page }, testInfo) => {
+test('画布分享入口隐藏时不请求分享接口', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
-  const errors: string[] = []
-  page.on('pageerror', (error) => errors.push(error.message))
   await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
   await page.route('**/api/v1/canvases/125**', (route) =>
     route.fulfill({
       json: new URL(route.request().url()).pathname.endsWith('/elements')
-        ? { elements: [], sync_revision: 1, has_more: false }
-        : { id: 125, title: '分享回显回归', revision: 1 },
+        ? { elements: [], sync_revision: 1, history_floor_revision: 0, has_more: false }
+        : { id: 125, title: '分享入口验收', revision: 1 },
     }),
   )
-  let reads = 0
-  let writes = 0
+  let shareRequests = 0
   await page.route('**/api/v1/canvases/125/share?**', (route) => {
-    if (route.request().method() !== 'GET') writes++
-    reads++
-    return reads === 3
-      ? route.fulfill({ status: 503, json: { message: '分享状态暂时不可用' } })
-      : route.fulfill({ json: { data: { url: 'https://example.invalid/shared-canvas', status: 'active' } } })
+    shareRequests++
+    return route.abort()
   })
   await page.goto('/canvas/125')
-  const open = page.getByRole('button', { name: '分享这块画布', exact: true })
-  for (let count = 0; count < 2; count++) {
-    await open.click()
-    const dialog = page.getByRole('dialog', { name: '分享画布' })
-    await expect(dialog.getByRole('textbox', { name: '分享链接' })).toHaveValue('https://example.invalid/shared-canvas')
-    await expect(dialog.getByRole('button', { name: '重新生成链接' })).toBeVisible()
-    await dialog.getByRole('button', { name: '关闭分享弹窗' }).click()
-  }
-  await open.click()
-  const dialog = page.getByRole('dialog', { name: '分享画布' })
-  await expect(dialog.getByRole('button', { name: '重新读取分享状态' })).toBeVisible()
-  await expect(dialog.getByText('这块画布还没有分享链接。')).toHaveCount(0)
-  await dialog.getByRole('button', { name: '重新读取分享状态' }).click()
-  await expect(dialog.getByRole('textbox', { name: '分享链接' })).toHaveValue('https://example.invalid/shared-canvas')
-  expect(reads).toBe(4)
-  expect(writes).toBe(0)
-  await page.screenshot({ path: testInfo.outputPath('share-reopened.png') })
-  await page.setViewportSize({ width: 760, height: 800 })
-  await expect(dialog.getByRole('textbox', { name: '分享链接' })).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('share-reopened-narrow.png') })
-  expect(errors).toEqual([])
+  await expect(page.getByText('点击下方「+」创建新节点')).toBeVisible()
+  await expect(page.getByRole('button', { name: '分享这块画布' })).toHaveCount(0)
+  expect(shareRequests).toBe(0)
   expectNoUnexpectedApi(api)
 })
 

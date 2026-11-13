@@ -7,7 +7,6 @@ import {
   getPromoOrder,
   getWorkspacePromoOrderIds,
   promoOrderBelongsToWorkspace,
-  listPromoOrders,
   refundPromoOrder,
   reworkPromoOrder,
   type PromoOrder,
@@ -39,7 +38,7 @@ const rework: Record<string, string> = {
 interface Props {
   workspaceId: number
   onClose: () => void
-  initialOrderId?: number
+  initialOrderId: number
   serviceTel?: string
   reworkDays?: number
   reworkWindowDays?: number
@@ -54,11 +53,7 @@ export default function PromoOrders({
   reworkDays,
   reworkWindowDays,
 }: Props) {
-  const [items, setItems] = useState<PromoOrder[]>([])
-  const [offset, setOffset] = useState(0)
-  const [total, setTotal] = useState(0)
-  const [hasUnfinished, setHasUnfinished] = useState(false)
-  const [selected, setSelected] = useState<number | null>(initialOrderId || null)
+  const selected = initialOrderId
   const [order, setOrder] = useState<PromoOrder | null>(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [loading, setLoading] = useState(true)
@@ -91,28 +86,13 @@ export default function PromoOrders({
     setVideoUrl('')
     const run = async () => {
       try {
-        if (selected === null) {
-          const [result, ids] = await Promise.all([
-            listPromoOrders(20, offset, controller.signal),
-            getWorkspacePromoOrderIds(workspaceId, controller.signal),
-          ])
-          if (!controller.signal.aborted) {
-            const scopedItems = result.items.filter((item) => promoOrderBelongsToWorkspace(item, workspaceId, ids))
-            setItems(scopedItems)
-            setTotal(result.total)
-            setHasUnfinished(
-              scopedItems.some((item) => ['pending', 'producing', 'reworking', 'overdue'].includes(item.status)),
-            )
-          }
-        } else {
-          const result = await getPromoOrder(selected, controller.signal)
-          const ids =
-            result.order.workspace_id == null
-              ? await getWorkspacePromoOrderIds(workspaceId, controller.signal)
-              : new Set<number>()
-          if (!promoOrderBelongsToWorkspace(result.order, workspaceId, ids)) throw new Error('该订单不属于当前工作空间')
-          if (!controller.signal.aborted) setOrder(result.order)
-        }
+        const result = await getPromoOrder(selected, controller.signal)
+        const ids =
+          result.order.workspace_id == null
+            ? await getWorkspacePromoOrderIds(workspaceId, controller.signal)
+            : new Set<number>()
+        if (!promoOrderBelongsToWorkspace(result.order, workspaceId, ids)) throw new Error('该订单不属于当前工作空间')
+        if (!controller.signal.aborted) setOrder(result.order)
       } catch (reason) {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '订单加载失败，请重试')
       } finally {
@@ -121,7 +101,7 @@ export default function PromoOrders({
     }
     void run()
     return () => controller.abort()
-  }, [selected, workspaceId, reload, offset])
+  }, [selected, workspaceId, reload])
 
   useEffect(() => {
     if (!order || !['pending', 'producing', 'reworking', 'overdue'].includes(order.status)) return
@@ -185,28 +165,21 @@ export default function PromoOrders({
   }
 
   return (
-    <section className={selected === null ? styles.panel : styles.workflow} aria-label="真实宣传片订单">
-      {selected !== null && (
-        <div className={styles.steps}>
-          <StepProgress
-            theme="delivery"
-            steps={[
-              { key: 'material', label: '需求与素材' },
-              { key: 'confirm', label: '确认并提交' },
-              { key: 'produce', label: '制作中' },
-              { key: 'delivery', label: '交付验收' },
-            ]}
-            current={order && ['delivered', 'completed'].includes(order.status) ? 3 : 2}
-          />
-        </div>
-      )}
+    <section className={styles.workflow} aria-label="真实宣传片订单">
+      <div className={styles.steps}>
+        <StepProgress
+          theme="delivery"
+          steps={[
+            { key: 'material', label: '需求与素材' },
+            { key: 'confirm', label: '确认并提交' },
+            { key: 'produce', label: '制作中' },
+            { key: 'delivery', label: '交付验收' },
+          ]}
+          current={order && ['delivered', 'completed'].includes(order.status) ? 3 : 2}
+        />
+      </div>
       <div className={styles.heading}>
-        <h1>{selected === null ? '宣传片订单' : `宣传片订单 #${selected}`}</h1>
-        {selected === null && (
-          <button type="button" onClick={onClose}>
-            返回
-          </button>
-        )}
+        <h1>{`宣传片订单 #${selected}`}</h1>
       </div>
       {actionNotice && <p role="status">{actionNotice}</p>}
       {loading && <p role="status">正在加载订单…</p>}
@@ -218,37 +191,7 @@ export default function PromoOrders({
           </button>
         </p>
       )}
-      {!loading && !error && selected === null && !items.length && (
-        <p>{total > 20 ? '当前页暂无本空间订单，可翻页查看。' : '暂无宣传片订单。'}</p>
-      )}
-      {selected === null && hasUnfinished && <p>您有未完成的订单，仍可继续下单。</p>}
-      {selected === null &&
-        items.map((item) => (
-          <button className={styles.row} type="button" key={item.id} onClick={() => setSelected(item.id)}>
-            <span>订单 #{item.id}</span>
-            <span>
-              {item.is_overdue && !['delivered', 'completed', 'cancelled'].includes(item.status)
-                ? labels.overdue
-                : labels[item.status] || item.status}
-            </span>
-          </button>
-        ))}
-      {selected === null && total > 20 && (
-        <div>
-          <button type="button" disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0, offset - 20))}>
-            上一页
-          </button>
-          <span>
-            {' '}
-            {offset + 1}–{Math.min(offset + 20, total)} / {total}{' '}
-          </span>
-          <button type="button" disabled={loading || offset + 20 >= total} onClick={() => setOffset(offset + 20)}>
-            下一页
-          </button>
-        </div>
-      )}
-      {selected !== null &&
-        order &&
+      {order &&
         (['delivered', 'completed'].includes(order.status) ? (
           <div className={styles.delivery}>
             <div>

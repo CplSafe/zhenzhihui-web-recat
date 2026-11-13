@@ -1,22 +1,28 @@
 .shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   color: #1f2329;
   background: #eef1f6;
 }
 .main {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
   background: linear-gradient(180deg, #f6f7fa 0%, #eef1f8 55%, #e2f0f6 100%);
 }
 .workspace {
   display: flex;
+  flex: 1;
   min-width: 0;
-  min-height: calc(100vh - 56px);
+  min-height: 0;
+  overflow-y: auto;
 }
 .workspace > aside[aria-label='任务管理（已收起）'] {
   position: sticky;
-  top: 56px;
+  top: 0;
   align-self: flex-start;
   height: calc(100vh - 56px);
 }
@@ -47,7 +53,7 @@
 }
 .panel {
   box-sizing: border-box;
-  padding: 24px;
+  padding: 20px;
   border: 1px solid #eceef2;
   border-radius: 18px;
   background: #fff;
@@ -192,8 +198,8 @@
 .steps {
   box-sizing: border-box;
   width: calc(100% + 44px);
-  margin: 0 -22px 20px;
-  padding: 14px 22px;
+  margin: 0 -22px 16px;
+  padding: 10px 22px;
   overflow-x: auto;
   border-bottom: 1px solid #eef0f4;
   background: #fff;
@@ -204,7 +210,7 @@
   max-width: none;
 }
 .projectTitle {
-  margin: 0 0 18px;
+  margin: 0 0 14px;
   font-size: 17px;
   font-weight: 700;
 }
@@ -218,9 +224,9 @@
 .fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 20px;
+  gap: 12px 20px;
   padding: 0;
-  margin: 0 0 18px;
+  margin: 0 0 14px;
   border: 0;
 }
 .fields label {
@@ -247,6 +253,20 @@
   color: #1f2329;
   font: inherit;
 }
+.fields select {
+  appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 12px center;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+}
+@media (forced-colors: active) {
+  .fields select {
+    appearance: auto;
+    background-image: none;
+  }
+}
 .fields textarea {
   min-height: 78px;
   resize: vertical;
@@ -259,7 +279,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
-  margin-top: 22px;
+  margin-top: 16px;
 }
 .actions > span:first-child {
   color: #a3abb8;
@@ -281,6 +301,8 @@
   margin-bottom: 16px;
 }
 .materialCard {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 14px;
   border: 1px solid #eef0f4;
@@ -306,6 +328,7 @@
   color: #d3403e;
 }
 .uploadBox {
+  flex: 1;
   min-height: 74px;
   display: flex;
   flex-direction: column;

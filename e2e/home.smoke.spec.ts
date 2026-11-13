@@ -46,6 +46,15 @@ test('旧首页地址在无真实后端和登录态时落到爆款复刻', async
 test('供需商单展示「我要发单」与「我要接单」两个标签，发单在前且默认选中', async ({ page }) => {
   await page.goto('/market')
 
+  const iconSources: string[] = []
+  for (const name of ['爆款成片', '定制宣传片', '供需商单', '剧本创意']) {
+    const image = page.getByRole('button', { name, exact: true }).locator('img')
+    await expect(image).toBeVisible()
+    expect(await image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
+    iconSources.push((await image.getAttribute('src'))!)
+  }
+  expect(new Set(iconSources).size).toBe(4)
+
   // 页面不再显示「供需商单」大标题
   await expect(page.getByRole('heading', { name: '供需商单' })).toHaveCount(0)
   const tabs = page.getByRole('tab')

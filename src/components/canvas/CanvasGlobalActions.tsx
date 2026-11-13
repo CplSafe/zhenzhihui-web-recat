@@ -13,7 +13,7 @@ interface Props {
   onClose: () => void
   onGuide: () => void
   onImportScript: () => void
-  onShare: () => void
+  onShare?: () => void
 }
 
 /** 画布级积分、指南、导入、教程与分享入口。 */
@@ -68,7 +68,7 @@ export default function CanvasGlobalActions({
           </button>
         )}
         <TutorialButton variant="pill" tutorialKey="canvas" />
-        {canvasId > 0 && workspaceId > 0 && (
+        {onShare && canvasId > 0 && workspaceId > 0 && (
           <button className="canvas-share-btn" onClick={onShare} title="分享这块画布" aria-label="分享这块画布">
             <svg
               width="18"

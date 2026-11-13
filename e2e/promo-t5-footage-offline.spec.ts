@@ -110,20 +110,15 @@ for (const withFootage of [false, true]) {
   })
 }
 
-test('可登记线下交接，登记后不再受实拍最少条数阻断', async ({ page }, testInfo) => {
+test('直接显示客服电话，不自动登记线下交接', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   const capture = await mockPromo(page)
   await openMaterialStage(page)
 
   await uploadFootage(page)
-  await page.getByRole('button', { name: '素材我线下交给顾问' }).click()
-  await expect(page.getByText('已登记线下交接，具体交付日期以报价为准。')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /复制顾问电话/ })).toBeVisible()
-  expect(capture.offline).toHaveLength(1)
-  await page
-    .getByRole('button', { name: '素材我线下交给顾问' })
-    .isVisible()
-    .catch(() => false)
+  await expect(page.getByRole('button', { name: '素材我线下交给顾问' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /复制客服电话/ })).toBeVisible()
+  expect(capture.offline).toHaveLength(0)
 
   await page.getByLabel('素材授权声明').check()
   await page.getByLabel('制作须知').check()
@@ -144,11 +139,10 @@ for (const width of [1440, 390]) {
     await installStrictAuthenticatedApp(page)
     await mockPromo(page)
     await openMaterialStage(page)
-    await page.getByRole('button', { name: '素材我线下交给顾问' }).click()
-    const phone = page.getByRole('button', { name: '复制顾问电话 10000' })
+    const phone = page.getByRole('button', { name: '复制客服电话 10000' })
     await expect(phone).toBeVisible()
-    const help = page.locator('[class*="materialHelp"]').filter({ hasText: '由顾问联系你' })
-    await expect(help).toContainText('顾问电话：')
+    const help = page.locator('[class*="materialHelp"]').filter({ hasText: '请拨打客服电话，与顾问沟通素材交接。' })
+    await expect(help).toContainText('客服电话：')
     const bounds = await help.boundingBox()
     const phoneBounds = await phone.boundingBox()
     expect(bounds).not.toBeNull()

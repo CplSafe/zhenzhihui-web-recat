@@ -9,6 +9,10 @@ import marketIcon from '@/assets/sidebar/cooperation.svg'
 import marketActiveIcon from '@/assets/sidebar/cooperation-active.svg'
 import smartIcon from '@/assets/sidebar/smart.svg'
 import smartActiveIcon from '@/assets/sidebar/smart-active.svg'
+import promoIcon from '@/assets/sidebar/promo.svg'
+import promoActiveIcon from '@/assets/sidebar/promo-active.svg'
+import scriptIdeasIcon from '@/assets/sidebar/script-ideas.svg'
+import scriptIdeasActiveIcon from '@/assets/sidebar/script-ideas-active.svg'
 import hotCopyIcon from '@/assets/sidebar/hotcopy.svg'
 import hotCopyActiveIcon from '@/assets/sidebar/hotcopy-active.svg'
 import canvasIcon from '@/assets/sidebar/grid.svg'
@@ -65,7 +69,7 @@ const GROUPS: SidebarGroup[] = [
       { key: 'hot-copy', label: '爆款复刻', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },
       { key: 'creative', label: '爆款成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       ...(PROMO_DELIVERY_CREATE_ENABLED
-        ? [{ key: 'promo', label: '定制宣传片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 as const }]
+        ? [{ key: 'promo', label: '定制宣传片', icon: promoIcon, activeIcon: promoActiveIcon, iconSize: 16 as const }]
         : []),
       { key: 'studio', label: 'AI 创作台', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
@@ -79,7 +83,13 @@ const GROUPS: SidebarGroup[] = [
       { key: 'templates', label: '模板库', icon: ecommerceIcon, activeIcon: ecommerceActiveIcon, iconSize: 16 },
       // 原首页的「IP / 需求市场」两个标签，收进独立页面 /market
       { key: 'market', label: '供需商单', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
-      { key: 'script-ideas', label: '剧本创意', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
+      {
+        key: 'script-ideas',
+        label: '剧本创意',
+        icon: scriptIdeasIcon,
+        activeIcon: scriptIdeasActiveIcon,
+        iconSize: 16,
+      },
     ],
   },
   {
