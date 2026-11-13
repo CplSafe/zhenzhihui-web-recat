@@ -20,8 +20,8 @@ for (const width of [1440, 390]) {
     if (width < 760) await page.getByRole('button', { name: '画布操作' }).click()
     const balance = page.getByRole('button', { name: /剩余积分/ })
     const tutorial = page.getByRole('button', { name: '操作教程' })
-    const share = page.getByRole('button', { name: '分享这块画布' })
-    for (const control of [back, saved, balance, tutorial, share]) {
+    await expect(page.getByRole('button', { name: '分享这块画布' })).toHaveCount(0)
+    for (const control of [back, saved, balance, tutorial]) {
       await expect(control).toBeVisible()
       await expect(control).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
       await expect(control).toHaveCSS('border-top-width', '1px')
@@ -31,9 +31,6 @@ for (const width of [1440, 390]) {
     await expect(page.getByTestId('tutorial-modal-mask')).toBeVisible()
     await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click()
     await expect(page.getByTestId('tutorial-modal-mask')).not.toBeVisible()
-    if (width < 760) await page.getByRole('button', { name: '画布操作' }).click()
-    await share.click()
-    await expect(page.getByRole('dialog', { name: '分享画布' })).toBeVisible()
     expectNoUnexpectedApi(api)
   })
 }

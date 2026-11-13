@@ -2745,7 +2745,8 @@ function CanvasInner() {
     () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
     [currentUserId, workspaceId],
   )
-  const showCanvasDirector: boolean = true
+  const showCanvasDirector: boolean = false
+  const showCanvasShare: boolean = false
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
   const directorOpen = showCanvasDirector && openDirectorBinding === directorBindingKey
@@ -11376,7 +11377,7 @@ function CanvasInner() {
           onClose={() => setActionsMenuOpen(false)}
           onGuide={() => setGuideRequested((visible) => !visible)}
           onImportScript={() => setScriptImportOpen(true)}
-          onShare={() => setShareOpen(true)}
+          onShare={showCanvasShare ? () => setShareOpen(true) : undefined}
         />
 
         {cloudStatus !== 'loading' &&
