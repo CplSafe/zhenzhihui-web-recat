@@ -4,7 +4,7 @@
  * 草稿键按项目 id 隔离，避免不同画布项目互相覆盖
  */
 import type { Node, Edge } from '@xyflow/react'
-import { pickPersistedNodeData } from '@/utils/canvasElements'
+import { pickPersistedNodeData, type ComparableNode, type ComparableEdge } from '@/utils/canvasElements'
 
 const DRAFT_KEY_PREFIX = 'zzh_canvas_draft'
 const SCRIPT_CREATION_PENDING_PREFIX = 'zzh_canvas_script_creation_pending'
@@ -77,6 +77,9 @@ interface CanvasDraft {
   boundCanvasId?: number
   /** 创建画布时的一次性脚本创作入口是否已处理 */
   scriptCreationHandled?: boolean
+  pendingSync?: boolean
+  syncBaseline?: { nodes: ComparableNode[]; edges: ComparableEdge[] }
+  pendingState?: Record<string, unknown>
 }
 
 /** 读取草稿绑定的画布 id（无草稿或未绑定时返回 0）。 */
@@ -98,12 +101,17 @@ export function saveCanvasDraft(
   projectId?: string | number,
   boundCanvasId?: number,
   scope?: CanvasDraftScope,
+  sync?: {
+    pendingSync: boolean
+    syncBaseline?: { nodes: ComparableNode[]; edges: ComparableEdge[] }
+    pendingState?: Record<string, unknown>
+  },
 ) {
   const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
   const textContents: Record<string, string> = {}
   if (textMap) {
     textMap.forEach((v, k) => {
-      if (v) textContents[k] = v
+      textContents[k] = v
     })
   }
 
@@ -127,11 +135,19 @@ export function saveCanvasDraft(
     updatedAt: Date.now(),
     // 画布绑定：草稿归属的唯一真相源，防止误上传到其他画布
     boundCanvasId: Number(boundCanvasId || 0) || 0,
+    ...(sync
+      ? {
+          pendingSync: sync.pendingSync,
+          ...(sync.syncBaseline ? { syncBaseline: sync.syncBaseline } : {}),
+          ...(sync.pendingState ? { pendingState: sync.pendingState } : {}),
+        }
+      : {}),
   }
   try {
     localStorage.setItem(draftKey(projectId, scope), JSON.stringify(draft))
+    return true
   } catch {
-    // localStorage 配额满或其他异常，静默跳过
+    return false
   }
 }
 

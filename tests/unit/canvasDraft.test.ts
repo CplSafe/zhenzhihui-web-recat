@@ -90,4 +90,19 @@ describe('canvasDraft', () => {
     clearCanvasScriptCreationPending(10)
     expect(hasCanvasScriptCreationPending(10)).toBe(false)
   })
+
+  it('保留未同步标记、基线以及清空后的文本', () => {
+    ;(window as typeof window & { __canvasTextContents?: Map<string, string> }).__canvasTextContents = new Map([
+      ['text-1', ''],
+    ])
+    const baseline = { nodes: [{ id: 'text-1', type: 'text', data: { text: '旧内容' } }], edges: [] }
+    expect(
+      saveCanvasDraft([], [], 12, 12, { userId: 7, workspaceId: 21 }, { pendingSync: true, syncBaseline: baseline }),
+    ).toBe(true)
+    expect(loadCanvasDraft(12, { userId: 7, workspaceId: 21 })).toMatchObject({
+      pendingSync: true,
+      syncBaseline: baseline,
+      textContents: { 'text-1': '' },
+    })
+  })
 })

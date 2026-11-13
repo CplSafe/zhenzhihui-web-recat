@@ -71,7 +71,7 @@ for (const viewport of [
       }),
     )
     await page.goto('/canvas/119')
-    await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('100')
+    await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
     await page.locator('.react-flow__node[data-id="source"]').click()
     const editor = page.locator('[data-canvas-node-panel]')
     const realPersonHint = page.getByRole('button', { name: '可使用已认证的真人素材' })

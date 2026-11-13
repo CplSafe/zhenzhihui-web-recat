@@ -1152,9 +1152,16 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   // 兜底可跳转源：整片抓到本地后的 object URL（见 ensureSeekableSource）
   const [videoLocalSrc, setVideoLocalSrc] = useState('')
   const [videoPreparing, setVideoPreparing] = useState(false)
+  const [videoDownloadProgress, setVideoDownloadProgress] = useState<{
+    loadedBytes: number
+    totalBytes: number
+  } | null>(null)
   const [videoSeekableUnavailable, setVideoSeekableUnavailable] = useState(false)
+  const [videoBufferCancelled, setVideoBufferCancelled] = useState(false)
   const videoLocalSrcRef = useRef('')
   const videoSeekableHandleRef = useRef<SeekableSourceHandle | null>(null)
+  const videoPendingHandleRef = useRef<SeekableSourceHandle | null>(null)
+  const videoCancelDownloadRef = useRef<(() => void) | null>(null)
   const videoPreparingRef = useRef(false)
   const resumeAfterSwapRef = useRef(false)
   const seekCheckTimerRef = useRef(0)
@@ -1186,6 +1193,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     setVideoNaturalSize({ width: 0, height: 0 })
     setVideoPreload('metadata')
     setVideoLocalSrc('')
+    setVideoDownloadProgress(null)
+    setVideoBufferCancelled(false)
     pendingSeekRef.current = 0
     pendingSeekTriesRef.current = 0
     posterCaptureDoneRef.current = false
@@ -1194,6 +1203,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       // blob 归 seekableMediaSource 所有（可能还被别处共用），这里只还引用，不自己 revoke
       window.clearTimeout(seekCheckTimerRef.current)
       videoSeekableHandleRef.current?.release()
+      videoCancelDownloadRef.current?.()
+      videoCancelDownloadRef.current = null
+      videoPendingHandleRef.current = null
       videoSeekableHandleRef.current = null
       videoLocalSrcRef.current = ''
     }
@@ -1218,16 +1230,34 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     if (!url || url.startsWith('blob:') || url.startsWith('data:')) return
     videoPreparingRef.current = true
     setVideoPreparing(true)
+    setVideoBufferCancelled(false)
     resumeAfterSwapRef.current = !videoRef.current?.paused
-    const handle = acquireSeekableSource(url)
+    let timeoutId = 0
+    let resolveTimeout: (value: null) => void = () => {}
+    const timeout = new Promise<null>((resolve) => {
+      resolveTimeout = resolve
+    })
+    const resetTimeout = () => {
+      window.clearTimeout(timeoutId)
+      timeoutId = window.setTimeout(() => resolveTimeout(null), 30_000)
+    }
+    resetTimeout()
+    const handle = acquireSeekableSource(url, {
+      onProgress: (progress) => {
+        resetTimeout()
+        if (mediaUrlRef.current === url) setVideoDownloadProgress(progress)
+      },
+    })
+    videoPendingHandleRef.current = handle
+    const cancelDownload = () => {
+      setVideoBufferCancelled(true)
+      handle.release()
+      resolveTimeout(null)
+    }
+    videoCancelDownloadRef.current = cancelDownload
     let retainedByPlayer = false
     try {
-      let timeoutId = 0
-      const timeout = new Promise<null>((resolve) => {
-        timeoutId = window.setTimeout(() => resolve(null), 10_000)
-      })
       const ready = await Promise.race([handle.ready, timeout])
-      window.clearTimeout(timeoutId)
       // 抓取期间换了素材，或压根没抓下来（鉴权/跨域/网络）：丢弃这次，
       // 继续用流式地址，跳转能力取决于源是否支持分段请求
       if (mediaUrlRef.current !== url || !ready?.local) {
@@ -1244,9 +1274,13 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       pendingSeekTriesRef.current = 0
       setVideoLocalSrc(ready.url)
     } finally {
+      window.clearTimeout(timeoutId)
+      if (videoPendingHandleRef.current === handle) videoPendingHandleRef.current = null
+      if (videoCancelDownloadRef.current === cancelDownload) videoCancelDownloadRef.current = null
       if (!retainedByPlayer) handle.release()
       videoPreparingRef.current = false
       setVideoPreparing(false)
+      setVideoDownloadProgress(null)
     }
   }
 
@@ -2217,7 +2251,21 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               </span>
               {videoPreparing ? (
                 <span className="canvas-node-video-hint" role="status">
-                  <span className="canvas-video-buffering" aria-label="缓冲中" title="缓冲中" />
+                  <span className="canvas-video-buffering" aria-label="缓冲中" title="缓冲中" />{' '}
+                  {videoDownloadProgress?.totalBytes
+                    ? `缓冲 ${Math.min(100, Math.floor((videoDownloadProgress.loadedBytes / videoDownloadProgress.totalBytes) * 100))}%`
+                    : '视频缓冲中'}
+                  <button
+                    type="button"
+                    className="canvas-node-video-cancel nodrag nopan"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      videoCancelDownloadRef.current?.()
+                    }}
+                  >
+                    取消
+                  </button>
                 </span>
               ) : videoSeekableUnavailable ? (
                 <button
@@ -2229,7 +2277,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                     void ensureSeekableSource()
                   }}
                 >
-                  加载超时，重试
+                  {videoBufferCancelled ? '已取消缓冲，重试' : '视频暂不可用，重试'}
                 </button>
               ) : null}
               <div
@@ -5019,11 +5067,15 @@ function CanvasInner() {
   const syncInFlightRef = useRef(false)
   const syncRetryTimerRef = useRef<number | null>(null)
   const syncRetryAttemptRef = useRef(0)
+  const syncRetryBlockedRef = useRef(false)
+  const syncRejectedSignatureRef = useRef('')
+  const localDraftStoredRef = useRef(true)
 
   // 增量保存到云端：对比 syncRef 快照与最新状态 → upsert/delete；内部串行 + 冲突合并重试
   const pushCanvasMutations = useCallback(() => {
     const canvasId = canvasIdRef.current
     if (!canvasId || !cloudLoadedRef.current) return
+    if (syncRetryTimerRef.current) return
     syncPendingRef.current = true
     // 若已有请求在途，标记待补即可，避免重复入队
     if (syncInFlightRef.current) return
@@ -5033,16 +5085,33 @@ function CanvasInner() {
       while (syncPendingRef.current) {
         syncPendingRef.current = false
         const latest = latestRef.current
-        const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+        const currentTextMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+        const textMap = new Map(currentTextMap || [])
         const mutations = diffCanvasMutations(syncRef.current, latest, textMap)
         const submittedState = { ...pendingCanvasStateRef.current }
+        const signature = JSON.stringify({ mutations, state: submittedState })
+        if (syncRetryBlockedRef.current && signature === syncRejectedSignatureRef.current) continue
+        if (syncRetryBlockedRef.current) {
+          syncRetryBlockedRef.current = false
+          syncRejectedSignatureRef.current = ''
+        }
         if (mutations.length === 0 && Object.keys(submittedState).length === 0) {
           // 被标成待保存、内容却与云端一致（选中、无变化的标脏等）：没有要存的，就是已同步。
           // 以前这里直接跳过，状态永远停在「等待保存…」，用户以为改动没存上。
           setSaveStatus((current) => (current === 'dirty' ? 'saved' : current))
+          localDraftStoredRef.current = saveCanvasDraft(
+            latest.nodes,
+            latest.edges,
+            routeProjectId,
+            canvasId,
+            draftScope,
+            { pendingSync: false, syncBaseline: syncRef.current },
+          )
           continue
         }
         try {
+          setCloudStatus('online')
+          setSaveStatus('saving')
           const { sync_revision } = await saveCanvasElementsBatched({
             workspaceId,
             canvasId,
@@ -5060,9 +5129,24 @@ function CanvasInner() {
             nodes: latest.nodes.map((n) => comparableNode(n, textMap)),
             edges: latest.edges.map((e) => comparableEdge(e)),
           }
-          setSaveStatus('saved')
+          const currentGraph = latestRef.current
+          const currentText = (window as any).__canvasTextContents as Map<string, string> | undefined
+          const remaining = diffCanvasMutations(syncRef.current, currentGraph, currentText)
+          const hasPending = remaining.length > 0 || Object.keys(pendingCanvasStateRef.current).length > 0
+          if (hasPending) syncPendingRef.current = true
+          setSaveStatus(hasPending ? 'dirty' : 'saved')
           setCloudStatus('online')
-          setCloudMessage('已保存')
+          setCloudMessage(hasPending ? '还有修改等待保存' : '已保存')
+          localDraftStoredRef.current = saveCanvasDraft(
+            currentGraph.nodes,
+            currentGraph.edges,
+            routeProjectId,
+            canvasId,
+            draftScope,
+            { pendingSync: hasPending, syncBaseline: syncRef.current, pendingState: pendingCanvasStateRef.current },
+          )
+          syncRetryBlockedRef.current = false
+          syncRejectedSignatureRef.current = ''
           syncRetryAttemptRef.current = 0
           if (syncRetryTimerRef.current) {
             window.clearTimeout(syncRetryTimerRef.current)
@@ -5094,13 +5178,6 @@ function CanvasInner() {
               { nodes: remoteNodes.map((node) => normalizeNodeMedia(node, workspaceId)), edges: remoteEdges },
               mutations,
             )
-            restoreTextContents(
-              Object.fromEntries(
-                merged.nodes
-                  .map((node) => [node.id, String((node.data as any)?.text || '')])
-                  .filter(([, text]) => Boolean(text)),
-              ),
-            )
             const result = await saveCanvasElementsBatched({
               workspaceId,
               canvasId,
@@ -5112,23 +5189,34 @@ function CanvasInner() {
             Object.entries(submittedState).forEach(([key, value]) => {
               if (pendingCanvasStateRef.current[key] === value) delete pendingCanvasStateRef.current[key]
             })
-            const mergedTextMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+            const latestTextMap = new Map(
+              ((window as any).__canvasTextContents as Map<string, string> | undefined) || [],
+            )
+            const mergedTextMap = new Map(
+              merged.nodes.flatMap((node) =>
+                typeof node.data?.text === 'string' ? [[node.id, node.data.text] as const] : [],
+              ),
+            )
             // 冲突处理要两个往返,期间用户可能还在拖节点/连线。合并结果不能直接覆盖画面,
             // 否则这几百毫秒里的操作会被「回滚」;把请求发出之后的本地增量再叠到合并结果上,
             // 而已同步基线仍取 merged(本次真正落库的内容),这样增量会在下一轮循环里正常补存。
             const latestNow = latestRef.current
-            const inFlightEdits =
-              latestNow === latest
-                ? []
-                : diffCanvasMutations(
-                    {
-                      nodes: latest.nodes.map((node) => comparableNode(node, mergedTextMap)),
-                      edges: latest.edges.map(comparableEdge),
-                    },
-                    latestNow,
-                    mergedTextMap,
-                  )
+            const inFlightEdits = diffCanvasMutations(
+              {
+                nodes: latest.nodes.map((node) => comparableNode(node, textMap)),
+                edges: latest.edges.map(comparableEdge),
+              },
+              latestNow,
+              latestTextMap,
+            )
             const displayed = inFlightEdits.length ? applyCanvasElementMutations(merged, inFlightEdits) : merged
+            restoreTextContents(
+              Object.fromEntries(
+                displayed.nodes.flatMap((node) =>
+                  typeof node.data?.text === 'string' ? [[node.id, node.data.text]] : [],
+                ),
+              ),
+            )
             setNodes(displayed.nodes)
             setEdges(displayed.edges)
             latestRef.current = displayed
@@ -5137,10 +5225,21 @@ function CanvasInner() {
               nodes: merged.nodes.map((node) => comparableNode(node, mergedTextMap)),
               edges: merged.edges.map(comparableEdge),
             }
-            setSaveStatus('saved')
+            const hasPending = inFlightEdits.length > 0 || Object.keys(pendingCanvasStateRef.current).length > 0
+            setSaveStatus(hasPending ? 'dirty' : 'saved')
             setCloudStatus('online')
-            setCloudMessage('已保存，其他成员的修改也已更新')
+            setCloudMessage(hasPending ? '还有修改等待保存' : '已保存，其他成员的修改也已更新')
+            localDraftStoredRef.current = saveCanvasDraft(
+              displayed.nodes,
+              displayed.edges,
+              routeProjectId,
+              canvasId,
+              draftScope,
+              { pendingSync: hasPending, syncBaseline: syncRef.current, pendingState: pendingCanvasStateRef.current },
+            )
             syncRetryAttemptRef.current = 0
+            syncRetryBlockedRef.current = false
+            syncRejectedSignatureRef.current = ''
             if (syncRetryTimerRef.current) {
               window.clearTimeout(syncRetryTimerRef.current)
               syncRetryTimerRef.current = null
@@ -5149,17 +5248,32 @@ function CanvasInner() {
             // 仍失败：保留 dirty 状态；本地草稿继续兜底。
             setSaveStatus('dirty')
             if (isDeterministicReject) {
+              syncRetryBlockedRef.current = true
+              syncRejectedSignatureRef.current = signature
               // 确定性拒绝不安排自动重试：等下一次真实变更（会产生不同的 mutation）再走保存链路
               setCloudStatus('error')
-              setCloudMessage('保存失败，修改暂存在本机；请检查内容后重试')
+              setCloudMessage(
+                localDraftStoredRef.current
+                  ? '保存失败，修改暂存在本机；请检查内容后重试'
+                  : '保存失败，本机草稿也未能保存，请勿离开页面',
+              )
             } else {
               // 网络/服务异常：安排退避重试
               setCloudStatus(navigator.onLine ? 'error' : 'offline')
-              setCloudMessage(navigator.onLine ? '保存遇到问题，正在重试' : '网络已断开，修改暂存在本机')
+              setCloudMessage(
+                !localDraftStoredRef.current
+                  ? '保存遇到问题，本机草稿也未能保存，请勿离开页面'
+                  : navigator.onLine
+                    ? '保存遇到问题，正在重试'
+                    : '网络已断开，修改暂存在本机',
+              )
               if (!syncRetryTimerRef.current) {
                 const delay = navigator.onLine
                   ? Math.min(30000, 1500 * 2 ** Math.min(syncRetryAttemptRef.current++, 4))
                   : 3000
+                if (navigator.onLine && localDraftStoredRef.current) {
+                  setCloudMessage(`云端保存未成功，本机已暂存；约 ${Math.ceil(delay / 1000)} 秒后重试`)
+                }
                 syncRetryTimerRef.current = window.setTimeout(() => {
                   syncRetryTimerRef.current = null
                   scheduleSyncRef.current(true)
@@ -5176,7 +5290,7 @@ function CanvasInner() {
       .then(() => {
         syncInFlightRef.current = false
       })
-  }, [setEdges, setNodes, workspaceId])
+  }, [setEdges, setNodes, workspaceId, routeProjectId, draftScope])
   // 初始化：云端优先（复用画布或新建），失败回退 localStorage 草稿
   useEffect(() => {
     let cancelled = false
@@ -5273,6 +5387,66 @@ function CanvasInner() {
         const cloudNodes = rawCloudNodes.map((n) =>
           normalizeNodeMedia({ ...n, data: restoreCanvasTaskState(n.data) }, workspaceId),
         )
+        if (draftForPaint?.pendingSync && readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId) {
+          const baseline = draftForPaint.syncBaseline
+          if (!baseline || !Array.isArray(baseline.nodes) || !Array.isArray(baseline.edges)) {
+            setCloudStatus('error')
+            setCloudMessage('检测到未同步的本机草稿，无法安全合并；请保留此页面并联系支持')
+            return
+          }
+          const localNodes = (draftForPaint.nodes as Node[]).map((node) =>
+            normalizeNodeMedia({ ...node, data: restoreCanvasTaskState(node.data) }, workspaceId),
+          )
+          const localEdges = draftForPaint.edges as Edge[]
+          const localChanges = diffCanvasMutations(
+            baseline,
+            { nodes: localNodes, edges: localEdges },
+            draftForPaint.textContents,
+          )
+          const cloudText = new Map(
+            cloudNodes
+              .map((node) => [node.id, String((node.data as any)?.text || '')] as const)
+              .filter(([, value]) => Boolean(value)),
+          )
+          const remoteChanges = diffCanvasMutations(baseline, { nodes: cloudNodes, edges: cloudEdges }, cloudText)
+          const remoteIds = new Set(remoteChanges.map((item) => `${item.kind}:${item.element_id}`))
+          const conflicts = localChanges.some((item) => remoteIds.has(`${item.kind}:${item.element_id}`))
+          if (conflicts) {
+            const confirmed = await requestConfirm(
+              '本机未同步修改与云端修改了相同节点或连线。恢复本机修改可能覆盖这些云端内容，是否继续？',
+              { title: '恢复本机修改', confirmLabel: '恢复本机修改', cancelLabel: '暂不恢复' },
+            )
+            if (cancelled) return
+            if (!confirmed) {
+              setCloudStatus('error')
+              setCloudMessage('本机修改尚未恢复，暂不能保存；请返回后重新打开画布')
+              return
+            }
+          }
+          const merged = applyCanvasElementMutations({ nodes: cloudNodes, edges: cloudEdges }, localChanges)
+          pendingCanvasStateRef.current = { ...(draftForPaint.pendingState || {}) }
+          syncRef.current = {
+            nodes: cloudNodes.map((node) => comparableNode(node, cloudText)),
+            edges: cloudEdges.map(comparableEdge),
+          }
+          restoreTextContents(
+            Object.fromEntries(
+              merged.nodes
+                .map((node) => [node.id, String((node.data as any)?.text || '')])
+                .filter(([, value]) => Boolean(value)),
+            ),
+          )
+          latestRef.current = merged
+          setNodes(merged.nodes)
+          setEdges(merged.edges)
+          cloudLoadedRef.current = true
+          setSaveStatus('dirty')
+          setCloudStatus('online')
+          setCloudMessage('正在恢复本机修改')
+          scheduleSyncRef.current(true)
+          fitCanvasView()
+          return
+        }
         if (cloudNodes.length > 0 || cloudEdges.length > 0) {
           if (!handled) {
             scriptCreationHandledRef.current = true
@@ -5305,6 +5479,34 @@ function CanvasInner() {
               })
             const hasConflict =
               signature(draftNodes, draftEdges, draftTextMap) !== signature(cloudNodes, cloudEdges, cloudTextMap)
+            if (hasConflict && draftForPaint.pendingSync === undefined) {
+              const confirmed = await requestConfirm(
+                '发现旧版本的本机草稿与云端不同，无法判断草稿是否已同步。恢复本机草稿会覆盖云端画布中的不同内容，是否继续？选择暂不恢复会保留草稿并暂停保存。',
+                { title: '发现本机草稿', confirmLabel: '恢复本机草稿', cancelLabel: '暂不恢复' },
+              )
+              if (cancelled) return
+              if (!confirmed) {
+                setSaveStatus('dirty')
+                setCloudStatus('error')
+                setCloudMessage('本机草稿已保留，暂不能保存；请返回后重新打开画布')
+                return
+              }
+              syncRef.current = {
+                nodes: cloudNodes.map((node) => comparableNode(node, cloudTextMap)),
+                edges: cloudEdges.map(comparableEdge),
+              }
+              restoreTextContents(draftForPaint.textContents || {})
+              latestRef.current = { nodes: draftNodes, edges: draftEdges }
+              setNodes(draftNodes)
+              setEdges(draftEdges)
+              cloudLoadedRef.current = true
+              setSaveStatus('dirty')
+              setCloudStatus('online')
+              setCloudMessage('正在恢复本机草稿')
+              scheduleSyncRef.current(true)
+              fitCanvasView()
+              return
+            }
             if (hasConflict) {
               // 云端已有内容时以最近一次成功保存的版本为准，刷新本地缓存，避免旧草稿每次进入都弹冲突框。
               // 用户在当前页面的操作已通过本地草稿/同步队列保存；不同步的旧快照不应覆盖已保存版本。
@@ -5416,14 +5618,22 @@ function CanvasInner() {
     if (!cloudLoadedRef.current) return
     if (immediate) {
       const latest = latestRef.current
-      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope)
+      localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
+        pendingSync: true,
+        syncBaseline: syncRef.current,
+        pendingState: pendingCanvasStateRef.current,
+      })
       pushCanvasMutations()
       return
     }
     saveTimerRef.current = window.setTimeout(() => {
       const latest = latestRef.current
       // 本地草稿同步落盘兜底（云端失败时仍可恢复）
-      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope)
+      localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
+        pendingSync: true,
+        syncBaseline: syncRef.current,
+        pendingState: pendingCanvasStateRef.current,
+      })
       pushCanvasMutations()
     }, 1000)
   }
@@ -5470,13 +5680,25 @@ function CanvasInner() {
   // 页面关闭/刷新/切后台时 flush（beforeunload / pagehide 兜底）
   useEffect(() => {
     const onHide = () => flushOnUnload()
-    window.addEventListener('beforeunload', onHide)
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      const unsaved =
+        saveStatusRef.current !== 'saved' ||
+        syncInFlightRef.current ||
+        syncPendingRef.current ||
+        Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync)
+      flushOnUnload()
+      if (unsaved) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
     window.addEventListener('pagehide', onHide)
     return () => {
-      window.removeEventListener('beforeunload', onHide)
+      window.removeEventListener('beforeunload', onBeforeUnload)
       window.removeEventListener('pagehide', onHide)
     }
-  }, [flushOnUnload])
+  }, [flushOnUnload, routeProjectId, draftScope])
 
   // 切到后台时浏览器通常仍允许普通请求完成，比 unload 阶段才提交可靠得多。
   useEffect(() => {
@@ -5517,6 +5739,7 @@ function CanvasInner() {
       }
       // 保存失败留下 dirty 状态时，主动重新驱动保存，不能只等待状态自行变化。
       if (!syncInFlightRef.current && !syncPendingRef.current && saveStatusRef.current !== 'saved') {
+        if (syncRetryTimerRef.current || syncRetryBlockedRef.current) return schedule()
         pushCanvasMutations()
         idleRounds = 0
         return schedule(1500)
@@ -11100,7 +11323,29 @@ function CanvasInner() {
           saveStatus={saveStatus}
           cloudStatus={cloudStatus}
           cloudMessage={cloudMessage}
-          onBack={() => navigate('/canvas')}
+          onBack={() => {
+            if (
+              cloudLoadedRef.current &&
+              saveStatusRef.current === 'saved' &&
+              !syncInFlightRef.current &&
+              !syncPendingRef.current
+            ) {
+              navigate('/canvas')
+              return
+            }
+            void requestConfirm(
+              localDraftStoredRef.current
+                ? '画布还有修改未确认保存到云端。离开后将尝试从本机草稿恢复，是否离开？'
+                : '画布未能保存到云端或本机，离开可能丢失修改。是否离开？',
+              {
+                title: '画布尚未保存',
+                confirmLabel: '仍然离开',
+                cancelLabel: '继续等待',
+              },
+            ).then((confirmed) => {
+              if (confirmed) navigate('/canvas')
+            })
+          }}
         />
         <CanvasGlobalActions
           open={actionsMenuOpen}
