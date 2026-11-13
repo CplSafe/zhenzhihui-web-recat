@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
@@ -36,7 +37,7 @@ async function expectFullWidthSteps(page: Page) {
   await expect(bar.getByText('交付验收')).toBeInViewport()
 }
 
-test('宣传片关闭时显示服务未开放，并保留订单入口', async ({ page }, testInfo) => {
+test('宣传片关闭时显示服务未开放且不显示订单列表入口', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/promo/config', (route) =>
     route.fulfill({ json: { code: 0, data: { enabled: false, entry_name: '定制宣传片' } } }),
@@ -45,6 +46,7 @@ test('宣传片关闭时显示服务未开放，并保留订单入口', async ({
   await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
   await expect(page.getByText('宣传片配置不完整，请联系客服')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提交需求，进入制作排期' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '查看我的订单' })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('promo-disabled.png'), animations: 'disabled' })
 })
 
@@ -167,6 +169,21 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   await page.getByLabel('制作需求', { exact: true }).fill('介绍产品')
   await page.screenshot({ path: testInfo.outputPath('promo-form.png'), fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '下一步：上传素材 →' }).click()
+  const cards = page.locator('[class*="uploads"] > section')
+  await expect(cards.locator('h2')).toHaveText(['实拍素材 尽可能上传', 'LOGO 选传', 'VI / 口播稿 / 音乐 选传'])
+  await page.screenshot({
+    path: testInfo.outputPath('promo-materials-empty.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(cards.locator('h2')).toHaveText(['实拍素材 尽可能上传', 'LOGO 选传', 'VI / 口播稿 / 音乐 选传'])
+  await page.screenshot({
+    path: testInfo.outputPath('promo-materials-narrow.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 1280, height: 720 })
   await page.getByLabel('上传实拍素材').evaluate((input) => {
     const data = new DataTransfer()
     data.items.add(new File(['abc'], '素材.png', { type: 'image/png' }))
@@ -223,11 +240,18 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   orderStatus = 'delivered'
   await page.getByRole('button', { name: '刷新状态' }).click()
   await expect(page.getByLabel('宣传片成片')).toBeVisible()
-  await expect(page.getByRole('link', { name: '下载视频' })).toBeVisible()
+  const downloadButton = page.getByRole('button', { name: '下载视频' })
+  await expect(downloadButton).toBeVisible()
   await page.getByLabel('宣传片成片').evaluate((element) => (element as HTMLVideoElement).play())
   await expect
     .poll(() => page.getByLabel('宣传片成片').evaluate((element) => (element as HTMLVideoElement).currentTime))
     .toBeGreaterThan(0)
+  const download = page.waitForEvent('download')
+  await downloadButton.click()
+  const downloadedFile = await download
+  expect(downloadedFile.suggestedFilename()).toBe('宣传片_31.mp4')
+  expect(await downloadedFile.failure()).toBeNull()
+  expect(statSync((await downloadedFile.path())!).size).toBeGreaterThan(0)
   await page.screenshot({ path: testInfo.outputPath('promo-delivered.png'), fullPage: true, animations: 'disabled' })
   await page.getByLabel('修改意见').fill('调整片尾')
   await page.getByRole('button', { name: '申请免费修改' }).click()
@@ -239,7 +263,7 @@ test('宣传片素材完成后报价，下单失败后使用原请求重试', as
   expect(reworkRequests).toBe(1)
 })
 
-test('服务关闭时仍可查看历史订单', async ({ page }) => {
+test('服务关闭时不显示订单列表入口', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/promo/config', (route) =>
@@ -251,8 +275,7 @@ test('服务关闭时仍可查看历史订单', async ({ page }) => {
   await page.goto('/promo')
   await expect(page.getByText('新建服务暂未开放，已有订单仍可查看。')).toBeVisible()
   await expect(page.getByRole('button', { name: '提交需求，进入制作排期' })).toHaveCount(0)
-  await page.getByRole('button', { name: '查看我的订单' }).click()
-  await expect(page.getByText('暂无宣传片订单。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '查看我的订单' })).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
@@ -339,7 +362,7 @@ for (const enabled of [true, false]) {
   })
 }
 
-test('素材上传失败后登记线下交接可继续并保留未上传提示', async ({ page }, testInfo) => {
+test('素材上传失败时直接展示客服电话并阻止继续', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   let quotes = 0
   await page.route('**/api/v1/promo/**', async (route) => {
@@ -386,12 +409,9 @@ test('素材上传失败后登记线下交接可继续并保留未上传提示',
   await page.getByLabel('制作须知').check()
   await expect(page.getByRole('button', { name: '下一步：确认并提交' })).toBeDisabled()
   expect(quotes).toBe(0)
-  await page.getByRole('button', { name: '素材我线下交给顾问' }).click()
-  await expect(page.getByText('已登记线下交接，具体交付日期以报价为准。')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /复制顾问电话/ })).toBeVisible()
-  await page.getByRole('button', { name: '下一步：确认并提交' }).click()
-  await expect(page.getByRole('heading', { name: '需求已填写，素材线下交接' })).toBeVisible()
-  await expect(page.getByText('未上传，将线下交接')).toBeVisible()
-  expect(quotes).toBe(1)
+  await expect(page.getByRole('button', { name: '素材我线下交给顾问' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /复制客服电话/ })).toBeVisible()
+  await expect(page.getByText('存在未完成的素材，请重试确认、重新上传或删除后继续。')).toBeVisible()
+  expect(quotes).toBe(0)
   await page.screenshot({ path: testInfo.outputPath('offline-failed-material.png') })
 })

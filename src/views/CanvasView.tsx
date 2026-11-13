@@ -1124,6 +1124,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   }, [data, editing, id, textContent])
   // 视频播放态：默认暂停，点击播放按钮后播放，播放中显示暂停按钮
   const [playing, setPlaying] = useState(false)
+  const videoPlaybackRequestedRef = useRef(false)
   const [selectionSoundBlocked, setSelectionSoundBlocked] = useState(false)
   const soundEnabledRef = useRef(false)
   const selectionAutoPlayedRef = useRef(false)
@@ -1152,6 +1153,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   // 兜底可跳转源：整片抓到本地后的 object URL（见 ensureSeekableSource）
   const [videoLocalSrc, setVideoLocalSrc] = useState('')
   const [videoPreparing, setVideoPreparing] = useState(false)
+  const [videoWaiting, setVideoWaiting] = useState(false)
   const [videoDownloadProgress, setVideoDownloadProgress] = useState<{
     loadedBytes: number
     totalBytes: number
@@ -1186,12 +1188,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const videoUrl = mediaUrl
   useEffect(() => {
     setPlaying(false)
+    videoPlaybackRequestedRef.current = false
     setVideoDurationSec(0)
     setVideoCurrentSec(0)
     setVideoScrubbing(false)
     setVideoPreviewOpen(false)
     setVideoNaturalSize({ width: 0, height: 0 })
     setVideoPreload('metadata')
+    setVideoWaiting(false)
     setVideoLocalSrc('')
     setVideoDownloadProgress(null)
     setVideoBufferCancelled(false)
@@ -1386,6 +1390,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     // 用户手动接管后不再算「悬停自动播放」，移出画面时不该被自动暂停
     selectionAutoPlayedRef.current = false
     if (v.paused) {
+      videoPlaybackRequestedRef.current = true
+      const streamFailed = Boolean(v.error)
       // 用户点击播放是明确的声音授权；之后重新选中节点时优先尝试带声播放。
       soundEnabledRef.current = true
       setSelectionSoundBlocked(false)
@@ -1395,13 +1401,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       applyPendingSeek(v)
       v.play().catch(() => setPlaying(false))
       setPlaying(true)
-      // 流式地址连元数据都读不到时，跳转校验无法触发；主动尝试完整素材回退。
-      if (v.readyState < HTMLMediaElement.HAVE_METADATA && !videoLocalSrcRef.current) {
-        void ensureSeekableSource()
-      }
+      if (streamFailed && !videoLocalSrcRef.current) void ensureSeekableSource()
       // 起播后再验一次：被抹回 0 就切本地整片
       verifySeekLanded()
     } else {
+      videoPlaybackRequestedRef.current = false
       v.pause()
       setPlaying(false)
     }
@@ -2165,8 +2169,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               }}
               onLoadedData={(event) => captureVideoPosterFrame(event.currentTarget)}
               onError={() => {
+                setVideoWaiting(false)
                 // 部分素材服务不支持浏览器的分段请求，完整下载仍可能正常播放。
-                if (selected && !videoLocalSrcRef.current) void ensureSeekableSource()
+                if ((selected || videoPlaybackRequestedRef.current) && !videoLocalSrcRef.current) {
+                  void ensureSeekableSource()
+                }
               }}
               onSeeked={(event) => {
                 // 以元素实际落点为准回填，进度条不谎报位置
@@ -2207,8 +2214,15 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 setPlaying(true)
                 verifySeekLanded()
               }}
-              onPlaying={(event) => applyPendingSeek(event.currentTarget)}
-              onPause={() => setPlaying(false)}
+              onWaiting={() => setVideoWaiting(true)}
+              onPlaying={(event) => {
+                setVideoWaiting(false)
+                applyPendingSeek(event.currentTarget)
+              }}
+              onPause={() => {
+                setVideoWaiting(false)
+                setPlaying(false)
+              }}
               onEnded={() => {
                 // 播完后回到自然行为：下次点播放从头开始
                 pendingSeekRef.current = 0
@@ -2266,6 +2280,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                   >
                     取消
                   </button>
+                </span>
+              ) : videoWaiting && playing ? (
+                <span className="canvas-node-video-hint" role="status">
+                  <span className="canvas-video-buffering" aria-label="缓冲中" title="缓冲中" /> 视频加载中
                 </span>
               ) : videoSeekableUnavailable ? (
                 <button

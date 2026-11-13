@@ -538,6 +538,7 @@ export default function ManualVideoFlow(props: Props) {
               <h2 className={manualStyles.supportTitle}>需要帮忙？</h2>
               <div className={manualStyles.support}>
                 <p>临时要改需求、不想做了、或者内容很急，可以联系客服。</p>
+                <span>客服电话：</span>
                 <span className={manualStyles.phone}>136 8106 5734</span>{' '}
                 <button className={manualStyles.copyPhone} type="button" onClick={copyPhone}>
                   复制

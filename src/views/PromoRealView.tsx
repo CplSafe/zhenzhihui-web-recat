@@ -22,7 +22,6 @@ import {
   getPromoConfig,
   getPromoIntake,
   quotePromo,
-  registerPromoOffline,
   uploadPromoFile,
   type PromoConfig,
   type PromoMaterial,
@@ -96,7 +95,6 @@ export default function PromoRealView() {
   const [config, setConfig] = useState<PromoConfig | null>(null)
   const [configLoading, setConfigLoading] = useState(true)
   const [configAttempt, setConfigAttempt] = useState(0)
-  const [orders, setOrders] = useState(false)
   const orderId = Number(query.get('order') || 0)
   const [started, setStarted] = useState(false)
   const [stage, setStage] = useState<'intro' | 'form' | 'materials' | 'order'>('intro')
@@ -496,16 +494,15 @@ export default function PromoRealView() {
         <div className={styles.workspace}>
           <TaskCenterDrawer scope="smart" />
           <main className={styles.content}>
-            {orders || orderId > 0 ? (
+            {orderId > 0 ? (
               <PromoOrders
                 key={`${scope}-${orderId}`}
                 workspaceId={workspace}
-                initialOrderId={orderId || undefined}
+                initialOrderId={orderId}
                 serviceTel={config?.service_tel}
                 reworkDays={config?.rework_days}
                 reworkWindowDays={config?.rework_window_days}
                 onClose={() => {
-                  setOrders(false)
                   setQuery({})
                 }}
               />
@@ -533,10 +530,7 @@ export default function PromoRealView() {
                 )}
                 {pending && (
                   <div className={styles.notice} role="status">
-                    <p>上次订单提交结果尚未确认，请重试原请求，或先查看订单状态。</p>
-                    <button type="button" disabled={busy} onClick={() => setOrders(true)}>
-                      查看订单
-                    </button>
+                    <p>上次订单提交结果尚未确认，请在任务管理中查看状态，或重试原请求。</p>
                     <button type="button" disabled={busy} onClick={() => submit(pending)}>
                       重试原请求
                     </button>
@@ -571,8 +565,8 @@ export default function PromoRealView() {
                             提交需求与素材后进入制作排期，交付后可在订单中播放和下载。修改与交付时间以订单详情为准。
                             {config?.rework_window_days != null && config?.rework_days != null && (
                               <p>
-                                交付后 {config.rework_window_days} 天内可申请修改，修改交付时间参考 {config.rework_days}{' '}
-                                天。
+                                成片交付后 {config.rework_window_days} 天内可申请修改，修改后的成片预计{' '}
+                                {config.rework_days} 天左右交付，具体时间以订单详情为准。
                               </p>
                             )}
                           </div>
@@ -607,9 +601,6 @@ export default function PromoRealView() {
                                 提交需求，进入制作排期
                               </button>
                             )}
-                            <button className={styles.secondary} type="button" onClick={() => setOrders(true)}>
-                              查看我的订单
-                            </button>
                           </div>
                         </aside>
                       </div>
@@ -877,7 +868,7 @@ export default function PromoRealView() {
                           <h1 className={styles.projectTitle}>上传素材</h1>
                           {uploadingName && <p role="status">正在处理素材：{uploadingName}，请稍候…</p>}
                           <div className={styles.uploads}>
-                            {(['logo', 'footage', 'supplement'] as const).map((role) => (
+                            {(['footage', 'logo', 'supplement'] as const).map((role) => (
                               <section
                                 key={role}
                                 className={`${styles.materialCard} ${role === 'footage' ? styles.requiredMaterial : ''}`}
@@ -965,17 +956,17 @@ export default function PromoRealView() {
                             <span>
                               <b>传不上来怎么办？</b>{' '}
                               {config.offline_fallback
-                                ? '可以登记线下交接，由顾问联系你。'
+                                ? '请拨打客服电话，与顾问沟通素材交接。'
                                 : '请检查素材后重试，或联系客服。'}
                             </span>
-                            {offline && config.service_tel && (
+                            {config.service_tel && (
                               <span className={styles.advisorContact}>
-                                <span>顾问电话：</span>
+                                <span>客服电话：</span>
                                 <span>{config.service_tel}</span>
                                 <button
                                   type="button"
                                   className={styles.copyPhone}
-                                  aria-label={`复制顾问电话 ${config.service_tel}`}
+                                  aria-label={`复制客服电话 ${config.service_tel}`}
                                   onClick={() => {
                                     if (!navigator.clipboard) {
                                       showToast('复制不可用，请手动选择号码', 'error')
@@ -992,23 +983,6 @@ export default function PromoRealView() {
                               </span>
                             )}
                           </div>
-                          {config.offline_fallback && !offline && (
-                            <button
-                              className={styles.secondary}
-                              type="button"
-                              disabled={busy}
-                              onClick={() =>
-                                void guarded(async () => {
-                                  await registerPromoOffline(token)
-                                  localStorage.setItem(`zzh.promo.offline.${scope}`, '1')
-                                  setOffline(true)
-                                  setQuote(null)
-                                })
-                              }
-                            >
-                              素材我线下交给顾问
-                            </button>
-                          )}
                           <fieldset className={styles.consent} disabled={busy}>
                             <label>
                               <input
@@ -1028,10 +1002,7 @@ export default function PromoRealView() {
                             </label>
                           </fieldset>
                           {!offline && materials.some((item) => item.status !== 'active') && (
-                            <p className={styles.notice}>
-                              存在未完成的素材，请重试确认、重新上传或删除后继续
-                              {config.offline_fallback ? '；也可登记线下交接。' : '。'}
-                            </p>
+                            <p className={styles.notice}>存在未完成的素材，请重试确认、重新上传或删除后继续。</p>
                           )}
                           {(!config.price_show || config.manual_quote_required) && (
                             <p className={styles.notice}>
@@ -1200,7 +1171,7 @@ export default function PromoRealView() {
                             </div>
                           </div>
                           <div className={styles.actions}>
-                            <span>还可返回修改需求与素材</span>
+                            <span>需要修改需求与素材，请点击上一步</span>
                             <span className={styles.cost}>
                               预计费用 <b>{quote.total_cost}</b> 积分
                             </span>
