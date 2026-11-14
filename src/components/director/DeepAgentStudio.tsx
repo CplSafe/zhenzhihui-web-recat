@@ -563,6 +563,11 @@ export default function DeepAgentStudio({
             当前 MCP 授权空间与页面不同。请在连接设置中重新授权，避免写入其他画布。
           </div>
         )}
+        {!loading && state.connected && !mismatch && !studio.error && !catalog.planning_model && (
+          <div role="alert" className={styles.alert}>
+            推理模型暂不可用，无法发送消息。请管理员检查指定模型是否已启用，以及当前账号是否有使用权限。
+          </div>
+        )}
         {studio.error && (
           <div role="alert" className={styles.alert}>
             {studio.error}

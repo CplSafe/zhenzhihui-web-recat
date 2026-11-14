@@ -201,6 +201,28 @@ describe('Studio transport', () => {
       vi.unstubAllGlobals()
     }
   })
+  it('explains an unavailable planner without submitting or changing models', async () => {
+    const posts = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/state', () => HttpResponse.json({ connected: true, workspace_id: 54, runs: [] })),
+      http.get('*/agent-studio/api/catalog', () => HttpResponse.json({ ...catalog, planning_model: null })),
+      http.post('*/agent-studio/api/runs', () => {
+        posts()
+        return HttpResponse.json(snapshot())
+      }),
+    )
+    render(<DeepAgentStudio />)
+    const message = await screen.findByRole('textbox', { name: '创作要求' })
+    fireEvent.change(message, { target: { value: '仅回复连接正常' } })
+    expect(
+      await screen.findByText(
+        '推理模型暂不可用，无法发送消息。请管理员检查指定模型是否已启用，以及当前账号是否有使用权限。',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
+    fireEvent.submit(message.closest('form')!)
+    expect(posts).not.toHaveBeenCalled()
+  })
   it('canvas dock opens with business identity and collapse retains the draft without triggering canvas input', async () => {
     const canvasKey = vi.fn(),
       seen = vi.fn()

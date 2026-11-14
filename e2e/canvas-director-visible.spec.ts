@@ -29,7 +29,22 @@ for (const width of [1440, 390]) {
         expect(request.headers()['x-agent-canvas-id']).toBe('110')
         return route.fulfill({ json: { connected: true, workspace_id: 21, session_scope: 'test', runs: [] } })
       }
-      if (path.endsWith('/api/catalog')) return route.fulfill({ json: { models: [], skills: [] } })
+      if (path.endsWith('/api/catalog'))
+        return route.fulfill({
+          json: {
+            models: [
+              {
+                id: 29,
+                model: 'banana-pro',
+                display_name: 'Nano Banana Pro (Google)',
+                operation_codes: ['image.text_to_image'],
+              },
+              { id: 18, model: 'seedance-2.5', display_name: 'Seedance 2.5', operation_codes: ['video.generate'] },
+            ],
+            planning_model: { id: 52, model: 'gpt-5.6-terra', operation_codes: ['agent.chat'] },
+            skills: [],
+          },
+        })
       return route.abort()
     })
     await page.goto('/canvas/110')
@@ -43,6 +58,7 @@ for (const width of [1440, 390]) {
     await expect(agent.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled()
     const input = agent.getByRole('textbox', { name: '创作要求' })
     await input.fill('保留画布草稿')
+    await expect(agent.getByRole('button', { name: '发送创作要求' })).toBeEnabled()
     await agent.getByRole('button', { name: '收起 DoDo Agent' }).click()
     await expect(agent).toBeHidden()
     await page.getByRole('button', { name: '打开 DoDo Agent' }).click()
