@@ -1,6 +1,10 @@
 import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
-import { canvasReferenceFromNode, isCanvasReferenceTarget, type CanvasReference } from '@/components/director/canvasReference'
+import {
+  canvasReferenceFromNode,
+  isCanvasReferenceTarget,
+  type CanvasReference,
+} from '@/components/director/canvasReference'
 import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
@@ -2746,7 +2750,7 @@ function CanvasInner() {
     () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
     [currentUserId, workspaceId],
   )
-  const showCanvasDirector: boolean = false
+  const showCanvasDirector: boolean = true
   const showCanvasShare: boolean = false
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
@@ -11337,7 +11341,9 @@ function CanvasInner() {
             canvasId={canvasId}
             onCanvasChange={onDirectorCanvasChange}
             opened={directorOpen}
-            canvasReference={directorReference?.binding === directorBindingKey ? directorReference.reference : undefined}
+            canvasReference={
+              directorReference?.binding === directorBindingKey ? directorReference.reference : undefined
+            }
             onCollapse={() => setOpenDirectorBinding(null)}
           />
         )}
@@ -11758,8 +11764,14 @@ function CanvasInner() {
                 handlePickRefNode(node as unknown as Node)
                 return
               }
-              if (directorOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
-                  isCanvasReferenceTarget(event.target as Element)) {
+              if (
+                directorOpen &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.shiftKey &&
+                isCanvasReferenceTarget(event.target as Element)
+              ) {
                 const reference = canvasReferenceFromNode(node)
                 if (reference) {
                   setDirectorReference({ binding: directorBindingKey, reference })
