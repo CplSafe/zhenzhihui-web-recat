@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
-import { defaultModel, StudioHTTPError, contextInfo } from './studio'
+import { defaultModel, StudioHTTPError, contextInfo, conversationCredits } from './studio'
 import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
@@ -43,21 +43,34 @@ export default function DeepAgentStudio({
   const [retryTarget, setRetryTarget] = useState<{ runId: string; id: number; version: number }>()
   const [notificationMessage, setNotificationMessage] = useState('')
   useEffect(() => {
-    if (serverRun?.status !== 'error') { notifiedFailure.current = null; return }
+    if (serverRun?.status !== 'error') {
+      notifiedFailure.current = null
+      return
+    }
     if (notifiedFailure.current === serverRun.id) return
     notifiedFailure.current = serverRun.id
     if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
       try {
-        const notice = new Notification('DoDo Agent 需要你处理', { body: '执行已暂停，进度已保留。请返回会话查看具体原因。', tag: 'dodo-' + serverRun.id })
-        notice.onclick = () => { window.focus(); notice.close() }
-      } catch { setNotificationMessage('浏览器通知暂不可用，失败信息已保留在页面中') }
+        const notice = new Notification('DoDo Agent 需要你处理', {
+          body: '执行已暂停，进度已保留。请返回会话查看具体原因。',
+          tag: 'dodo-' + serverRun.id,
+        })
+        notice.onclick = () => {
+          window.focus()
+          notice.close()
+        }
+      } catch {
+        setNotificationMessage('浏览器通知暂不可用，失败信息已保留在页面中')
+      }
     }
   }, [serverRun?.id, serverRun?.status])
   const [pendingSend, setPendingSend] = useState<{ run: StudioRun; target?: string; api: typeof api } | null>(null)
   const activeAPI = useRef(api)
   activeAPI.current = api
-  const run = pendingSend?.api === api && (!pendingSend.target || serverRun?.id !== pendingSend.target)
-    ? pendingSend.run : serverRun
+  const run =
+    pendingSend?.api === api && (!pendingSend.target || serverRun?.id !== pendingSend.target)
+      ? pendingSend.run
+      : serverRun
   useEffect(() => {
     if (pendingSend?.target && serverRun?.id === pendingSend.target) setPendingSend(null)
   }, [pendingSend, serverRun?.id])
@@ -224,7 +237,15 @@ export default function DeepAgentStudio({
       const optimistic: StudioRun = {
         ...(run || { id: 'pending', cursor: 0, title: '新对话', events: [] }),
         status: 'complete',
-        events: [...(run?.events || []), { id: 'pending-send', kind: 'user', text: draft.trim() || '已添加附件', data: { delivery: 'sending', canvas_references: canvasReferences } }],
+        events: [
+          ...(run?.events || []),
+          {
+            id: 'pending-send',
+            kind: 'user',
+            text: draft.trim() || '已添加附件',
+            data: { delivery: 'sending', canvas_references: canvasReferences },
+          },
+        ],
       }
       setPendingSend({ api, run: optimistic })
       setMessage('')
@@ -252,9 +273,18 @@ export default function DeepAgentStudio({
         throw e
       }
       if (activeAPI.current !== api) return
-      setPendingSend({ api, target: response.id, run: { ...optimistic, id: response.id, status: 'running',
-        events: optimistic.events.map((event) => event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event),
-      } })
+      setPendingSend({
+        api,
+        target: response.id,
+        run: {
+          ...optimistic,
+          id: response.id,
+          status: 'running',
+          events: optimistic.events.map((event) =>
+            event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event,
+          ),
+        },
+      })
       studio.setCurrent(response.id)
       setMessage('')
       setAttachments([])
@@ -352,12 +382,14 @@ export default function DeepAgentStudio({
   }
   const currentSkill = catalog.skills.find((s) => s.name === skill)
   const context = contextInfo(run, catalog)
-  const contextLabel = context.context.status === 'compacting' ? '正在整理上下文' :
-    context.percent !== null
-      ? `上次请求后剩余 ${context.percent}%`
-      : context.input != null
-        ? `上次输入 ${context.input.toLocaleString()} tokens`
-        : '上下文用量未提供'
+  const contextLabel =
+    context.context.status === 'compacting'
+      ? '正在整理上下文'
+      : context.percent !== null
+        ? `上次请求后剩余 ${context.percent}%`
+        : context.input != null
+          ? `上次输入 ${context.input.toLocaleString()} tokens`
+          : '上下文用量未提供'
 
   const activeBatch = run?.batches?.find((b) => b.id === run.active_batch)
   const batchHasRunning = Object.values(activeBatch?.nodes || {}).some((node) =>
@@ -367,12 +399,11 @@ export default function DeepAgentStudio({
     () => doudouState(run, !!studio.streamState && studio.streamState !== '实时更新'),
     [run, studio.streamState],
   )
-  const latestTask = [...(run?.events || [])].reverse().find((event) =>
-    ['cost', 'progress', 'tool'].includes(event.kind) && event.data?.tool,
-  )
-  const replying = run?.events.some((event) =>
-    event.kind === 'assistant' && event.data?.streaming &&
-    event.data.task_id === latestTask?.data?.task_id,
+  const latestTask = [...(run?.events || [])]
+    .reverse()
+    .find((event) => ['cost', 'progress', 'tool'].includes(event.kind) && event.data?.tool)
+  const replying = run?.events.some(
+    (event) => event.kind === 'assistant' && event.data?.streaming && event.data.task_id === latestTask?.data?.task_id,
   )
   const status =
     {
@@ -618,7 +649,9 @@ export default function DeepAgentStudio({
                                 <button
                                   type="button"
                                   disabled={actionBusy}
-                                  onClick={() => setRetryTarget({ runId: run.id, id: node.task_id!, version: Date.now() })}
+                                  onClick={() =>
+                                    setRetryTarget({ runId: run.id, id: node.task_id!, version: Date.now() })
+                                  }
                                 >
                                   查看原因与处理方案
                                 </button>
@@ -642,12 +675,35 @@ export default function DeepAgentStudio({
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
                   {run.status === 'error' && <p role="alert">执行已暂停，进度已保留。请查看上方的具体原因。</p>}
-                  {'Notification' in window && Notification.permission !== 'granted' && <button type="button" onClick={() => {
-                    void Notification.requestPermission().then(permission => setNotificationMessage(permission === 'granted' ? '已开启浏览器提醒' : '未开启浏览器通知，失败时仍会在页面内提醒')).catch(() => setNotificationMessage('浏览器通知暂不可用，失败时仍会在页面内提醒'))
-                  }}>开启浏览器提醒</button>}
+                  {'Notification' in window && Notification.permission !== 'granted' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void Notification.requestPermission()
+                          .then((permission) =>
+                            setNotificationMessage(
+                              permission === 'granted'
+                                ? '已开启浏览器提醒'
+                                : '未开启浏览器通知，失败时仍会在页面内提醒',
+                            ),
+                          )
+                          .catch(() => setNotificationMessage('浏览器通知暂不可用，失败时仍会在页面内提醒'))
+                      }}
+                    >
+                      开启浏览器提醒
+                    </button>
+                  )}
                   {notificationMessage && <p role="status">{notificationMessage}</p>}
-                  {!run.pending && <MediaRetry key={run.id} api={api} runId={run.id} models={catalog.models} reload={studio.reload}
-                    requestedTask={retryTarget?.runId === run.id ? retryTarget : undefined} />}
+                  {!run.pending && (
+                    <MediaRetry
+                      key={run.id}
+                      api={api}
+                      runId={run.id}
+                      models={catalog.models}
+                      reload={studio.reload}
+                      requestedTask={retryTarget?.runId === run.id ? retryTarget : undefined}
+                    />
+                  )}
                   <p>已成功的素材会保留。恢复会先查询已提交任务；失败素材重试需要单独确认。</p>
                   <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
                     恢复执行 / 查询已有任务
@@ -813,9 +869,16 @@ export default function DeepAgentStudio({
                 {canvasReferences.map((item) => (
                   <div key={item.id}>
                     <StudioIcon name="file" size={18} />
-                    <span>{item.title}<small>画布节点引用</small></span>
-                    <button type="button" aria-label={`移除引用 ${item.title}`} disabled={actionBusy}
-                      onClick={() => setCanvasReferences((old) => old.filter((entry) => entry.id !== item.id))}>
+                    <span>
+                      {item.title}
+                      <small>画布节点引用</small>
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`移除引用 ${item.title}`}
+                      disabled={actionBusy}
+                      onClick={() => setCanvasReferences((old) => old.filter((entry) => entry.id !== item.id))}
+                    >
                       <X size={16} />
                     </button>
                   </div>
@@ -830,7 +893,16 @@ export default function DeepAgentStudio({
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+                if (
+                  e.key !== 'Enter' ||
+                  e.shiftKey ||
+                  e.ctrlKey ||
+                  e.altKey ||
+                  e.metaKey ||
+                  e.nativeEvent.isComposing ||
+                  e.nativeEvent.keyCode === 229
+                )
+                  return
                 e.preventDefault()
                 if (!e.repeat) void send()
               }}
@@ -943,7 +1015,13 @@ export default function DeepAgentStudio({
             </div>
           </form>
           <footer className={styles.footer}>
-            <span>{uploading ? '正在上传…' : mode === 'auto' ? '自动调用并计费，可随时停止' : '每次生成前确认'}</span>
+            <span aria-live="polite" aria-atomic="true">
+              已消耗{' '}
+              {conversationCredits([...(run?.history_events || []), ...(run?.events || [])]).toLocaleString('zh-CN', {
+                maximumFractionDigits: 3,
+              })}{' '}
+              积分
+            </span>
             <span>{run ? studio.streamState : '推理与素材按实际用量扣积分'}</span>
           </footer>
         </div>

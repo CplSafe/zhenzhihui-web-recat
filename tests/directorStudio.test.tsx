@@ -11,7 +11,14 @@ import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import DirectorStudioView from '@/views/DirectorStudioView'
 import { DocumentEditor, Markdown, EventCard, Conversation, Approval } from '@/components/director/StudioCards'
 import { Media, StudioMediaContext } from '@/components/director/StudioMedia'
-import { applyStudioFrame, createStudioAPI, defaultModel, mediaURLs, contextInfo } from '@/components/director/studio'
+import {
+  conversationCredits,
+  applyStudioFrame,
+  createStudioAPI,
+  defaultModel,
+  mediaURLs,
+  contextInfo,
+} from '@/components/director/studio'
 import type { StudioRun, StudioDocument } from '@/components/director/studio'
 
 const catalog = {
@@ -61,7 +68,7 @@ beforeEach(() => {
   }
   server.use(
     http.post('*/api/v1/auth/refresh', () => HttpResponse.json({ message: 'login required' }, { status: 401 })),
-    http.get('*/agent-studio/', () => new HttpResponse('studio')),
+    http.get('*/agent-studio/api/bootstrap', () => HttpResponse.json({ ready: true })),
     http.get('*/agent-studio/api/state', () =>
       HttpResponse.json({
         connected: true,
@@ -103,7 +110,9 @@ describe('Studio transport', () => {
   it('offers media retry only when the server reports a failed media candidate', async () => {
     server.use(
       http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error' }))),
-      http.get('*/agent-studio/api/runs/run1/media-retries', () => HttpResponse.json({ items: [], candidates: [{ task_id: 7 }] })),
+      http.get('*/agent-studio/api/runs/run1/media-retries', () =>
+        HttpResponse.json({ items: [], candidates: [{ task_id: 7 }] }),
+      ),
     )
     render(<DeepAgentStudio />)
     await openHistory()
@@ -111,17 +120,47 @@ describe('Studio transport', () => {
   })
   it('explains review rejection before retry and never posts when opening the batch failure', async () => {
     const posts = vi.fn()
-    const candidate = { task_id: 7, title: 'Evening reference', tool: 'model.generate_image',
-      before: { model_version_id: 29, prompt: 'Original fictional character', operation_code: 'image.text_to_image', params: {} },
-      failure: { advice: { category: 'REVIEW_REJECTED', error_message: '安全审核拒绝' },
-        explanation: '供应商未提供具体命中原因', actual_credits: 0,
+    const candidate = {
+      task_id: 7,
+      title: 'Evening reference',
+      tool: 'model.generate_image',
+      before: {
+        model_version_id: 29,
+        prompt: 'Original fictional character',
+        operation_code: 'image.text_to_image',
+        params: {},
+      },
+      failure: {
+        advice: { category: 'REVIEW_REJECTED', error_message: '安全审核拒绝' },
+        explanation: '供应商未提供具体命中原因',
+        actual_credits: 0,
         references: [{ asset_id: 8, origin: 'generated_in_session', title: 'Original portrait' }],
-        assessment: { reason: '授权尚未明确', source_context_included: false } } }
+        assessment: { reason: '授权尚未明确', source_context_included: false },
+      },
+    }
     server.use(
-      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error', active_batch: 'batch-1',
-        batches: [{ id: 'batch-1', revision: 1, nodes: { a: { id: 'a', title: 'Evening reference', status: 'failed', attempt: 1, task_id: 7 } } }] }))),
-      http.get('*/agent-studio/api/runs/run1/media-retries', () => HttpResponse.json({ items: [], candidates: [candidate] })),
-      http.post('*/agent-studio/api/runs/run1/*', () => { posts(); return HttpResponse.json({}) }),
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(
+          snapshot({
+            status: 'error',
+            active_batch: 'batch-1',
+            batches: [
+              {
+                id: 'batch-1',
+                revision: 1,
+                nodes: { a: { id: 'a', title: 'Evening reference', status: 'failed', attempt: 1, task_id: 7 } },
+              },
+            ],
+          }),
+        ),
+      ),
+      http.get('*/agent-studio/api/runs/run1/media-retries', () =>
+        HttpResponse.json({ items: [], candidates: [candidate] }),
+      ),
+      http.post('*/agent-studio/api/runs/run1/*', () => {
+        posts()
+        return HttpResponse.json({})
+      }),
     )
     render(<DeepAgentStudio />)
     await openHistory()
@@ -136,12 +175,16 @@ describe('Studio transport', () => {
   })
 
   it('keeps recovery usable when desktop notifications throw and never asks permission automatically', async () => {
-    const notify = vi.fn(() => { throw new Error('desktop notifications unavailable') })
+    const notify = vi.fn(() => {
+      throw new Error('desktop notifications unavailable')
+    })
     const permission = vi.fn()
     class NotificationStub {
       static permission = 'granted'
       static requestPermission = permission
-      constructor() { notify() }
+      constructor() {
+        notify()
+      }
     }
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
     vi.stubGlobal('Notification', NotificationStub)
@@ -1329,28 +1372,56 @@ it('does not leave empty or overcounted tool groups for hidden inference receipt
 })
 
 it('renders real reply updates while running without duplicating the final message', async () => {
-  server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running', events: [
-    { id: 'planning', kind: 'cost', text: '生成中', data: { task_id: 808, tool: 'model.generate_text', status: 'running' } },
-  ] }))))
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () =>
+      HttpResponse.json(
+        snapshot({
+          status: 'running',
+          events: [
+            {
+              id: 'planning',
+              kind: 'cost',
+              text: '生成中',
+              data: { task_id: 808, tool: 'model.generate_text', status: 'running' },
+            },
+          ],
+        }),
+      ),
+    ),
+  )
   render(<DeepAgentStudio />)
   await openHistory()
   const socket = Socket.instances[0]
   for (const [index, text] of ['你好', '你好，欢迎', '你好，欢迎！'].entries()) {
-    act(() => socket.emit({ event: 'update', cursor: 8 + index, data: {
-      run_id: 'run1', type: 'MESSAGE_UPSERT', data: { id: 'deep-plan-0', kind: 'assistant', text, data: { streaming: true, task_id: 808 } },
-    } }))
+    act(() =>
+      socket.emit({
+        event: 'update',
+        cursor: 8 + index,
+        data: {
+          run_id: 'run1',
+          type: 'MESSAGE_UPSERT',
+          data: { id: 'deep-plan-0', kind: 'assistant', text, data: { streaming: true, task_id: 808 } },
+        },
+      }),
+    )
     expect(screen.getAllByText(text)).toHaveLength(1)
     expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
     expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   }
 })
 
-
 it('uses matching catalog capacity for old receipts, includes output, and rejects another model profile', () => {
   const modelCatalog = { ...catalog, context_defaults: { model_id: 21, capacity_tokens: 100000 } }
-  const run = snapshot({ selection: { image: 29, video: 18, mode: 'manual', chat: 21 }, context: {
-    model_id: 21, input_tokens: 24000, output_tokens: 1000, measurement: 'provider_usage', capacity_tokens: null,
-  } })
+  const run = snapshot({
+    selection: { image: 29, video: 18, mode: 'manual', chat: 21 },
+    context: {
+      model_id: 21,
+      input_tokens: 24000,
+      output_tokens: 1000,
+      measurement: 'provider_usage',
+      capacity_tokens: null,
+    },
+  })
   expect(contextInfo(run, modelCatalog).percent).toBe(75)
   expect(contextInfo({ ...run, selection: { ...run.selection!, chat: 55 } }, modelCatalog).percent).toBeNull()
 })
@@ -1359,40 +1430,74 @@ it('keeps previous messages and media through live updates and clears them only 
   const previous = [
     { id: 'history:old:user', kind: 'user', text: '记住海棠这个名字' },
     { id: 'history:old:reply', kind: 'assistant', text: '已记住海棠' },
-    { id: 'history:old:image', kind: 'cost', text: '图片完成', data: {
-      tool: 'model.generate_image', status: 'succeeded', assets: [{ id: 12, download_url: 'https://media.test/old.png' }],
-    } },
+    {
+      id: 'history:old:image',
+      kind: 'cost',
+      text: '图片完成',
+      data: {
+        tool: 'model.generate_image',
+        status: 'succeeded',
+        assets: [{ id: 12, download_url: 'https://media.test/old.png' }],
+      },
+    },
   ]
-  server.use(http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({
-    history_events: previous, events: [{ id: 'user', kind: 'user', text: '继续制作' }],
-  }))))
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () =>
+      HttpResponse.json(
+        snapshot({
+          history_events: previous,
+          events: [{ id: 'user', kind: 'user', text: '继续制作' }],
+        }),
+      ),
+    ),
+  )
   render(<DeepAgentStudio />)
   await openHistory()
   expect(screen.getByText('记住海棠这个名字')).toBeVisible()
   expect(screen.getByText('已记住海棠')).toBeVisible()
   expect(screen.getByRole('img', { name: '生成素材' })).toBeVisible()
-  act(() => Socket.instances[0].emit({ event: 'update', cursor: 8, data: {
-    run_id: 'run1', type: 'MESSAGE_UPSERT', data: { id: 'reply', kind: 'assistant', text: '正在继续' },
-  } }))
+  act(() =>
+    Socket.instances[0].emit({
+      event: 'update',
+      cursor: 8,
+      data: {
+        run_id: 'run1',
+        type: 'MESSAGE_UPSERT',
+        data: { id: 'reply', kind: 'assistant', text: '正在继续' },
+      },
+    }),
+  )
   expect(screen.getByText('已记住海棠')).toBeVisible()
   expect(screen.getByText('正在继续')).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
   expect(screen.queryByText('已记住海棠')).not.toBeInTheDocument()
 })
 
-
 it('sends on Enter immediately, keeps prior messages and prevents duplicate submission while acknowledgement is pending', async () => {
   let acknowledge!: () => void
-  const pending = new Promise<void>((resolve) => { acknowledge = resolve })
+  const pending = new Promise<void>((resolve) => {
+    acknowledge = resolve
+  })
   const starts: unknown[] = []
   server.use(
-    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ events: [{ id: 'old', kind: 'assistant', text: '此前的回复' }] }))),
+    http.get('*/agent-studio/api/runs/run1', () =>
+      HttpResponse.json(snapshot({ events: [{ id: 'old', kind: 'assistant', text: '此前的回复' }] })),
+    ),
     http.post('*/agent-studio/api/runs', async ({ request }) => {
       starts.push(await request.json())
       await pending
       return HttpResponse.json({ id: 'run2' })
     }),
-    http.get('*/agent-studio/api/runs/run2', () => HttpResponse.json(snapshot({ id: 'run2', status: 'running', history_events: [{ id: 'history:old', kind: 'assistant', text: '此前的回复' }], events: [{ id: 'user', kind: 'user', text: '继续这段对话' }] }))),
+    http.get('*/agent-studio/api/runs/run2', () =>
+      HttpResponse.json(
+        snapshot({
+          id: 'run2',
+          status: 'running',
+          history_events: [{ id: 'history:old', kind: 'assistant', text: '此前的回复' }],
+          events: [{ id: 'user', kind: 'user', text: '继续这段对话' }],
+        }),
+      ),
+    ),
   )
   render(<DeepAgentStudio />)
   await openHistory()
@@ -1427,14 +1532,19 @@ it('restores the draft after rejection without leaving a fake sent message', asy
   expect(screen.queryByText('发送中…')).not.toBeInTheDocument()
 })
 
-
 it('discards the old optimistic conversation and ignores its response when the host changes canvas', async () => {
   let release!: () => void
-  const pending = new Promise<void>((resolve) => { release = resolve })
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
   let posts = 0
   const oldSnapshot = vi.fn(() => HttpResponse.json(snapshot({ id: 'old-canvas-run' })))
   server.use(
-    http.post('*/agent-studio/api/runs', async () => { posts++; await pending; return HttpResponse.json({ id: 'old-canvas-run' }) }),
+    http.post('*/agent-studio/api/runs', async () => {
+      posts++
+      await pending
+      return HttpResponse.json({ id: 'old-canvas-run' })
+    }),
     http.get('*/agent-studio/api/runs/old-canvas-run', oldSnapshot),
   )
   const view = render(<DeepAgentStudio authMode="oauth" canvasId={1} />)
@@ -1446,25 +1556,40 @@ it('discards the old optimistic conversation and ignores its response when the h
   view.rerender(<DeepAgentStudio authMode="oauth" canvasId={2} />)
   await waitFor(() => expect(screen.queryByText('发送中…')).not.toBeInTheDocument())
   expect(screen.queryByText('旧画布的请求')).not.toBeInTheDocument()
-  await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+  await act(async () => {
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
   expect(oldSnapshot).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('')
   expect(posts).toBe(1)
 })
 
-
 it('ignores a late history refresh from the previous canvas after the send was accepted', async () => {
   let release!: () => void
-  const delayed = new Promise<void>((resolve) => { release = resolve })
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve
+  })
   let historyCalls = 0
   server.use(
     http.post('*/agent-studio/api/runs', () => HttpResponse.json({ id: 'run1' })),
     http.get('*/agent-studio/api/state', async () => {
       const call = ++historyCalls
       if (call === 2) await delayed
-      return HttpResponse.json({ connected: true, workspace_id: 54, runs: call === 1 ? [] : [{
-        id: call === 2 ? 'old-history' : 'new-history', title: call === 2 ? '旧画布历史' : '新画布历史', status: 'complete',
-      }] })
+      return HttpResponse.json({
+        connected: true,
+        workspace_id: 54,
+        runs:
+          call === 1
+            ? []
+            : [
+                {
+                  id: call === 2 ? 'old-history' : 'new-history',
+                  title: call === 2 ? '旧画布历史' : '新画布历史',
+                  status: 'complete',
+                },
+              ],
+      })
     }),
   )
   const view = render(<DeepAgentStudio authMode="oauth" canvasId={1} />)
@@ -1474,21 +1599,31 @@ it('ignores a late history refresh from the previous canvas after the send was a
   await waitFor(() => expect(historyCalls).toBe(2))
   view.rerender(<DeepAgentStudio authMode="oauth" canvasId={2} />)
   await waitFor(() => expect(historyCalls).toBe(3))
-  await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+  await act(async () => {
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
   fireEvent.click(screen.getByRole('button', { name: '新对话' }))
   expect(screen.getByRole('button', { name: /新画布历史/ })).toBeVisible()
   expect(screen.queryByRole('button', { name: /旧画布历史/ })).not.toBeInTheDocument()
 })
 
-
 describe('conversation refresh', () => {
   it('restores the active conversation and its history without submitting work; New remains empty on refresh', async () => {
     let posts = 0
     server.use(
-      http.post('*/agent-studio/api/runs', () => { posts++; return HttpResponse.json({ id: 'unexpected' }) }),
-      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({
-        status: 'running', events: [{ id: 1, kind: 'user', text: '保留这段剧本', at: 1 }],
-      }))),
+      http.post('*/agent-studio/api/runs', () => {
+        posts++
+        return HttpResponse.json({ id: 'unexpected' })
+      }),
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(
+          snapshot({
+            status: 'running',
+            events: [{ id: 1, kind: 'user', text: '保留这段剧本', at: 1 }],
+          }),
+        ),
+      ),
     )
     const first = render(<DeepAgentStudio apiBase="/agent-studio" />)
     await openHistory()
@@ -1511,7 +1646,12 @@ describe('conversation refresh', () => {
     const key = 'dodo-conversation:' + JSON.stringify(['/agent-studio', 'account-1', null])
     sessionStorage.setItem(key, 'gone')
     let reads = 0
-    server.use(http.get('*/agent-studio/api/runs/gone', () => { reads++; return HttpResponse.json({ detail: 'Not found' }, { status: 404 }) }))
+    server.use(
+      http.get('*/agent-studio/api/runs/gone', () => {
+        reads++
+        return HttpResponse.json({ detail: 'Not found' }, { status: 404 })
+      }),
+    )
     const otherCanvas = render(<DeepAgentStudio apiBase="/agent-studio" canvasId={20} />)
     await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
     expect(reads).toBe(0)
@@ -1522,7 +1662,11 @@ describe('conversation refresh', () => {
     missing.unmount()
     sessionStorage.setItem(key, 'gone')
     const oldReads = reads
-    server.use(http.get('*/agent-studio/api/state', () => HttpResponse.json({ connected: true, session_scope: 'account-2', workspace_id: 54, runs: [] })))
+    server.use(
+      http.get('*/agent-studio/api/state', () =>
+        HttpResponse.json({ connected: true, session_scope: 'account-2', workspace_id: 54, runs: [] }),
+      ),
+    )
     render(<DeepAgentStudio apiBase="/agent-studio" />)
     await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
     expect(reads).toBe(oldReads)
@@ -1533,13 +1677,17 @@ it('New clicked during delayed connection prevents saved conversation restoratio
   const key = 'dodo-conversation:' + JSON.stringify(['/agent-studio', 'account-1', null])
   sessionStorage.setItem(key, 'run1')
   let release!: () => void
-  const ready = new Promise<void>(resolve => { release = resolve })
+  const ready = new Promise<void>((resolve) => {
+    release = resolve
+  })
   const requested = vi.fn()
-  server.use(http.get('*/agent-studio/api/state', async () => {
-    requested()
-    await ready
-    return HttpResponse.json({ connected: true, session_scope: 'account-1', workspace_id: 54, runs: [] })
-  }))
+  server.use(
+    http.get('*/agent-studio/api/state', async () => {
+      requested()
+      await ready
+      return HttpResponse.json({ connected: true, session_scope: 'account-1', workspace_id: 54, runs: [] })
+    }),
+  )
   render(<DeepAgentStudio apiBase="/agent-studio" />)
   await waitFor(() => expect(requested).toHaveBeenCalled())
   fireEvent.click(screen.getByRole('button', { name: '新建会话' }))
@@ -1551,15 +1699,21 @@ it('New clicked during delayed connection prevents saved conversation restoratio
 
 it('adds clicked canvas references without sending, deduplicates and submits only node IDs', async () => {
   const starts: unknown[] = []
-  server.use(http.post('*/agent-studio/api/runs', async ({ request }) => {
-    starts.push(await request.json())
-    return HttpResponse.json({ detail: 'fixture rejected' }, { status: 400 })
-  }))
+  server.use(
+    http.post('*/agent-studio/api/runs', async ({ request }) => {
+      starts.push(await request.json())
+      return HttpResponse.json({ detail: 'fixture rejected' }, { status: 400 })
+    }),
+  )
   const { rerender } = render(<DeepAgentStudio canvasId={57} />)
   await openHistory()
-  rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'episode-1', title: '第一集字幕版', kind: 'video' }} />)
+  rerender(
+    <DeepAgentStudio canvasId={57} canvasReference={{ id: 'episode-1', title: '第一集字幕版', kind: 'video' }} />,
+  )
   expect(await screen.findByRole('button', { name: '移除引用 第一集字幕版' })).toBeVisible()
-  rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'episode-1', title: '第一集字幕版', kind: 'video' }} />)
+  rerender(
+    <DeepAgentStudio canvasId={57} canvasReference={{ id: 'episode-1', title: '第一集字幕版', kind: 'video' }} />,
+  )
   expect(screen.getAllByRole('button', { name: '移除引用 第一集字幕版' })).toHaveLength(1)
   expect(starts).toHaveLength(0)
   fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '查看这个节点，不生成' } })
@@ -1584,6 +1738,82 @@ it('limits references to eight and clears them for a new conversation', async ()
 })
 
 it('shows submitted node references in the conversation without embedding the full node', () => {
-  render(<EventCard event={{ id:'referenced', kind:'user', text:'查看这一集', data:{ canvas_references:[{ id:'n1', title:'第一集字幕版' }] } }} />)
+  render(
+    <EventCard
+      event={{
+        id: 'referenced',
+        kind: 'user',
+        text: '查看这一集',
+        data: { canvas_references: [{ id: 'n1', title: '第一集字幕版' }] },
+      }}
+    />,
+  )
   expect(screen.getByLabelText('本条消息引用的节点')).toHaveTextContent('引用 · 第一集字幕版')
+})
+
+it('bootstraps through the API instead of a redirect to the business HTML page', async () => {
+  const html = vi.fn()
+  server.use(
+    http.get('*/agent-studio/', () => {
+      html()
+      return new HttpResponse('<html/>')
+    }),
+  )
+  await createStudioAPI().bootstrap()
+  expect(html).not.toHaveBeenCalled()
+})
+
+it('counts conversation retries once using actual charges, including billed failures', () => {
+  const original = {
+    id: 'old',
+    kind: 'subtitle',
+    text: '',
+    data: { subtitle_id: 's1', status: 'succeeded', actual_cost: 0.22 },
+  }
+  const retry = {
+    id: 'retry',
+    kind: 'cost',
+    text: '',
+    data: { tool: 'video.subtitle', subtitle_id: 's2', status: 'failed', actual_cost: 0.22 },
+  }
+  expect(
+    conversationCredits([
+      original,
+      retry,
+      { ...retry, id: 'copy' },
+      { id: 'pending', kind: 'cost', text: '', data: { task_id: 8, status: 'running', estimated_cost: 1020 } },
+      { id: 'ai', kind: 'cost', text: '', data: { task_id: 9, status: 'failed', actual_cost: 0.1 } },
+    ]),
+  ).toBe(0.54)
+  expect(conversationCredits([retry, { ...original, data: { ...retry.data } }])).toBe(0.22)
+  expect(conversationCredits([retry, { ...retry, data: { ...retry.data, actual_cost: 0 } }])).toBe(0)
+  expect(conversationCredits([])).toBe(0)
+})
+
+it('shows the cumulative conversation credits in the composer footer and updates live', async () => {
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () =>
+      HttpResponse.json(
+        snapshot({
+          history_events: [
+            { id: 'old', kind: 'cost', text: '', data: { task_id: 1, status: 'succeeded', actual_cost: 10 } },
+          ],
+          events: [
+            {
+              id: 'retry',
+              kind: 'cost',
+              text: '',
+              data: { tool: 'video.subtitle', subtitle_id: 's2', status: 'failed', actual_cost: 0.22 },
+            },
+          ],
+        }),
+      ),
+    ),
+  )
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const amount = await screen.findByText('已消耗 10.22 积分')
+  expect(amount.closest('footer')).not.toBeNull()
+  act(() => Socket.instances.at(-1)!.emit({ event: 'snapshot', cursor: 8, data: snapshot({ events: [] }) }))
+  await screen.findByText('已消耗 0 积分')
 })

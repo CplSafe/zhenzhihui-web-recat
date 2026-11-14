@@ -150,8 +150,10 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
   return {
     request,
     async bootstrap(signal?: AbortSignal) {
-      const response = await fetch(prefix + '/', { credentials: 'same-origin', signal })
+      const response = await fetch(prefix + '/api/bootstrap', { credentials: 'same-origin', signal })
       if (!response.ok) throw new StudioHTTPError('暂时无法连接创作服务，请稍后重试。', response.status)
+      const value = await response.json().catch(() => null)
+      if (value?.ready !== true) throw new Error('创作服务初始化失败，请稍后重试。')
     },
     async upload(file: File): Promise<StudioAttachment> {
       await ensureBusinessLogin()
@@ -283,7 +285,8 @@ export function contextInfo(run: StudioRun | null, catalog?: StudioCatalog) {
     )?.data?.usage
   const input =
     Number.isFinite(context.input_tokens) && context.input_tokens >= 0 ? context.input_tokens : lastUsage?.input_tokens
-  const knownCapacity = context.capacity_tokens ??
+  const knownCapacity =
+    context.capacity_tokens ??
     (context.model_id == null || context.model_id === defaults?.model_id ? defaults?.capacity_tokens : null)
   const capacity = Number.isFinite(knownCapacity) && knownCapacity > 0 ? knownCapacity : null
   const output = Number.isFinite(context.output_tokens) && context.output_tokens >= 0 ? context.output_tokens : 0
@@ -292,4 +295,32 @@ export function contextInfo(run: StudioRun | null, catalog?: StudioCatalog) {
   const remaining = capacity && measured ? Math.max(0, capacity - context.input_tokens - output) : null
   const percent = remaining !== null ? Math.round((remaining / capacity) * 1000) / 10 : null
   return { context, input, capacity, remaining, percent }
+}
+
+/** Settled receipts across turns, including retries and charges retained after failure. */
+export function conversationCredits(events: StudioEvent[]): number {
+  const receipts = new Map<string, StudioEvent>()
+  events.forEach((event, index) => {
+    if (!['cost', 'subtitle'].includes(event.kind)) return
+    const data = event.data || {}
+    const subtitle = event.kind === 'subtitle' || data.tool === 'video.subtitle'
+    const id = subtitle ? data.subtitle_id : data.task_id
+    receipts.set(
+      `${subtitle ? 'subtitle' : 'cost'}:${id != null ? 'task:' + id : 'event:' + (event.id ?? index)}`,
+      event,
+    )
+  })
+  let milli = 0
+  for (const event of receipts.values()) {
+    const data = event.data || {}
+    const value = data.actual_cost
+    if (value == null || String(value).trim() === '' || !Number.isFinite(Number(value)) || Number(value) < 0) continue
+    if (
+      event.kind === 'subtitle' ||
+      data.tool === 'video.subtitle' ||
+      ['succeeded', 'success', 'completed', 'failed', 'cancelled', 'canceled', 'payment_failed'].includes(data.status)
+    )
+      milli += Math.round(Number(value) * 1000)
+  }
+  return milli / 1000
 }
