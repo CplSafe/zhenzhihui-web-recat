@@ -2750,7 +2750,7 @@ function CanvasInner() {
     () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
     [currentUserId, workspaceId],
   )
-  const showCanvasDirector: boolean = true
+  const showCanvasDirector = import.meta.env.VITE_CANVAS_DIRECTOR_ENABLED !== 'false'
   const showCanvasShare: boolean = false
   const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)

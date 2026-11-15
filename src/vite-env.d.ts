@@ -4,6 +4,7 @@ declare const __APP_BUILD_VERSION__: string
 
 /** 项目自定义的 Vite 构建时环境变量类型。 */
 interface ImportMetaEnv {
+  readonly VITE_CANVAS_DIRECTOR_ENABLED?: string
   readonly ZZH_DEV_PROXY_CONFIGURED: boolean
   readonly VITE_ZZH_ALLOWED_UPLOAD_ORIGINS: string
   readonly VITE_O2_CLIENT_TOKEN: string
