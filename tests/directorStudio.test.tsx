@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from './mocks/server'
 import { resetSharedSessionRefreshForTests } from '@/api/sessionRefresh'
+import { useUiStore } from '@/stores/ui'
+import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import DeepAgentStudio from '@/components/director/DeepAgentStudio'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
@@ -56,6 +58,8 @@ class Socket {
   }
 }
 beforeEach(() => {
+  useWorkspaceSessionStore.setState({ activeWorkspaceOverrideId: 54, userWorkspaces: [{ id: 54, name: 'Current' }] })
+  useUiStore.getState().closeMemberCenter()
   sessionStorage.clear()
   resetSharedSessionRefreshForTests()
   Socket.instances = []
@@ -90,6 +94,75 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it.each(['structured', 'legacy'])(
+    'shows %s credit failures as a Chinese reply and opens recharge without resuming',
+    async (variant) => {
+      const mutations = vi.fn()
+      const retries = vi.fn()
+      const event =
+        variant === 'structured'
+          ? { id: 'credit', kind: 'assistant', text: 'server text', data: { code: 'INSUFFICIENT_CREDITS' } }
+          : { id: 'credit', kind: 'error', text: 'Insufficient credits; top up the workspace balance before retrying.' }
+      server.use(
+        http.get('*/agent-studio/api/runs/run1', () =>
+          HttpResponse.json(snapshot({ status: 'error', events: [event] })),
+        ),
+        http.post('*/agent-studio/api/runs/run1/resume', () => {
+          mutations()
+          return HttpResponse.json({})
+        }),
+        http.get('*/agent-studio/api/runs/run1/media-retries', () => {
+          retries()
+          return HttpResponse.json({ items: [] })
+        }),
+      )
+      render(<DeepAgentStudio />)
+      await openHistory()
+      expect(screen.getByLabelText('积分不足提示')).toHaveTextContent('当前工作空间可用积分不足')
+      expect(screen.queryByText(/Insufficient credits/)).not.toBeInTheDocument()
+      expect(screen.queryByText('执行已暂停，进度已保留。请查看上方的具体原因。')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '去充值' }))
+      expect(useUiStore.getState().memberCenterOpen).toBe(true)
+      expect(useUiStore.getState().memberCenterTab).toBe('recharge')
+      expect(mutations).not.toHaveBeenCalled()
+      expect(retries).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: '充值后继续执行' }))
+      await waitFor(() => expect(mutations).toHaveBeenCalledTimes(1))
+    },
+  )
+
+  it('does not offer recharge for an OAuth conversation bound to another workspace', async () => {
+    useWorkspaceSessionStore.setState({ activeWorkspaceOverrideId: 55, userWorkspaces: [{ id: 55 }] })
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(
+          snapshot({
+            status: 'error',
+            events: [{ id: 'credit', kind: 'assistant', text: 'balance', data: { code: 'INSUFFICIENT_CREDITS' } }],
+          }),
+        ),
+      ),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    expect(screen.queryByRole('button', { name: '去充值' })).not.toBeInTheDocument()
+    expect(screen.getByText(/请切换到此会话绑定的工作空间/)).toBeVisible()
+  })
+
+  it('does not turn user text or provider balance failures into a workspace recharge notice', () => {
+    render(
+      <Conversation
+        onDocument={() => {}}
+        events={[
+          { id: 'user', kind: 'user', text: 'Insufficient credits; top up the workspace balance before retrying.' },
+          { id: 'error', kind: 'error', text: 'Provider insufficient credits' },
+        ]}
+      />,
+    )
+    expect(screen.queryByLabelText('积分不足提示')).not.toBeInTheDocument()
+    expect(screen.getByText('Provider insufficient credits')).toBeVisible()
+  })
+
   it('does not offer model switching for a context lookup failure without failed media', async () => {
     const queries = vi.fn()
     server.use(

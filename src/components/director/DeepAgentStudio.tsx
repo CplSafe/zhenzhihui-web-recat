@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
-import { defaultModel, StudioHTTPError, contextInfo, conversationCredits } from './studio'
+import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
 import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
 import { useStudio } from './useStudio'
 import { StudioMediaContext } from './StudioMedia'
@@ -12,6 +12,8 @@ import { MediaRetry } from './MediaRetry'
 import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
 import type { CanvasReference } from './canvasReference'
+import { openMemberCenterTab } from '@/stores/ui'
+import { useWorkspaceId } from '@/stores/workspaceSession'
 
 export interface DeepAgentStudioProps {
   apiBase?: string
@@ -34,6 +36,7 @@ export default function DeepAgentStudio({
   className = '',
   canvasReference,
 }: DeepAgentStudioProps) {
+  const activeWorkspaceId = Number(useWorkspaceId() || 0)
   const tooltipScope = useRef<HTMLElement>(null)
   const business =
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
@@ -74,6 +77,11 @@ export default function DeepAgentStudio({
   useEffect(() => {
     if (pendingSend?.target && serverRun?.id === pendingSend.target) setPendingSend(null)
   }, [pendingSend, serverRun?.id])
+  const creditBlocked =
+    run?.status === 'error' &&
+    isInsufficientCreditsEvent([...run.events].reverse().find((event) => ['assistant', 'error'].includes(event.kind)))
+  const canOpenRecharge =
+    state.connected && !mismatch && activeWorkspaceId > 0 && state.workspace_id === activeWorkspaceId
   const mediaService = useMemo(
     () => ({ refresh: (assetId: number) => api.request<Data>(`/api/runs/${current}/assets/${assetId}`) }),
     [api, current],
@@ -601,6 +609,7 @@ export default function DeepAgentStudio({
                   active={running && !run.stop}
                   events={[...(run.history_events || []), ...run.events]}
                   canvas={run.canvas}
+                  onRecharge={canOpenRecharge ? () => openMemberCenterTab('recharge') : undefined}
                   onDocument={(id) => {
                     setSelectedDocument(id)
                     setDialog('documents')
@@ -679,8 +688,10 @@ export default function DeepAgentStudio({
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
-                  {run.status === 'error' && <p role="alert">执行已暂停，进度已保留。请查看上方的具体原因。</p>}
-                  {'Notification' in window && Notification.permission !== 'granted' && (
+                  {run.status === 'error' && !creditBlocked && (
+                    <p role="alert">执行已暂停，进度已保留。请查看上方的具体原因。</p>
+                  )}
+                  {!creditBlocked && 'Notification' in window && Notification.permission !== 'granted' && (
                     <button
                       type="button"
                       onClick={() => {
@@ -699,7 +710,7 @@ export default function DeepAgentStudio({
                     </button>
                   )}
                   {notificationMessage && <p role="status">{notificationMessage}</p>}
-                  {!run.pending && (
+                  {!creditBlocked && !run.pending && (
                     <MediaRetry
                       key={run.id}
                       api={api}
@@ -711,7 +722,7 @@ export default function DeepAgentStudio({
                   )}
                   <p>已成功的素材会保留。恢复会先查询已提交任务；失败素材重试需要单独确认。</p>
                   <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
-                    恢复执行 / 查询已有任务
+                    {creditBlocked ? '充值后继续执行' : '恢复执行 / 查询已有任务'}
                   </button>
                   {run.inference_failure?.retryable && (
                     <button

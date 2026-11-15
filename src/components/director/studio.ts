@@ -324,3 +324,16 @@ export function conversationCredits(events: StudioEvent[]): number {
   }
   return milli / 1000
 }
+
+/** Exact legacy fallback: never interpret user prose or provider errors as our wallet code. */
+export function isInsufficientCreditsEvent(event?: StudioEvent): boolean {
+  if (!event || !['assistant', 'error'].includes(event.kind)) return false
+  return (
+    event.data?.code === 'INSUFFICIENT_CREDITS' ||
+    (event.kind === 'error' &&
+      event.text.trim() === 'Insufficient credits; top up the workspace balance before retrying.')
+  )
+}
+
+export const insufficientCreditsMessage =
+  '当前工作空间可用积分不足以启动下一步，已有进度已保留。请充值后点击继续执行。任务启动前需预留费用，最终按实际用量结算。'

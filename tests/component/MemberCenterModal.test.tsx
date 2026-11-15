@@ -218,6 +218,32 @@ describe('MemberCenterModal behavior', () => {
     expect(screen.queryByText('个人版/一分体验会员')).not.toBeInTheDocument()
   })
 
+  it('honors the recharge entry after subscription loading without creating an order', async () => {
+    let resolveSubscription!: (value: unknown) => void
+    mocks.getSubscription.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSubscription = resolve
+        }),
+    )
+    render(<MemberCenterModal open initialTab="recharge" onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: '立即充值' })).not.toBeInTheDocument()
+    await act(async () => resolveSubscription({ active: true, plan_code: 'personal' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '积分充值' })).toHaveClass('is-active'))
+    expect(screen.getByRole('button', { name: '立即充值' })).toBeVisible()
+    expect(mocks.createRechargeOrder).not.toHaveBeenCalled()
+  })
+
+  it('does not enter recharge for an inactive subscription even when requested by Agent', async () => {
+    mocks.getSubscription.mockResolvedValue({ active: false })
+    render(<MemberCenterModal open initialTab="recharge" onClose={vi.fn()} />)
+    const tab = await screen.findByRole('button', { name: '积分充值' })
+    expect(tab).not.toHaveClass('is-active')
+    expect(tab).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.queryByRole('button', { name: '立即充值' })).not.toBeInTheDocument()
+    expect(mocks.createRechargeOrder).not.toHaveBeenCalled()
+  })
+
   it('shows recharge only to an active personal-space member or active team owner', async () => {
     mocks.getSubscription.mockResolvedValue({
       active: true,
