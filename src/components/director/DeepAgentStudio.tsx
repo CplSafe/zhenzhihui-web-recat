@@ -4,6 +4,8 @@ import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, Toolt
 import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
 import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
 import { useStudio } from './useStudio'
+import { ScriptEpisodes } from './ScriptEpisodes'
+import type { EpisodeDecision } from './ScriptEpisodes'
 import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
 import { StudioAssetPicker } from './StudioAssetPicker'
@@ -100,6 +102,7 @@ export default function DeepAgentStudio({
     [results, setResults] = useState(false)
   const [attachments, setAttachments] = useState<StudioAttachment[]>([]),
     [uploading, setUploading] = useState(false)
+  const [episodeDialog, setEpisodeDialog] = useState(false)
   const [canvasReferences, setCanvasReferences] = useState<CanvasReference[]>([])
   const consumedCanvasReference = useRef<CanvasReference>()
   const [stopping, setStopping] = useState(false)
@@ -230,7 +233,7 @@ export default function DeepAgentStudio({
     studio.setError('')
     prompt.current?.focus()
   }
-  async function send() {
+  async function send(episodeDecision?: EpisodeDecision) {
     if (
       !ready ||
       disabled ||
@@ -240,6 +243,11 @@ export default function DeepAgentStudio({
       (!message.trim() && !attachments.length)
     )
       return
+    if (!episodeDecision && attachments.some((a) => a.type === 'prompt')) {
+      setEpisodeDialog(true)
+      return
+    }
+    setEpisodeDialog(false)
     await action(async () => {
       const draft = message
       const optimistic: StudioRun = {
@@ -262,6 +270,7 @@ export default function DeepAgentStudio({
       let response: { id: string }
       try {
         response = await api.request('/api/runs', {
+          ...episodeDecision,
           message: message.trim(),
           selection: { image, video, mode },
           skill,
@@ -873,6 +882,23 @@ export default function DeepAgentStudio({
                   </div>
                 ))}
               </div>
+            )}
+            {attachments.some((a) => a.type === 'prompt' && a.id) && (
+              <ScriptEpisodes
+                key={current || 'new'}
+                request={api.request}
+                attachmentIds={attachments.flatMap((a) => (a.id ? [a.id] : []))}
+                message={message.trim()}
+                models={catalog.models}
+                image={image}
+                video={video}
+                mode={mode}
+                disabled={disabled || unfinished || uncertain}
+                open={episodeDialog}
+                onOpen={() => setEpisodeDialog(true)}
+                onClose={() => setEpisodeDialog(false)}
+                onConfirm={(decision) => void send(decision)}
+              />
             )}
             {canvasId && (
               <div className={styles.referenceHint}>

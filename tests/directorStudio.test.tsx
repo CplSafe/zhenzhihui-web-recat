@@ -1912,3 +1912,48 @@ it('shows the cumulative conversation credits in the composer footer and updates
   act(() => Socket.instances.at(-1)!.emit({ event: 'snapshot', cursor: 8, data: snapshot({ events: [] }) }))
   await screen.findByText('已消耗 0 积分')
 })
+
+it('confirms script episodes before creating a run and sends only the chosen scope', async () => {
+  const started = vi.fn()
+  server.use(
+    http.post('*/agent-studio/api/attachments', () =>
+      HttpResponse.json({ id: 'episode-file', asset_id: 42, type: 'prompt', characters: 40 }),
+    ),
+    http.post('*/agent-studio/api/episodes/preview', () =>
+      HttpResponse.json({
+        fingerprint: 'script-revision',
+        range_specified: false,
+        notice: '请选集数',
+        episodes: [1, 2].map((n) => ({
+          id: `42:${n}`,
+          number: n,
+          title: `第${n}集`,
+          file_name: 'episodes.txt',
+          characters: 20,
+        })),
+      }),
+    ),
+    http.post('*/agent-studio/api/runs', async ({ request }) => {
+      started(await request.json())
+      return HttpResponse.json({ detail: 'isolated test' }, { status: 409 })
+    }),
+  )
+  const { container } = render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new NodeFile(['Episode 1\nline\nEpisode 2\nline'], 'episodes.txt')] },
+  })
+  await screen.findByText('已识别 2 集 · 已选 0 集')
+  expect(started).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await screen.findByRole('checkbox', { name: '选择 第2集' })
+  expect(started).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('checkbox', { name: '选择 第2集' }))
+  fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+  await waitFor(() => expect(started).toHaveBeenCalledOnce())
+  expect(started.mock.calls[0][0]).toMatchObject({
+    attachments: ['episode-file'],
+    selection: { image: 29, video: 18, mode: 'manual' },
+    episode_plan: { fingerprint: 'script-revision', episodes: [{ id: '42:2' }] },
+  })
+})
