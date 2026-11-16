@@ -57,31 +57,6 @@ const initial: Form = {
 }
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : '请求失败，请重试')
 
-const VIDEO_FORMAT_LABELS: Record<string, string> = {
-  'video/mp4': 'MP4',
-  'video/quicktime': 'MOV',
-  'video/webm': 'WebM',
-}
-
-function formatUploadLimit(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit++
-  }
-  return `${Math.floor(value * 100) / 100} ${units[unit]}`
-}
-
-function videoUploadHint(config: PromoConfig): string {
-  const formats = config.allowed_mime
-    .filter((mime) => mime.startsWith('video/'))
-    .map((mime) => VIDEO_FORMAT_LABELS[mime] || mime)
-  if (!formats.length) return '当前不支持上传视频'
-  return `视频支持 ${formats.join('、')}，单个文件不超过 ${formatUploadLimit(config.max_file_bytes)}`
-}
-
 export default function PromoRealView() {
   const navigate = useSidebarNavigate()
   const { showToast } = useToast()
@@ -144,13 +119,9 @@ export default function PromoRealView() {
           !value.ratio_options.length ||
           !Array.isArray(value.resolution_options) ||
           !value.resolution_options.length ||
-          !Array.isArray(value.allowed_mime) ||
           !value.authorization_text ||
           !value.acknowledgement_text ||
-          !value.authorization_version ||
-          !value.max_files ||
-          !value.max_file_bytes ||
-          !value.max_total_bytes
+          !value.authorization_version
         )
           throw new Error('宣传片配置不完整，请联系客服')
         setConfig(value)
@@ -309,28 +280,19 @@ export default function PromoRealView() {
     void guarded(async () => {
       if (!config || !token || pending) return
       setQuote(null)
-      if (!config.allowed_mime.includes(file.type)) throw new Error('不支持该文件格式')
-      if (role === 'footage' && !file.type.startsWith('image/') && !file.type.startsWith('video/'))
-        throw new Error('实拍素材须为图片或视频')
-      if (role === 'logo' && !file.type.startsWith('image/')) throw new Error('LOGO 须为图片')
       if (
         existing &&
         ((existing.name && existing.name !== file.name) ||
-          (existing.size_bytes != null && existing.size_bytes !== file.size) ||
-          (existing.mime_type && existing.mime_type !== file.type))
+          (existing.size_bytes != null && existing.size_bytes !== file.size))
       )
-        throw new Error('请选择与原素材名称、大小及格式一致的文件')
-      if (file.size > config.max_file_bytes) throw new Error('文件超过单文件大小限制')
-      if (materials.length >= config.max_files) throw new Error('文件数量已达上限，请删除不需要的素材后再重新上传')
-      if (materials.reduce((sum, item) => sum + (item.size_bytes || 0), 0) + file.size > config.max_total_bytes)
-        throw new Error('素材总大小超出限制')
+        throw new Error('请选择与原素材名称及大小一致的文件')
       setUploadingName(file.name)
       try {
         const ticket = await createPromoUpload({
           intake_token: token,
           role,
           name: file.name,
-          mime_type: file.type,
+          mime_type: file.type || 'application/octet-stream',
           size_bytes: file.size,
         })
         setMaterials((list) => [...list, ticket.material])
@@ -879,14 +841,14 @@ export default function PromoRealView() {
                                 </h2>
                                 <p>
                                   {role === 'footage'
-                                    ? '图片或视频'
+                                    ? '任意格式，素材选传'
                                     : role === 'logo'
-                                      ? '图片文件，透明底优先'
+                                      ? '任意格式，透明底图片优先'
                                       : '补充文件可选传'}
                                 </p>
                                 {role === 'footage' && (
                                   <p id="promo-video-upload-hint" className={styles.uploadHint}>
-                                    {videoUploadHint(config)}
+                                    文件格式、大小和数量不作限制，也可不上传素材直接下一步。
                                   </p>
                                 )}
                                 <label
@@ -902,7 +864,6 @@ export default function PromoRealView() {
                                   <input
                                     type="file"
                                     disabled={busy}
-                                    accept={config.allowed_mime.join(',')}
                                     aria-describedby={role === 'footage' ? 'promo-video-upload-hint' : undefined}
                                     onChange={selectFile(role)}
                                   />

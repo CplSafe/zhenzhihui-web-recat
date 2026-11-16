@@ -10,19 +10,13 @@ import { sleep } from '../utils/common'
 import { failureIdentifiers } from '../utils/generationFailure'
 import { normalizeCanvasToolPrompt } from '../utils/canvasTools'
 import { sanitizeMediaUrl } from '../utils/urlSafety'
-import { isAllowedUploadUrl as isUploadUrlAllowedByPolicy } from '../utils/uploadUrlSafety'
+import { isValidUploadUrl } from '../utils/uploadUrlSafety'
 import { resolveUploadMimeType } from '../utils/fileSignature'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { AUTH_REFRESH_PATH, runSharedSessionRefresh } from './sessionRefresh'
 
 /** 业务 API 固定经同源代理访问，真实后端主机不编译进浏览器代码。 */
 const businessApiBaseUrl = ''
-/** 部署方显式允许的额外对象存储源，会与内置白名单合并。 */
-const extraAllowedUploadOrigins = String(import.meta.env.VITE_ZZH_ALLOWED_UPLOAD_ORIGINS || '')
-  .split(',')
-  .map((item) => normalizeBaseUrl(item.trim()))
-  .filter(Boolean)
-
 /** 模型查询缓存的有效时间。 */
 const MODEL_CACHE_TTL_MS = 30_000
 /** 按工作空间和能力隔离的模型查询缓存。 */
@@ -53,27 +47,6 @@ const ASSET_COMPLETE_RETRY_LIMIT = 2
  * 用户重试必须复用同一资产与对象键，避免重复分配资产或重复上传。
  */
 const resumableAssetUploads = new WeakMap()
-
-/** 上传目标主机白名单，用于拦截后端重定向到内网或非授权主机的攻击。 */
-const ALLOWED_UPLOAD_HOST_PATTERNS = [
-  ...extraAllowedUploadOrigins,
-  // Common object-storage providers used in this project
-  /\.amazonaws\.com$/i,
-  /\.tos-cn-[a-z0-9-]+\.volces\.com$/i,
-  /\.aliyuncs\.com$/i,
-  /\.myqcloud\.com$/i,
-]
-
-/** 用统一上传 URL 策略校验协议、主机、同源与环境白名单。 */
-function isAllowedUploadUrl(url) {
-  return isUploadUrlAllowedByPolicy(url, {
-    pageOrigin: globalThis.location?.origin || '',
-    // 开发环境仍允许任意绝对 http(s) 上传地址，方便连接开发者自己的 MinIO；
-    // 协议相对地址、反斜杠变体和危险协议会在此规则之前统一拒绝。
-    allowAnyHttp: import.meta.env.DEV,
-    allowedHostPatterns: ALLOWED_UPLOAD_HOST_PATTERNS,
-  })
-}
 
 /** 携带 HTTP 状态、业务码、原始响应和中断原因的统一业务异常。 */
 export class BusinessApiError extends Error {
@@ -2418,17 +2391,9 @@ export async function uploadAssetFile({
     throw new BusinessApiError('素材元数据创建失败')
   }
 
-  if (!isAllowedUploadUrl(upload.url)) {
-    let blockedHost = upload.url
-    try {
-      blockedHost = new URL(upload.url).host
-    } catch {
-      /* ignore */
-    }
+  if (!isValidUploadUrl(upload.url)) {
     clearResumableAssetUpload(file, resumeKey, pendingUpload)
-    throw new BusinessApiError(
-      `素材上传地址不在受信任的存储域名列表中:${blockedHost}（请把该域名加入 .env 的 VITE_ZZH_ALLOWED_UPLOAD_ORIGINS）`,
-    )
+    throw new BusinessApiError('素材上传地址无效')
   }
 
   if (!pendingUpload.uploaded) {
@@ -2455,9 +2420,10 @@ export async function uploadAssetFile({
               (requestSignal) =>
                 fetch(upload.url, {
                   method: 'POST',
+                  credentials: 'omit',
                   body: formData,
                   // 预签名上传不应发生跳转；fail-closed 避免被允许的存储域 3xx 重定向到
-                  // 内网/任意主机后浏览器自动跟随并把文件体重新 POST 过去（绕过上方 allowlist）。
+                  // 其他地址后再次 POST 文件；始终使用后端签发的原始上传端点。
                   redirect: 'error',
                   ...(requestSignal ? { signal: requestSignal } : {}),
                 }),

@@ -1,4 +1,4 @@
-import { isAllowedUploadUrl } from '@/utils/uploadUrlSafety'
+import { isValidUploadUrl } from '@/utils/uploadUrlSafety'
 
 /** 学生剧本工作流：接口中的接入状态与审批进度分别处理。 */
 export interface Application {
@@ -209,25 +209,7 @@ export async function uploadScriptFile(file: File, key: string): Promise<ScriptA
   })
   if (!ticket.file?.id) throw new Error('上传凭证缺少文件编号')
   if (ticket.upload_required) {
-    const extraOrigins = String(import.meta.env.VITE_ZZH_ALLOWED_UPLOAD_ORIGINS || '')
-      .split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean)
-    if (
-      !isAllowedUploadUrl(ticket.url, {
-        pageOrigin: globalThis.location?.origin || '',
-        allowAnyHttp: import.meta.env.DEV,
-        allowedHostPatterns: [
-          'https://s3oss-yy.youliangads.com',
-          /\.aliyuncs\.com$/i,
-          /\.myqcloud\.com$/i,
-          /\.amazonaws\.com$/i,
-          /\.tos-cn-[a-z0-9-]+\.volces\.com$/i,
-          ...extraOrigins,
-        ],
-      })
-    )
-      throw new Error('文件上传地址不在受信任的存储域名列表中')
+    if (!isValidUploadUrl(ticket.url)) throw new Error('文件上传地址无效')
     const body = new FormData()
     for (const [name, value] of Object.entries(ticket.form_fields || {})) body.append(name, value)
     body.append('file', file)
