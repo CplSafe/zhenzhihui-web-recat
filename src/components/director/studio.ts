@@ -58,6 +58,7 @@ export interface StudioModel {
   display_name?: string
   description?: string
   operation_codes: string[]
+  params_schema?: { fields?: Data[] }
 }
 export interface StudioCatalog {
   models: StudioModel[]

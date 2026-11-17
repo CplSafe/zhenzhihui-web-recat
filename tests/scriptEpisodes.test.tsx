@@ -69,6 +69,49 @@ describe('script episode intake', () => {
       episode_plan: { fingerprint: 'fixed-source', episodes: [{ id: '42:1' }, { id: '42:2', image: 4, video: 5 }] },
     })
   })
+  it('edits actual model parameters, clears them on model switch, and keeps other episodes unchanged', async () => {
+    const { rerender, props, onConfirm } = setup({ ...result, range_specified: true })
+    const schema = {
+      fields: [
+        { name: 'resolution', options: ['480p', '720p'], default: '720p' },
+        { name: 'ratio', options: ['16:9', '9:16'], default: '16:9' },
+        { name: 'count', options: ['1', '10'], default: '1' },
+      ],
+    }
+    rerender(
+      <ScriptEpisodes
+        {...props}
+        models={models.map((m) => ({
+          ...m,
+          params_schema:
+            m.id === 3
+              ? schema
+              : m.id === 5
+                ? { fields: [{ name: 'resolution', options: ['1080p'], required: true }] }
+                : undefined,
+        }))}
+      />,
+    )
+    await screen.findByRole('checkbox', { name: '选择 第1集' })
+    fireEvent.click(screen.getByRole('button', { name: '第1集，修改模型' }))
+    expect(screen.getByRole('combobox', { name: '本集视频清晰度' })).toHaveValue('720p')
+    expect(screen.queryByRole('combobox', { name: /count/ })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('combobox', { name: '本集视频清晰度' }), { target: { value: '480p' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '本集视频画面比例' }), { target: { value: '9:16' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '本集视频模型' }), { target: { value: '5' } })
+    expect(screen.getByRole('combobox', { name: '本集视频清晰度' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: '完成设置' })).toBeDisabled()
+    expect(screen.queryByRole('combobox', { name: '本集视频画面比例' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('combobox', { name: '本集视频清晰度' }), { target: { value: '1080p' } })
+    fireEvent.click(screen.getByRole('button', { name: '完成设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+    expect(onConfirm).toHaveBeenCalledWith({
+      episode_plan: {
+        fingerprint: 'fixed-source',
+        episodes: [{ id: '42:1', video: 5, video_params: { resolution: '1080p' } }, { id: '42:2' }, { id: '42:3' }],
+      },
+    })
+  })
   it('uses only the requested range and inherits session models when unchanged', async () => {
     const { onConfirm } = setup({ ...result, episodes: [episodes[2]], range_specified: true })
     await screen.findByRole('checkbox', { name: '选择 第3集' })
