@@ -333,10 +333,28 @@ import './CanvasView.css'
 const CanvasVideoDetailsDrawer = lazy(() => import('@/components/canvas/CanvasVideoDetailsDrawer'))
 const CanvasImageTools = lazy(() => import('@/components/canvas/CanvasImageTools'))
 const CanvasImageCropModal = lazy(() => import('@/components/canvas/CanvasImageCropModal'))
+const CanvasStandaloneImageCropModal = lazy(() => import('@/components/canvas/CanvasStandaloneImageCropModal'))
 const CanvasHdWorkspace = lazy(() => import('@/components/canvas/CanvasUpscale'))
 
 /** 节点级生成历史最多保留的条数：够回看最近几版，又不至于把画布元素 payload 撑大。 */
 const CANVAS_RESULT_HISTORY_CAP = 12
+
+type StandaloneCropRequest = {
+  canvasBinding: string
+  nodeId: string
+  assetId: number
+  assetWorkspaceId: number
+  sourceUrl: string
+  title: string
+}
+
+function imageNodeDisplayRatio(width: number, height: number): string {
+  const naturalRatio = naturalImageRatio(width, height)
+  const [ratioWidth, ratioHeight] = naturalRatio.split(':').map(Number)
+  const ratio = ratioWidth / ratioHeight
+  // 卡片展示限制与素材像素尺寸独立，避免极端比例撑开画布。
+  return ratio > 2.4 ? '12:5' : ratio < 1 / 2.4 ? '5:12' : naturalRatio
+}
 
 /** 节点素材回显地址归一化：blob:（本地上传的会话级临时地址）或缺失但 assetId 存在时，用同源流式地址重建。 */
 export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, workspaceId: number): string {
@@ -2747,9 +2765,16 @@ function CanvasInner() {
   )
   const showCanvasDirector: boolean = false
   const showCanvasShare: boolean = false
-  const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const canvasBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const [standaloneCropRequest, setStandaloneCropRequest] = useState<StandaloneCropRequest | null>(null)
+  const standaloneCrop = standaloneCropRequest?.canvasBinding === canvasBindingKey ? standaloneCropRequest : null
+  const activeStandaloneCropRef = useRef(standaloneCrop)
+  activeStandaloneCropRef.current = standaloneCrop
+  useEffect(() => {
+    setStandaloneCropRequest(null)
+  }, [canvasBindingKey])
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
-  const directorOpen = showCanvasDirector && openDirectorBinding === directorBindingKey
+  const directorOpen = showCanvasDirector && openDirectorBinding === canvasBindingKey
   const requestDirectorSyncRef = useRef<() => void>(() => {})
   const onDirectorCanvasChange = useCallback(
     (snapshot: Record<string, any>) => {
@@ -8654,14 +8679,96 @@ function CanvasInner() {
     [setNodes, workspaceId],
   )
 
+  const openStandaloneCrop = (nodeId: string) => {
+    const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+    if (!node || node.data.kind !== 'image' || node.data.uploading) return
+    const assetId = Number(node.data.assetId)
+    const assetWorkspaceId = Number(node.data.assetWorkspaceId || workspaceId)
+    const sourceUrl = assetStreamUrl(assetId, assetWorkspaceId)
+    if (!sourceUrl || !workspaceId) {
+      showToast('请先将原图保存为素材，再进行裁剪', 'error')
+      return
+    }
+    setStandaloneCropRequest({
+      canvasBinding: canvasBindingKey,
+      nodeId,
+      assetId,
+      assetWorkspaceId,
+      sourceUrl,
+      title: String(node.data.title || '图片'),
+    })
+  }
+
+  const saveStandaloneCrop = async (
+    request: StandaloneCropRequest,
+    file: File,
+    width: number,
+    height: number,
+    signal: AbortSignal,
+  ) => {
+    const readSource = () => {
+      signal.throwIfAborted()
+      if (activeStandaloneCropRef.current !== request) throw new Error('画布已切换，请重新打开裁剪')
+      const node = latestRef.current.nodes.find((item) => item.id === request.nodeId)
+      if (
+        !node ||
+        node.data.kind !== 'image' ||
+        node.data.uploading ||
+        Number(node.data.assetId) !== request.assetId ||
+        Number(node.data.assetWorkspaceId || workspaceId) !== request.assetWorkspaceId
+      ) {
+        throw new Error('原图已更换或删除，请重新打开裁剪')
+      }
+      return node
+    }
+
+    readSource()
+    const uploaded = await uploadAssetFile({ workspaceId, file, signal })
+    const sourceNode = readSource()
+    const assetId = Number(uploaded?.asset?.id)
+    if (!Number.isSafeInteger(assetId) || assetId <= 0) throw new Error('裁剪结果上传失败，请重试')
+
+    const ratio = imageNodeDisplayRatio(width, height)
+    const size = canvasImageResultSize({ ratio })
+    const gap = 32
+    const occupied = latestRef.current.nodes.map((node) => ({
+      x: node.position.x,
+      y: node.position.y,
+      width: node.measured?.width || Number(node.style?.width) || 250,
+      height: node.measured?.height || Number(node.style?.height) || 250,
+    }))
+    const sourceWidth = sourceNode.measured?.width || Number(sourceNode.style?.width) || 250
+    const anchor = { x: sourceNode.position.x + sourceWidth + gap, y: sourceNode.position.y }
+    const nextPosition = findFreeNodePosition({ anchor, size, occupied, gap })
+    const overlaps = occupied.some(
+      (rect) =>
+        nextPosition.x < rect.x + rect.width &&
+        nextPosition.x + size.width > rect.x &&
+        nextPosition.y < rect.y + rect.height &&
+        nextPosition.y + size.height > rect.y,
+    )
+    const position = overlaps
+      ? { x: occupied.reduce((right, rect) => Math.max(right, rect.x + rect.width + gap), anchor.x), y: anchor.y }
+      : nextPosition
+
+    appendNewNode('image', position, {
+      ratio,
+      size,
+      extraData: {
+        title: `${request.title} · 裁剪`,
+        assetId,
+        assetWorkspaceId: Number(workspaceId),
+        assetSource: 'upload',
+        resultUrl: assetStreamUrl(assetId, Number(workspaceId)),
+      },
+    })
+    showToast('裁剪结果已添加到画布', 'success')
+  }
+
   /** 图片节点统一按已解码图片的真实比例校准；短边固定，避免原始像素尺寸直接撑大画布。 */
   const handleImageNaturalSize = useCallback(
     (nodeId: string, naturalWidth: number, naturalHeight: number) => {
-      const rawRatio = naturalImageRatio(naturalWidth, naturalHeight)
-      const [ratioWidth, ratioHeight] = rawRatio.split(':').map(Number)
-      const rawValue = ratioWidth / ratioHeight
-      // Match video nodes: preserve ordinary ratios and cap pathological dimensions to a usable canvas footprint.
-      const ratio = rawValue > 2.4 ? '12:5' : rawValue < 1 / 2.4 ? '5:12' : rawRatio
+      const ratio = imageNodeDisplayRatio(naturalWidth, naturalHeight)
       const current = latestRef.current.nodes.find((node) => node.id === nodeId)
       if (!current || (current.data as Record<string, unknown> | undefined)?.kind !== 'image') return
       const size = canvasImageResultSize({ ...current.data, ratio })
@@ -11123,6 +11230,7 @@ function CanvasInner() {
     canvasModalOpen ||
     imageTool ||
     imageCropRequest ||
+    standaloneCrop ||
     settingsOpen ||
     scriptImportOpen ||
     shortcutsOpen ||
@@ -11205,6 +11313,19 @@ function CanvasInner() {
           onModalChange={handleHdModalChange}
         />
       </Suspense>
+      {standaloneCrop && (
+        <Suspense fallback={null}>
+          <CanvasStandaloneImageCropModal
+            sourceUrl={standaloneCrop.sourceUrl}
+            title={standaloneCrop.title}
+            onClose={() => {
+              setStandaloneCropRequest(null)
+              canvasRootRef.current?.focus({ preventScroll: true })
+            }}
+            onSave={(file, width, height, signal) => saveStandaloneCrop(standaloneCrop, file, width, height, signal)}
+          />
+        </Suspense>
+      )}
       {imageCropRequest ? (
         <Suspense fallback={null}>
           <CanvasImageCropModal
@@ -11330,7 +11451,7 @@ function CanvasInner() {
         )}
         {showCanvasDirector && currentUserId && workspaceId > 0 && canvasId > 0 && (
           <CanvasDirectorDock
-            key={directorBindingKey}
+            key={canvasBindingKey}
             workspaceId={workspaceId}
             canvasId={canvasId}
             onCanvasChange={onDirectorCanvasChange}
@@ -11495,8 +11616,7 @@ function CanvasInner() {
               directorOpen={directorOpen}
               onToggleDirector={
                 showCanvasDirector && currentUserId && workspaceId > 0 && canvasId > 0
-                  ? () =>
-                      setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
+                  ? () => setOpenDirectorBinding((current) => (current === canvasBindingKey ? null : canvasBindingKey))
                   : undefined
               }
             />
@@ -12030,11 +12150,12 @@ function CanvasInner() {
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
 
-        {/* 单选节点操作条：贴在节点上方，收纳改名/上传/截帧/下载/删除 */}
+        {/* 单选节点操作条贴在节点上方。 */}
         {nodeToolbarAnchor &&
           selectedNodeVisible &&
           selectedNode &&
           !imageTool &&
+          !standaloneCrop &&
           !reversePromptTarget &&
           !hdRequest &&
           !hdModalOpen &&
@@ -12061,6 +12182,7 @@ function CanvasInner() {
               onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
               onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
               onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
+              onCrop={() => openStandaloneCrop(selectedNode.id)}
               onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
               imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
               onImageTool={(code) => {
