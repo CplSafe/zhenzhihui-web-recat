@@ -893,7 +893,7 @@ export default function DeepAgentStudio({
                 <details>
                   <summary>
                     已保存 {Object.keys(run.selection.episode_models).length} 集配置
-                    {run.selection.media_allowed === false ? ' · 等待开始制作' : ''}
+                    {run.selection.media_allowed === false ? ' · 等待你的要求' : ''}
                   </summary>
                   {Object.entries(run.selection.episode_models).map(([id, episode]) => (
                     <p key={id}>
@@ -915,7 +915,7 @@ export default function DeepAgentStudio({
                 </details>
                 {run.selection.media_allowed === false && (
                   <>
-                    <span>可先发送补充要求，准备好后再开始。</span>
+                    <span>可继续补充要求；准备好后直接说“开始制作”，也可点击按钮。</span>
                     <button
                       type="button"
                       disabled={!ready || disabled || unfinished || uncertain || !!attachments.length}

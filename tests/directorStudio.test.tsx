@@ -94,7 +94,7 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
-  it('keeps saved episode settings idle and starts only through the explicit button with the current draft', async () => {
+  it.each(['message', 'button'])('keeps settings idle until a user request via %s', async (entry) => {
     const starts: Record<string, unknown>[] = []
     server.use(
       http.get('*/agent-studio/api/runs/run1', () =>
@@ -122,15 +122,15 @@ describe('Studio transport', () => {
     expect(screen.getByLabelText('已保存的制作配置')).toHaveTextContent('480p')
     expect(starts).toHaveLength(0)
     const input = screen.getByRole('textbox')
-    fireEvent.change(input, { target: { value: '纯英文，写实风格，保留原剧情' } })
+    fireEvent.change(input, { target: { value: '开始制作，纯英文，写实风格，保留原剧情' } })
     expect(starts).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: '开始制作' }))
+    fireEvent.click(screen.getByRole('button', { name: entry === 'button' ? '开始制作' : '发送创作要求' }))
     await waitFor(() => expect(starts).toHaveLength(1))
     expect(starts[0]).toMatchObject({
       previous: 'run1',
-      start_production: true,
-      message: '纯英文，写实风格，保留原剧情',
+      message: '开始制作，纯英文，写实风格，保留原剧情',
     })
+    expect(starts[0].start_production).toBe(entry === 'button' ? true : undefined)
   })
   it.each(['structured', 'legacy'])(
     'shows %s credit failures as a Chinese reply and opens recharge without resuming',
