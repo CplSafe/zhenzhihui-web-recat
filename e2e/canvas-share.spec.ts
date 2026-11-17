@@ -54,7 +54,8 @@ async function mockGuestShare(page: Page, editorRequests: string[]) {
               }),
               node('text', 'text', 480, { text: '分享的画布文字' }),
               node('video', 'video', 880, { publicResultUrl: '/t1test.mp4' }),
-              node('audio', 'audio', 1280, { publicResultUrl: '/t1test.mp4' }),
+              // 音频与视频使用独立素材地址，避免共用测试文件的加载缓存。
+              node('audio', 'audio', 1280, { publicResultUrl: '/t1test.mp4?fixture=audio' }),
               node('storyboard', 'text', 1680, { text: JSON.stringify([{ title: '第一镜', prompt: '走入画面' }]) }),
               {
                 element_id: 'edge-1',

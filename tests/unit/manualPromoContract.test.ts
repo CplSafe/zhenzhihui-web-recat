@@ -97,6 +97,7 @@ describe('人工视频与宣传片契约', () => {
   it.each([
     'https://bucket.aliyuncs.com/upload',
     'https://s3oss-yy.youliangads.com/goujie/',
+    'https://s30ss-yy.youliangads.com/goujie/',
     'https://new-storage.example.net/upload',
   ])('对象存储直传接受后端签发的地址且不附带业务凭证、不跟随跳转：%s', async (uploadUrl) => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))

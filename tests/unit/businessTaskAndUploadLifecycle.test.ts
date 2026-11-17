@@ -166,43 +166,46 @@ describe('object-storage upload lifecycle', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('shares metadata creation, object upload, and completion for concurrent calls with the same file', async () => {
-    const file = new File(['image'], 'shared.png', { type: 'image/png' })
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url === '/api/v1/assets') {
-        return Promise.resolve(
-          jsonResponse({
-            asset: { id: 61, name: 'shared.png' },
-            upload: { url: 'https://storage.example.com/upload/61', form_fields: {} },
-          }),
-        )
-      }
-      if (url === 'https://storage.example.com/upload/61') {
-        return Promise.resolve(new Response(null, { status: 204 }))
-      }
-      if (url === '/api/v1/assets/61/complete?workspace_id=7') {
-        return Promise.resolve(jsonResponse({ id: 61, status: 'active' }))
-      }
-      return Promise.reject(new Error(`Unexpected request: ${url}`))
-    })
-    vi.stubGlobal('fetch', fetchMock)
+  it.each(['s3oss-yy.youliangads.com', 's30ss-yy.youliangads.com', 'new-storage.example.net'])(
+    'uploads to %s without domain configuration and shares concurrent calls',
+    async (storageHost) => {
+      const file = new File(['image'], 'shared.png', { type: 'image/png' })
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === '/api/v1/assets') {
+          return Promise.resolve(
+            jsonResponse({
+              asset: { id: 61, name: 'shared.png' },
+              upload: { url: `https://${storageHost}/upload/61`, form_fields: {} },
+            }),
+          )
+        }
+        if (url === `https://${storageHost}/upload/61`) {
+          return Promise.resolve(new Response(null, { status: 204 }))
+        }
+        if (url === '/api/v1/assets/61/complete?workspace_id=7') {
+          return Promise.resolve(jsonResponse({ id: 61, status: 'active' }))
+        }
+        return Promise.reject(new Error(`Unexpected request: ${url}`))
+      })
+      vi.stubGlobal('fetch', fetchMock)
 
-    const [first, second] = await Promise.all([
-      uploadAssetFile({ workspaceId: 7, file }),
-      uploadAssetFile({ workspaceId: 7, file }),
-    ])
+      const [first, second] = await Promise.all([
+        uploadAssetFile({ workspaceId: 7, file }),
+        uploadAssetFile({ workspaceId: 7, file }),
+      ])
 
-    expect(first).toMatchObject({ asset: { id: 61, status: 'active' } })
-    expect(second).toMatchObject({ asset: { id: 61, status: 'active' } })
-    expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/v1/assets')).toHaveLength(1)
-    expect(
-      fetchMock.mock.calls.filter(([input]) => String(input) === 'https://storage.example.com/upload/61'),
-    ).toHaveLength(1)
-    expect(
-      fetchMock.mock.calls.filter(([input]) => String(input) === '/api/v1/assets/61/complete?workspace_id=7'),
-    ).toHaveLength(1)
-  })
+      expect(first).toMatchObject({ asset: { id: 61, status: 'active' } })
+      expect(second).toMatchObject({ asset: { id: 61, status: 'active' } })
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/v1/assets')).toHaveLength(1)
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input) === `https://${storageHost}/upload/61`),
+      ).toHaveLength(1)
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input) === '/api/v1/assets/61/complete?workspace_id=7'),
+      ).toHaveLength(1)
+    },
+  )
 
   it('lets one caller abort while another keeps waiting for shared metadata creation', async () => {
     const file = new File(['image'], 'metadata.png', { type: 'image/png' })

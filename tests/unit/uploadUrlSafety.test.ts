@@ -7,6 +7,7 @@ describe('backend-issued uploads without an origin allowlist', () => {
     '/api/upload',
     '/%2F%2Fstorage.example/object',
     'https://s3oss-yy.youliangads.com/goujie/',
+    'https://s30ss-yy.youliangads.com/goujie/',
     'https://new-storage.example.net/upload',
     'https://s3.amazonaws.com.other.example/upload',
     'https://app.example.com:9443/upload',
