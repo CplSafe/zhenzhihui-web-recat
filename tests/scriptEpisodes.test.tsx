@@ -24,7 +24,14 @@ beforeEach(() => {
     this.removeAttribute('open')
   }
 })
-function setup(value = result) {
+function setup(
+  value: typeof result & {
+    method?: 'rules' | 'model'
+    analysis_pending?: boolean
+    needs_assistance?: boolean
+    receipts?: Array<{ task_id: number; actual_cost: number; status: string }>
+  } = result,
+) {
   const request = vi.fn().mockResolvedValue(value),
     onConfirm = vi.fn()
   const props = {
@@ -81,10 +88,48 @@ describe('script episode intake', () => {
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
   })
   it('allows discussion when no reliable episode headers are found', async () => {
-    const { onConfirm } = setup({ ...result, episodes: [] })
+    const { onConfirm } = setup({ ...result, episodes: [], notice: '未识别到独立集标题，可以先讨论剧本。' })
     await screen.findByText(/未识别到独立集标题/)
     expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '仅讨论剧本' }))
     expect(onConfirm).toHaveBeenCalledWith({ discuss_script: true })
+  })
+  it('quietly polls existing analysis and requires checking model boundaries before creation', async () => {
+    const { request, onConfirm } = setup({
+      ...result,
+      episodes: [],
+      analysis_pending: true,
+      notice: '正在核对分集结构',
+    })
+    await screen.findByText('正在辅助识别集数…')
+    expect(onConfirm).not.toHaveBeenCalled()
+    request.mockResolvedValue({
+      ...result,
+      method: 'model',
+      range_specified: true,
+      receipts: [{ task_id: 123, actual_cost: 1.25, status: 'succeeded' }],
+      episodes: [{ ...episodes[0], start_excerpt: '原文开头', end_excerpt: '原文结尾' }],
+    })
+    await screen.findByText('开头：原文开头', {}, { timeout: 4000 })
+    expect(screen.getByText(/分集识别已消耗 1.250/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: '已核对分集标题及开头、结尾' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+    expect(onConfirm).toHaveBeenCalledWith({
+      episode_plan: { fingerprint: 'fixed-source', boundaries_confirmed: true, episodes: [{ id: '42:1' }] },
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+  it('does not show zero episodes as a successful recognition and cannot start ambiguous results', async () => {
+    const { onConfirm, request } = setup({
+      ...result,
+      episodes: [],
+      needs_assistance: true,
+      notice: '无法可靠确认分集边界',
+    })
+    await screen.findByText('分集边界待核对 · 点击查看')
+    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(onConfirm).not.toHaveBeenCalled()
   })
 })
