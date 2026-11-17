@@ -27,10 +27,21 @@
 .btn {
   width: 28px;
 }
-.btn:hover,
+.btn:not(:disabled):hover,
 .zoomValue:hover {
   background: rgb(255 255 255 / 7%);
   color: #fff;
+}
+.layoutReset {
+  width: auto;
+  padding-inline: 8px;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.layoutReset:disabled {
+  color: #898989;
+  cursor: default;
 }
 .active {
   background: rgb(255 255 255 / 8%);

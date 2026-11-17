@@ -18,6 +18,7 @@ export const CANVAS_KIND_LABELS: Record<string, string> = {
   text: '文本',
   image: '图片',
   video: '视频',
+  audio: '音频',
   timeline: '视频剪辑',
 }
 

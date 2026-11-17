@@ -272,9 +272,10 @@ test('已有节点的画布拖入 MP4 且上传缓慢时仍可操作', async ({ 
     root.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }))
   })
   await expect(page.locator('.react-flow__node-video')).toHaveCount(1)
-  const zoom = page.getByRole('combobox', { name: '画布缩放', exact: true })
-  await zoom.selectOption('50')
-  await expect(zoom).toHaveValue('50')
+  const zoom = page.getByRole('button', { name: /当前缩放 .*点击回到 100%/ })
+  await expect(zoom).not.toHaveText('100%')
+  await zoom.click()
+  await expect(zoom).toHaveText('100%')
   releaseUpload()
   await expect
     .poll(() => page.locator('.react-flow__node-video video').getAttribute('src'))

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 390]) {
-  test(`画布暂不展示 DoDo Agent ${width}px`, async ({ page }, testInfo) => {
+  test(`画布展示并可打开 DoDo Agent ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/canvases/110**', (route) => {
@@ -20,9 +20,11 @@ for (const width of [1440, 390]) {
     })
     await page.goto('/canvas/110')
     await expect(page.getByText('点击下方「+」创建新节点')).toBeVisible()
-    await expect(page.getByRole('button', { name: '打开 DoDo Agent' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '打开 DoDo Agent' })).toBeVisible()
     await expect(page.getByRole('region', { name: 'DoDo Agent' })).toHaveCount(0)
     expect(agentRequests).toBe(0)
+    await page.getByRole('button', { name: '打开 DoDo Agent' }).click()
+    await expect(page.getByRole('region', { name: 'DoDo Agent' })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`canvas-agent-${width}.png`), animations: 'disabled' })
   })
 }

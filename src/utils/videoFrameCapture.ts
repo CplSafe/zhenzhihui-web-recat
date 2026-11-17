@@ -1,5 +1,15 @@
 /** 等待视频定位到目标时间并确认对应画面已经完成解码，供 Canvas 安全截帧。 */
 
+/** 没有封面时，轻推播放头让只预载元数据的视频绘制首帧。 */
+export function primeVideoFirstFrame(video: HTMLVideoElement): void {
+  if (video.currentTime > 0) return
+  try {
+    video.currentTime = 0.01
+  } catch {
+    // 元数据尚未就绪时让浏览器稍后自行处理。
+  }
+}
+
 interface FrameCallbackMetadataLike {
   mediaTime?: number
 }

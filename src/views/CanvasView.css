@@ -1,36 +1,13 @@
-/*
- * 画布交互的统一动效口径。
- *
- * 此前十几个画布样式文件里只有二十来条 transition，时长在 0.15/0.16/0.2/0.22/0.25 之间随手取，
- * 缓动一律是默认的 ease（两头慢），于是同一块画布上每个控件的手感都不一样。
- * 这里定死三档时长和一条 ease-out-quart：起手快、收尾稳，界面反馈跟手而不飘。
- */
-.canvas-view {
-  --canvas-surface: #262626;
-  --canvas-surface-raised: #262626;
-  --canvas-surface-highest: #262626;
-  --canvas-surface-input: #262626;
-  --canvas-text: #e5e7eb;
-  --canvas-text-muted: #9ca3af;
-  --canvas-border: rgb(255 255 255 / 12%);
-  --canvas-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --canvas-dur-fast: 120ms;
-  --canvas-dur: 180ms;
-  --canvas-dur-slow: 260ms;
-  --canvas-brand: #00e5be;
-  --canvas-brand-hover: #1ae9c5;
-  --canvas-brand-subtle: rgb(0 229 190 / 12%);
-  --canvas-surface-low: #262626;
-  --canvas-text-secondary: #94a3b8;
-  --canvas-focus-ring: 0 0 0 3px rgb(203 213 217 / 32%);
+@import './CanvasNodePresentation.css';
 
+.canvas-view {
   width: 100vw;
   height: 100vh;
   position: relative;
   overflow: hidden;
   /* 触控板滑到画布边缘时不要把惯性继续传给外层页面或浏览器回弹。 */
   overscroll-behavior: none;
-  background: #242424;
+  background: var(--canvas-bg);
   color: var(--canvas-text);
 }
 
@@ -498,32 +475,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   color: var(--canvas-brand, #00e5be);
 }
 
-.canvas-navigation {
-  position: absolute;
-  top: 20px;
-  left: 20px;
-  /* chrome 档：品牌区右侧就是保存状态，被节点压住会让人以为没保存 */
-  z-index: 1100;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: calc((100vw - 40px) / var(--canvas-ui-scale, 1));
-  box-sizing: border-box;
-  padding: 12px 16px 12px 12px;
-  border: 1px solid var(--canvas-border);
-  border-radius: 16px;
-  background: var(--canvas-surface);
-  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 65%);
-}
-.canvas-save-status {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding-left: 12px;
-  border-left: 1px solid var(--canvas-border);
-}
-
 .canvas-video-previous-failure {
   position: absolute;
   z-index: 9;
@@ -580,12 +531,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 /* ── 连线的焦点 / 悬停 / 淡化态（class 由 CanvasView 的 displayEdges 按状态打上）── */
 .react-flow__edge {
   transition: opacity 160ms ease;
-}
-
-/* 默认连线：React Flow 自带的 #b1b1b7 / 1px 在浅色画布上隔远了几乎看不见 */
-.canvas-view .react-flow__edge-path {
-  stroke: #566174;
-  stroke-width: 2.2;
 }
 
 /* Keep the connection intact and send a soft mint dash along it to show direction. */
@@ -940,37 +885,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   }
 }
 
-/* 自定义画布节点 */
-.canvas-default-node {
-  --canvas-readable-text-scale: 1;
-  position: relative;
-  overflow: visible;
-  border-radius: 14px;
-  background: transparent;
-  border: none;
-  box-shadow:
-    0 0 0 1px rgb(226 232 240 / 18%),
-    0 4px 14px rgb(0 0 0 / 34%),
-    0 16px 28px rgb(0 0 0 / 22%);
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  font-family: 'PingFang SC', sans-serif;
-  font-size: calc(14px * var(--canvas-readable-text-scale));
-  color: var(--canvas-text);
-  box-sizing: border-box;
-}
-
-/* 文本节点需要可辨认的卡片底色；透明背景会与深色画布融成一块黑区。 */
-.canvas-default-node.is-text {
-  background: var(--canvas-surface);
-}
-
-.canvas-default-node:is(.is-image, .is-video) {
-  border-radius: 10px;
-}
-
 /* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
 .react-flow__node.selected {
   outline: #cbd5d9 solid 1.5px !important;
@@ -997,27 +911,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   box-shadow: none;
 }
 
-/*
- * 悬停：轻微抬起 0.5px + 阴影加深。
- *
- * 这条规则原来把和默认态一模一样的阴影又写了一遍，等于什么都没做——
- * 节点是画布上最主要的操作对象，鼠标移上去却毫无反应，界面看着就是「死」的。
- * 位移控制在 0.5px：画布上常有几十个节点，动静大了会显得整片都在抖。
- */
-.canvas-default-node {
-  transition:
-    transform var(--canvas-dur) var(--canvas-ease),
-    box-shadow var(--canvas-dur) var(--canvas-ease);
-}
-
-.canvas-default-node:hover {
-  transform: translateY(-0.5px);
-  box-shadow:
-    0px 4px 10px rgba(0, 0, 0, 0.12),
-    0px 14px 18px rgba(0, 0, 0, 0.1),
-    0px 26px 20px rgba(0, 0, 0, 0.06);
-}
-
 /* 选中轮廓绘制在 React Flow 外层，内容不能单独上移。 */
 .react-flow__node.selected .canvas-default-node:hover {
   transform: none;
@@ -1033,51 +926,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 .canvas-default-node__label {
   user-select: none;
-}
-
-/*
- * 类型头部保持在节点外部，媒体区域因此始终使用完整节点尺寸。
- *
- * 为避免缩小画布时两行反向补偿文字钻进上一张卡片，常态只展示一行省略；完整名称由 title
- * 提示和双击编辑承接。这样既不遮媒体，也不改变图片/视频的可见比例。
- */
-.canvas-node-header {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  left: 4px;
-  right: 4px;
-  transform: translateY(-100%);
-  padding-bottom: 6px;
-  color: var(--canvas-text);
-  font-size: calc(12px * var(--canvas-header-text-scale, 1));
-  line-height: calc(16px * var(--canvas-header-text-scale, 1));
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  pointer-events: auto;
-  font-weight: 600;
-  text-shadow:
-    0 1px 4px rgb(0 0 0 / 95%),
-    0 0 1px rgb(0 0 0 / 90%);
-}
-
-/* 图标跟着字号一起缩放：写死 px 时缩小画布会让字变大而图标不动，
- * 两者错位撑开整行，正是标签折行的另一半原因。 */
-.canvas-node-header__icon {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(12px * var(--canvas-header-text-scale, 1));
-  height: calc(12px * var(--canvas-header-text-scale, 1));
-  opacity: 0.85;
-}
-
-.canvas-node-header__icon svg {
-  width: 100%;
-  height: 100%;
 }
 
 .canvas-media-compliance {
@@ -1112,35 +960,17 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   color: #79808c;
 }
 
-/* 隔离双击的包装层：min-width:0 必须一路传下去，否则 flex 子项不肯收缩，
- * text-overflow 永远不会触发，长标题继续把节点顶宽。 */
-.canvas-node-header__label-wrap {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-/* 常态固定单行，避免标题侵入相邻节点；完整内容由 title 提示与双击编辑承接。 */
-.canvas-node-header__label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  display: block;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+/* 悬停才提示「这里可以改」，静止时保持克制，不与缩略图抢注意力。
+ * InlineEdit 自带的 .ie-display:hover 是智能成片那套青绿，这里覆盖成画布主色。 */
+.canvas-view .canvas-node-header__label {
   cursor: text;
-  border-radius: 4px;
-  padding: 0 2px;
   transition:
     background-color 120ms ease,
     color 120ms ease;
 }
 
-/* 悬停才提示「这里可以改」，静止时保持克制，不与缩略图抢注意力。
- * InlineEdit 自带的 .ie-display:hover 是智能成片那套青绿，这里覆盖成画布主色。 */
 .canvas-node-header .ie-display:hover,
-.canvas-default-node:hover .canvas-node-header__label:hover {
+.canvas-view .canvas-default-node:hover .canvas-node-header__label:hover {
   background: rgba(87, 103, 229, 0.1);
   color: #fff;
 }
@@ -1158,21 +988,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   border-radius: 4px;
   background: var(--canvas-surface-input);
   outline: none;
-}
-
-/* 主体占位 */
-.canvas-node-body {
-  width: 100%;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--canvas-text-muted);
-  overflow: hidden;
-  min-height: 0;
-  padding: 8px;
-  box-sizing: border-box;
-  border-radius: 14px;
 }
 
 .canvas-node-generation-mask {
@@ -1406,28 +1221,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   line-height: 1.4;
 }
 
-/* 文本节点提示文字 */
-.canvas-node-prompt {
-  width: 100%;
-  height: 100%;
-  padding: 2px;
-  font-family: 'PingFang SC', sans-serif;
-  font-size: calc(14px * var(--canvas-readable-text-scale));
-  line-height: calc(22.4px * var(--canvas-readable-text-scale));
-  color: var(--canvas-text);
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--canvas-surface-highest) transparent;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.canvas-node-prompt.is-placeholder {
-  color: var(--canvas-text-muted);
-}
-
 .canvas-storyboard {
   width: 100%;
   height: 100%;
@@ -1561,117 +1354,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   -webkit-line-clamp: 3;
 }
 
-/* 素材节点内容（来自素材库的图片/视频） */
-.canvas-node-media {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-/* 剪辑时间线节点：卡片只显示片段摘要，编辑在双击打开的编辑器里进行 */
-.canvas-node-timeline {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: 100%;
-  height: 100%;
-  text-align: center;
-}
-
-.canvas-node-timeline strong {
-  font-size: 15px;
-}
-
-.canvas-node-timeline span {
-  color: #9aa3b2;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.canvas-node-timeline em {
-  margin-top: 4px;
-  color: #7a8496;
-  font-size: 12px;
-  font-style: normal;
-}
-
-/* 视频节点：容器持有交互（pointer-events），媒体本身保持 none 以免拖拽冲突 */
-.canvas-node-video-wrap {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  overflow: hidden;
-  pointer-events: auto;
-}
-
-/* 播放/暂停按钮：缩小后放在视频进度条左侧，不遮挡画面中心 */
-.canvas-node-play-btn,
-.canvas-node-pause-btn {
-  position: relative;
-  flex: 0 0 20px;
-  width: 20px;
-  height: 20px;
-  z-index: 1;
-  border: none;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.45);
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  cursor: pointer;
-  backdrop-filter: none;
-  box-shadow: none;
-  transition: background 0.15s;
-}
-
-/* 播放按钮图标微右移，视觉居中 */
-.canvas-node-play-btn {
-  padding: 0 0 0 1px;
-}
-
-.canvas-node-play-btn:hover,
-.canvas-node-pause-btn:hover {
-  background: rgba(0, 0, 0, 0.68);
-}
-
-/* 视频底部控制条：当前时间/总时长 + 可点击拖动的进度条（跳转到指定秒） */
-.canvas-node-video-bar {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
-}
-
-/* 时间读数：字号随缩放做反向补偿保持可读 */
-.canvas-node-video-time {
-  flex: none;
-  color: #ffffff;
-  font-size: calc(11px * var(--canvas-readable-text-scale));
-  line-height: calc(16px * var(--canvas-readable-text-scale));
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.4px;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
 /* 整片缓冲提示：跳转落不住时切本地整片，期间给个可见反馈 */
 .canvas-node-video-hint {
   position: absolute;
@@ -1703,66 +1385,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   color: #d1e7e2;
   cursor: pointer;
   pointer-events: auto;
-}
-
-/* 轨道：命中区域比视觉轨道更高，方便在缩小的画布上点中 */
-.canvas-node-video-track {
-  position: relative;
-  flex: 1 1 auto;
-  height: 14px;
-  min-width: 40px;
-  cursor: pointer;
-  touch-action: none;
-  border-radius: 999px;
-  outline: none;
-}
-
-.canvas-node-video-track::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.32);
-  transform: translateY(-50%);
-}
-
-.canvas-node-video-track__fill {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--canvas-surface-raised);
-  transform: translateY(-50%);
-}
-
-/* 滑块：悬停/拖动/键盘聚焦时出现，静态时保持画面干净 */
-.canvas-node-video-track__thumb {
-  position: absolute;
-  top: 50%;
-  right: -5px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--canvas-surface-raised);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-  transform: translateY(-50%);
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.canvas-node-video-wrap:hover .canvas-node-video-track__thumb,
-.canvas-node-video-track:focus-visible .canvas-node-video-track__thumb,
-.canvas-node-video-track[data-scrubbing='true'] .canvas-node-video-track__thumb {
-  opacity: 1;
-}
-
-.canvas-node-video-track:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 2px;
 }
 
 /* 放大查看：右下角按钮，与播放/暂停同款视觉 */
@@ -2226,46 +1848,16 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   transform: translateX(-50%) translateY(0);
 }
 
-/* 组图在自己的节点范围内展开；折叠纸叠允许露出，拖拽和连线仍由父节点负责。 */
-.canvas-default-node.is-image-results .canvas-node-body {
-  overflow: visible;
-  padding: 0;
-}
-.canvas-default-node.is-image-results {
-  background: transparent;
-}
-
-/* 图片与剪辑节点的媒体直接贴合节点尺寸，不再露出白色卡片边框。 */
-.canvas-default-node.is-image {
-  background: transparent;
-  border: none;
-}
-.canvas-default-node.is-empty-media {
-  background: var(--canvas-surface);
-  border: 1px solid var(--canvas-border);
-}
-.canvas-default-node.is-timeline {
-  background: var(--canvas-surface);
-  border: 1px solid var(--canvas-border);
-}
-.canvas-default-node:is(.is-image, .is-video) .canvas-node-body {
-  padding: 0;
-  border-radius: 10px;
-}
-
-.canvas-default-node.is-audio .canvas-node-body {
-  overflow: visible;
-}
-.canvas-default-node.is-audio .canvas-node-header,
-.canvas-default-node.is-audio .canvas-node-body {
+.canvas-view .canvas-default-node.is-audio .canvas-node-header,
+.canvas-view .canvas-default-node.is-audio .canvas-node-body {
   cursor: grab;
   user-select: none;
 }
-.react-flow__node.dragging .canvas-default-node.is-audio .canvas-node-header,
-.react-flow__node.dragging .canvas-default-node.is-audio .canvas-node-body {
+.canvas-view .react-flow__node.dragging .canvas-default-node.is-audio .canvas-node-header,
+.canvas-view .react-flow__node.dragging .canvas-default-node.is-audio .canvas-node-body {
   cursor: grabbing;
 }
-.canvas-default-node.is-audio .canvas-node-header__label {
+.canvas-view .canvas-default-node.is-audio .canvas-node-header__label {
   cursor: grab;
 }
 
@@ -2638,10 +2230,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   resize: vertical;
 }
 
-.canvas-default-node.is-hd-result {
-  border: 2px solid #cbd5d9;
-}
-
 .canvas-hd-count {
   min-width: 18px;
   padding: 1px 5px;
@@ -2728,45 +2316,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   }
 }
 
-/* 视频控制统一置于底部同一行，竖版节点也保留完整可点击区域。 */
-.canvas-default-node.is-video .canvas-node-body {
-  padding: 0;
-}
-.canvas-node-video-wrap .canvas-node-media {
-  object-fit: contain;
-  background: #111;
-}
-.canvas-node-video-bar {
-  min-width: 0;
-  gap: 6px;
-  padding: 4px 6px;
-}
-.canvas-node-video-time {
-  font-size: 11px;
-  line-height: 16px;
-  letter-spacing: 0;
-}
-.canvas-video-expand {
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 5px;
-  padding: 0;
-  background: transparent;
-  color: #fff;
-  cursor: pointer;
-}
-.canvas-video-expand:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
-.canvas-video-expand:focus-visible {
-  outline: 2px solid #e5e7eb;
-  outline-offset: 1px;
-}
 .canvas-video-buffering {
   display: block;
   width: 10px;
@@ -3174,23 +2723,6 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 }
 
 /* Cyber Cyan: editor-specific visual layer; interaction geometry remains owned by React Flow. */
-.canvas-view {
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    'PingFang SC',
-    'Microsoft YaHei',
-    sans-serif;
-}
-.canvas-view .react-flow__background pattern circle {
-  fill: rgb(255 255 255 / 18%);
-}
-.canvas-view .react-flow__edge-path {
-  stroke: rgb(255 255 255 / 25%);
-  stroke-width: 2;
-}
 .canvas-view .react-flow__edge.is-focused .react-flow__edge-path,
 .canvas-view .react-flow__edge.selected .react-flow__edge-path,
 .canvas-view .react-flow__edge.is-hover-highlight:hover .react-flow__edge-path {

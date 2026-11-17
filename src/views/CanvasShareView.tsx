@@ -1,107 +1,289 @@
-/**
- * 公开画布只读查看页（/canvas/share/:token）。
- *
- * 免登录：数据走 /api/v1/canvas-shares/{token} 与 .../elements 两个匿名接口。
- * 这里刻意不复用 CanvasView——那一套挂着生成、云端同步、撤销栈、右键菜单等完整编辑链路，
- * 为只读再往里加分支，等于给全仓库最复杂的文件继续加负担。访客要的只有「看清这块画布画了什么」，
- * 因此节点在这里退化成一张卡片：图片/视频直接播放，文本原样展示。
- */
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   ReactFlow,
   Background,
-  Controls,
   Handle,
   Position,
+  useReactFlow,
+  useStore,
   type Node,
   type NodeProps,
   type NodeTypes,
+  type OnNodesChange,
+  type XYPosition,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import './CanvasNodePresentation.css'
 import './CanvasShareView.css'
 import CanvasImageResults from '@/components/canvas/CanvasImageResults'
-import { canvasImageResultIds, canvasImageResultSize } from '@/utils/canvasImageResults'
-import { shareAssetUrl } from '@/utils/canvasShareMedia'
+import CanvasAudioNode from '@/components/canvas/CanvasAudioNode'
 import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
+import CanvasStoryboard from '@/components/canvas/CanvasStoryboard'
+import CanvasNodeVideoBar from '@/components/canvas/CanvasNodeVideoBar'
+import CanvasBottomBar from '@/components/canvas/CanvasBottomBar'
+import CanvasViewControls from '@/components/canvas/CanvasViewControls'
+import { CanvasNodeBody, CanvasNodeFrame, CanvasNodeImage, CanvasNodePrompt } from '@/components/canvas/CanvasNodeFrame'
+import { canvasImageResultIds, canvasImageResultSize } from '@/utils/canvasImageResults'
 import { elementsToGraph } from '@/utils/canvasElements'
-import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia } from '@/utils/canvasShareMedia'
+import {
+  alignSharedVideoLabels,
+  alignSharedVideoSectionHeadings,
+  clearShareNodePositions,
+  readShareNodePositions,
+  saveShareNodePositions,
+  tightenSharedVideoRows,
+} from '@/utils/canvasShareLayout'
+import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia, shareAssetUrl } from '@/utils/canvasShareMedia'
+import { resolveCanvasNodeTitle } from '@/utils/canvasNodeTitle'
+import { parseCanvasStructuredText } from '@/utils/canvasStructuredText'
+import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
+import { primeVideoFirstFrame } from '@/utils/videoFrameCapture'
 import type { CanvasElementMutation } from '@/api/canvasApi'
 import { fetchAllPublicCanvasElements, fetchPublicCanvas, type PublicCanvasShare } from '@/api/canvasShare'
 
+const CanvasVideoPreviewModal = lazy(() => import('@/components/canvas/CanvasVideoPreviewModal'))
+const CanvasImagePreviewModal = lazy(() => import('@/components/canvas/CanvasImagePreviewModal'))
 const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
 const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
+const SHARE_FIT_VIEW_OPTIONS = {
+  padding: { top: '92px', bottom: '76px', left: '24px', right: '24px' },
+  minZoom: 0.01,
+  maxZoom: 1,
+} as const
 
-/** 节点类型 → 展示用中文名；未知类型原样显示，不猜。 */
-const KIND_LABELS: Record<string, string> = {
-  text: '文本',
-  image: '图片',
-  video: '视频',
-  timeline: '视频剪辑',
-  audio: '音频',
+function ShareViewControls({ canResetLayout, onResetLayout }: { canResetLayout: boolean; onResetLayout: () => void }) {
+  const zoom = useStore((state) => state.transform[2])
+  const { fitView, zoomIn, zoomOut, zoomTo } = useReactFlow()
+  return (
+    <CanvasBottomBar
+      controls={
+        <CanvasViewControls
+          readOnly
+          zoom={zoom}
+          onZoomIn={() => void zoomIn({ duration: 160 })}
+          onZoomOut={() => void zoomOut({ duration: 160 })}
+          onFitView={() => void fitView(SHARE_FIT_VIEW_OPTIONS)}
+          onZoomReset={() => void zoomTo(1, { duration: 160 })}
+          canResetLayout={canResetLayout}
+          onResetLayout={onResetLayout}
+        />
+      }
+    >
+      {null}
+    </CanvasBottomBar>
+  )
 }
 
-/** 只读节点保留原连接点位置，历史连线才能在分享页找到起止坐标。 */
+function SharedVideo({
+  url,
+  poster,
+  title,
+  onError,
+}: {
+  url: string
+  poster: string
+  title: string
+  onError: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [playing, setPlaying] = useState(false)
+  const [current, setCurrent] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [preview, setPreview] = useState(false)
+  const time = `${formatVideoTimeLabel(current)} / ${formatVideoDurationLabel(duration) || '--:--'}`
+  const progress = duration > 0 ? Math.min(current / duration, 1) * 100 : 0
+  const expand = () => {
+    videoRef.current?.pause()
+    setPreview(true)
+  }
+  return (
+    <div className="canvas-node-video-wrap nopan">
+      <video
+        ref={videoRef}
+        className="canvas-node-media"
+        src={url}
+        poster={poster || undefined}
+        aria-label={`${title}预览`}
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(event) => {
+          if (!poster) primeVideoFirstFrame(event.currentTarget)
+        }}
+        onError={onError}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={(event) => setCurrent(event.currentTarget.currentTime)}
+        onDurationChange={(event) => {
+          const next = event.currentTarget.duration
+          setDuration(Number.isFinite(next) ? next : 0)
+        }}
+      />
+      <CanvasNodeVideoBar
+        playing={playing}
+        time={time}
+        onExpand={expand}
+        onToggle={() => {
+          const video = videoRef.current
+          if (!video) return
+          if (video.paused)
+            void video.play().catch(() => {
+              if (video.error) onError()
+            })
+          else video.pause()
+        }}
+      >
+        <label className="canvas-node-video-track" data-share-track>
+          <span className="canvas-node-video-track__fill" style={{ width: `${progress}%` }} aria-hidden="true">
+            <span className="canvas-node-video-track__thumb" />
+          </span>
+          <input
+            type="range"
+            aria-label="视频进度"
+            aria-valuetext={time}
+            min={0}
+            max={duration}
+            step="0.01"
+            disabled={!duration}
+            value={Math.min(current, duration)}
+            onChange={(event) => {
+              const value = Number(event.currentTarget.value)
+              if (videoRef.current) videoRef.current.currentTime = value
+              setCurrent(value)
+            }}
+          />
+        </label>
+      </CanvasNodeVideoBar>
+      {preview && (
+        <Suspense fallback={null}>
+          <CanvasVideoPreviewModal
+            src={url}
+            poster={poster || undefined}
+            startTime={current}
+            showInfo={false}
+            readOnly
+            onClose={() => setPreview(false)}
+          />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+/** 使用编辑画布节点的展示组件，操作仅由公开页提供。 */
 function ShareNode({ id, data }: NodeProps<Node>) {
-  const info = (data || {}) as Record<string, unknown>
-  const kind = String(info.kind || '')
-  const resultUrl = resolveCanvasShareMediaUrl(info)
-  const posterUrl = resolveCanvasShareMediaUrl(info, 'poster')
-  const text = String(info.text || info.prompt || '')
-  const title = String(info.title || KIND_LABELS[kind] || kind || '节点')
+  const { fitView } = useReactFlow()
+  const headerScale = useStore((state) => Math.min(6, Math.max(1, 1 / state.transform[2])))
+  const kind = String(data.kind || '')
+  const resultUrl = resolveCanvasShareMediaUrl(data)
+  const posterUrl = resolveCanvasShareMediaUrl(data, 'poster')
+  const text = String(data.text || data.prompt || '')
+  const structuredText = useMemo(() => parseCanvasStructuredText(text), [text])
+  const title = resolveCanvasNodeTitle({ ...data, kind, text }) || '节点'
   const [failedUrl, setFailedUrl] = useState('')
-  const mediaFailed = Boolean(resultUrl && failedUrl === resultUrl)
-  const isVideo = kind === 'video' || kind === 'timeline'
-  const hasMedia = Boolean(info.assetId || resultUrl)
+  const [previewId, setPreviewId] = useState('')
+  const imageIds = canvasImageResultIds(data)
+  const imageGroup = kind === 'image' && imageIds.length > 1
+  const hasMedia = Boolean(data.assetId || resultUrl)
+  const mediaAvailable = Boolean(resultUrl && failedUrl !== resultUrl)
+  const captionVideoId = typeof data.shareCaptionVideoId === 'string' ? data.shareCaptionVideoId : ''
+  const sectionHeading = kind === 'text' && data.shareSectionHeading === true && structuredText.kind === 'plain'
+  const focusId = captionVideoId || id
+  const focusNode = () => void fitView({ nodes: [{ id: focusId }], padding: 0.35, maxZoom: 1.5, duration: 300 })
+  const imageUrl = (assetId: number) =>
+    assetId === Number(data.assetId) && resultUrl ? resultUrl : shareAssetUrl(String(data.shareToken), assetId)
+  const imageItems = imageGroup
+    ? imageIds.map((assetId) => ({ id: String(assetId), url: imageUrl(assetId), title }))
+    : [{ id, url: resultUrl, title }]
 
   return (
-    <div className="share-node">
-      <div className="share-node-kind" title={title}>
-        {title}
-      </div>
-      {kind === 'image' && canvasImageResultIds(info).length > 1 ? (
-        <div style={{ height: 'calc(100% - 22px)' }}>
+    <CanvasNodeFrame
+      kind={kind}
+      headerScale={headerScale}
+      imageGroup={imageGroup}
+      highDefinition={Boolean(data.hd)}
+      data-share-section-heading={sectionHeading ? '' : undefined}
+    >
+      <CanvasNodeBody
+        onDoubleClick={() => {
+          if (kind === 'image' && mediaAvailable && !imageGroup) setPreviewId(id)
+          else focusNode()
+        }}
+      >
+        {imageGroup ? (
           <CanvasImageResults
-            assetIds={canvasImageResultIds(info)}
-            primaryAssetId={Number(info.assetId)}
-            expanded={Boolean(info.imageResultsExpanded)}
-            resolveUrl={(assetId) => shareAssetUrl(String(info.shareToken), assetId)}
-            onToggle={() => (info.onToggleImages as () => void)?.()}
+            assetIds={imageIds}
+            primaryAssetId={imageIds.includes(Number(data.assetId)) ? Number(data.assetId) : imageIds[0]}
+            expanded={Boolean(data.imageResultsExpanded)}
+            resolveUrl={imageUrl}
+            onToggle={() => (data.onToggleImages as () => void)()}
+            onPreview={(assetId) => setPreviewId(String(assetId))}
           />
-        </div>
-      ) : resultUrl && !mediaFailed && kind === 'audio' ? (
-        <audio
-          className="share-node-audio nodrag nopan nowheel"
-          src={resultUrl}
-          controls
-          preload="metadata"
-          aria-label={`${title}试听`}
-          onError={() => setFailedUrl(resultUrl)}
-        />
-      ) : resultUrl && !mediaFailed && isVideo ? (
-        // 访客可能只想确认成片效果，给原生控件即可，不再搬运画布那套自定义播放器
-        <video
-          className="share-node-media nodrag nopan nowheel"
-          src={resultUrl}
-          poster={posterUrl || undefined}
-          controls
-          playsInline
-          preload="metadata"
-          aria-label={`${title}预览`}
-          onError={() => setFailedUrl(resultUrl)}
-        />
-      ) : resultUrl && !mediaFailed ? (
-        <img
-          className="share-node-media"
-          src={resultUrl}
-          alt={`${title}预览`}
-          loading="lazy"
-          onError={() => setFailedUrl(resultUrl)}
-        />
-      ) : (
-        <div className={hasMedia ? 'share-node-unavailable' : 'share-node-text'}>
-          {hasMedia ? '素材暂时无法加载，请联系分享者检查访问权限' : text}
-        </div>
+        ) : mediaAvailable && (kind === 'video' || kind === 'timeline') ? (
+          <SharedVideo
+            key={resultUrl}
+            url={resultUrl}
+            poster={posterUrl}
+            title={title}
+            onError={() => setFailedUrl(resultUrl)}
+          />
+        ) : kind === 'audio' ? (
+          <CanvasAudioNode nodeId={id} data={data} src={resultUrl} selected={false} workspaceId={0} readOnly />
+        ) : mediaAvailable && kind === 'image' ? (
+          <CanvasNodeImage
+            src={resultUrl}
+            alt={`${title}预览`}
+            draggable={false}
+            onError={() => setFailedUrl(resultUrl)}
+          />
+        ) : kind === 'text' ? (
+          structuredText.kind === 'storyboard' ? (
+            <CanvasStoryboard items={structuredText.items} readOnly />
+          ) : sectionHeading ? (
+            <h2 className="share-section-heading" title={structuredText.text}>
+              {structuredText.text}
+            </h2>
+          ) : (
+            <CanvasNodePrompt>{structuredText.text}</CanvasNodePrompt>
+          )
+        ) : (
+          <CanvasNodePrompt placeholder>
+            {hasMedia ? '素材暂时无法加载，请联系分享者检查访问权限' : '暂无内容'}
+          </CanvasNodePrompt>
+        )}
+      </CanvasNodeBody>
+      {!captionVideoId && (
+        <button
+          type="button"
+          className="canvas-video-expand share-node-focus nodrag nopan"
+          aria-label={`放大查看${title}`}
+          data-storyboard={kind === 'text' && structuredText.kind === 'storyboard' ? '' : undefined}
+          title="聚焦节点"
+          onClick={focusNode}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="10" cy="10" r="6" />
+            <path d="m14.5 14.5 4.5 4.5M7.5 10h5M10 7.5v5" />
+          </svg>
+        </button>
+      )}
+      {previewId && (
+        <Suspense fallback={null}>
+          <CanvasImagePreviewModal
+            items={imageItems}
+            activeId={previewId}
+            onSelect={setPreviewId}
+            onClose={() => setPreviewId('')}
+          />
+        </Suspense>
       )}
       <Handle
         id={`${id}-left-target`}
@@ -119,7 +301,7 @@ function ShareNode({ id, data }: NodeProps<Node>) {
         className="share-node-handle"
         aria-hidden="true"
       />
-    </div>
+    </CanvasNodeFrame>
   )
 }
 
@@ -127,13 +309,22 @@ const nodeTypes: NodeTypes = { share: ShareNode }
 
 type LoadState = 'loading' | 'ready' | 'missing' | 'error'
 
+function moveWithAnchor(position: XYPosition, from: XYPosition, to: XYPosition): XYPosition {
+  return { x: position.x + (to.x - from.x), y: position.y + (to.y - from.y) }
+}
+
 export default function CanvasShareView() {
   const { token = '' } = useParams()
+  return <CanvasSharePage key={token} token={token} />
+}
+
+function CanvasSharePage({ token }: { token: string }) {
   const [state, setState] = useState<LoadState>('loading')
   const [message, setMessage] = useState('')
   const [share, setShare] = useState<PublicCanvasShare | null>(null)
   const [elements, setElements] = useState<CanvasElementMutation[]>([])
   const [expandedImages, setExpandedImages] = useState<Record<string, boolean>>({})
+  const [nodePositions, setNodePositions] = useState(() => readShareNodePositions(token))
 
   useEffect(() => {
     let cancelled = false
@@ -167,57 +358,109 @@ export default function CanvasShareView() {
 
   const graph = useMemo(() => {
     const { nodes, edges } = elementsToGraph(elements)
+    // 自定义只读节点不套 React Flow 默认卡片的边框/内边距；保留原尺寸与连接点。
+    const displayNodes = nodes.map((node) => {
+      // 节点自带的 resultUrl 要登录才能取，这里换算成分享口令下的匿名地址交给 ShareNode
+      const media = resolvePublicCanvasNodeMedia(token, node.data)
+      const expanded = expandedImages[node.id] ?? Boolean(node.data.imageResultsExpanded)
+      const data = { ...node.data, imageResultsExpanded: expanded }
+      return {
+        ...node,
+        style: canvasImageResultIds(data).length > 1 ? { ...node.style, ...canvasImageResultSize(data) } : node.style,
+        data: {
+          ...data,
+          shareMediaUrl: media.url,
+          sharePosterUrl: media.posterUrl,
+          shareToken: token,
+          onToggleImages: () => setExpandedImages((current) => ({ ...current, [node.id]: !expanded })),
+        },
+        type: 'share',
+        selectable: false,
+      }
+    })
     return {
-      // 自定义只读节点不套 React Flow 默认卡片的边框/内边距；保留原尺寸与连接点。
-      nodes: nodes.map((node) => {
-        // 节点自带的 resultUrl 要登录才能取，这里换算成分享口令下的匿名地址交给 ShareNode
-        const media = resolvePublicCanvasNodeMedia(token, node.data)
-        const expanded = expandedImages[node.id] ?? Boolean(node.data.imageResultsExpanded)
-        const data = { ...node.data, imageResultsExpanded: expanded }
-        return {
-          ...node,
-          style: canvasImageResultIds(data).length > 1 ? { ...node.style, ...canvasImageResultSize(data) } : node.style,
-          data: {
-            ...data,
-            shareMediaUrl: media.url,
-            sharePosterUrl: media.posterUrl,
-            shareToken: token,
-            onToggleImages: () => setExpandedImages((current) => ({ ...current, [node.id]: !expanded })),
-          },
-          type: 'share',
-          draggable: false,
-          selectable: false,
-        }
-      }),
+      nodes: alignSharedVideoSectionHeadings(tightenSharedVideoRows(alignSharedVideoLabels(displayNodes))),
       edges: edges.map(({ markerEnd: _markerEnd, ...rest }) => ({ ...rest, type: CANVAS_ARROW_EDGE_TYPE })),
     }
   }, [elements, token, expandedImages])
 
+  const { nodesById, videoByTitleId } = useMemo(() => {
+    const nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
+    const videoByTitleId = new Map<string, Node>()
+    for (const node of graph.nodes) {
+      const videoId = node.data.shareTitleVideoId ?? node.data.shareCaptionVideoId
+      if (node.data.kind !== 'text' || typeof videoId !== 'string') continue
+      const video = nodesById.get(videoId)
+      if (video?.data.kind === 'video' || video?.data.kind === 'timeline') videoByTitleId.set(node.id, video)
+    }
+    return { nodesById, videoByTitleId }
+  }, [graph.nodes])
+
+  // 标题和视频共用视频的位置，拖动任意一个时都保留它们的相对间距。
+  const handleNodesChange = useCallback<OnNodesChange>(
+    (changes) => {
+      const moved = new Map<string, XYPosition>()
+      const settled = new Map<string, XYPosition>()
+      for (const change of changes) {
+        if (change.type !== 'position' || !change.position) continue
+        const node = nodesById.get(change.id)
+        if (!node) continue
+        const video = videoByTitleId.get(node.id)
+        const id = video?.id ?? node.id
+        const position = video ? moveWithAnchor(video.position, node.position, change.position) : change.position
+        moved.set(id, position)
+        if (change.dragging !== true) settled.set(id, position)
+      }
+      if (moved.size) setNodePositions((current) => new Map([...current, ...moved]))
+      saveShareNodePositions(token, settled)
+    },
+    [nodesById, token, videoByTitleId],
+  )
+
+  const displayNodes = useMemo(
+    () =>
+      graph.nodes.map((node) => {
+        const video = videoByTitleId.get(node.id)
+        const position = nodePositions.get(video?.id ?? node.id)
+        if (!position) return node
+        return { ...node, position: video ? moveWithAnchor(node.position, video.position, position) : position }
+      }),
+    [graph.nodes, nodePositions, videoByTitleId],
+  )
+
   return (
     <div className="share-view">
-      <div className="share-topbar">
+      <div className="canvas-navigation share-topbar nodrag nopan nowheel" aria-label="画布导航">
         <span className="share-title">{share?.title || '共享画布'}</span>
-        <span className="share-badge">只读查看</span>
+        <span className="canvas-save-status share-badge">只读查看</span>
       </div>
 
       {state === 'ready' ? (
         <ReactFlow
-          nodes={graph.nodes}
+          nodes={displayNodes}
           edges={graph.edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onNodesChange={handleNodesChange}
           fitView
           minZoom={0.01}
           maxZoom={10}
-          fitViewOptions={{ padding: 0.2, minZoom: 0.01, maxZoom: 1 }}
+          fitViewOptions={SHARE_FIT_VIEW_OPTIONS}
           zoomOnDoubleClick={false}
-          nodesDraggable={false}
+          nodesDraggable
           nodesConnectable={false}
           elementsSelectable={false}
+          deleteKeyCode={null}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={16} />
-          <Controls showInteractive={false} />
+          <Background color="rgba(255, 255, 255, 0.18)" gap={24} size={2} />
+          <ShareViewControls
+            canResetLayout={nodePositions.size > 0}
+            onResetLayout={() => {
+              clearShareNodePositions(token)
+              setNodePositions(new Map())
+            }}
+          />
         </ReactFlow>
       ) : (
         <div className="share-state" role="status">

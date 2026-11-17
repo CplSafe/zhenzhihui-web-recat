@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { DeepAgentStudioProps } from './DeepAgentStudio'
+import { hasFileDrag } from '@/utils/canvasLocalImage'
 import styles from './CanvasDirectorDock.module.css'
 
 const DeepAgentStudio = lazy(() => import('./DeepAgentStudio'))
@@ -23,8 +24,18 @@ export default function CanvasDirectorDock({
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
-      onDragOver={(event) => event.stopPropagation()}
-      onDrop={(event) => event.stopPropagation()}
+      onDragOver={(event) => {
+        if (hasFileDrag(event.dataTransfer)) {
+          // 输入区接受附件。其余位置禁用拖入，避免浏览器直接打开本地文件。
+          event.dataTransfer.dropEffect = event.defaultPrevented ? 'copy' : 'none'
+          event.preventDefault()
+        }
+        event.stopPropagation()
+      }}
+      onDrop={(event) => {
+        if (hasFileDrag(event.dataTransfer)) event.preventDefault()
+        event.stopPropagation()
+      }}
     >
       {mounted && (
         <div hidden={!opened}>
