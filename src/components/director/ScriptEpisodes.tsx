@@ -217,7 +217,7 @@ export function ScriptEpisodes({
         </span>
         <Settings2 size={16} />
       </button>
-      <span className={styles.hint}>确认前不会生成图片或视频</span>
+      <span className={styles.hint}>保存后等待你的要求，不会立即开始制作</span>
       {open && !edit && (
         <Dialog title="剧本集数与模型" onClose={onClose} error={error}>
           <div className={styles.content}>
@@ -309,8 +309,8 @@ export function ScriptEpisodes({
             )}
             <p>
               {mode === 'auto'
-                ? '全自动：确认后按所选集数和模型制作，产生实际积分消耗。'
-                : '手动：确认范围后先规划，每次生成仍由你确认。'}
+                ? '全自动：保存配置不会开工；点击开始制作后才自动执行。'
+                : '手动：保存配置不会开工；开始制作后，每次生成仍由你确认。'}
             </p>
             {invalidSelected && <p role="alert">请打开所选集数，补全或调整模型支持的画面参数。</p>}
             <div className={styles.footer}>
@@ -336,7 +336,7 @@ export function ScriptEpisodes({
                 }
                 onClick={confirm}
               >
-                确认并开始制作
+                保存到对话
               </button>
             </div>
           </div>

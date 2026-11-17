@@ -31,7 +31,23 @@ export interface StudioRun {
   status: RunStatus
   stop?: boolean
   cursor: number
-  selection?: { image: number; video: number; chat?: number; mode: 'manual' | 'auto' }
+  selection?: {
+    image: number
+    video: number
+    chat?: number
+    mode: 'manual' | 'auto'
+    media_allowed?: boolean
+    episode_models?: Record<
+      string,
+      {
+        title: string
+        image: number
+        video: number
+        image_params?: Record<string, string>
+        video_params?: Record<string, string>
+      }
+    >
+  }
   skill_name?: string
   events: StudioEvent[]
   documents?: StudioDocument[]

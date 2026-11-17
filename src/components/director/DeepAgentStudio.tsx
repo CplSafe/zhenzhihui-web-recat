@@ -122,6 +122,7 @@ export default function DeepAgentStudio({
   const threadRef = useRef(current),
     currentId = useRef(current),
     lastCanvas = useRef<Data | null>(null)
+  const savedConfigurationDraft = useRef<{ id: string; text: string } | null>(null)
   currentId.current = current
   const running = run?.status === 'running',
     unfinished = !!run && run.status !== 'complete'
@@ -138,7 +139,8 @@ export default function DeepAgentStudio({
       threadRef.current = current
       setAttachments([])
       setCanvasReferences([])
-      setMessage('')
+      setMessage(savedConfigurationDraft.current?.id === current ? savedConfigurationDraft.current.text : '')
+      savedConfigurationDraft.current = null
       setResults(false)
       setSelectedDocument('')
     }
@@ -233,14 +235,15 @@ export default function DeepAgentStudio({
     studio.setError('')
     prompt.current?.focus()
   }
-  async function send(episodeDecision?: EpisodeDecision) {
+  async function send(episodeDecision?: EpisodeDecision, startProduction = false) {
+    const savingConfiguration = !!episodeDecision && 'episode_plan' in episodeDecision
     if (
       !ready ||
       disabled ||
       unfinished ||
       uncertain ||
       attachments.some((a) => !a.id) ||
-      (!message.trim() && !attachments.length)
+      (!message.trim() && !attachments.length && !startProduction)
     )
       return
     if (!episodeDecision && attachments.some((a) => a.type === 'prompt')) {
@@ -264,13 +267,14 @@ export default function DeepAgentStudio({
         ],
       }
       setPendingSend({ api, run: optimistic })
-      setMessage('')
+      if (!savingConfiguration) setMessage('')
       setResults(false)
       followUpdates.current = true
       let response: { id: string }
       try {
         response = await api.request('/api/runs', {
           ...episodeDecision,
+          ...(startProduction ? { start_production: true } : {}),
           message: message.trim(),
           selection: { image, video, mode },
           skill,
@@ -296,14 +300,15 @@ export default function DeepAgentStudio({
         run: {
           ...optimistic,
           id: response.id,
-          status: 'running',
+          status: savingConfiguration ? 'complete' : 'running',
           events: optimistic.events.map((event) =>
             event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event,
           ),
         },
       })
+      if (savingConfiguration) savedConfigurationDraft.current = { id: response.id, text: draft }
       studio.setCurrent(response.id)
-      setMessage('')
+      setMessage(savingConfiguration ? draft : '')
       setAttachments([])
       setCanvasReferences([])
       setResults(false)
@@ -881,6 +886,45 @@ export default function DeepAgentStudio({
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+            {run?.selection?.episode_models && (
+              <div className={styles.referenceHint} aria-label="已保存的制作配置">
+                <details>
+                  <summary>
+                    已保存 {Object.keys(run.selection.episode_models).length} 集配置
+                    {run.selection.media_allowed === false ? ' · 等待开始制作' : ''}
+                  </summary>
+                  {Object.entries(run.selection.episode_models).map(([id, episode]) => (
+                    <p key={id}>
+                      {episode.title}
+                      <br />
+                      生图：
+                      {catalog.models.find((m) => m.id === episode.image)?.display_name ||
+                        catalog.models.find((m) => m.id === episode.image)?.model ||
+                        episode.image}{' '}
+                      · {Object.values(episode.image_params || {}).join(' · ')}
+                      <br />
+                      视频：
+                      {catalog.models.find((m) => m.id === episode.video)?.display_name ||
+                        catalog.models.find((m) => m.id === episode.video)?.model ||
+                        episode.video}{' '}
+                      · {Object.values(episode.video_params || {}).join(' · ')}
+                    </p>
+                  ))}
+                </details>
+                {run.selection.media_allowed === false && (
+                  <>
+                    <span>可先发送补充要求，准备好后再开始。</span>
+                    <button
+                      type="button"
+                      disabled={!ready || disabled || unfinished || uncertain || !!attachments.length}
+                      onClick={() => void send(undefined, true)}
+                    >
+                      开始制作
+                    </button>
+                  </>
+                )}
               </div>
             )}
             {attachments.some((a) => a.type === 'prompt' && a.id) && (

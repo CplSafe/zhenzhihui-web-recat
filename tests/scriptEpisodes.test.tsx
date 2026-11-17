@@ -56,7 +56,7 @@ describe('script episode intake', () => {
     const { onConfirm, request } = setup()
     await screen.findByRole('checkbox', { name: '选择 第1集' })
     expect(request).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '保存到对话' })).toBeDisabled()
     expect(onConfirm).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 第2集' }))
     fireEvent.click(screen.getByRole('button', { name: '第2集，修改模型' }).querySelector('svg')!)
@@ -64,7 +64,7 @@ describe('script episode intake', () => {
     fireEvent.change(screen.getByRole('combobox', { name: '本集视频模型' }), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('button', { name: '完成设置' }))
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 第1集' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
     expect(onConfirm).toHaveBeenCalledWith({
       episode_plan: { fingerprint: 'fixed-source', episodes: [{ id: '42:1' }, { id: '42:2', image: 4, video: 5 }] },
     })
@@ -104,7 +104,7 @@ describe('script episode intake', () => {
     expect(screen.queryByRole('combobox', { name: '本集视频画面比例' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByRole('combobox', { name: '本集视频清晰度' }), { target: { value: '1080p' } })
     fireEvent.click(screen.getByRole('button', { name: '完成设置' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
     expect(onConfirm).toHaveBeenCalledWith({
       episode_plan: {
         fingerprint: 'fixed-source',
@@ -116,7 +116,7 @@ describe('script episode intake', () => {
     const { onConfirm } = setup({ ...result, episodes: [episodes[2]], range_specified: true })
     await screen.findByRole('checkbox', { name: '选择 第3集' })
     expect(screen.queryByRole('checkbox', { name: '选择 第1集' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
     expect(onConfirm).toHaveBeenCalledWith({
       episode_plan: { fingerprint: 'fixed-source', episodes: [{ id: '42:3' }] },
     })
@@ -126,14 +126,14 @@ describe('script episode intake', () => {
     await screen.findByRole('checkbox', { name: '选择 第1集' })
     request.mockImplementation(() => new Promise(() => {}))
     rerender(<ScriptEpisodes {...props} message="只做第3集" />)
-    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '保存到对话' })).toBeDisabled()
     expect(screen.queryByRole('checkbox', { name: '选择 第1集' })).not.toBeInTheDocument()
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
   })
   it('allows discussion when no reliable episode headers are found', async () => {
     const { onConfirm } = setup({ ...result, episodes: [], notice: '未识别到独立集标题，可以先讨论剧本。' })
     await screen.findByText(/未识别到独立集标题/)
-    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '保存到对话' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '仅讨论剧本' }))
     expect(onConfirm).toHaveBeenCalledWith({ discuss_script: true })
   })
@@ -155,9 +155,9 @@ describe('script episode intake', () => {
     })
     await screen.findByText('开头：原文开头', {}, { timeout: 4000 })
     expect(screen.getByText(/分集识别已消耗 1.250/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '保存到对话' })).toBeDisabled()
     fireEvent.click(screen.getByRole('checkbox', { name: '已核对分集标题及开头、结尾' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
     expect(onConfirm).toHaveBeenCalledWith({
       episode_plan: { fingerprint: 'fixed-source', boundaries_confirmed: true, episodes: [{ id: '42:1' }] },
     })
@@ -171,7 +171,7 @@ describe('script episode intake', () => {
       notice: '无法可靠确认分集边界',
     })
     await screen.findByText('分集边界待核对 · 点击查看')
-    expect(screen.getByRole('button', { name: '确认并开始制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '保存到对话' })).toBeDisabled()
     expect(request).toHaveBeenCalledTimes(1)
     expect(onConfirm).not.toHaveBeenCalled()
   })

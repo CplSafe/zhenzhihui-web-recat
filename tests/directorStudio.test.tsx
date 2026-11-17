@@ -94,6 +94,44 @@ async function openHistory() {
 }
 
 describe('Studio transport', () => {
+  it('keeps saved episode settings idle and starts only through the explicit button with the current draft', async () => {
+    const starts: Record<string, unknown>[] = []
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(
+          snapshot({
+            selection: {
+              image: 29,
+              video: 18,
+              mode: 'auto',
+              media_allowed: false,
+              episode_models: {
+                '42:1': { title: '第1集', image: 29, video: 18, video_params: { ratio: '9:16', resolution: '480p' } },
+              },
+            },
+          }),
+        ),
+      ),
+      http.post('*/agent-studio/api/runs', async ({ request }) => {
+        starts.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ id: 'run1' })
+      }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    expect(screen.getByLabelText('已保存的制作配置')).toHaveTextContent('480p')
+    expect(starts).toHaveLength(0)
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '纯英文，写实风格，保留原剧情' } })
+    expect(starts).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: '开始制作' }))
+    await waitFor(() => expect(starts).toHaveLength(1))
+    expect(starts[0]).toMatchObject({
+      previous: 'run1',
+      start_production: true,
+      message: '纯英文，写实风格，保留原剧情',
+    })
+  })
   it.each(['structured', 'legacy'])(
     'shows %s credit failures as a Chinese reply and opens recharge without resuming',
     async (variant) => {
@@ -1949,8 +1987,71 @@ it('confirms script episodes before creating a run and sends only the chosen sco
   await screen.findByRole('checkbox', { name: '选择 第2集' })
   expect(started).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('checkbox', { name: '选择 第2集' }))
-  fireEvent.click(screen.getByRole('button', { name: '确认并开始制作' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
   await waitFor(() => expect(started).toHaveBeenCalledOnce())
+  expect(started.mock.calls[0][0]).toMatchObject({
+    attachments: ['episode-file'],
+    selection: { image: 29, video: 18, mode: 'manual' },
+    episode_plan: { fingerprint: 'script-revision', episodes: [{ id: '42:2' }] },
+  })
+})
+
+it('saves configuration without consuming the unsent requirements or starting production', async () => {
+  const started = vi.fn()
+  server.use(
+    http.post('*/agent-studio/api/attachments', () =>
+      HttpResponse.json({ id: 'episode-file', asset_id: 42, type: 'prompt', characters: 40 }),
+    ),
+    http.post('*/agent-studio/api/episodes/preview', () =>
+      HttpResponse.json({
+        fingerprint: 'script-revision',
+        range_specified: false,
+        notice: '请选集数',
+        episodes: [1, 2].map((n) => ({
+          id: `42:${n}`,
+          number: n,
+          title: `第${n}集`,
+          file_name: 'episodes.txt',
+          characters: 20,
+        })),
+      }),
+    ),
+    http.get('*/agent-studio/api/runs/saved', () =>
+      HttpResponse.json(
+        snapshot({
+          id: 'saved',
+          selection: {
+            image: 29,
+            video: 18,
+            mode: 'manual',
+            media_allowed: false,
+            episode_models: { '42:2': { title: '第2集', image: 29, video: 18 } },
+          },
+        }),
+      ),
+    ),
+    http.get('*/agent-studio/api/runs/saved/media-retries', () => HttpResponse.json({ items: [] })),
+    http.post('*/agent-studio/api/runs', async ({ request }) => {
+      started(await request.json())
+      return HttpResponse.json({ id: 'saved', configuration_only: true })
+    }),
+  )
+  const { container } = render(<DeepAgentStudio />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new NodeFile(['Episode 1\nline\nEpisode 2\nline'], 'episodes.txt')] },
+  })
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: '只讨论风格，先别制作' } })
+  await screen.findByText('已识别 2 集 · 已选 0 集')
+  expect(started).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await screen.findByRole('checkbox', { name: '选择 第2集' })
+  expect(started).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('checkbox', { name: '选择 第2集' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
+  await waitFor(() => expect(started).toHaveBeenCalledOnce())
+  expect(screen.getByRole('textbox')).toHaveValue('只讨论风格，先别制作')
+  expect(started.mock.calls[0][0].start_production).toBeUndefined()
   expect(started.mock.calls[0][0]).toMatchObject({
     attachments: ['episode-file'],
     selection: { image: 29, video: 18, mode: 'manual' },
