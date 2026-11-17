@@ -16,15 +16,18 @@ vi.mock('@/api/canvasShare', () => ({
   fetchAllPublicCanvasElements: vi.fn(),
 }))
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ nodes, edges, nodeTypes }: any) => (
+  ReactFlow: ({ nodes, edges, nodeTypes, children }: any) => (
     <div aria-label="共享画布" data-edge-count={edges.length}>
       {nodes.map((node: any) => createElement(nodeTypes[node.type], { key: node.id, id: node.id, data: node.data }))}
+      {children}
     </div>
   ),
   Background: () => null,
-  Controls: () => null,
   Handle: ({ id }: { id: string }) => <span data-testid={`handle-${id}`} />,
   Position: { Left: 'left', Right: 'right' },
+  useReactFlow: () => ({ fitView: vi.fn(), zoomIn: vi.fn(), zoomOut: vi.fn(), zoomTo: vi.fn() }),
+  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
+    selector({ transform: [0, 0, 1] }),
 }))
 
 const node = (id: string, data: Record<string, unknown>) => ({

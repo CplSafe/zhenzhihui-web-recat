@@ -24,7 +24,7 @@ test('创作入口的视频模型保持后台顺序', async ({ page }, testInfo)
   expectNoUnexpectedApi(api)
 })
 
-test('画布分享入口隐藏时不请求分享接口', async ({ page }) => {
+test('画布分享入口在点击前不请求分享接口', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
   await page.route('**/api/v1/canvases/125**', (route) =>
@@ -35,13 +35,13 @@ test('画布分享入口隐藏时不请求分享接口', async ({ page }) => {
     }),
   )
   let shareRequests = 0
-  await page.route('**/api/v1/canvases/125/share?**', (route) => {
+  await page.route(/\/api\/v1\/canvases\/125\/share(?:\/activity)?(?=\?|$)/, (route) => {
     shareRequests++
     return route.abort()
   })
   await page.goto('/canvas/125')
   await expect(page.getByText('点击下方「+」创建新节点')).toBeVisible()
-  await expect(page.getByRole('button', { name: '分享这块画布' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '分享这块画布' })).toBeVisible()
   expect(shareRequests).toBe(0)
   expectNoUnexpectedApi(api)
 })

@@ -8,12 +8,14 @@ import styles from './CanvasStoryboard.module.css'
 export default function CanvasStoryboardModal({
   items,
   disabled,
+  readOnly,
   onChange,
   onClose,
 }: {
   items: CanvasStoryboardItem[]
   disabled?: boolean
-  onChange: (items: CanvasStoryboardItem[]) => void
+  readOnly?: boolean
+  onChange?: (items: CanvasStoryboardItem[]) => void
   onClose: () => void
 }) {
   const shots = useRef(new Map<number, HTMLDivElement>())
@@ -32,9 +34,9 @@ export default function CanvasStoryboardModal({
       onCancel={onClose}
       footer={
         <div className={styles.footer}>
-          <span>修改即时同步到画布</span>
+          {!readOnly && <span>修改即时同步到画布</span>}
           <button type="button" onClick={onClose}>
-            完成
+            {readOnly ? '关闭' : '完成'}
           </button>
         </div>
       }
@@ -74,8 +76,8 @@ export default function CanvasStoryboardModal({
               <CanvasStoryboardShot
                 item={item}
                 index={index}
-                disabled={disabled}
-                onChange={(prompt) => onChange(items.map((shot, i) => (i === index ? { ...shot, prompt } : shot)))}
+                disabled={disabled || readOnly}
+                onChange={(prompt) => onChange?.(items.map((shot, i) => (i === index ? { ...shot, prompt } : shot)))}
               />
             </div>
           ))}

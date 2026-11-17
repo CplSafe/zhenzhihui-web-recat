@@ -37,7 +37,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('region', { name: '开始创作' })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath(`empty-${width}.png`) })
     if (width < 760) await page.getByRole('button', { name: '画布操作' }).click()
-    await expect(page.getByRole('button', { name: '分享这块画布' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '分享这块画布' })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`actions-${width}.png`) })
     if (width < 760) await page.getByRole('button', { name: '画布操作' }).click()
     await page.reload()

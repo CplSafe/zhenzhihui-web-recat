@@ -79,7 +79,6 @@ test('选中视频节点时自动播放，取消选择后暂停', async ({ page 
   await page.goto('/canvas/130')
   const node = page.locator('.react-flow__node[data-id="hover-video"]')
   const video = node.locator('video')
-  const videoWrap = node.locator('.canvas-node-video-wrap')
   const secondNode = page.locator('.react-flow__node[data-id="second-video"]')
   const secondVideo = secondNode.locator('video')
   await expect(video).toBeVisible()

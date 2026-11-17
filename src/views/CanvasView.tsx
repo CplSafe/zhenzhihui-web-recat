@@ -1,3 +1,12 @@
+import CanvasNodeVideoBar from '@/components/canvas/CanvasNodeVideoBar'
+import {
+  CanvasNodeFrame,
+  CanvasNodeHeader,
+  CanvasNodeBody,
+  CanvasNodeImage,
+  CanvasNodePrompt,
+  getTypeIcon,
+} from '@/components/canvas/CanvasNodeFrame'
 import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
 import {
@@ -220,6 +229,7 @@ import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import {
   captureVideoFrameFromUrl,
   captureVideoFrameWithRetry,
+  primeVideoFirstFrame,
   type VideoFramePosition,
 } from '@/utils/videoFrameCapture'
 import {
@@ -338,10 +348,28 @@ import './CanvasView.css'
 const CanvasVideoDetailsDrawer = lazy(() => import('@/components/canvas/CanvasVideoDetailsDrawer'))
 const CanvasImageTools = lazy(() => import('@/components/canvas/CanvasImageTools'))
 const CanvasImageCropModal = lazy(() => import('@/components/canvas/CanvasImageCropModal'))
+const CanvasStandaloneImageCropModal = lazy(() => import('@/components/canvas/CanvasStandaloneImageCropModal'))
 const CanvasHdWorkspace = lazy(() => import('@/components/canvas/CanvasUpscale'))
 
 /** 节点级生成历史最多保留的条数：够回看最近几版，又不至于把画布元素 payload 撑大。 */
 const CANVAS_RESULT_HISTORY_CAP = 12
+
+type StandaloneCropRequest = {
+  canvasBinding: string
+  nodeId: string
+  assetId: number
+  assetWorkspaceId: number
+  sourceUrl: string
+  title: string
+}
+
+function imageNodeDisplayRatio(width: number, height: number): string {
+  const naturalRatio = naturalImageRatio(width, height)
+  const [ratioWidth, ratioHeight] = naturalRatio.split(':').map(Number)
+  const ratio = ratioWidth / ratioHeight
+  // 卡片展示限制与素材像素尺寸独立，避免极端比例撑开画布。
+  return ratio > 2.4 ? '12:5' : ratio < 1 / 2.4 ? '5:12' : naturalRatio
+}
 
 /** 节点素材回显地址归一化：blob:（本地上传的会话级临时地址）或缺失但 assetId 存在时，用同源流式地址重建。 */
 export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, workspaceId: number): string {
@@ -505,55 +533,6 @@ function captureVideoPoster(file: File): Promise<string> {
 }
 
 /** 类型小图标（头部用，12×12） */
-function getTypeIcon(kind: string) {
-  if (kind === 'image') {
-    return (
-      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-        <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" />
-        <circle cx="5" cy="5" r="1.2" fill="currentColor" />
-        <path
-          d="M1 10l3.5-3.5 2.5 2.5 2-2L13 10"
-          stroke="currentColor"
-          strokeWidth="1.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    )
-  }
-  if (kind === 'video') {
-    return (
-      <svg width="12" height="12" viewBox="0 0 48 48" fill="none">
-        <path
-          fillRule="evenodd"
-          clipRule="evenodd"
-          d="M31.8 3C33.7 3 35.3 3 36.6 3.1c1.3.1 2.4.3 3.5.9 1.7.8 3 2.2 3.9 3.9.6 1 .8 2.2.9 3.5.1 1.3.1 2.9.1 4.8v15.6c0 2-.1 3.5-.1 4.8-.1 1.3-.3 2.4-.9 3.5a8 8 0 01-3.9 3.9c-1 .6-2.2.8-3.5.9-1.3.1-2.8.1-4.8.1H16.2c-2 0-3.5 0-4.8-.1-1.3-.1-2.4-.3-3.5-.9a8 8 0 01-3.9-3.9c-.6-1-.8-2.2-.9-3.5C3 33.5 3 32 3 30V16.2c0-2 0-3.5.1-4.8.1-1.3.3-2.4.9-3.5a8 8 0 013.9-3.9c1-.6 2.2-.8 3.5-.9C12.7 3 14.3 3 16.2 3h15.6zM16.2 7c-2 0-3.3 0-4.4.1-1 .1-1.6.3-2 .5a4 4 0 00-2.2 2.2c-.2.4-.3 1-.4 2-.1 1.1-.1 2.5-.1 4.4v15.6c0 2 0 3.3.1 4.4.1 1 .3 1.6.5 2a4 4 0 002.2 2.2c.4.2 1 .3 2 .4 1.1.1 2.5.1 4.4.1h15.6c2 0 3.3 0 4.4-.1 1-.1 1.6-.3 2-.5a4 4 0 002.2-2.2c.2-.4.3-1 .4-2 .1-1.1.1-2.5.1-4.4V16.2c0-2 0-3.3-.1-4.4-.1-1-.3-1.6-.5-2a4 4 0 00-2.2-2.2c-.4-.2-1-.3-2-.4-1.1-.1-2.5-.1-4.4-.1H16.2zm2.4 12.6c0-1.7 1.9-2.7 3.4-1.8l7.8 4.4c1.4.8 1.4 2.8 0 3.6l-7.8 4.4c-1.5.8-3.4-.2-3.4-1.8v-8.8z"
-          fill="currentColor"
-        />
-      </svg>
-    )
-  }
-  if (kind === 'timeline') {
-    // 胶片格：时间线节点此前没有自己的图标，会掉进下面的 text 分支显示成一支笔，
-    // 和「文本」节点撞脸。
-    return (
-      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-        <rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M4.2 2.5v9M9.8 2.5v9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-      </svg>
-    )
-  }
-  // text
-  return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-      <path
-        d="M9.7 10.3c.3 0 .6.2.6.6 0 .3-.2.6-.6.6H2c-.3 0-.6-.3-.6-.6 0-.3.3-.6.6-.6h7.7zM7.8 6.4c.3 0 .6.3.6.6 0 .3-.3.6-.6.6H2c-.3 0-.6-.3-.6-.6 0-.3.3-.6.6-.6h5.8zm4.2-3.8c.3 0 .5.3.5.6s-.2.6-.5.6H2c-.3 0-.6-.3-.6-.6s.3-.6.6-.6h9.9z"
-        fill="currentColor"
-      />
-    </svg>
-  )
-}
-
 /** 类型大占位图标（主体用） */
 /**
  * 合成在浏览器本地完成（见 utils/videoConcat）：不解码不重编码，画质与源片一致。
@@ -1516,15 +1495,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
    * 促使浏览器取回并绘制第一帧——从文件头下载，不依赖源支持 Range。
    */
   const primeVideoPosterFrame = (el: HTMLVideoElement) => {
-    if (nodePosterUrl || posterCaptureDoneRef.current) return
+    if (nodePosterUrl || posterCaptureDoneRef.current || el.readyState >= 2) return
     // 已有明确落点的 seek（片段起点/断点续看）自己就会绘出画面，不再多推一次
     if (Math.max(0, Number((data as any).clipInSec) || 0) > 0 || pendingSeekRef.current > 0) return
-    if (el.readyState >= 2 || el.currentTime > 0) return
-    try {
-      el.currentTime = 0.01
-    } catch {
-      /* 元数据未完全就绪时浏览器稍后自行处理 */
-    }
+    primeVideoFirstFrame(el)
   }
 
   /** 首帧数据就绪后抓一张小图交给视图层：本次会话立即显示，并上传素材中心供跨会话回显。 */
@@ -1887,47 +1861,39 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   )
 
   return (
-    <div
-      className={`canvas-default-node${kind === 'text' ? ' is-text' : ''}${kind === 'video' ? ' is-video' : ''}${kind === 'image' ? ' is-image' : ''}${kind === 'timeline' ? ' is-timeline' : ''}${(kind === 'image' || kind === 'video') && !mediaUrl ? ' is-empty-media' : ''}${data.hd ? ' is-hd-result' : ''}${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
-      // 节点内文字和控件随画布等比例缩放；长文本通过展开窗口阅读和编辑。
-      style={{ '--canvas-readable-text-scale': 1, '--canvas-header-text-scale': canvasHeaderScale } as CSSProperties}
+    <CanvasNodeFrame
+      kind={kind}
+      headerScale={canvasHeaderScale}
+      emptyMedia={(kind === 'image' || kind === 'video') && !mediaUrl}
+      highDefinition={Boolean(data.hd)}
+      imageGroup={imageResultIds.length > 1}
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
       onWheel={onNodeWheel}
     >
-      {/*
-       * 头部：类型图标 + 名称（双击改名），节点外单行展示，完整名称通过悬停提示查看。
-       *
-       * nodrag nopan 缺一不可：没有 nodrag，在标题上按下拖选文字会变成拖动整个节点；
-       * 没有 nopan，双击会穿到 React Flow 的 onNodeDoubleClick——时间线节点因此
-       * 在改名的同时弹出剪辑弹窗。React Flow 的手势过滤只认这两个类名（见下方视频区注释）。
-       */}
-      <div
-        className={`canvas-node-header nopan${kind === 'audio' ? '' : ' nodrag'}`}
+      <CanvasNodeHeader
+        kind={kind}
         title={headerTitle}
         onPointerDown={(event) => {
           if (kind === 'audio' && event.target instanceof HTMLInputElement) event.stopPropagation()
         }}
       >
-        <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
-        <span className="canvas-node-header__label-wrap" onDoubleClick={(event) => event.stopPropagation()}>
-          <InlineEdit
-            className="canvas-node-header__label"
-            value={headerTitle}
-            maxLength={CANVAS_TITLE_MAX_LENGTH}
-            placeholder={getCanvasKindLabel(kind)}
-            // 标题是提示词摘要，两行放不下时悬停要能看到完整提示词，而不是只看到「双击修改」
-            title={headerTooltip}
-            openSignal={renamingNodeId === id}
-            onEditingEnd={onRenamingDone}
-            onCommit={(next) => {
-              // 改回默认名等同于「没起名」：提交空串让上层删掉 title 字段，
-              // 之后标题继续跟着内容走。这里必须比 derivedTitle，不能比 headerTitle。
-              onRenameNode?.(id, next.trim() === derivedTitle.trim() ? '' : next)
-            }}
-          />
-        </span>
-      </div>
+        <InlineEdit
+          className="canvas-node-header__label"
+          value={headerTitle}
+          maxLength={CANVAS_TITLE_MAX_LENGTH}
+          placeholder={getCanvasKindLabel(kind)}
+          // 标题是提示词摘要，两行放不下时悬停要能看到完整提示词，而不是只看到「双击修改」
+          title={headerTooltip}
+          openSignal={renamingNodeId === id}
+          onEditingEnd={onRenamingDone}
+          onCommit={(next) => {
+            // 改回默认名等同于「没起名」：提交空串让上层删掉 title 字段，
+            // 之后标题继续跟着内容走。这里必须比 derivedTitle，不能比 headerTitle。
+            onRenameNode?.(id, next.trim() === derivedTitle.trim() ? '' : next)
+          }}
+        />
+      </CanvasNodeHeader>
 
       {/*
        * 时间线节点的「添加视频 / 精修 / 合成」仍留在节点上：
@@ -1954,7 +1920,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       )}
 
       {/* 主体：文本节点可编辑；图片/视频显示素材内容或占位图标 */}
-      <div className="canvas-node-body" onDoubleClick={handleDoubleClick}>
+      <CanvasNodeBody onDoubleClick={handleDoubleClick}>
         {(kind === 'image' || kind === 'video') &&
           ['approved', 'rejected', 'pending', 'unknown'].includes(String(data.seedanceModerationStatus || '')) && (
             <span
@@ -2037,9 +2003,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               }}
             />
           ) : (
-            <div className={`canvas-node-prompt${textContent.trim() ? '' : ' is-placeholder'}`}>
-              {structuredText.text || placeholder}
-            </div>
+            <CanvasNodePrompt placeholder={!textContent.trim()}>{structuredText.text || placeholder}</CanvasNodePrompt>
           )
         ) : kind === 'video' && mediaUrl ? (
           <div
@@ -2235,39 +2199,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 setPlaying(false)
               }}
             />
-            <div
-              className="canvas-node-video-bar nodrag nopan"
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => event.stopPropagation()}
+            <CanvasNodeVideoBar
+              playing={playing}
+              time={`${formatVideoTimeLabel(videoCurrentSec)} / ${videoDurationLabel || '--:--'}`}
+              onToggle={toggleVideoPlay}
+              onExpand={openVideoPreview}
             >
-              {!playing ? (
-                <button
-                  type="button"
-                  className="canvas-node-play-btn nodrag nopan"
-                  onClick={toggleVideoPlay}
-                  aria-label="播放视频"
-                >
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-                    <path d="M8 5.14v13.72a1 1 0 0 0 1.52.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
-                  </svg>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="canvas-node-pause-btn nodrag nopan"
-                  onClick={toggleVideoPlay}
-                  aria-label="暂停视频"
-                >
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-                    <rect x="6" y="5" width="4" height="14" rx="1.2" />
-                    <rect x="14" y="5" width="4" height="14" rx="1.2" />
-                  </svg>
-                </button>
-              )}
-              <span className="canvas-node-video-time">
-                {formatVideoTimeLabel(videoCurrentSec)} / {videoDurationLabel || '--:--'}
-              </span>
               {videoPreparing ? (
                 <span className="canvas-node-video-hint" role="status">
                   <span className="canvas-video-buffering" aria-label="缓冲中" title="缓冲中" />{' '}
@@ -2325,32 +2262,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                   <span className="canvas-node-video-track__thumb" />
                 </div>
               </div>
-              <button
-                type="button"
-                className="canvas-video-expand nodrag nopan"
-                aria-label="放大视频"
-                title="放大视频"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  openVideoPreview()
-                }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="18"
-                  height="18"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
-                </svg>
-              </button>
-            </div>
+            </CanvasNodeVideoBar>
           </div>
         ) : kind === 'image' && imageResultIds.length > 1 ? (
           <CanvasGeneratedImageGroup
@@ -2367,15 +2279,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             onPrimaryLoad={(width, height) => onImageNaturalSize?.(id, width, height)}
           />
         ) : kind === 'image' && mediaUrl ? (
-          <img
-            /*
-             * nopan 的用途与上方视频画面一致：让双击放大查看时 React Flow 放行，
-             * 不被 zoomOnDoubleClick 当成「放大一级画布」（详见视频区注释）。
-             */
-            className="canvas-node-media nopan"
+          <CanvasNodeImage
             src={mediaUrl}
             alt={kind}
-            loading="lazy"
             onLoad={(event) => {
               const image = event.currentTarget
               onImageNaturalSize?.(id, image.naturalWidth, image.naturalHeight)
@@ -2417,7 +2323,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         ) : (
           getTypePlaceholder(kind)
         )}
-      </div>
+      </CanvasNodeBody>
 
       {taskFailed && kind === 'video' && mediaUrl && !connectionError ? (
         <div className="canvas-video-previous-failure nodrag nopan" role="alert">
@@ -2583,7 +2489,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       >
         <HandleIcon nodeId={id} side="right" visible={rightVisible} />
       </Handle>
-    </div>
+    </CanvasNodeFrame>
   )
 }
 
@@ -2750,11 +2656,21 @@ function CanvasInner() {
     () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
     [currentUserId, workspaceId],
   )
-  const showCanvasDirector = import.meta.env.VITE_CANVAS_DIRECTOR_ENABLED !== 'false'
-  const showCanvasShare: boolean = false
-  const directorBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const canvasBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const [standaloneCropRequest, setStandaloneCropRequest] = useState<StandaloneCropRequest | null>(null)
+  const standaloneCrop = standaloneCropRequest?.canvasBinding === canvasBindingKey ? standaloneCropRequest : null
+  const activeStandaloneCropRef = useRef(standaloneCrop)
+  activeStandaloneCropRef.current = standaloneCrop
+  useEffect(() => {
+    setStandaloneCropRequest(null)
+  }, [canvasBindingKey])
+  const directorAvailable =
+    import.meta.env.VITE_CANVAS_DIRECTOR_ENABLED !== 'false' &&
+    Boolean(currentUserId) &&
+    workspaceId > 0 &&
+    canvasId > 0
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
-  const directorOpen = showCanvasDirector && openDirectorBinding === directorBindingKey
+  const directorOpen = directorAvailable && openDirectorBinding === canvasBindingKey
   const [directorReference, setDirectorReference] = useState<{ binding: string; reference: CanvasReference }>()
   const requestDirectorSyncRef = useRef<() => void>(() => {})
   const onDirectorCanvasChange = useCallback(
@@ -3037,7 +2953,7 @@ function CanvasInner() {
   // 是否有文件正拖到画布上方（显示拖放提示遮罩）
   const [fileDragActive, setFileDragActive] = useState(false)
   // dragenter/dragleave 会随子元素冒泡反复触发，用计数抵消，避免提示闪烁
-  const fileDragDepthRef = useRef(0)
+  const fileDragTargetRef = useRef<Element | null>(null)
   // 最近一次鼠标位置（视口坐标）：粘贴图片时作为落点
   const pointerRef = useRef<{ x: number; y: number } | null>(null)
   // 撤销/重做历史栈：存储 nodes/edges + 文本内容快照
@@ -6573,12 +6489,29 @@ function CanvasInner() {
     return () => window.removeEventListener('paste', onPaste, true)
   }, [drawerPanel, isPickingRef, importLocalMedia, acceptsCanvasShortcut, selectedNode, selectedNodeIds.length])
 
-  const handleFileDragEnter = useCallback((event: React.DragEvent) => {
-    if (!hasFileDrag(event.dataTransfer)) return
-    event.preventDefault()
-    fileDragDepthRef.current += 1
-    setFileDragActive(true)
+  const clearFileDrag = useCallback(() => {
+    if (!fileDragTargetRef.current) return
+    fileDragTargetRef.current = null
+    setFileDragActive(false)
   }, [])
+
+  useEffect(() => {
+    window.addEventListener('blur', clearFileDrag)
+    return () => window.removeEventListener('blur', clearFileDrag)
+  }, [clearFileDrag])
+
+  const trackFileDrag = useCallback(
+    (event: React.DragEvent) => {
+      if (!hasFileDrag(event.dataTransfer) || !(event.target instanceof Element)) return
+      if (!event.currentTarget.contains(event.target) || event.target.closest('.canvas-director-area')) {
+        clearFileDrag()
+        return
+      }
+      if (!fileDragTargetRef.current) setFileDragActive(true)
+      fileDragTargetRef.current = event.target
+    },
+    [clearFileDrag],
+  )
 
   const handleFileDragOver = useCallback((event: React.DragEvent) => {
     if (!hasFileDrag(event.dataTransfer)) return
@@ -6587,18 +6520,18 @@ function CanvasInner() {
     event.dataTransfer.dropEffect = 'copy'
   }, [])
 
-  const handleFileDragLeave = useCallback((event: React.DragEvent) => {
-    if (!hasFileDrag(event.dataTransfer)) return
-    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1)
-    if (fileDragDepthRef.current === 0) setFileDragActive(false)
-  }, [])
+  const handleFileDragLeave = useCallback(
+    (event: React.DragEvent) => {
+      // 浏览器先进入新目标再离开旧目标。只结束当前目标对应的提示。
+      if (event.target === fileDragTargetRef.current) clearFileDrag()
+    },
+    [clearFileDrag],
+  )
 
   const handleFileDrop = useCallback(
     (event: React.DragEvent) => {
       if (!hasFileDrag(event.dataTransfer)) return
       event.preventDefault()
-      fileDragDepthRef.current = 0
-      setFileDragActive(false)
       // 参考选择模式下画布正在等待点选来源节点，此时不接受导入
       if (isPickingRef) return
       const { images, videos, audios, unsupported } = extractMediaFiles(event.dataTransfer)
@@ -8660,14 +8593,96 @@ function CanvasInner() {
     [setNodes, workspaceId],
   )
 
+  const openStandaloneCrop = (nodeId: string) => {
+    const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+    if (!node || node.data.kind !== 'image' || node.data.uploading) return
+    const assetId = Number(node.data.assetId)
+    const assetWorkspaceId = Number(node.data.assetWorkspaceId || workspaceId)
+    const sourceUrl = assetStreamUrl(assetId, assetWorkspaceId)
+    if (!sourceUrl || !workspaceId) {
+      showToast('请先将原图保存为素材，再进行裁剪', 'error')
+      return
+    }
+    setStandaloneCropRequest({
+      canvasBinding: canvasBindingKey,
+      nodeId,
+      assetId,
+      assetWorkspaceId,
+      sourceUrl,
+      title: String(node.data.title || '图片'),
+    })
+  }
+
+  const saveStandaloneCrop = async (
+    request: StandaloneCropRequest,
+    file: File,
+    width: number,
+    height: number,
+    signal: AbortSignal,
+  ) => {
+    const readSource = () => {
+      signal.throwIfAborted()
+      if (activeStandaloneCropRef.current !== request) throw new Error('画布已切换，请重新打开裁剪')
+      const node = latestRef.current.nodes.find((item) => item.id === request.nodeId)
+      if (
+        !node ||
+        node.data.kind !== 'image' ||
+        node.data.uploading ||
+        Number(node.data.assetId) !== request.assetId ||
+        Number(node.data.assetWorkspaceId || workspaceId) !== request.assetWorkspaceId
+      ) {
+        throw new Error('原图已更换或删除，请重新打开裁剪')
+      }
+      return node
+    }
+
+    readSource()
+    const uploaded = await uploadAssetFile({ workspaceId, file, signal })
+    const sourceNode = readSource()
+    const assetId = Number(uploaded?.asset?.id)
+    if (!Number.isSafeInteger(assetId) || assetId <= 0) throw new Error('裁剪结果上传失败，请重试')
+
+    const ratio = imageNodeDisplayRatio(width, height)
+    const size = canvasImageResultSize({ ratio })
+    const gap = 32
+    const occupied = latestRef.current.nodes.map((node) => ({
+      x: node.position.x,
+      y: node.position.y,
+      width: node.measured?.width || Number(node.style?.width) || 250,
+      height: node.measured?.height || Number(node.style?.height) || 250,
+    }))
+    const sourceWidth = sourceNode.measured?.width || Number(sourceNode.style?.width) || 250
+    const anchor = { x: sourceNode.position.x + sourceWidth + gap, y: sourceNode.position.y }
+    const nextPosition = findFreeNodePosition({ anchor, size, occupied, gap })
+    const overlaps = occupied.some(
+      (rect) =>
+        nextPosition.x < rect.x + rect.width &&
+        nextPosition.x + size.width > rect.x &&
+        nextPosition.y < rect.y + rect.height &&
+        nextPosition.y + size.height > rect.y,
+    )
+    const position = overlaps
+      ? { x: occupied.reduce((right, rect) => Math.max(right, rect.x + rect.width + gap), anchor.x), y: anchor.y }
+      : nextPosition
+
+    appendNewNode('image', position, {
+      ratio,
+      size,
+      extraData: {
+        title: `${request.title} · 裁剪`,
+        assetId,
+        assetWorkspaceId: Number(workspaceId),
+        assetSource: 'upload',
+        resultUrl: assetStreamUrl(assetId, Number(workspaceId)),
+      },
+    })
+    showToast('裁剪结果已添加到画布', 'success')
+  }
+
   /** 图片节点统一按已解码图片的真实比例校准；短边固定，避免原始像素尺寸直接撑大画布。 */
   const handleImageNaturalSize = useCallback(
     (nodeId: string, naturalWidth: number, naturalHeight: number) => {
-      const rawRatio = naturalImageRatio(naturalWidth, naturalHeight)
-      const [ratioWidth, ratioHeight] = rawRatio.split(':').map(Number)
-      const rawValue = ratioWidth / ratioHeight
-      // Match video nodes: preserve ordinary ratios and cap pathological dimensions to a usable canvas footprint.
-      const ratio = rawValue > 2.4 ? '12:5' : rawValue < 1 / 2.4 ? '5:12' : rawRatio
+      const ratio = imageNodeDisplayRatio(naturalWidth, naturalHeight)
       const current = latestRef.current.nodes.find((node) => node.id === nodeId)
       if (!current || (current.data as Record<string, unknown> | undefined)?.kind !== 'image') return
       const size = canvasImageResultSize({ ...current.data, ratio })
@@ -11129,6 +11144,7 @@ function CanvasInner() {
     canvasModalOpen ||
     imageTool ||
     imageCropRequest ||
+    standaloneCrop ||
     settingsOpen ||
     scriptImportOpen ||
     shortcutsOpen ||
@@ -11211,6 +11227,19 @@ function CanvasInner() {
           onModalChange={handleHdModalChange}
         />
       </Suspense>
+      {standaloneCrop && (
+        <Suspense fallback={null}>
+          <CanvasStandaloneImageCropModal
+            sourceUrl={standaloneCrop.sourceUrl}
+            title={standaloneCrop.title}
+            onClose={() => {
+              setStandaloneCropRequest(null)
+              canvasRootRef.current?.focus({ preventScroll: true })
+            }}
+            onSave={(file, width, height, signal) => saveStandaloneCrop(standaloneCrop, file, width, height, signal)}
+          />
+        </Suspense>
+      )}
       {imageCropRequest ? (
         <Suspense fallback={null}>
           <CanvasImageCropModal
@@ -11316,10 +11345,15 @@ function CanvasInner() {
           setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.relatedTarget))
         }
         className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${selectionIsGroup ? ' has-group-selection' : ''}${canvasModalOpen ? ' has-modal' : ''}${spacePanning || panModeEnabled ? ' is-space-panning' : ''}`}
-        onDragEnter={handleFileDragEnter}
+        onDragEnterCapture={trackFileDrag}
+        onDragOverCapture={trackFileDrag}
         onDragOver={handleFileDragOver}
-        onDragLeave={handleFileDragLeave}
+        onDragLeaveCapture={handleFileDragLeave}
+        onDragEndCapture={clearFileDrag}
+        onDropCapture={clearFileDrag}
         onDrop={handleFileDrop}
+        // 有些外部拖放取消后没有结束事件。正常指针操作恢复时也清理提示。
+        onPointerMoveCapture={fileDragActive ? clearFileDrag : undefined}
         /* 偏好「双击空白开菜单」：React Flow 没有 onPaneDoubleClick，在容器上按事件目标判断是否点在空白面上 */
         onDoubleClick={(event) => {
           if (preferences.paneMenuTrigger !== 'dblclick') return
@@ -11334,16 +11368,14 @@ function CanvasInner() {
             {interactionHint.text}
           </div>
         )}
-        {showCanvasDirector && currentUserId && workspaceId > 0 && canvasId > 0 && (
+        {directorAvailable && (
           <CanvasDirectorDock
-            key={directorBindingKey}
+            key={canvasBindingKey}
             workspaceId={workspaceId}
             canvasId={canvasId}
             onCanvasChange={onDirectorCanvasChange}
             opened={directorOpen}
-            canvasReference={
-              directorReference?.binding === directorBindingKey ? directorReference.reference : undefined
-            }
+            canvasReference={directorReference?.binding === canvasBindingKey ? directorReference.reference : undefined}
             onCollapse={() => setOpenDirectorBinding(null)}
           />
         )}
@@ -11386,7 +11418,7 @@ function CanvasInner() {
           onClose={() => setActionsMenuOpen(false)}
           onGuide={() => setGuideRequested((visible) => !visible)}
           onImportScript={() => setScriptImportOpen(true)}
-          onShare={showCanvasShare ? () => setShareOpen(true) : undefined}
+          onShare={() => setShareOpen(true)}
         />
 
         {cloudStatus !== 'loading' &&
@@ -11503,9 +11535,8 @@ function CanvasInner() {
               onOpenHelp={() => setShortcutsOpen(true)}
               directorOpen={directorOpen}
               onToggleDirector={
-                showCanvasDirector && currentUserId && workspaceId > 0 && canvasId > 0
-                  ? () =>
-                      setOpenDirectorBinding((current) => (current === directorBindingKey ? null : directorBindingKey))
+                directorAvailable
+                  ? () => setOpenDirectorBinding((current) => (current === canvasBindingKey ? null : canvasBindingKey))
                   : undefined
               }
             />
@@ -11774,7 +11805,7 @@ function CanvasInner() {
               ) {
                 const reference = canvasReferenceFromNode(node)
                 if (reference) {
-                  setDirectorReference({ binding: directorBindingKey, reference })
+                  setDirectorReference({ binding: canvasBindingKey, reference })
                   setSelectedNode(null)
                   setAddMenu(null)
                   return
@@ -12055,11 +12086,12 @@ function CanvasInner() {
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
 
-        {/* 单选节点操作条：贴在节点上方，收纳改名/上传/截帧/下载/删除 */}
+        {/* 单选节点操作条贴在节点上方。 */}
         {nodeToolbarAnchor &&
           selectedNodeVisible &&
           selectedNode &&
           !imageTool &&
+          !standaloneCrop &&
           !reversePromptTarget &&
           !hdRequest &&
           !hdModalOpen &&
@@ -12086,6 +12118,7 @@ function CanvasInner() {
               onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
               onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
               onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
+              onCrop={() => openStandaloneCrop(selectedNode.id)}
               onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
               imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
               onImageTool={(code) => {

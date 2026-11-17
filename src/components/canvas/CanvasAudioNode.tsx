@@ -19,6 +19,7 @@ export default function CanvasAudioNode({
   workspaceId,
   src,
   selected,
+  readOnly = false,
   onGenerated,
 }: {
   nodeId: string
@@ -26,13 +27,16 @@ export default function CanvasAudioNode({
   workspaceId: number
   src: string
   selected: boolean
+  readOnly?: boolean
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const isEditor = data.audioRole === 'editor'
   // selected 只表示批量选择成员；仅唯一选中时才允许展开编辑面板。
   // 直接订阅 React Flow 的选择状态，涵盖框选、快捷键及整组选中。
-  const hasOtherSelectedNodes = useStore((state) => state.nodes.some((node) => node.selected && node.id !== nodeId))
-  const panelVisible = selected && !hasOtherSelectedNodes
+  const hasOtherSelectedNodes = useStore(
+    (state) => !readOnly && selected && state.nodes.some((node) => node.selected && node.id !== nodeId),
+  )
+  const panelVisible = !readOnly && selected && !hasOtherSelectedNodes
   const { updateNodeData, getNode, getEdges } = useReactFlow()
   const { showToast } = useToast()
   const settings = normalizeAudioSettings(data.audio)
@@ -73,12 +77,14 @@ export default function CanvasAudioNode({
     return () => observer.disconnect()
   }, [waveformVisible])
   useEffect(() => {
-    const abort = new AbortController()
-    setPeaks([])
     setPlaying(false)
     setCurrentTime(0)
     setMediaDuration(0)
-    setWaveformStatus(src ? (waveformVisible ? '波形加载中' : '') : '上传音频或生成配音')
+  }, [src])
+  useEffect(() => {
+    const abort = new AbortController()
+    setPeaks([])
+    setWaveformStatus(src && waveformVisible ? '波形加载中' : '')
     if (src && waveformVisible)
       void loadAudioWaveform(src, abort.signal)
         .then((values) => {
@@ -116,9 +122,11 @@ export default function CanvasAudioNode({
   const elapsed = Math.min(visibleDuration, Math.max(0, currentTime - playbackStart))
   const progress = visibleDuration > 0 ? elapsed / visibleDuration : 0
   const activeBars = useMemo(() => Math.round(progress * peaks.length), [progress, peaks.length])
-  const isGenerating = ['preparing', 'processing', 'pending', 'queued', 'running', 'result_pending'].includes(
-    String(data.taskStatus || ''),
-  )
+  const isGenerating =
+    !readOnly &&
+    ['preparing', 'processing', 'pending', 'queued', 'running', 'result_pending'].includes(
+      String(data.taskStatus || ''),
+    )
   const saveEditedAudio = async () => {
     if (savingEdited || !(Number(data.assetId) > 0) || visibleDuration <= 0) return
     setSavingEdited(true)
@@ -180,7 +188,7 @@ export default function CanvasAudioNode({
     try {
       await audio.play()
     } catch {
-      showToast('音频暂时无法播放，请重新上传或稍后重试', 'error')
+      showToast(readOnly ? '音频暂时无法播放，请稍后重试' : '音频暂时无法播放，请重新上传或稍后重试', 'error')
     }
   }
   const upload = async (file?: File) => {
@@ -241,18 +249,16 @@ export default function CanvasAudioNode({
             ♫
           </span>
           <div className={styles.emptyCopy}>
-            <strong>{isEditor ? '编辑音频' : isGenerating ? '音频生成中' : '创建音频'}</strong>
+            <strong>{readOnly ? '暂无音频' : isEditor ? '编辑音频' : '创建音频'}</strong>
             <span>
-              {isEditor
-                ? '连接音频节点或上传音频'
-                : isGenerating
-                  ? '生成完成后在这里试听'
-                  : '输入描述，选择模型生成声音'}
+              {readOnly ? '此节点暂无可播放的音频' : isEditor ? '连接音频节点或上传音频' : '输入描述，选择模型生成声音'}
             </span>
           </div>
-          <span className={styles.emptyArrow} aria-hidden="true">
-            ↗
-          </span>
+          {!readOnly && (
+            <span className={styles.emptyArrow} aria-hidden="true">
+              ↗
+            </span>
+          )}
         </div>
       ) : (
         <div className={styles.playerCard}>
@@ -276,14 +282,14 @@ export default function CanvasAudioNode({
               ))}
               {waveformStatus && <span className={styles.waveHint}>{waveformStatus}</span>}
             </div>
-            {src && selected && fullDuration > 0 && (
+            {src && !readOnly && selected && fullDuration > 0 && (
               <div className={styles.trimOverlay} aria-hidden="true">
                 <span style={{ width: `${(playbackStart / fullDuration) * 100}%` }} />
                 <span style={{ width: `${Math.max(0, (fullDuration - playbackEnd) / fullDuration) * 100}%` }} />
               </div>
             )}
             <input
-              className={`${styles.progress} nodrag`}
+              className={`${styles.progress} nodrag nopan`}
               type="range"
               aria-label="音频播放进度"
               min={playbackStart}
@@ -294,7 +300,7 @@ export default function CanvasAudioNode({
               onKeyDown={(event) => {
                 if (!src) return
                 const key = event.key.toLowerCase()
-                if (key === 'i' || key === 'o') {
+                if (!readOnly && (key === 'i' || key === 'o')) {
                   event.preventDefault()
                   event.stopPropagation()
                   change({ [key === 'i' ? 'inSec' : 'outSec']: currentTime })
@@ -318,7 +324,7 @@ export default function CanvasAudioNode({
             <div className={styles.timeRow}>
               <span>{formatAudioTime(elapsed)}</span>
               <span>/ {formatAudioTime(visibleDuration)}</span>
-              {src && selected && (
+              {src && !readOnly && selected && (
                 <span className={styles.trimReadout}>
                   选区 {playbackStart.toFixed(1)}–{playbackEnd.toFixed(1)} 秒
                 </span>
@@ -331,11 +337,12 @@ export default function CanvasAudioNode({
               ref={player}
               src={src}
               preload="metadata"
+              aria-label={readOnly ? '音频试听' : undefined}
               onLoadedMetadata={(e) => {
                 const duration = Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0
                 setMediaDuration(duration)
                 setCurrentTime(settings.inSec)
-                if (!settings.durationSec) change({ durationSec: duration, outSec: duration })
+                if (!readOnly && !settings.durationSec) change({ durationSec: duration, outSec: duration })
               }}
               onPlay={(e) => {
                 setPlaying(true)
@@ -355,229 +362,231 @@ export default function CanvasAudioNode({
           )}
         </div>
       )}
-      <section
-        ref={panelElement}
-        className={`${styles.settings} canvas-audio-panel nodrag nopan ${isEditor ? styles.editorPanel : ''}`}
-        hidden={!panelVisible}
-        aria-label={isEditor ? '音频编辑' : '音频参数'}
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
-      >
-        <div className={styles.panelHeader}>
-          <span className={styles.panelIcon} aria-hidden="true">
-            ♫
-          </span>
-          <div>
-            <strong>{isEditor ? '编辑音频' : src ? '调整音频' : '创建音频'}</strong>
-            <p>
-              {isEditor
-                ? '裁剪、调节音量与淡入淡出，完成后可连接视频或导出'
-                : '描述你想要的声音，生成后可直接在画布中试听和连接'}
-            </p>
-          </div>
-        </div>
-        {!isEditor &&
-          Array.isArray(data.resultHistory) &&
-          data.resultHistory.some((entry: any) => entry.kind === 'audio') && (
-            <details className="canvas-audio-history">
-              <summary>生成历史</summary>
-              <select
-                aria-label="音频生成历史"
-                disabled={['processing', 'pending', 'queued', 'running', 'result_pending'].includes(data.taskStatus)}
-                value={String(data.assetId || '')}
-                onChange={(event) => {
-                  const assetId = Number(event.target.value)
-                  if (!(assetId > 0)) return
-                  updateNodeData(nodeId, {
-                    assetId,
-                    resultUrl: assetStreamUrl(assetId, workspaceId),
-                    assetWorkspaceId: workspaceId,
-                    assetSource: 'generated',
-                    audio: normalizeAudioSettings({
-                      ...settings,
-                      durationSec: 0,
-                      inSec: 0,
-                      outSec: 0,
-                      origin: 'generated',
-                    }),
-                  })
-                }}
-              >
-                <option value="">选择历史版本</option>
-                {[...data.resultHistory]
-                  .filter((entry: any) => entry.kind === 'audio')
-                  .reverse()
-                  .map((entry: any, index: number) => (
-                    <option key={`${entry.assetId}-${entry.createdAt}-${index}`} value={String(entry.assetId)}>
-                      {new Date(entry.createdAt).toLocaleString()} · {entry.prompt || '音频版本'}
-                    </option>
-                  ))}
-              </select>
-            </details>
-          )}
-        {!isEditor && (
-          <CanvasAudioGenerator
-            nodeId={nodeId}
-            data={data}
-            workspaceId={workspaceId}
-            active={panelVisible}
-            onGenerated={onGenerated}
-          />
-        )}
-        {isEditor && (
-          <button
-            type="button"
-            onClick={() => {
-              const edge = getEdges().find((item) => item.target === nodeId)
-              const source = edge ? getNode(edge.source) : undefined
-              if (!source || source.data?.kind !== 'audio' || !(Number(source.data.assetId) > 0)) {
-                showToast('请先连接一个已有生成结果或上传素材的音频节点', 'info')
-                return
-              }
-              const durationSec = Number((source.data.audio as any)?.durationSec || 0)
-              const sourceWorkspaceId = Number(source.data.assetWorkspaceId || workspaceId)
-              updateNodeData(nodeId, {
-                sourceAudioNodeId: source.id,
-                assetId: source.data.assetId,
-                assetWorkspaceId: sourceWorkspaceId,
-                resultUrl: assetStreamUrl(Number(source.data.assetId), sourceWorkspaceId),
-                audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec }),
-              })
-            }}
-          >
-            使用源节点最新音频
-          </button>
-        )}
-        {isEditor && src && (
-          <p className={styles.routingHint}>
-            下一步：连接到视频剪辑节点可将声音混入成片；连接到视频生成节点仅作为模型参考，需该模型支持音频输入。
-          </p>
-        )}
-        {isEditor && (
-          <div className={styles.editSettings}>
-            <div className={styles.editorToolbar}>
-              <div>
-                <strong>剪辑设置</strong>
-                <span>
-                  当前片段 {visibleDuration.toFixed(1)} 秒 / 原音频 {fullDuration.toFixed(1)} 秒
-                </span>
-              </div>
-              {src && (
-                <button
-                  type="button"
-                  disabled={settings.inSec === 0 && settings.outSec === fullDuration}
-                  onClick={() => change({ inSec: 0, outSec: fullDuration })}
-                >
-                  重置裁剪
-                </button>
-              )}
+      {!readOnly && (
+        <section
+          ref={panelElement}
+          className={`${styles.settings} canvas-audio-panel nodrag nopan ${isEditor ? styles.editorPanel : ''}`}
+          hidden={!panelVisible}
+          aria-label={isEditor ? '音频编辑' : '音频参数'}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <div className={styles.panelHeader}>
+            <span className={styles.panelIcon} aria-hidden="true">
+              ♫
+            </span>
+            <div>
+              <strong>{isEditor ? '编辑音频' : src ? '调整音频' : '创建音频'}</strong>
+              <p>
+                {isEditor
+                  ? '裁剪、调节音量与淡入淡出，完成后可连接视频或导出'
+                  : '描述你想要的声音，生成后可直接在画布中试听和连接'}
+              </p>
             </div>
-            <div className={styles.settingsBody}>
-              <label className={styles.upload}>
-                {busy ? '正在上传…' : src ? '替换音频' : '上传 MP3 / WAV / M4A / AAC'}
-                <input
-                  type="file"
-                  accept="audio/*,.mp3,.wav,.m4a,.aac"
-                  disabled={busy}
-                  onChange={(e) => {
-                    void upload(e.target.files?.[0])
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-              <label className={styles.editorField}>
-                用途
+          </div>
+          {!isEditor &&
+            Array.isArray(data.resultHistory) &&
+            data.resultHistory.some((entry: any) => entry.kind === 'audio') && (
+              <details className="canvas-audio-history">
+                <summary>生成历史</summary>
                 <select
-                  aria-label="音频用途"
-                  value={settings.lane}
-                  onChange={(e) => change({ lane: e.target.value, loop: e.target.value === 'bgm' })}
+                  aria-label="音频生成历史"
+                  disabled={['processing', 'pending', 'queued', 'running', 'result_pending'].includes(data.taskStatus)}
+                  value={String(data.assetId || '')}
+                  onChange={(event) => {
+                    const assetId = Number(event.target.value)
+                    if (!(assetId > 0)) return
+                    updateNodeData(nodeId, {
+                      assetId,
+                      resultUrl: assetStreamUrl(assetId, workspaceId),
+                      assetWorkspaceId: workspaceId,
+                      assetSource: 'generated',
+                      audio: normalizeAudioSettings({
+                        ...settings,
+                        durationSec: 0,
+                        inSec: 0,
+                        outSec: 0,
+                        origin: 'generated',
+                      }),
+                    })
+                  }}
                 >
-                  <option value="voice">人声 / 配音</option>
-                  <option value="bgm">背景音乐</option>
-                  <option value="sfx">音效</option>
+                  <option value="">选择历史版本</option>
+                  {[...data.resultHistory]
+                    .filter((entry: any) => entry.kind === 'audio')
+                    .reverse()
+                    .map((entry: any, index: number) => (
+                      <option key={`${entry.assetId}-${entry.createdAt}-${index}`} value={String(entry.assetId)}>
+                        {new Date(entry.createdAt).toLocaleString()} · {entry.prompt || '音频版本'}
+                      </option>
+                    ))}
                 </select>
-              </label>
-              {src && (
-                <>
-                  <div className={styles.editorSectionTitle}>裁剪范围</div>
-                  <div className={styles.pair}>
-                    {(['inSec', 'outSec'] as const).map((key) => (
-                      <label key={key}>
-                        {key === 'inSec' ? '裁剪起点' : '裁剪终点'}
-                        <input
-                          type="number"
-                          min="0"
-                          max={settings.durationSec}
-                          step="0.1"
-                          value={settings[key]}
-                          onChange={(e) => change({ [key]: Number(e.target.value) })}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <div className={styles.editorSectionTitle}>声音效果</div>
-                  <label className={styles.volumeControl}>
-                    <span>
-                      音量 <strong>{Math.round(displayedVolume * 100)}%</strong>
-                    </span>
-                    <input
-                      aria-label="编辑音频音量"
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={displayedVolume}
-                      className="nodrag nopan"
-                      style={{ '--volume-fill': `${displayedVolume * 100}%` } as CSSProperties}
-                      onChange={(e) => {
-                        const volume = Number(e.target.value)
-                        volumeDraftRef.current = volume
-                        setVolumeDraft(volume)
-                        if (player.current) player.current.volume = volume
-                      }}
-                      onPointerUp={commitVolume}
-                      onPointerCancel={commitVolume}
-                      onKeyUp={commitVolume}
-                      onBlur={commitVolume}
-                    />
-                  </label>
-                  <div className={styles.pair}>
-                    {(['fadeInSec', 'fadeOutSec'] as const).map((key) => (
-                      <label key={key}>
-                        {key === 'fadeInSec' ? '淡入（秒）' : '淡出（秒）'}
-                        <input
-                          type="number"
-                          min="0"
-                          max={settings.outSec - settings.inSec}
-                          step="0.1"
-                          value={settings[key]}
-                          onChange={(e) => change({ [key]: Number(e.target.value) })}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <small className={styles.editorSource}>
-                    {settings.origin === 'generated'
-                      ? 'AI 生成音频 · AIGC'
-                      : settings.origin === 'licensed'
-                        ? '已声明授权素材'
-                        : '上传音频 · 商用前请确认授权'}
-                  </small>
-                  <div className={`${styles.editorActions} canvas-audio-editor-actions`}>
-                    <button
-                      type="button"
-                      disabled={savingEdited || visibleDuration <= 0}
-                      onClick={() => void saveEditedAudio()}
-                    >
-                      {savingEdited ? '正在保存…' : '保存为新素材并用于下游'}
-                    </button>
-                  </div>
-                </>
-              )}
+              </details>
+            )}
+          {!isEditor && (
+            <CanvasAudioGenerator
+              nodeId={nodeId}
+              data={data}
+              workspaceId={workspaceId}
+              active={panelVisible}
+              onGenerated={onGenerated}
+            />
+          )}
+          {isEditor && (
+            <button
+              type="button"
+              onClick={() => {
+                const edge = getEdges().find((item) => item.target === nodeId)
+                const source = edge ? getNode(edge.source) : undefined
+                if (!source || source.data?.kind !== 'audio' || !(Number(source.data.assetId) > 0)) {
+                  showToast('请先连接一个已有生成结果或上传素材的音频节点', 'info')
+                  return
+                }
+                const durationSec = Number((source.data.audio as any)?.durationSec || 0)
+                const sourceWorkspaceId = Number(source.data.assetWorkspaceId || workspaceId)
+                updateNodeData(nodeId, {
+                  sourceAudioNodeId: source.id,
+                  assetId: source.data.assetId,
+                  assetWorkspaceId: sourceWorkspaceId,
+                  resultUrl: assetStreamUrl(Number(source.data.assetId), sourceWorkspaceId),
+                  audio: normalizeAudioSettings({ durationSec, inSec: 0, outSec: durationSec }),
+                })
+              }}
+            >
+              使用源节点最新音频
+            </button>
+          )}
+          {isEditor && src && (
+            <p className={styles.routingHint}>
+              下一步：连接到视频剪辑节点可将声音混入成片；连接到视频生成节点仅作为模型参考，需该模型支持音频输入。
+            </p>
+          )}
+          {isEditor && (
+            <div className={styles.editSettings}>
+              <div className={styles.editorToolbar}>
+                <div>
+                  <strong>剪辑设置</strong>
+                  <span>
+                    当前片段 {visibleDuration.toFixed(1)} 秒 / 原音频 {fullDuration.toFixed(1)} 秒
+                  </span>
+                </div>
+                {src && (
+                  <button
+                    type="button"
+                    disabled={settings.inSec === 0 && settings.outSec === fullDuration}
+                    onClick={() => change({ inSec: 0, outSec: fullDuration })}
+                  >
+                    重置裁剪
+                  </button>
+                )}
+              </div>
+              <div className={styles.settingsBody}>
+                <label className={styles.upload}>
+                  {busy ? '正在上传…' : src ? '替换音频' : '上传 MP3 / WAV / M4A / AAC'}
+                  <input
+                    type="file"
+                    accept="audio/*,.mp3,.wav,.m4a,.aac"
+                    disabled={busy}
+                    onChange={(e) => {
+                      void upload(e.target.files?.[0])
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+                <label className={styles.editorField}>
+                  用途
+                  <select
+                    aria-label="音频用途"
+                    value={settings.lane}
+                    onChange={(e) => change({ lane: e.target.value, loop: e.target.value === 'bgm' })}
+                  >
+                    <option value="voice">人声 / 配音</option>
+                    <option value="bgm">背景音乐</option>
+                    <option value="sfx">音效</option>
+                  </select>
+                </label>
+                {src && (
+                  <>
+                    <div className={styles.editorSectionTitle}>裁剪范围</div>
+                    <div className={styles.pair}>
+                      {(['inSec', 'outSec'] as const).map((key) => (
+                        <label key={key}>
+                          {key === 'inSec' ? '裁剪起点' : '裁剪终点'}
+                          <input
+                            type="number"
+                            min="0"
+                            max={settings.durationSec}
+                            step="0.1"
+                            value={settings[key]}
+                            onChange={(e) => change({ [key]: Number(e.target.value) })}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className={styles.editorSectionTitle}>声音效果</div>
+                    <label className={styles.volumeControl}>
+                      <span>
+                        音量 <strong>{Math.round(displayedVolume * 100)}%</strong>
+                      </span>
+                      <input
+                        aria-label="编辑音频音量"
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={displayedVolume}
+                        className="nodrag nopan"
+                        style={{ '--volume-fill': `${displayedVolume * 100}%` } as CSSProperties}
+                        onChange={(e) => {
+                          const volume = Number(e.target.value)
+                          volumeDraftRef.current = volume
+                          setVolumeDraft(volume)
+                          if (player.current) player.current.volume = volume
+                        }}
+                        onPointerUp={commitVolume}
+                        onPointerCancel={commitVolume}
+                        onKeyUp={commitVolume}
+                        onBlur={commitVolume}
+                      />
+                    </label>
+                    <div className={styles.pair}>
+                      {(['fadeInSec', 'fadeOutSec'] as const).map((key) => (
+                        <label key={key}>
+                          {key === 'fadeInSec' ? '淡入（秒）' : '淡出（秒）'}
+                          <input
+                            type="number"
+                            min="0"
+                            max={settings.outSec - settings.inSec}
+                            step="0.1"
+                            value={settings[key]}
+                            onChange={(e) => change({ [key]: Number(e.target.value) })}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <small className={styles.editorSource}>
+                      {settings.origin === 'generated'
+                        ? 'AI 生成音频 · AIGC'
+                        : settings.origin === 'licensed'
+                          ? '已声明授权素材'
+                          : '上传音频 · 商用前请确认授权'}
+                    </small>
+                    <div className={`${styles.editorActions} canvas-audio-editor-actions`}>
+                      <button
+                        type="button"
+                        disabled={savingEdited || visibleDuration <= 0}
+                        onClick={() => void saveEditedAudio()}
+                      >
+                        {savingEdited ? '正在保存…' : '保存为新素材并用于下游'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </section>
+          )}
+        </section>
+      )}
     </div>
   )
 }

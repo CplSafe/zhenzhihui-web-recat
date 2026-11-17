@@ -39,6 +39,7 @@ interface CanvasVideoPreviewModalProps {
   /** 视频信息；有任一字段时在播放器右侧展示信息栏 */
   info?: CanvasVideoPreviewInfo
   showInfo?: boolean
+  readOnly?: boolean
   /**
    * 「截取此帧」（反馈 #7 任意帧截帧）：把当前进度条时刻传给上层，由节点在该时刻取一帧建图片节点。
    * 不传则不显示截帧按钮。
@@ -93,6 +94,7 @@ export default function CanvasVideoPreviewModal({
   startTime = 0,
   info,
   showInfo = true,
+  readOnly = false,
   onCaptureFrame,
   capturing = false,
   onClose,
@@ -232,6 +234,7 @@ export default function CanvasVideoPreviewModal({
             src={src}
             poster={poster || undefined}
             controls
+            controlsList={readOnly ? 'nodownload' : undefined}
             autoPlay
             tabIndex={0}
             aria-label="视频播放器"

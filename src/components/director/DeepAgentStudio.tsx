@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
+import { RequestAbortError } from '@/api/requestTimeout'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
 import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
 import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
@@ -113,7 +114,7 @@ export default function DeepAgentStudio({
   const [showBottom, setShowBottom] = useState(false)
   const composerAnchor = useRef<HTMLDivElement>(null)
   const historyAnchor = useRef<HTMLDivElement>(null)
-  const uploadLock = useRef(false)
+  const uploadLock = useRef<AbortController | null>(null)
   const scroll = useRef<HTMLDivElement>(null)
   const followUpdates = useRef(true)
   const actionLock = useRef<symbol | null>(null),
@@ -198,6 +199,11 @@ export default function DeepAgentStudio({
     setCanvasReferences([])
     actionLock.current = null
     setActionBusy(false)
+    setUploading(false)
+    return () => {
+      uploadLock.current?.abort()
+      uploadLock.current = null
+    }
   }, [api])
 
   async function action(fn: () => Promise<void>) {
@@ -321,7 +327,8 @@ export default function DeepAgentStudio({
       studio.setError('一次创作最多添加 8 个附件。')
       return
     }
-    uploadLock.current = true
+    const operation = new AbortController()
+    uploadLock.current = operation
     setUploading(true)
     studio.setError('')
     try {
@@ -329,16 +336,24 @@ export default function DeepAgentStudio({
         let entry: StudioAttachment = { name: file.name }
         try {
           if (!file.size || file.size > 50 * 1024 * 1024) throw new Error('单个文件须为 1 字节至 50 MB。')
-          entry = await api.upload(file)
+          entry = await api.upload(file, operation.signal)
         } catch (e) {
+          if (operation.signal.aborted || activeAPI.current !== api) return
+          if (e instanceof RequestAbortError && e.abortCause === 'timeout') {
+            studio.setError('附件上传超时，请检查网络后重新添加未上传的文件。')
+            break
+          }
           entry.error = e instanceof Error ? e.message : '上传失败'
         }
+        if (operation.signal.aborted || activeAPI.current !== api) return
         setAttachments((old) => [...old, entry])
       }
     } finally {
-      uploadLock.current = false
-      setUploading(false)
-      if (files.current) files.current.value = ''
+      if (uploadLock.current === operation) {
+        uploadLock.current = null
+        setUploading(false)
+        if (files.current) files.current.value = ''
+      }
     }
   }
   async function decide(data: Data) {

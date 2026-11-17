@@ -8,15 +8,17 @@ const CanvasStoryboardModal = lazy(() => import('./CanvasStoryboardModal'))
 export default function CanvasStoryboard({
   items,
   disabled,
+  readOnly,
   onChange,
 }: {
   items: CanvasStoryboardItem[]
   disabled?: boolean
-  onChange: (items: CanvasStoryboardItem[]) => void
+  readOnly?: boolean
+  onChange?: (items: CanvasStoryboardItem[]) => void
 }) {
   const [open, setOpen] = useState(false)
   const update = (index: number, prompt: string) =>
-    onChange(items.map((item, i) => (i === index ? { ...item, prompt } : item)))
+    onChange?.(items.map((item, i) => (i === index ? { ...item, prompt } : item)))
   return (
     <div
       className={`${styles.card} nopan`}
@@ -38,14 +40,20 @@ export default function CanvasStoryboard({
             key={index}
             item={item}
             index={index}
-            disabled={disabled}
+            disabled={disabled || readOnly}
             onChange={(prompt) => update(index, prompt)}
           />
         ))}
       </div>
       {open && (
         <Suspense fallback={null}>
-          <CanvasStoryboardModal items={items} disabled={disabled} onChange={onChange} onClose={() => setOpen(false)} />
+          <CanvasStoryboardModal
+            items={items}
+            disabled={disabled}
+            readOnly={readOnly}
+            onChange={onChange}
+            onClose={() => setOpen(false)}
+          />
         </Suspense>
       )}
     </div>

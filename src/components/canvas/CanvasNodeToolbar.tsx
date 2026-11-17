@@ -8,6 +8,7 @@
  * 位置由调用方按节点包围盒算好后传入（视口坐标），组件本身不关心画布变换。
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Crop } from 'lucide-react'
 import styles from './CanvasNodeToolbar.module.css'
 
 /**
@@ -33,6 +34,7 @@ export interface CanvasNodeToolbarProps {
   /** 图片/视频放大预览；放在屏幕固定工具栏中，不随画布缩放。 */
   onPreview?: () => void
   onCapture?: (position: CanvasCapturePosition) => void
+  onCrop?: () => void
   onDelete: () => void
   onHd?: () => void
   onCompareHd?: () => void
@@ -61,6 +63,7 @@ export default function CanvasNodeToolbar({
   onDownload,
   onPreview,
   onCapture,
+  onCrop,
   onDelete,
   onHd,
   onCompareHd,
@@ -114,6 +117,7 @@ export default function CanvasNodeToolbar({
   // 图片与视频都支持放大预览；图片预览还带全部图片的画廊导航
   const showPreview = Boolean(onPreview) && isMedia && hasContent && !uploading
   const showCapture = Boolean(onCapture) && kind === 'video' && hasContent
+  const showCrop = Boolean(onCrop) && kind === 'image' && hasContent && !uploading
   // 空图片/视频节点还没有可处理的素材；时间线继续保留现有超分入口。
   const showHd = Boolean(onHd) && (kind === 'timeline' || (isMedia && hasContent && !uploading))
 
@@ -181,6 +185,12 @@ export default function CanvasNodeToolbar({
             </div>
           )}
         </span>
+      )}
+
+      {showCrop && (
+        <button type="button" className={styles.action} data-tip="裁剪" aria-label="裁剪" onClick={onCrop}>
+          <Crop aria-hidden="true" />
+        </button>
       )}
 
       {showDownload && (

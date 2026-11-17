@@ -256,14 +256,18 @@ export function AppShell() {
       <AppVersionNotice />
       {/* 帮助中心悬浮球:登录后所有业务页都显示(含 requiresAuth:false 的 /smart、/hot-copy),登录/开屏页不显示。
           用 hasChecked 而非 !isCheckingSession —— 后台续期/再校验时不跟着闪、也不被卸载。 */}
-      {isAuthenticated && hasChecked && location.pathname !== '/login' && location.pathname !== '/welcome' && (
-        <Suspense fallback={null}>
-          <HelpCenter />
-        </Suspense>
-      )}
+      {isAuthenticated &&
+        hasChecked &&
+        location.pathname !== '/login' &&
+        location.pathname !== '/welcome' &&
+        !location.pathname.startsWith('/canvas/share/') && (
+          <Suspense fallback={null}>
+            <HelpCenter />
+          </Suspense>
+        )}
 
       {/* 新手引导覆盖层:登录后由页面首次进入自动弹 / 帮助中心手动重看 */}
-      {isAuthenticated && hasChecked && guideActive ? (
+      {isAuthenticated && hasChecked && guideActive && !location.pathname.startsWith('/canvas/share/') ? (
         <Suspense fallback={null}>
           <GuideOverlay />
         </Suspense>

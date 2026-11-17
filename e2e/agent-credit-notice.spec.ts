@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
-test('Agent 积分不足在对话提示，点击充值打开弹窗且不自动恢复', async ({ page }) => {
+test('Agent 积分不足在对话提示，点击充值打开弹窗且不自动恢复', async ({ page }, testInfo) => {
   await installStrictAuthenticatedApp(page)
+  await page.routeWebSocket('**/agent-studio/**', () => {})
   await page.addInitScript(() => {
     sessionStorage.setItem('dodo-conversation:' + JSON.stringify(['/agent-studio', 'credits-test', 110]), 'credit-run')
   })
@@ -66,5 +67,5 @@ test('Agent 积分不足在对话提示，点击充值打开弹窗且不自动�
   await expect(modal.getByRole('button', { name: '积分充值', exact: true })).toHaveClass(/is-active/)
   await expect(modal.getByText('暂无可充值的积分包')).toBeVisible()
   expect(mutations).toEqual([])
-  await page.screenshot({ path: '/Users/guijinhao/Documents/zhenzhihui/tmp/agent-credit-recharge.png' })
+  await page.screenshot({ path: testInfo.outputPath('agent-credit-recharge.png') })
 })

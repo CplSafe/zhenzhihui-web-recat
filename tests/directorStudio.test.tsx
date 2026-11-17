@@ -401,7 +401,12 @@ describe('Studio transport', () => {
       try {
         for (let index = 0; index < 4; index++) {
           now += interval
-          act(() => Socket.instances.at(-1)!.emit({ event: 'stream_error', data: { code: 'AUTH_CHANGED' } }))
+          act(() =>
+            Socket.instances[Socket.instances.length - 1].emit({
+              event: 'stream_error',
+              data: { code: 'AUTH_CHANGED' },
+            }),
+          )
           if (interval || index < 3) {
             await waitFor(() => expect(Socket.instances).toHaveLength(index + 2))
           } else {
@@ -970,12 +975,12 @@ describe('Director conversation parity', () => {
     render(<DeepAgentStudio />)
     await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
     fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '尚未发送的创意' } })
-    fireEvent.click(screen.getByRole('button', { name: '模型', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: '模型' }))
     expect(screen.getByRole('dialog', { name: '选择模型' })).not.toHaveAttribute('aria-modal', 'true')
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '选择模型' })).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '创作要求' })).toHaveValue('尚未发送的创意')
-    fireEvent.click(screen.getByRole('button', { name: 'Skill', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Skill' }))
     expect(screen.getByRole('dialog', { name: 'Skill' })).toBeInTheDocument()
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('dialog', { name: 'Skill' })).not.toBeInTheDocument()
@@ -1050,7 +1055,7 @@ describe('Director conversation parity', () => {
     render(<DirectorStudioView />)
     await openHistory()
     fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '保留这一段草稿' } })
-    fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+    fireEvent.click(screen.getByRole('img', { name: '上下文用量' }))
     fireEvent.click(screen.getByRole('button', { name: '收起 DoDo Agent' }))
     expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: '创作要求' })).not.toBeInTheDocument()
@@ -1178,7 +1183,7 @@ describe('Director conversation parity', () => {
   it('shows unavailable context honestly and uses only reported input usage without inventing a percentage', async () => {
     render(<DeepAgentStudio />)
     await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+    fireEvent.click(screen.getByRole('img', { name: '上下文用量' }))
     expect(screen.getByRole('img', { name: '上下文用量' })).toHaveAttribute('data-tooltip', '上下文用量未提供')
     expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -1203,7 +1208,7 @@ describe('Director conversation parity', () => {
       ),
     )
     await openHistory()
-    fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+    fireEvent.click(screen.getByRole('img', { name: '上下文用量' }))
     expect(screen.getByRole('img', { name: '上下文用量' })).toHaveAttribute('data-tooltip', '上次输入 12,345 tokens')
     expect(screen.queryByText(/剩余.*%/)).not.toBeInTheDocument()
   })
@@ -1305,7 +1310,7 @@ it('updates real context remaining over websocket without rendering the summary 
       },
     }),
   )
-  fireEvent.click(screen.getByRole('img', { name: '上下文用量', exact: true }))
+  fireEvent.click(screen.getByRole('img', { name: '上下文用量' }))
   expect(screen.getByRole('img', { name: '上下文用量' })).toHaveAttribute('data-tooltip', '上次请求后剩余 75%')
   expect(screen.queryByRole('dialog', { name: '上下文用量' })).not.toBeInTheDocument()
   expect(document.body.textContent).not.toContain('private-context-summary')
@@ -1345,7 +1350,7 @@ it('preserves user-facing correction and recovery progress messages', () => {
 it('hover and keyboard focus show the same custom tooltip without native duplicates', async () => {
   render(<DeepAgentStudio />)
   await waitFor(() => expect(screen.getByRole('button', { name: '上传图片或剧本' })).toBeEnabled())
-  const button = screen.getByRole('button', { name: '模型', exact: true })
+  const button = screen.getByRole('button', { name: '模型' })
   expect(button).not.toHaveAttribute('title')
   fireEvent.pointerOver(button)
   expect(screen.getByRole('tooltip')).toHaveTextContent('选择模型')
@@ -1474,9 +1479,7 @@ it('closing library registration ignores its late response without attaching or 
   fireEvent.click(await screen.findByRole('button', { name: /参考图/ }))
   fireEvent.click(screen.getByRole('button', { name: '添加所选素材（1）' }))
   await waitFor(() => expect(registered).toHaveBeenCalledOnce())
-  fireEvent.click(
-    within(screen.getByRole('dialog', { name: '从素材库选择' })).getByRole('button', { name: '关闭', exact: true }),
-  )
+  fireEvent.click(within(screen.getByRole('dialog', { name: '从素材库选择' })).getByRole('button', { name: '关闭' }))
   await act(async () => {
     finish()
     await Promise.resolve()
@@ -1753,7 +1756,7 @@ describe('conversation refresh', () => {
         HttpResponse.json(
           snapshot({
             status: 'running',
-            events: [{ id: 1, kind: 'user', text: '保留这段剧本', at: 1 }],
+            events: [{ id: '1', kind: 'user', text: '保留这段剧本', at: 1 }],
           }),
         ),
       ),
@@ -1947,7 +1950,13 @@ it('shows the cumulative conversation credits in the composer footer and updates
   await openHistory()
   const amount = await screen.findByText('已消耗 10.22 积分')
   expect(amount.closest('footer')).not.toBeNull()
-  act(() => Socket.instances.at(-1)!.emit({ event: 'snapshot', cursor: 8, data: snapshot({ events: [] }) }))
+  act(() =>
+    Socket.instances[Socket.instances.length - 1].emit({
+      event: 'snapshot',
+      cursor: 8,
+      data: snapshot({ events: [] }),
+    }),
+  )
   await screen.findByText('已消耗 0 积分')
 })
 

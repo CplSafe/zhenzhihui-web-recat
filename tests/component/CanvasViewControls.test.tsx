@@ -2,9 +2,9 @@ import { ConfigProvider } from 'antd'
 import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import CanvasViewControls from '@/components/canvas/CanvasViewControls'
+import CanvasViewControls, { type CanvasViewControlsProps } from '@/components/canvas/CanvasViewControls'
 
-function mount(overrides: Partial<React.ComponentProps<typeof CanvasViewControls>> = {}) {
+function mount(overrides: Partial<CanvasViewControlsProps> = {}) {
   const props = {
     zoom: 0.89,
     onArrange: vi.fn(),

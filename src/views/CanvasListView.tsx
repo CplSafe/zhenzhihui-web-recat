@@ -285,6 +285,7 @@ export default function CanvasListView() {
     }
   }, [showToast])
 
+  const hasCarriedMaterial = Boolean(carriedMaterial)
   // 起始页只由最近项目组件读取最近列表；完整画布详情只在管理列表或素材承接页加载。
   useEffect(() => {
     loadSequenceRef.current += 1
@@ -293,9 +294,9 @@ export default function CanvasListView() {
     setCanvasesWorkspaceId(0)
     setOpenMenuId(0)
     setDeletingId(0)
-    if (manageView || carriedMaterial) loadCanvases()
+    if (manageView || hasCarriedMaterial) loadCanvases()
     else setLoading(false)
-  }, [workspaceId, manageView, Boolean(carriedMaterial), loadCanvases])
+  }, [workspaceId, manageView, hasCarriedMaterial, loadCanvases])
 
   // 点击菜单外部关闭
   useEffect(() => {

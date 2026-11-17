@@ -21,7 +21,9 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
     try {
       if (id) sessionStorage.setItem(conversationKey.current, id)
       else sessionStorage.removeItem(conversationKey.current)
-    } catch { /* Browser storage may be disabled. */ }
+    } catch {
+      /* Browser storage may be disabled. */
+    }
   }, [])
   const [run, setRun] = useState<StudioRun | null>(null)
   const [error, setError] = useState('')
@@ -55,8 +57,10 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
         await api.bootstrap(signal)
         const next = await refreshHistory(0, signal)
         if (activeAPI.current !== api || signal?.aborted) return
-        const key = next.connected && next.session_scope && (!workspaceId || next.workspace_id === workspaceId)
-          ? 'dodo-conversation:' + JSON.stringify([base, next.session_scope, canvasId ?? null]) : null
+        const key =
+          next.connected && next.session_scope && (!workspaceId || next.workspace_id === workspaceId)
+            ? 'dodo-conversation:' + JSON.stringify([base, next.session_scope, canvasId ?? null])
+            : null
         if (conversationKey.current !== key) {
           conversationKey.current = key
           let saved = null
@@ -65,7 +69,9 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
               if (choice === conversationChoice.current) saved = sessionStorage.getItem(key)
               else sessionStorage.removeItem(key) // New was clicked while connecting.
             }
-          } catch { /* Continue without persistence. */ }
+          } catch {
+            /* Continue without persistence. */
+          }
           setCurrentState(saved)
         }
         setError('')

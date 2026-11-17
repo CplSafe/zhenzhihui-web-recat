@@ -9,11 +9,19 @@ export function createCanvasPullLoop(pull: () => Promise<void>) {
     if (disposed) return
     timer = setTimeout(async () => {
       if (disposed) return
-      if (running) { wakePending = true; return }
+      if (running) {
+        wakePending = true
+        return
+      }
       running = true
-      try { await pull() } finally {
+      try {
+        await pull()
+      } finally {
         running = false
-        if (wakePending && !disposed) { wakePending = false; schedule(0) }
+        if (wakePending && !disposed) {
+          wakePending = false
+          schedule(0)
+        }
       }
     }, delay)
   }
@@ -24,6 +32,9 @@ export function createCanvasPullLoop(pull: () => Promise<void>) {
       if (running) wakePending = true
       else schedule(0)
     },
-    dispose() { disposed = true; clearTimeout(timer) },
+    dispose() {
+      disposed = true
+      clearTimeout(timer)
+    },
   }
 }

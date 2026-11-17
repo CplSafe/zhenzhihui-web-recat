@@ -1,4 +1,20 @@
 import { runSharedSessionRefresh } from '@/api/sessionRefresh'
+import { withRequestTimeout } from '@/api/requestTimeout'
+
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000
+
+async function waitForSessionRefresh(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  const refresh = runSharedSessionRefresh()
+  if (!signal) return refresh
+
+  // 只中断当前请求对续期的等待，续期本身仍供其他请求复用。
+  return new Promise<Awaited<typeof refresh>>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    void refresh.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
 
 /** Public Studio contract. MCP credentials and private Skill bodies never reach this client. */
 export type Data = Record<string, any>
@@ -147,7 +163,7 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
     // Only replay reads. A generation/approval with an uncertain response must
     // never be submitted again as a side effect of login renewal.
     if (business && data === undefined && response.status === 401 && !renewed) {
-      const refresh = await runSharedSessionRefresh()
+      const refresh = await waitForSessionRefresh(signal)
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       if (refresh.ok) return request<T>(path, undefined, signal, true)
     }
@@ -172,17 +188,23 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
       const value = await response.json().catch(() => null)
       if (value?.ready !== true) throw new Error('创作服务初始化失败，请稍后重试。')
     },
-    async upload(file: File): Promise<StudioAttachment> {
-      await ensureBusinessLogin()
-      const response = await fetch(prefix + '/api/attachments?name=' + encodeURIComponent(file.name), {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { ...authHeaders, 'X-Agent-Request': '1', 'Content-Type': 'application/octet-stream' },
-        body: file,
-      })
-      const value = await response.json()
-      if (!response.ok) throw new StudioHTTPError(value.error || value.detail || '上传失败', response.status)
-      return { ...value, name: file.name }
+    upload(file: File, signal?: AbortSignal): Promise<StudioAttachment> {
+      return withRequestTimeout(
+        async (requestSignal) => {
+          await ensureBusinessLogin(requestSignal)
+          const response = await fetch(prefix + '/api/attachments?name=' + encodeURIComponent(file.name), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { ...authHeaders, 'X-Agent-Request': '1', 'Content-Type': 'application/octet-stream' },
+            body: file,
+            signal: requestSignal,
+          })
+          const value = await response.json()
+          if (!response.ok) throw new StudioHTTPError(value.error || value.detail || '上传失败', response.status)
+          return { ...value, name: file.name }
+        },
+        { signal, timeoutMs: ATTACHMENT_UPLOAD_TIMEOUT_MS },
+      )
     },
     socketURL(id: string, cursor: number) {
       const url = new URL(prefix + '/api/runs/' + encodeURIComponent(id) + '/ws', window.location.href)

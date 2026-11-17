@@ -108,7 +108,7 @@ export function ScriptEpisodes({
     const abort = new AbortController()
     setError('')
     setVerified(false)
-    let timer: ReturnType<typeof window.setTimeout>
+    let timer: number
     const load = () => {
       const [ids, text] = JSON.parse(key) as [string[], string]
       request<Preview>('/api/episodes/preview', { attachments: ids, message: text }, abort.signal)
