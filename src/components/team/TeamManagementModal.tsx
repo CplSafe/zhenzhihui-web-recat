@@ -444,7 +444,7 @@ export default function TeamManagementModal({
       if (active) {
         applyActiveInvitation(active.raw)
       } else {
-        // 无有效邀请码 → 显示「暂无邀请码」,由主账号手动「重新生成」。
+        // 无有效邀请码 → 显示「暂无邀请码」,由主账号手动生成。
         // 【不再自动补码】:否则主账号「撤销邀请」后重开弹窗会又自动生成,撤销形同无效。
         setActiveInvitationId(0)
         setInviteCode('')
@@ -656,11 +656,12 @@ export default function TeamManagementModal({
     if (!wsId || invitationsLoadingRef.current) return
     invitationsLoadingRef.current = true
     const previousInvitationId = Number(activeInvitationId || 0)
+    const hadInviteCode = Boolean(String(inviteCode || '').trim())
     createWorkspaceInvitation({ workspaceId: wsId, expiryDays })
       .then((created: any) => {
         if (workspaceIdRef.current !== wsId) return null
         applyActiveInvitation(created)
-        onToast?.('邀请码已重新生成', 'success')
+        onToast?.(hadInviteCode ? '邀请码已重新生成' : '邀请码已生成', 'success')
         if (previousInvitationId && toInvitationId(created) && previousInvitationId !== toInvitationId(created)) {
           invitationDeleteBusyIds.current.add(previousInvitationId)
           return deleteWorkspaceInvitation({ workspaceId: wsId, invitationId: previousInvitationId }).finally(() => {
@@ -680,7 +681,7 @@ export default function TeamManagementModal({
       })
   }
 
-  // 撤销邀请:让当前邀请码立即失效(删除该邀请),不再生成新码 —— 无码状态保持,直到主账号「重新生成」。
+  // 撤销邀请:让当前邀请码立即失效(删除该邀请),不再生成新码。
   // 不影响已加入成员;仅关闭新的加入通道。
   async function handleRevoke() {
     const wsId = Number(workspaceId || 0)
@@ -900,7 +901,7 @@ export default function TeamManagementModal({
                     <svg viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M13.7 7.2a5.7 5.7 0 1 1-1.4-3.6l.1-1.2h1.2v4H9.5V5.2h1.6A4.5 4.5 0 1 0 12.6 8h1.1Z" />
                     </svg>
-                    重新生成
+                    {displayInviteCode ? '重新生成' : '生成邀请码'}
                   </button>
                 )}
 

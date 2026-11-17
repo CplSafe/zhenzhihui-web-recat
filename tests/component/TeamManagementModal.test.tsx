@@ -229,7 +229,7 @@ describe('TeamManagementModal behavior', () => {
       id: 10,
     })
     render(<TeamManagementModal {...modalProps({ onToast })} />)
-    const regenerate = await screen.findByRole('button', { name: '重新生成' })
+    const regenerate = await screen.findByRole('button', { name: '生成邀请码' })
 
     await user.dblClick(regenerate)
     expect(mocks.createWorkspaceInvitation).toHaveBeenCalledTimes(1)
@@ -239,9 +239,9 @@ describe('TeamManagementModal behavior', () => {
     })
     expect(onToast).toHaveBeenCalledWith('生成失败', 'error')
 
-    await user.click(screen.getByRole('button', { name: '重新生成' }))
+    await user.click(screen.getByRole('button', { name: '生成邀请码' }))
     await waitFor(() => expect(mocks.createWorkspaceInvitation).toHaveBeenCalledTimes(2))
-    expect(onToast).toHaveBeenCalledWith('邀请码已重新生成', 'success')
+    expect(onToast).toHaveBeenCalledWith('邀请码已生成', 'success')
   })
 
   it('closes with Escape', async () => {
