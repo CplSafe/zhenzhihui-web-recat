@@ -7,26 +7,38 @@ describe('canvas change notifications', () => {
     vi.useFakeTimers()
     let finish!: () => void
     const applied: string[] = []
-    const pull = vi.fn().mockImplementationOnce(async () => {
-      await new Promise<void>(resolve => { finish = resolve })
-      applied.push('first')
-      loop.schedule(10_000)
-    }).mockImplementation(async () => { applied.push('second'); loop.schedule(10_000) })
+    const pull = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => {
+          finish = resolve
+        })
+        applied.push('first')
+        loop.schedule(10_000)
+      })
+      .mockImplementation(async () => {
+        applied.push('second')
+        loop.schedule(10_000)
+      })
     const loop = createCanvasPullLoop(pull)
     loop.wake()
     vi.advanceTimersByTime(0)
-    for (let i = 0; i < 5; i++) { loop.wake(); vi.advanceTimersByTime(500) }
+    for (let i = 0; i < 5; i++) {
+      loop.wake()
+      vi.advanceTimersByTime(500)
+    }
     expect(pull).toHaveBeenCalledTimes(1)
     finish()
     await vi.advanceTimersByTimeAsync(1)
-    expect(applied).toEqual(['first','second'])
+    expect(applied).toEqual(['first', 'second'])
     loop.dispose()
     await vi.advanceTimersByTimeAsync(20_000)
     expect(pull).toHaveBeenCalledTimes(2)
   })
   it('switching canvas discards the old scheduler and allows the new canvas first change immediately', async () => {
     vi.useFakeTimers()
-    const oldPull = vi.fn(async () => {}), newPull = vi.fn(async () => {})
+    const oldPull = vi.fn(async () => {}),
+      newPull = vi.fn(async () => {})
     const old = createCanvasPullLoop(oldPull)
     old.schedule(1500)
     old.dispose()

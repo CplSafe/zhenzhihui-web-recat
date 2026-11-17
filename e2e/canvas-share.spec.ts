@@ -281,13 +281,19 @@ test('分享页恢复原布局并只清除当前链接保存的位置', async ({
   expect(editorRequests).toEqual([])
 })
 
-test('画布分享入口打开分享弹窗并读取状态', async ({ page }) => {
+test('画布分享入口打开分享弹窗并读取状态与活动记录', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
   let revision = 1
   let shareRequests = 0
+  let activityRequests = 0
   await page.route('**/api/v1/canvases/128**', async (route) => {
     const request = route.request()
-    if (request.url().includes('/share')) {
+    const { pathname } = new URL(request.url())
+    if (request.method() === 'GET' && pathname.endsWith('/share/activity')) {
+      activityRequests++
+      return route.fulfill({ json: { items: [], has_more: false } })
+    }
+    if (request.method() === 'GET' && pathname.endsWith('/share')) {
       shareRequests++
       return route.fulfill({ json: {} })
     }
@@ -301,8 +307,11 @@ test('画布分享入口打开分享弹窗并读取状态', async ({ page }) => 
   await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))
   await page.goto('/canvas/128')
   await page.getByRole('button', { name: '分享这块画布' }).click()
-  await expect(page.getByRole('dialog', { name: '分享画布' })).toContainText('这块画布还没有分享链接')
+  const dialog = page.getByRole('dialog', { name: '分享画布' })
+  await expect(dialog).toContainText('这块画布还没有分享链接')
+  await expect(dialog.getByRole('region', { name: '分享活动记录' })).toContainText('暂无查看或复制记录')
   expect(shareRequests).toBe(1)
+  expect(activityRequests).toBe(1)
   expectNoUnexpectedApi(api)
 })
 

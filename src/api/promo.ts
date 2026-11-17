@@ -1,5 +1,5 @@
 import { requestBusinessJson } from './business'
-import { isAllowedUploadUrl } from '@/utils/uploadUrlSafety'
+import { isValidUploadUrl } from '@/utils/uploadUrlSafety'
 
 export interface PromoMaterial {
   id: number
@@ -189,27 +189,9 @@ export function canRefundPromoOrder(order: PromoOrder): boolean {
   return order.is_overdue === true && order.first_delivered_at === null && order.billing_status === 'frozen'
 }
 
-/** 只发送存储表单，不携带业务认证；拒绝不受信任地址及重定向。 */
+/** 只发送存储表单，不携带业务认证；不限制存储域名，拒绝无效 URL 和重定向。 */
 export async function uploadPromoFile(ticket: PromoUploadTicket, file: File, signal?: AbortSignal): Promise<void> {
-  const allowedHostPatterns = [
-    /\.aliyuncs\.com$/i,
-    /\.myqcloud\.com$/i,
-    /\.amazonaws\.com$/i,
-    /\.tos-cn-[a-z0-9-]+\.volces\.com$/i,
-  ]
-  const extraAllowedOrigins = String(import.meta.env.VITE_ZZH_ALLOWED_UPLOAD_ORIGINS || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-  if (
-    !isAllowedUploadUrl(ticket.url, {
-      pageOrigin: globalThis.location?.origin || '',
-      allowAnyHttp: import.meta.env.DEV,
-      allowedHostPatterns: [...allowedHostPatterns, ...extraAllowedOrigins],
-    })
-  ) {
-    throw new Error('素材上传地址不在受信任的存储域名列表中')
-  }
+  if (!isValidUploadUrl(ticket.url)) throw new Error('素材上传地址无效')
   const body = new FormData()
   for (const [key, value] of Object.entries(ticket.form_fields)) body.append(key, value)
   body.append('file', file)

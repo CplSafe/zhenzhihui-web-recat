@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   ReactFlow,
   Background,
@@ -7,6 +7,7 @@ import {
   Position,
   useReactFlow,
   useStore,
+  type FitViewOptions,
   type Node,
   type NodeProps,
   type NodeTypes,
@@ -40,7 +41,13 @@ import { parseCanvasStructuredText } from '@/utils/canvasStructuredText'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { primeVideoFirstFrame } from '@/utils/videoFrameCapture'
 import type { CanvasElementMutation } from '@/api/canvasApi'
-import { fetchAllPublicCanvasElements, fetchPublicCanvas, type PublicCanvasShare } from '@/api/canvasShare'
+import {
+  copySharedCanvas,
+  fetchAllPublicCanvasElements,
+  fetchPublicCanvas,
+  type PublicCanvasShare,
+} from '@/api/canvasShare'
+import { useAllWorkspaces, useCurrentUser } from '@/stores/workspaceSession'
 
 const CanvasVideoPreviewModal = lazy(() => import('@/components/canvas/CanvasVideoPreviewModal'))
 const CanvasImagePreviewModal = lazy(() => import('@/components/canvas/CanvasImagePreviewModal'))
@@ -52,7 +59,15 @@ const SHARE_FIT_VIEW_OPTIONS = {
   maxZoom: 1,
 } as const
 
-function ShareViewControls({ canResetLayout, onResetLayout }: { canResetLayout: boolean; onResetLayout: () => void }) {
+function ShareViewControls({
+  fitViewOptions,
+  canResetLayout,
+  onResetLayout,
+}: {
+  fitViewOptions: FitViewOptions
+  canResetLayout: boolean
+  onResetLayout: () => void
+}) {
   const zoom = useStore((state) => state.transform[2])
   const { fitView, zoomIn, zoomOut, zoomTo } = useReactFlow()
   return (
@@ -63,7 +78,7 @@ function ShareViewControls({ canResetLayout, onResetLayout }: { canResetLayout: 
           zoom={zoom}
           onZoomIn={() => void zoomIn({ duration: 160 })}
           onZoomOut={() => void zoomOut({ duration: 160 })}
-          onFitView={() => void fitView(SHARE_FIT_VIEW_OPTIONS)}
+          onFitView={() => void fitView(fitViewOptions)}
           onZoomReset={() => void zoomTo(1, { duration: 160 })}
           canResetLayout={canResetLayout}
           onResetLayout={onResetLayout}
@@ -315,16 +330,111 @@ function moveWithAnchor(position: XYPosition, from: XYPosition, to: XYPosition):
 
 export default function CanvasShareView() {
   const { token = '' } = useParams()
-  return <CanvasSharePage key={token} token={token} />
+  const copyKeys = useRef(new Map<string, string>())
+  return <CanvasSharePage key={token} token={token} copyKeys={copyKeys.current} />
 }
 
-function CanvasSharePage({ token }: { token: string }) {
+function ShareCopyActions({
+  token,
+  userId,
+  canCopy,
+  copyKeys,
+}: {
+  token: string
+  userId: number | undefined
+  canCopy: boolean
+  copyKeys: Map<string, string>
+}) {
+  const navigate = useNavigate()
+  const workspaces = useAllWorkspaces()
+  const [targetWorkspace, setTargetWorkspace] = useState('')
+  const [copyBusy, setCopyBusy] = useState(false)
+  const [copyMessage, setCopyMessage] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const handleApply = async () => {
+    if (copyBusy || copied || !targetWorkspace) return
+    setCopyBusy(true)
+    setCopyMessage('')
+    try {
+      const key = `${userId}:${token}:${targetWorkspace}`
+      const requestKey = copyKeys.get(key) ?? crypto.randomUUID()
+      copyKeys.set(key, requestKey)
+      await copySharedCanvas(token, Number(targetWorkspace), requestKey)
+      setCopied(true)
+      setCopyMessage('已复制到所选空间，可返回首页进入该空间查看。')
+    } catch (err) {
+      setCopyMessage(String((err as Error)?.message || '复制失败，请重试'))
+    } finally {
+      setCopyBusy(false)
+    }
+  }
+
+  if (!canCopy) return <span>分享者未允许复制</span>
+  if (!userId) {
+    return (
+      <button type="button" onClick={() => navigate('/login', { state: { returnTo: `/canvas/share/${token}` } })}>
+        登录后应用此画布
+      </button>
+    )
+  }
+  return (
+    <>
+      <select
+        aria-label="复制到哪个空间"
+        value={targetWorkspace}
+        disabled={copyBusy}
+        onChange={(event) => {
+          setTargetWorkspace(event.target.value)
+          setCopied(false)
+          setCopyMessage('')
+        }}
+      >
+        <option value="">请选择目标空间</option>
+        {workspaces.map((workspace) => (
+          <option key={workspace.id} value={workspace.id}>
+            {workspace.name}
+          </option>
+        ))}
+      </select>
+      <button type="button" disabled={copyBusy || !targetWorkspace || copied} onClick={() => void handleApply()}>
+        {copyBusy ? '复制中…' : copied ? '已应用' : '应用此画布'}
+      </button>
+      {copyMessage && <span role="status">{copyMessage}</span>}
+    </>
+  )
+}
+
+function CanvasSharePage({ token, copyKeys }: { token: string; copyKeys: Map<string, string> }) {
+  const user = useCurrentUser()
+  const topbarRef = useRef<HTMLDivElement>(null)
+  const [fitTop, setFitTop] = useState(92)
   const [state, setState] = useState<LoadState>('loading')
   const [message, setMessage] = useState('')
   const [share, setShare] = useState<PublicCanvasShare | null>(null)
   const [elements, setElements] = useState<CanvasElementMutation[]>([])
   const [expandedImages, setExpandedImages] = useState<Record<string, boolean>>({})
   const [nodePositions, setNodePositions] = useState(() => readShareNodePositions(token))
+
+  useLayoutEffect(() => {
+    const topbar = topbarRef.current
+    const viewport = topbar?.parentElement
+    if (!topbar || !viewport) return
+    // 复制控件在窄屏会换行，适应画布时要给完整的导航栏留出空间。
+    const measure = () => {
+      const bottom = topbar.getBoundingClientRect().bottom - viewport.getBoundingClientRect().top
+      setFitTop(Math.max(92, Math.ceil(bottom + 10)))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(topbar)
+    return () => observer.disconnect()
+  }, [])
+  const fitViewOptions = useMemo<FitViewOptions>(
+    () => ({ ...SHARE_FIT_VIEW_OPTIONS, padding: { ...SHARE_FIT_VIEW_OPTIONS.padding, top: `${fitTop}px` } }),
+    [fitTop],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -430,9 +540,23 @@ function CanvasSharePage({ token }: { token: string }) {
 
   return (
     <div className="share-view">
-      <div className="canvas-navigation share-topbar nodrag nopan nowheel" aria-label="画布导航">
-        <span className="share-title">{share?.title || '共享画布'}</span>
-        <span className="canvas-save-status share-badge">只读查看</span>
+      <div ref={topbarRef} className="canvas-navigation share-topbar nodrag nopan nowheel" aria-label="画布导航">
+        <div className="share-heading">
+          <span className="share-title">{share?.title || '共享画布'}</span>
+          <span className="canvas-save-status share-badge">只读查看</span>
+        </div>
+        <div className="share-apply">
+          <span>查看和复制会向分享者留记录，未登录时记为匿名访客。</span>
+          {state === 'ready' && (
+            <ShareCopyActions
+              key={user?.id}
+              token={token}
+              userId={user?.id}
+              canCopy={Boolean(share?.allowCopy)}
+              copyKeys={copyKeys}
+            />
+          )}
+        </div>
       </div>
 
       {state === 'ready' ? (
@@ -445,7 +569,7 @@ function CanvasSharePage({ token }: { token: string }) {
           fitView
           minZoom={0.01}
           maxZoom={10}
-          fitViewOptions={SHARE_FIT_VIEW_OPTIONS}
+          fitViewOptions={fitViewOptions}
           zoomOnDoubleClick={false}
           nodesDraggable
           nodesConnectable={false}
@@ -455,6 +579,7 @@ function CanvasSharePage({ token }: { token: string }) {
         >
           <Background color="rgba(255, 255, 255, 0.18)" gap={24} size={2} />
           <ShareViewControls
+            fitViewOptions={fitViewOptions}
             canResetLayout={nodePositions.size > 0}
             onResetLayout={() => {
               clearShareNodePositions(token)

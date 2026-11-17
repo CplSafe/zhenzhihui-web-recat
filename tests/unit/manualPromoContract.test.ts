@@ -94,20 +94,24 @@ describe('人工视频与宣传片契约', () => {
     expect(JSON.parse(String(vi.mocked(requestBusinessJson).mock.calls[0][1]?.body))).toEqual(input)
   })
 
-  it('对象存储直传不附带业务凭证且不跟随跳转', async () => {
+  it.each([
+    'https://bucket.aliyuncs.com/upload',
+    'https://s3oss-yy.youliangads.com/goujie/',
+    'https://new-storage.example.net/upload',
+  ])('对象存储直传接受后端签发的地址且不附带业务凭证、不跟随跳转：%s', async (uploadUrl) => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
     const file = new File(['image'], 'image.png', { type: 'image/png' })
     await uploadPromoFile(
       {
         material: { id: 1, status: 'pending' },
-        url: 'https://bucket.aliyuncs.com/upload',
+        url: uploadUrl,
         form_fields: { key: 'value' },
         expires_at: '',
       },
       file,
     )
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('https://bucket.aliyuncs.com/upload')
+    expect(url).toBe(uploadUrl)
     expect(init?.credentials).toBe('omit')
     expect(init?.redirect).toBe('error')
     expect((init?.body as FormData).get('key')).toBe('value')

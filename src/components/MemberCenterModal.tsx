@@ -697,7 +697,7 @@ export default function MemberCenterModal({
   useEffect(() => {
     if (!open) return
     let alive = true
-    setMainTab('basic')
+    setMainTab(initialTab === 'recharge' ? 'basic' : initialTab)
     setLoading(true)
     setError('')
     setSubscription(null)
@@ -722,13 +722,21 @@ export default function MemberCenterModal({
         .catch(() => alive && setBalance(null))
       // 当前订阅(套餐 / 席位 / 并发);未订阅返回 active:false
       getSubscription(workspaceId)
-        .then((s: any) => alive && setSubscription(s))
+        .then((s: any) => {
+          if (!alive) return
+          setSubscription(s)
+          setSubscriptionLoading(false)
+          const expiry = expiryTimeMs(s)
+          if (initialTab === 'recharge' && canRecharge && s?.active && (!expiry || expiry > Date.now())) {
+            setMainTab('recharge')
+          }
+        })
         .catch((e: any) => {
           if (!alive) return
           setSubscription(null)
+          setSubscriptionLoading(false)
           setError(getBusinessErrorMessage(e, '会员状态加载失败，请刷新后重试'))
         })
-        .finally(() => alive && setSubscriptionLoading(false))
     } else {
       setBalance(null)
       setSubscription(null)
@@ -737,7 +745,7 @@ export default function MemberCenterModal({
     return () => {
       alive = false
     }
-  }, [open, workspaceId])
+  }, [open, workspaceId, initialTab, canRecharge])
 
   const expiredBanner = useMemo(() => {
     if (!subscription) return false

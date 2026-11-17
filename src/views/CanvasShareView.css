@@ -9,6 +9,14 @@
 
 .share-topbar {
   min-height: 62px;
+  flex-wrap: wrap;
+}
+
+.share-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
 }
 
 .share-title {
@@ -145,4 +153,46 @@
   border: 0;
   opacity: 0;
   pointer-events: none;
+}
+
+.share-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--canvas-border);
+  border-radius: 8px;
+  background: var(--canvas-bg);
+  color: var(--canvas-text-muted);
+  font-size: 12px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.share-apply select,
+.share-apply button {
+  max-width: 100%;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--canvas-border);
+  border-radius: 8px;
+  background: var(--canvas-surface-input);
+  color: var(--canvas-text);
+  font: inherit;
+}
+.share-apply button {
+  border-color: transparent;
+  background: var(--canvas-brand);
+  color: #102723;
+  cursor: pointer;
+}
+.share-apply button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.share-apply button:focus-visible,
+.share-apply select:focus-visible {
+  outline: 2px solid var(--canvas-brand);
+  outline-offset: 2px;
 }

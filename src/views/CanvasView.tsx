@@ -9,6 +9,11 @@ import {
 } from '@/components/canvas/CanvasNodeFrame'
 import { createCanvasPullLoop } from '@/utils/canvasPullLoop'
 import CanvasDirectorDock from '@/components/director/CanvasDirectorDock'
+import {
+  canvasReferenceFromNode,
+  isCanvasReferenceTarget,
+  type CanvasReference,
+} from '@/components/director/canvasReference'
 import CanvasDuplicateMenu from '@/components/canvas/CanvasDuplicateMenu'
 import { Dropdown, Tooltip } from 'antd'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
@@ -2659,8 +2664,14 @@ function CanvasInner() {
   useEffect(() => {
     setStandaloneCropRequest(null)
   }, [canvasBindingKey])
+  const directorAvailable =
+    import.meta.env.VITE_CANVAS_DIRECTOR_ENABLED !== 'false' &&
+    Boolean(currentUserId) &&
+    workspaceId > 0 &&
+    canvasId > 0
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
-  const directorOpen = openDirectorBinding === canvasBindingKey
+  const directorOpen = directorAvailable && openDirectorBinding === canvasBindingKey
+  const [directorReference, setDirectorReference] = useState<{ binding: string; reference: CanvasReference }>()
   const requestDirectorSyncRef = useRef<() => void>(() => {})
   const onDirectorCanvasChange = useCallback(
     (snapshot: Record<string, any>) => {
@@ -10856,7 +10867,7 @@ function CanvasInner() {
   // 参考选择模式仍由 click 确认触发（避免 mousedown+click 双触发创建重复连线）。
   const handleSelectNodeOnDown = useCallback(
     (node: Node) => {
-      if (isPickingRef) return
+      if (isPickingRef || directorOpen) return
       const groupId = getNodeGroupId(node as GroupableNode)
       if (groupId && groupId !== editingGroupRef.current && !deepSelectRef.current) return
       /*
@@ -10881,7 +10892,7 @@ function CanvasInner() {
         params: (node.data as any)?.params,
       })
     },
-    [isPickingRef, getSourceRefs],
+    [isPickingRef, directorOpen, getSourceRefs],
   )
 
   /**
@@ -11357,13 +11368,14 @@ function CanvasInner() {
             {interactionHint.text}
           </div>
         )}
-        {currentUserId && workspaceId > 0 && canvasId > 0 && (
+        {directorAvailable && (
           <CanvasDirectorDock
             key={canvasBindingKey}
             workspaceId={workspaceId}
             canvasId={canvasId}
             onCanvasChange={onDirectorCanvasChange}
             opened={directorOpen}
+            canvasReference={directorReference?.binding === canvasBindingKey ? directorReference.reference : undefined}
             onCollapse={() => setOpenDirectorBinding(null)}
           />
         )}
@@ -11523,7 +11535,7 @@ function CanvasInner() {
               onOpenHelp={() => setShortcutsOpen(true)}
               directorOpen={directorOpen}
               onToggleDirector={
-                currentUserId && workspaceId > 0 && canvasId > 0
+                directorAvailable
                   ? () => setOpenDirectorBinding((current) => (current === canvasBindingKey ? null : canvasBindingKey))
                   : undefined
               }
@@ -11782,6 +11794,22 @@ function CanvasInner() {
               if (isPickingRef) {
                 handlePickRefNode(node as unknown as Node)
                 return
+              }
+              if (
+                directorOpen &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.shiftKey &&
+                isCanvasReferenceTarget(event.target as Element)
+              ) {
+                const reference = canvasReferenceFromNode(node)
+                if (reference) {
+                  setDirectorReference({ binding: canvasBindingKey, reference })
+                  setSelectedNode(null)
+                  setAddMenu(null)
+                  return
+                }
               }
               const groupId = getNodeGroupId(node as GroupableNode)
               if (event.altKey && groupId) setEditingGroup(groupId)

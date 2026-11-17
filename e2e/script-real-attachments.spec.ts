@@ -113,7 +113,7 @@ for (const uploadUrl of [
   'https://s3oss-yy.youliangads.com.attacker.example/goujie/',
   'http://s3oss-yy.youliangads.com/goujie/',
 ]) {
-  test(`剧本附件拒绝未经授权的上传地址 ${uploadUrl}`, async ({ page }) => {
+  test(`剧本附件接受后端签发的自定义上传地址 ${uploadUrl}`, async ({ page }) => {
     await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/script-creators/me', (route) =>
       route.fulfill({
@@ -147,8 +147,8 @@ for (const uploadUrl of [
       .getByLabel('剧本文档附件')
       .setInputFiles({ name: '故事.txt', mimeType: 'text/plain', buffer: Buffer.from('content') })
     await page.getByRole('button', { name: '提交创意', exact: true }).click()
-    await expect(page.getByText(/文件上传地址不在受信任的存储域名列表中/)).toBeVisible()
-    expect(unexpectedUpload).toBe(0)
+    await expect(page.getByText(/附件未能上传/)).toBeVisible()
+    expect(unexpectedUpload).toBe(1)
     await expect(page.getByLabel('剧名')).toHaveValue('示例剧')
   })
 }

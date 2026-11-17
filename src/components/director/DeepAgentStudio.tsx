@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
 import { RequestAbortError } from '@/api/requestTimeout'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
-import { defaultModel, StudioHTTPError, contextInfo } from './studio'
+import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
 import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
 import { useStudio } from './useStudio'
+import { ScriptEpisodes } from './ScriptEpisodes'
+import type { EpisodeDecision } from './ScriptEpisodes'
 import { StudioMediaContext } from './StudioMedia'
 import { StudioIcon } from './StudioIcons'
 import { StudioAssetPicker } from './StudioAssetPicker'
@@ -12,6 +14,9 @@ import { DoudouMascot } from './DoudouMascot'
 import { MediaRetry } from './MediaRetry'
 import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
+import type { CanvasReference } from './canvasReference'
+import { openMemberCenterTab } from '@/stores/ui'
+import { useWorkspaceId } from '@/stores/workspaceSession'
 
 export interface DeepAgentStudioProps {
   apiBase?: string
@@ -21,6 +26,7 @@ export interface DeepAgentStudioProps {
   onCanvasChange?: (canvas: Data) => void
   onCollapse?: () => void
   className?: string
+  canvasReference?: CanvasReference
 }
 /** Embeddable Studio: the host owns placement; the service owns auth, tools, billing and execution. */
 export default function DeepAgentStudio({
@@ -31,7 +37,9 @@ export default function DeepAgentStudio({
   onCanvasChange,
   onCollapse,
   className = '',
+  canvasReference,
 }: DeepAgentStudioProps) {
+  const activeWorkspaceId = Number(useWorkspaceId() || 0)
   const tooltipScope = useRef<HTMLElement>(null)
   const business =
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
@@ -72,6 +80,11 @@ export default function DeepAgentStudio({
   useEffect(() => {
     if (pendingSend?.target && serverRun?.id === pendingSend.target) setPendingSend(null)
   }, [pendingSend, serverRun?.id])
+  const creditBlocked =
+    run?.status === 'error' &&
+    isInsufficientCreditsEvent([...run.events].reverse().find((event) => ['assistant', 'error'].includes(event.kind)))
+  const canOpenRecharge =
+    state.connected && !mismatch && activeWorkspaceId > 0 && state.workspace_id === activeWorkspaceId
   const mediaService = useMemo(
     () => ({ refresh: (assetId: number) => api.request<Data>(`/api/runs/${current}/assets/${assetId}`) }),
     [api, current],
@@ -90,6 +103,9 @@ export default function DeepAgentStudio({
     [results, setResults] = useState(false)
   const [attachments, setAttachments] = useState<StudioAttachment[]>([]),
     [uploading, setUploading] = useState(false)
+  const [episodeDialog, setEpisodeDialog] = useState(false)
+  const [canvasReferences, setCanvasReferences] = useState<CanvasReference[]>([])
+  const consumedCanvasReference = useRef<CanvasReference>()
   const [stopping, setStopping] = useState(false)
   const stopLock = useRef(false)
   const [actionBusy, setActionBusy] = useState(false),
@@ -107,6 +123,7 @@ export default function DeepAgentStudio({
   const threadRef = useRef(current),
     currentId = useRef(current),
     lastCanvas = useRef<Data | null>(null)
+  const savedConfigurationDraft = useRef<{ id: string; text: string } | null>(null)
   currentId.current = current
   const running = run?.status === 'running',
     unfinished = !!run && run.status !== 'complete'
@@ -122,7 +139,9 @@ export default function DeepAgentStudio({
     if (threadRef.current !== current) {
       threadRef.current = current
       setAttachments([])
-      setMessage('')
+      setCanvasReferences([])
+      setMessage(savedConfigurationDraft.current?.id === current ? savedConfigurationDraft.current.text : '')
+      savedConfigurationDraft.current = null
       setResults(false)
       setSelectedDocument('')
     }
@@ -133,6 +152,14 @@ export default function DeepAgentStudio({
       setSkill(run.skill_name || '')
     }
   }, [current, run?.selection, run?.skill_name])
+  useEffect(() => {
+    if (!canvasReference || !canvasId || actionBusy || consumedCanvasReference.current === canvasReference) return
+    consumedCanvasReference.current = canvasReference
+    setCanvasReferences((old) => {
+      if (old.some((item) => item.id === canvasReference.id)) return old
+      return old.length < 8 ? [...old, canvasReference] : old
+    })
+  }, [canvasReference, canvasId, actionBusy])
   useEffect(() => {
     if (run?.canvas && run.canvas !== lastCanvas.current) {
       lastCanvas.current = run.canvas
@@ -169,6 +196,7 @@ export default function DeepAgentStudio({
     setPendingSend(null)
     setMessage('')
     setUncertain(false)
+    setCanvasReferences([])
     actionLock.current = null
     setActionBusy(false)
     setUploading(false)
@@ -205,6 +233,7 @@ export default function DeepAgentStudio({
     studio.setCurrent(null)
     setMessage('')
     setAttachments([])
+    setCanvasReferences([])
     setSkill('')
     setHistory(false)
     setResults(false)
@@ -212,16 +241,22 @@ export default function DeepAgentStudio({
     studio.setError('')
     prompt.current?.focus()
   }
-  async function send() {
+  async function send(episodeDecision?: EpisodeDecision, startProduction = false) {
+    const savingConfiguration = !!episodeDecision && 'episode_plan' in episodeDecision
     if (
       !ready ||
       disabled ||
       unfinished ||
       uncertain ||
       attachments.some((a) => !a.id) ||
-      (!message.trim() && !attachments.length)
+      (!message.trim() && !attachments.length && !startProduction)
     )
       return
+    if (!episodeDecision && attachments.some((a) => a.type === 'prompt')) {
+      setEpisodeDialog(true)
+      return
+    }
+    setEpisodeDialog(false)
     await action(async () => {
       const draft = message
       const optimistic: StudioRun = {
@@ -229,20 +264,28 @@ export default function DeepAgentStudio({
         status: 'complete',
         events: [
           ...(run?.events || []),
-          { id: 'pending-send', kind: 'user', text: draft.trim() || '已添加附件', data: { delivery: 'sending' } },
+          {
+            id: 'pending-send',
+            kind: 'user',
+            text: draft.trim() || '已添加附件',
+            data: { delivery: 'sending', canvas_references: canvasReferences },
+          },
         ],
       }
       setPendingSend({ api, run: optimistic })
-      setMessage('')
+      if (!savingConfiguration) setMessage('')
       setResults(false)
       followUpdates.current = true
       let response: { id: string }
       try {
         response = await api.request('/api/runs', {
+          ...episodeDecision,
+          ...(startProduction ? { start_production: true } : {}),
           message: message.trim(),
           selection: { image, video, mode },
           skill,
           attachments: attachments.map((a) => a.id),
+          canvas_references: canvasReferences.map((item) => item.id),
           previous: run?.status === 'complete' ? current : null,
           ...(canvasId ? { canvas_id: canvasId } : {}),
         })
@@ -263,15 +306,17 @@ export default function DeepAgentStudio({
         run: {
           ...optimistic,
           id: response.id,
-          status: 'running',
+          status: savingConfiguration ? 'complete' : 'running',
           events: optimistic.events.map((event) =>
-            event.id === 'pending-send' ? { ...event, data: undefined } : event,
+            event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event,
           ),
         },
       })
+      if (savingConfiguration) savedConfigurationDraft.current = { id: response.id, text: draft }
       studio.setCurrent(response.id)
-      setMessage('')
+      setMessage(savingConfiguration ? draft : '')
       setAttachments([])
+      setCanvasReferences([])
       setResults(false)
       await studio.refreshHistory()
     })
@@ -555,6 +600,11 @@ export default function DeepAgentStudio({
             当前 MCP 授权空间与页面不同。请在连接设置中重新授权，避免写入其他画布。
           </div>
         )}
+        {!loading && state.connected && !mismatch && !studio.error && !catalog.planning_model && (
+          <div role="alert" className={styles.alert}>
+            推理模型暂不可用，无法发送消息。请管理员检查指定模型是否已启用，以及当前账号是否有使用权限。
+          </div>
+        )}
         {studio.error && (
           <div role="alert" className={styles.alert}>
             {studio.error}
@@ -588,6 +638,7 @@ export default function DeepAgentStudio({
                   active={running && !run.stop}
                   events={[...(run.history_events || []), ...run.events]}
                   canvas={run.canvas}
+                  onRecharge={canOpenRecharge ? () => openMemberCenterTab('recharge') : undefined}
                   onDocument={(id) => {
                     setSelectedDocument(id)
                     setDialog('documents')
@@ -666,8 +717,10 @@ export default function DeepAgentStudio({
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
-                  {run.status === 'error' && <p role="alert">执行已暂停，进度已保留。请查看上方的具体原因。</p>}
-                  {'Notification' in window && Notification.permission !== 'granted' && (
+                  {run.status === 'error' && !creditBlocked && (
+                    <p role="alert">执行已暂停，进度已保留。请查看上方的具体原因。</p>
+                  )}
+                  {!creditBlocked && 'Notification' in window && Notification.permission !== 'granted' && (
                     <button
                       type="button"
                       onClick={() => {
@@ -686,7 +739,7 @@ export default function DeepAgentStudio({
                     </button>
                   )}
                   {notificationMessage && <p role="status">{notificationMessage}</p>}
-                  {!run.pending && (
+                  {!creditBlocked && !run.pending && (
                     <MediaRetry
                       key={run.id}
                       api={api}
@@ -698,7 +751,7 @@ export default function DeepAgentStudio({
                   )}
                   <p>已成功的素材会保留。恢复会先查询已提交任务；失败素材重试需要单独确认。</p>
                   <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
-                    恢复执行 / 查询已有任务
+                    {creditBlocked ? '充值后继续执行' : '恢复执行 / 查询已有任务'}
                   </button>
                   {run.inference_failure?.retryable && (
                     <button
@@ -850,6 +903,89 @@ export default function DeepAgentStudio({
                 ))}
               </div>
             )}
+            {run?.selection?.episode_models && (
+              <div className={styles.referenceHint} aria-label="已保存的制作配置">
+                <details>
+                  <summary>
+                    已保存 {Object.keys(run.selection.episode_models).length} 集配置
+                    {run.selection.media_allowed === false ? ' · 等待你的要求' : ''}
+                  </summary>
+                  {Object.entries(run.selection.episode_models).map(([id, episode]) => (
+                    <p key={id}>
+                      {episode.title}
+                      <br />
+                      生图：
+                      {catalog.models.find((m) => m.id === episode.image)?.display_name ||
+                        catalog.models.find((m) => m.id === episode.image)?.model ||
+                        episode.image}{' '}
+                      · {Object.values(episode.image_params || {}).join(' · ')}
+                      <br />
+                      视频：
+                      {catalog.models.find((m) => m.id === episode.video)?.display_name ||
+                        catalog.models.find((m) => m.id === episode.video)?.model ||
+                        episode.video}{' '}
+                      · {Object.values(episode.video_params || {}).join(' · ')}
+                    </p>
+                  ))}
+                </details>
+                {run.selection.media_allowed === false && (
+                  <>
+                    <span>可继续补充要求；准备好后直接说“开始制作”，也可点击按钮。</span>
+                    <button
+                      type="button"
+                      disabled={!ready || disabled || unfinished || uncertain || !!attachments.length}
+                      onClick={() => void send(undefined, true)}
+                    >
+                      开始制作
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {attachments.some((a) => a.type === 'prompt' && a.id) && (
+              <ScriptEpisodes
+                key={current || 'new'}
+                request={api.request}
+                attachmentIds={attachments.flatMap((a) => (a.id ? [a.id] : []))}
+                message={message.trim()}
+                models={catalog.models}
+                image={image}
+                video={video}
+                mode={mode}
+                disabled={disabled || unfinished || uncertain}
+                open={episodeDialog}
+                onOpen={() => setEpisodeDialog(true)}
+                onClose={() => setEpisodeDialog(false)}
+                onConfirm={(decision) => void send(decision)}
+              />
+            )}
+            {canvasId && (
+              <div className={styles.referenceHint}>
+                点击画布节点添加引用{canvasReferences.length > 0 ? ` · ${canvasReferences.length}/8` : ''}
+                {canvasReferences.length === 8 ? '，移除后可添加其他节点' : ''}
+              </div>
+            )}
+            {!!canvasReferences.length && (
+              <div className={styles.attachments} aria-label="画布引用">
+                {canvasReferences.map((item) => (
+                  <div key={item.id}>
+                    <StudioIcon name="file" size={18} />
+                    <span>
+                      {item.title}
+                      <small>画布节点引用</small>
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`移除引用 ${item.title}`}
+                      disabled={actionBusy}
+                      onClick={() => setCanvasReferences((old) => old.filter((entry) => entry.id !== item.id))}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={prompt}
               aria-label="创作要求"
@@ -980,7 +1116,13 @@ export default function DeepAgentStudio({
             </div>
           </form>
           <footer className={styles.footer}>
-            <span>{uploading ? '正在上传…' : mode === 'auto' ? '自动调用并计费，可随时停止' : '每次生成前确认'}</span>
+            <span aria-live="polite" aria-atomic="true">
+              已消耗{' '}
+              {conversationCredits([...(run?.history_events || []), ...(run?.events || [])]).toLocaleString('zh-CN', {
+                maximumFractionDigits: 3,
+              })}{' '}
+              积分
+            </span>
             <span>{run ? studio.streamState : '推理与素材按实际用量扣积分'}</span>
           </footer>
         </div>

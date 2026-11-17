@@ -35,7 +35,7 @@ test('画布分享入口在点击前不请求分享接口', async ({ page }) => 
     }),
   )
   let shareRequests = 0
-  await page.route('**/api/v1/canvases/125/share?**', (route) => {
+  await page.route(/\/api\/v1\/canvases\/125\/share(?:\/activity)?(?=\?|$)/, (route) => {
     shareRequests++
     return route.abort()
   })

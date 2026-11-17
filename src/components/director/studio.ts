@@ -47,7 +47,23 @@ export interface StudioRun {
   status: RunStatus
   stop?: boolean
   cursor: number
-  selection?: { image: number; video: number; chat?: number; mode: 'manual' | 'auto' }
+  selection?: {
+    image: number
+    video: number
+    chat?: number
+    mode: 'manual' | 'auto'
+    media_allowed?: boolean
+    episode_models?: Record<
+      string,
+      {
+        title: string
+        image: number
+        video: number
+        image_params?: Record<string, string>
+        video_params?: Record<string, string>
+      }
+    >
+  }
   skill_name?: string
   events: StudioEvent[]
   documents?: StudioDocument[]
@@ -74,6 +90,7 @@ export interface StudioModel {
   display_name?: string
   description?: string
   operation_codes: string[]
+  params_schema?: { fields?: Data[] }
 }
 export interface StudioCatalog {
   models: StudioModel[]
@@ -166,8 +183,10 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
   return {
     request,
     async bootstrap(signal?: AbortSignal) {
-      const response = await fetch(prefix + '/', { credentials: 'same-origin', signal })
+      const response = await fetch(prefix + '/api/bootstrap', { credentials: 'same-origin', signal })
       if (!response.ok) throw new StudioHTTPError('暂时无法连接创作服务，请稍后重试。', response.status)
+      const value = await response.json().catch(() => null)
+      if (value?.ready !== true) throw new Error('创作服务初始化失败，请稍后重试。')
     },
     upload(file: File, signal?: AbortSignal): Promise<StudioAttachment> {
       return withRequestTimeout(
@@ -316,3 +335,44 @@ export function contextInfo(run: StudioRun | null, catalog?: StudioCatalog) {
   const percent = remaining !== null ? Math.round((remaining / capacity) * 1000) / 10 : null
   return { context, input, capacity, remaining, percent }
 }
+
+/** Settled receipts across turns, including retries and charges retained after failure. */
+export function conversationCredits(events: StudioEvent[]): number {
+  const receipts = new Map<string, StudioEvent>()
+  events.forEach((event, index) => {
+    if (!['cost', 'subtitle'].includes(event.kind)) return
+    const data = event.data || {}
+    const subtitle = event.kind === 'subtitle' || data.tool === 'video.subtitle'
+    const id = subtitle ? data.subtitle_id : data.task_id
+    receipts.set(
+      `${subtitle ? 'subtitle' : 'cost'}:${id != null ? 'task:' + id : 'event:' + (event.id ?? index)}`,
+      event,
+    )
+  })
+  let milli = 0
+  for (const event of receipts.values()) {
+    const data = event.data || {}
+    const value = data.actual_cost
+    if (value == null || String(value).trim() === '' || !Number.isFinite(Number(value)) || Number(value) < 0) continue
+    if (
+      event.kind === 'subtitle' ||
+      data.tool === 'video.subtitle' ||
+      ['succeeded', 'success', 'completed', 'failed', 'cancelled', 'canceled', 'payment_failed'].includes(data.status)
+    )
+      milli += Math.round(Number(value) * 1000)
+  }
+  return milli / 1000
+}
+
+/** Exact legacy fallback: never interpret user prose or provider errors as our wallet code. */
+export function isInsufficientCreditsEvent(event?: StudioEvent): boolean {
+  if (!event || !['assistant', 'error'].includes(event.kind)) return false
+  return (
+    event.data?.code === 'INSUFFICIENT_CREDITS' ||
+    (event.kind === 'error' &&
+      event.text.trim() === 'Insufficient credits; top up the workspace balance before retrying.')
+  )
+}
+
+export const insufficientCreditsMessage =
+  '当前工作空间可用积分不足以启动下一步，已有进度已保留。请充值后点击继续执行。任务启动前需预留费用，最终按实际用量结算。'

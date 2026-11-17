@@ -16,6 +16,8 @@ import { requestBusinessJson } from './business'
 export interface CanvasShareState {
   /** 分享口令；空串表示当前未开启分享。 */
   token: string
+  enabled?: boolean
+  allowCopy?: boolean
   /** 后端直接给出的完整分享链接；没给时由前端按当前站点拼。 */
   url: string
   /** 过期时间（ISO 字符串）；空串表示长期有效。 */
@@ -26,6 +28,7 @@ export interface CanvasShareState {
 
 /** 公开画布的基本信息（对齐 httpapi.publicCanvasShareView）。 */
 export interface PublicCanvasShare {
+  allowCopy: boolean
   title: string
   status: string
   revision: number
@@ -75,9 +78,8 @@ function readText(record: Record<string, unknown>, ...keys: string[]): string {
 /**
  * 把响应解析成分享状态。
  *
- * token 是这套功能唯一不可缺的字段：没有它就没有可分享的链接。
- * 解析不到时返回空状态（视作未分享），绝不用一个猜出来的值拼链接——
- * 用户会把那个链接发给别人，打不开时排查成本远高于这里直接显示「未开启」。
+ * 管理接口仅返回 enabled / allow_copy，不能从 token 是否缺失推断分享状态。
+ * token 仅在创建时返回；缺少 token 时不拼造链接，重新生成后才能再复制链接。
  */
 export function parseCanvasShareState(payload: unknown): CanvasShareState {
   const data = unwrap(payload)
@@ -86,7 +88,14 @@ export function parseCanvasShareState(payload: unknown): CanvasShareState {
   const url = readText(share, 'url', 'share_url', 'shareUrl', 'link', 'share_link')
   const expiresAt = readText(share, 'expires_at', 'expiresAt', 'expire_at', 'expired_at')
   const status = readText(share, 'status', 'state')
-  return { token, url, expiresAt, status }
+  return {
+    token,
+    url,
+    expiresAt,
+    status,
+    enabled: share.enabled === true || Boolean(token || url),
+    allowCopy: share.allow_copy === true,
+  }
 }
 
 /** 查询画布当前的分享状态；未开启分享时返回空 token。 */
@@ -114,16 +123,18 @@ export async function createCanvasShare({
   workspaceId,
   canvasId,
   expiresAt = '',
+  allowCopy = false,
 }: {
   workspaceId: number
   canvasId: number
   expiresAt?: string
+  allowCopy?: boolean
 }): Promise<CanvasShareState> {
   const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
   const id = requirePositiveInteger(canvasId, '画布 ID 无效')
   const payload = await requestBusinessJson<unknown>(`/api/v1/canvases/${id}/share?workspace_id=${wsId}`, {
     method: 'POST',
-    body: JSON.stringify(expiresAt ? { expires_at: expiresAt } : {}),
+    body: JSON.stringify({ allow_copy: allowCopy, ...(expiresAt ? { expires_at: expiresAt } : {}) }),
   })
   return parseCanvasShareState(payload)
 }
@@ -152,6 +163,7 @@ export async function fetchPublicCanvas(token: string): Promise<PublicCanvasShar
   const payload = await requestBusinessJson<unknown>(`/api/v1/canvas-shares/${encodeURIComponent(requireToken(token))}`)
   const data = unwrap(payload)
   return {
+    allowCopy: data.allow_copy === true,
     title: readText(data, 'title', 'name'),
     status: readText(data, 'status'),
     revision: Number(data.revision) || 0,
@@ -214,4 +226,42 @@ export function buildCanvasShareUrl(state: CanvasShareState, origin = window.loc
   if (state.url) return state.url
   if (!state.token) return ''
   return `${origin.replace(/\/$/, '')}/canvas/share/${encodeURIComponent(state.token)}`
+}
+
+export interface CanvasShareActivity {
+  id: number
+  user_id: number
+  user_name: string
+  action: 'view' | 'copy'
+  target_workspace_name?: string
+  created_at: string
+}
+
+export async function updateCanvasShareCopy(workspaceId: number, canvasId: number, allowCopy: boolean) {
+  return parseCanvasShareState(
+    await requestBusinessJson(
+      `/api/v1/canvases/${requirePositiveInteger(canvasId, '画布 ID 无效')}/share?workspace_id=${requirePositiveInteger(workspaceId, '空间 ID 无效')}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ allow_copy: allowCopy }),
+      },
+    ),
+  )
+}
+
+export async function listCanvasShareActivity(workspaceId: number, canvasId: number, offset = 0) {
+  return requestBusinessJson<{ items: CanvasShareActivity[]; has_more: boolean }>(
+    `/api/v1/canvases/${requirePositiveInteger(canvasId, '画布 ID 无效')}/share/activity?workspace_id=${requirePositiveInteger(workspaceId, '空间 ID 无效')}&offset=${offset}`,
+  )
+}
+
+export async function copySharedCanvas(token: string, workspaceId: number, requestKey: string) {
+  return requestBusinessJson<{ id: number }>(
+    `/api/v1/canvas-shares/${encodeURIComponent(requireToken(token))}/copy?workspace_id=${requirePositiveInteger(workspaceId, '请选择目标空间')}`,
+    {
+      method: 'POST',
+      timeoutMs: 600_000,
+      body: JSON.stringify({ request_key: requestKey }),
+    },
+  )
 }

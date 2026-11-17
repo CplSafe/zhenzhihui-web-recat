@@ -69,3 +69,7 @@ src/
 - `src/api/*.ts` 顶部使用 `@ts-nocheck`（逐字移植的框架无关 JS，完整类型化为后续增量工作）。
 - `streamdown` 内含 shiki / mermaid，按需懒加载为独立 chunk，首屏不受影响但产物体积偏大。
 - 运行时尚未对接真实后端做全流程走查，建议接后端后逐页验证。
+
+### Canvas DoDo Agent entry
+
+The production canvas entry is hidden with `VITE_CANVAS_DIRECTOR_ENABLED=false npm run build`. TEST keeps the entry with `VITE_CANVAS_DIRECTOR_ENABLED=true npm run build`. This build flag only controls mounting the canvas panel and its entry; it does not delete conversations, modify assets, or replace backend authorization.

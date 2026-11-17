@@ -30,6 +30,8 @@ async function openCanvasAgent(page: Page, uploadAttachment: (route: Route) => P
     switch (key) {
       case 'GET /agent-studio/':
         return route.fulfill({ body: 'Agent mock' })
+      case 'GET /agent-studio/api/bootstrap':
+        return route.fulfill({ json: { ready: true } })
       case 'GET /agent-studio/api/state':
         return route.fulfill({
           json: { connected: true, workspace_id: WORKSPACE_ID, session_scope: 'drag-e2e', runs: [] },

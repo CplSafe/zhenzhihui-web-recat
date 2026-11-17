@@ -60,7 +60,7 @@ export async function withRequestTimeout<T>(
 
   const controller = new AbortController()
   let abortCause: RequestAbortCause | null = null
-  let timeoutId: number | null = null
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null
   let externalListenerAttached = false
 
   const abort = (cause: RequestAbortCause) => {

@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Download, ImageIcon, LoaderCircle, X } from 'lucide-react'
 import { StudioIcon } from './StudioIcons'
-import { isSettled } from './studio'
+import { isSettled, isInsufficientCreditsEvent, insufficientCreditsMessage } from './studio'
 import { Media } from './StudioMedia'
 import type { Data, StudioDocument, StudioEvent, StudioRun, StudioModel } from './studio'
 import styles from './DeepAgentStudio.module.css'
@@ -275,16 +275,31 @@ export function EventCard({
   event,
   canvas,
   onDocument,
+  onRecharge,
   active = true,
 }: {
   active?: boolean
   event: StudioEvent
   canvas?: Data | null
   onDocument?: (id: string) => void
+  onRecharge?: () => void
 }) {
   const data = event.data || {},
     settled = isSettled(event),
     failed = ['failed', 'cancelled', 'canceled', 'payment_failed'].includes(data.status)
+  if (isInsufficientCreditsEvent(event))
+    return (
+      <article className={`${styles.event} ${styles.assistantMessage}`} aria-label="积分不足提示">
+        <p>{insufficientCreditsMessage}</p>
+        {onRecharge ? (
+          <button type="button" onClick={onRecharge}>
+            去充值
+          </button>
+        ) : (
+          <p>请切换到此会话绑定的工作空间后充值，或联系空间管理员。</p>
+        )}
+      </article>
+    )
   const decisionLabel =
     event.kind === 'user'
       ? data.decision === 'reply' && data.tool === 'ask_user'
@@ -450,6 +465,13 @@ export function EventCard({
     >
       <Markdown>{event.text}</Markdown>
       {event.kind === 'user' && data.delivery === 'sending' && <small role="status">发送中…</small>}
+      {event.kind === 'user' && Array.isArray(data.canvas_references) && (
+        <div className={styles.chips} aria-label="本条消息引用的节点">
+          {data.canvas_references.slice(0, 8).map((item: Data) => (
+            <span key={String(item.id)}>引用 · {String(item.title || '画布节点').slice(0, 120)}</span>
+          ))}
+        </div>
+      )}
       {event.data && event.kind !== 'inspection' && <Media canvas={canvas} data={event.data} />}
       {['user', 'assistant'].includes(event.kind) && <CopyMessage text={event.text} />}
     </article>
@@ -460,12 +482,14 @@ export function Conversation({
   events,
   canvas,
   onDocument,
+  onRecharge,
   active = true,
 }: {
   active?: boolean
   events: StudioEvent[]
   canvas?: Data | null
   onDocument: (id: string) => void
+  onRecharge?: () => void
 }) {
   const groups: StudioEvent[][] = []
   let tools: StudioEvent[] = []
@@ -489,11 +513,25 @@ export function Conversation({
               已执行 {group.length} 个工具
             </summary>
             {group.map((event) => (
-              <EventCard key={event.id} event={event} canvas={canvas} onDocument={onDocument} active={active} />
+              <EventCard
+                key={event.id}
+                event={event}
+                canvas={canvas}
+                onDocument={onDocument}
+                onRecharge={onRecharge}
+                active={active}
+              />
             ))}
           </details>
         ) : (
-          <EventCard key={group[0].id} event={group[0]} canvas={canvas} onDocument={onDocument} active={active} />
+          <EventCard
+            key={group[0].id}
+            event={group[0]}
+            canvas={canvas}
+            onDocument={onDocument}
+            onRecharge={onRecharge}
+            active={active}
+          />
         ),
       )}
     </>

@@ -12,6 +12,9 @@ import {
   createCanvasShare,
   deleteCanvasShare,
   getCanvasShare,
+  updateCanvasShareCopy,
+  listCanvasShareActivity,
+  type CanvasShareActivity,
   type CanvasShareState,
 } from '@/api/canvasShare'
 
@@ -46,10 +49,8 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
       }
       if (event.key !== 'Tab') return
       const controls = Array.from(
-        dialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
-        ) || [],
-      )
+        dialogRef.current?.querySelectorAll<HTMLElement>('button, input, select, a[href], [tabindex]') || [],
+      ).filter((control) => control.tabIndex >= 0 && !('disabled' in control && control.disabled))
       const first = controls[0]
       const last = controls[controls.length - 1]
       if (event.shiftKey && document.activeElement === first) {
@@ -67,6 +68,12 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     }
   }, [])
   const [share, setShare] = useState<CanvasShareState | null>(null)
+  const [allowCopy, setAllowCopy] = useState(false)
+  const [activity, setActivity] = useState<CanvasShareActivity[]>([])
+  const [activityOffset, setActivityOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [activityBusy, setActivityBusy] = useState(false)
+  const [activityError, setActivityError] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -76,7 +83,9 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     setLoading(true)
     setError('')
     try {
-      setShare(await getCanvasShare({ workspaceId, canvasId }))
+      const next = await getCanvasShare({ workspaceId, canvasId })
+      setShare(next)
+      setAllowCopy(Boolean(next.allowCopy))
     } catch (err) {
       // 查询失败不能等同于未分享，否则用户会误点重新生成，让已有链接失效。
       setShare(null)
@@ -90,15 +99,57 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     void load()
   }, [load])
 
+  const loadActivity = useCallback(
+    async (offset = 0) => {
+      setActivityBusy(true)
+      setActivityError('')
+      try {
+        const page = await listCanvasShareActivity(workspaceId, canvasId, offset)
+        setActivity((current) => {
+          const items = offset ? [...current, ...page.items] : page.items
+          return Array.from(new Map(items.map((item) => [item.id, item])).values())
+        })
+        setActivityOffset(offset + page.items.length)
+        setHasMore(page.has_more)
+      } catch (err) {
+        setActivityError(String((err as Error)?.message || '记录读取失败，请重试'))
+      } finally {
+        setActivityBusy(false)
+      }
+    },
+    [workspaceId, canvasId],
+  )
+  useEffect(() => {
+    void loadActivity()
+  }, [loadActivity])
+
+  const handleAllowCopy = async (value: boolean) => {
+    if (!share?.enabled && !share?.token && !share?.url) {
+      setAllowCopy(value)
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const next = await updateCanvasShareCopy(workspaceId, canvasId, value)
+      setAllowCopy(Boolean(next.allowCopy))
+      setShare((current) => (current ? { ...current, ...next, token: current.token, url: current.url } : next))
+    } catch (err) {
+      setError(String((err as Error)?.message || '复制权限保存失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const shareUrl = share ? buildCanvasShareUrl(share) : ''
-  const hasShare = Boolean(shareUrl)
+  const hasShare = Boolean(share?.enabled || shareUrl)
 
   const handleCreate = async () => {
     setBusy(true)
     setError('')
     try {
       const expiresAt = expiryDays ? new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000).toISOString() : ''
-      const next = await createCanvasShare({ workspaceId, canvasId, expiresAt })
+      const next = await createCanvasShare({ workspaceId, canvasId, expiresAt, allowCopy })
       setShare(next)
       onToast?.(hasShare ? '已重新生成链接，原链接失效' : '分享已开启', 'success')
     } catch (err) {
@@ -113,7 +164,8 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
     setError('')
     try {
       await deleteCanvasShare({ workspaceId, canvasId })
-      setShare({ token: '', url: '', expiresAt: '', status: '' })
+      setShare({ token: '', url: '', expiresAt: '', status: '', enabled: false, allowCopy: false })
+      setAllowCopy(false)
       onToast?.('分享已关闭', 'success')
     } catch (err) {
       setError(String((err as Error)?.message || '关闭分享失败'))
@@ -153,12 +205,16 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
           <p className={styles.meta}>读取分享状态中…</p>
         ) : hasShare ? (
           <>
-            <div className={styles.linkRow}>
-              <input className={styles.link} readOnly value={shareUrl} aria-label="分享链接" />
-              <button type="button" className={styles.copy} onClick={handleCopy} disabled={!shareUrl}>
-                复制
-              </button>
-            </div>
+            {shareUrl ? (
+              <div className={styles.linkRow}>
+                <input className={styles.link} readOnly value={shareUrl} aria-label="分享链接" />
+                <button type="button" className={styles.copy} onClick={handleCopy} disabled={!shareUrl}>
+                  复制
+                </button>
+              </div>
+            ) : (
+              <p className={styles.meta}>分享已开启。链接仅在生成时显示；重新生成会使原链接失效。</p>
+            )}
             <p className={styles.meta}>{formatExpiry(share.expiresAt)}</p>
           </>
         ) : share ? (
@@ -182,6 +238,58 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
             </select>
           </label>
         )}
+        <label className={styles.permission}>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={allowCopy}
+            disabled={busy || loading || !share}
+            onChange={(event) => void handleAllowCopy(event.target.checked)}
+          />
+          <span>允许对方复制并应用此画布</span>
+        </label>
+        <p className={styles.hint}>
+          关闭时仅可查看。允许后，对方可将画布和素材复制到自己的空间，已复制的内容不受后续关闭影响。
+        </p>
+
+        <section className={styles.activity} aria-label="分享活动记录">
+          <div className={styles.head}>
+            <strong>查看与复制记录</strong>
+            <button type="button" className={styles.copy} disabled={activityBusy} onClick={() => void loadActivity()}>
+              刷新记录
+            </button>
+          </div>
+          {activity.length === 0 && (
+            <p className={styles.meta}>{activityBusy ? '读取记录中…' : activityError ? '' : '暂无查看或复制记录'}</p>
+          )}
+          <ul className={styles.activityList}>
+            {activity.map((item) => (
+              <li key={item.id}>
+                <span>
+                  {item.user_name}
+                  {item.user_id > 0 ? `（#${item.user_id}）` : ''}
+                  {item.action === 'copy' ? ` 复制到「${item.target_workspace_name}」` : ' 查看了画布'}
+                </span>
+                <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
+              </li>
+            ))}
+          </ul>
+          {activityError && (
+            <p role="alert" className={styles.error}>
+              {activityError}
+            </p>
+          )}
+          {hasMore && (
+            <button
+              type="button"
+              className={styles.copy}
+              disabled={activityBusy}
+              onClick={() => void loadActivity(activityOffset)}
+            >
+              {activityBusy ? '读取中…' : '更多记录'}
+            </button>
+          )}
+        </section>
 
         {error && <p className={styles.error}>{error}</p>}
 
