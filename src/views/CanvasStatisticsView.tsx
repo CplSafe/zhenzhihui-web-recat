@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ArrowLeft, RefreshCw, Search, SlidersHorizontal } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getCanvasStatistics, type CanvasStatistics, type CanvasStatisticsFilters } from '@/api/canvasApi'
 import { getBusinessErrorMessage } from '@/api/business'
@@ -44,171 +45,207 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
     }
   }, [workspaceId, canvasId, page, filters, attempt])
   return (
-    <main className={styles.page}>
-      <header className={styles.header}>
-        <button onClick={() => navigate(`/canvas/${canvasId}`)}>← 返回画布</button>
-        <h1>画布数据统计</h1>
-        <button onClick={() => setAttempt((v) => v + 1)}>刷新</button>
-      </header>
-      <p>统计所有成员的实际扣费，包含重试；未扣除的冻结积分不计入。删除节点不会扣减历史消耗。</p>
-      <form
-        className={styles.filters}
-        onSubmit={(event) => {
-          event.preventDefault()
-          setPage(1)
-          setFilters({ ...draft })
-        }}
-      >
-        <label>
-          节点名称 / ID
-          <input
-            value={draft.query || ''}
-            maxLength={100}
-            placeholder="搜索节点"
-            onChange={(e) => setDraft({ ...draft, query: e.target.value })}
-          />
-        </label>
-        <label>
-          任务发起人
-          <select value={draft.user_id || ''} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
-            <option value="">全部成员</option>
-            {choices.map((member) => (
-              <option key={member.user_id} value={member.user_id}>
-                {member.display_name} #{member.user_id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          节点状态
-          <select value={draft.state || 'all'} onChange={(e) => setDraft({ ...draft, state: e.target.value })}>
-            <option value="all">全部状态</option>
-            <option value="active">现存节点</option>
-            <option value="deleted">已删除节点</option>
-            <option value="unassigned">未关联节点</option>
-          </select>
-        </label>
-        <label>
-          开始日期
-          <input
-            type="date"
-            value={draft.date_from || ''}
-            max={draft.date_to || undefined}
-            onChange={(e) => setDraft({ ...draft, date_from: e.target.value })}
-          />
-        </label>
-        <label>
-          结束日期
-          <input
-            type="date"
-            value={draft.date_to || ''}
-            min={draft.date_from || undefined}
-            onChange={(e) => setDraft({ ...draft, date_to: e.target.value })}
-          />
-        </label>
-        <button type="submit">查询</button>
-        <button
-          type="button"
-          onClick={() => {
-            setDraft({})
-            setFilters({})
-            setPage(1)
-          }}
-        >
-          重置
-        </button>
-      </form>
-      <p>按北京时间的实际结算日期筛选。图表和明细统计全部匹配记录，不受当前页影响。</p>
-      {error ? (
-        <p role="alert">{error}</p>
-      ) : !data ? (
-        <p role="status">正在加载统计…</p>
-      ) : (
-        <>
-          <section className={styles.total} aria-label="画布累计消耗">
-            <span>
-              {Object.values(filters).some((value) => value && value !== 'all') ? '筛选结果消耗' : '累计消耗'}
-            </span>
-            <strong>{formatCredits(data.total_used_credits)} 积分</strong>
-          </section>
-          <p>
-            按任务发起人拆分。无法可靠对应节点的历史费用及 Agent 推理列入“未关联节点”；未产生计费任务的编辑不计作消耗。
-          </p>
-          <div className={styles.charts}>
-            <section className={styles.trend}>
-              <h2>消耗趋势</h2>
-              <small>有结算的日期 · 积分</small>
-              <UsageTrend points={data.trend || []} />
-            </section>
-            <UsageBars
-              title="成员消耗对比"
-              items={(data.member_totals || []).map((member) => ({
-                id: String(member.user_id),
-                label: `${member.display_name} #${member.user_id}`,
-                value: member.used_credits,
-              }))}
-            />
-            <UsageBars
-              title="节点消耗排行 · 前 10 项"
-              items={(data.top_nodes || []).map((node) => ({
-                id: node.node_id || 'unassigned',
-                label: node.title + (node.deleted ? '（已删除）' : ''),
-                value: node.used_credits,
-              }))}
-            />
-          </div>
-          <h2>节点消耗明细</h2>
-          <div className={styles.tableWrap}>
-            <table>
-              <thead>
-                <tr>
-                  <th>节点</th>
-                  <th>任务发起人 / 实际消耗</th>
-                  <th>节点合计</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((node) => (
-                  <tr key={node.node_id || '__unassigned__'}>
-                    <td>
-                      <strong>{node.title}</strong>
-                      {node.deleted && <span className={styles.badge}>已删除</span>}
-                      {node.node_id && <small>{node.node_id}</small>}
-                    </td>
-                    <td>
-                      {node.members.length ? (
-                        node.members.map((member) => (
-                          <div className={styles.member} key={member.user_id}>
-                            <span>
-                              {member.display_name} <small>#{member.user_id}</small>
-                            </span>
-                            <span>{formatCredits(member.used_credits)} 积分</span>
-                          </div>
-                        ))
-                      ) : (
-                        <span>暂无计费任务</span>
-                      )}
-                    </td>
-                    <td>{formatCredits(node.used_credits)} 积分</td>
-                  </tr>
+    <main className={styles.page} aria-label="画布数据统计" tabIndex={0}>
+      <div className={styles.content}>
+        <header className={styles.header}>
+          <button className={styles.back} onClick={() => navigate(`/canvas/${canvasId}`)}>
+            <ArrowLeft size={16} aria-hidden="true" />
+            返回画布
+          </button>
+          <h1>画布数据统计</h1>
+          <button onClick={() => setAttempt((v) => v + 1)}>
+            <RefreshCw size={15} aria-hidden="true" />
+            刷新
+          </button>
+        </header>
+        <p className={styles.intro}>查看这张画布的积分去向，追踪每位成员与每个节点的实际消耗。</p>
+        <section className={styles.filterPanel} aria-label="统计筛选">
+          <h2>
+            <SlidersHorizontal size={16} aria-hidden="true" />
+            筛选记录
+          </h2>
+          <form
+            className={styles.filters}
+            onSubmit={(event) => {
+              event.preventDefault()
+              setPage(1)
+              setFilters({ ...draft })
+            }}
+          >
+            <label>
+              节点名称 / ID
+              <input
+                value={draft.query || ''}
+                maxLength={100}
+                placeholder="搜索节点"
+                onChange={(e) => setDraft({ ...draft, query: e.target.value })}
+              />
+            </label>
+            <label>
+              任务发起人
+              <select value={draft.user_id || ''} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
+                <option value="">全部成员</option>
+                {choices.map((member) => (
+                  <option key={member.user_id} value={member.user_id}>
+                    {member.display_name} #{member.user_id}
+                  </option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+            </label>
+            <label>
+              节点状态
+              <select value={draft.state || 'all'} onChange={(e) => setDraft({ ...draft, state: e.target.value })}>
+                <option value="all">全部状态</option>
+                <option value="active">现存节点</option>
+                <option value="deleted">已删除节点</option>
+                <option value="unassigned">未关联节点</option>
+              </select>
+            </label>
+            <label>
+              开始日期
+              <input
+                type="date"
+                value={draft.date_from || ''}
+                max={draft.date_to || undefined}
+                onChange={(e) => setDraft({ ...draft, date_from: e.target.value })}
+              />
+            </label>
+            <label>
+              结束日期
+              <input
+                type="date"
+                value={draft.date_to || ''}
+                min={draft.date_from || undefined}
+                onChange={(e) => setDraft({ ...draft, date_to: e.target.value })}
+              />
+            </label>
+            <div className={styles.filterActions}>
+              <button type="submit" className={styles.primary}>
+                <Search size={15} aria-hidden="true" />
+                查询
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft({})
+                  setFilters({})
+                  setPage(1)
+                }}
+              >
+                重置
+              </button>
+            </div>
+          </form>
+          <p className={styles.filterHint}>日期按北京时间结算日统计，图表涵盖全部匹配记录。</p>
+        </section>
+        {error ? (
+          <div className={styles.notice} role="alert">
+            <p>{error}</p>
+            <button onClick={() => setAttempt((v) => v + 1)}>重新加载</button>
           </div>
-          {data.total === 0 && <p>暂无节点或消费记录。</p>}
-          <nav className={styles.pager} aria-label="统计分页">
-            <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
-              上一页
-            </button>
-            <span>
-              第 {page} 页 · 共 {data.total} 项
-            </span>
-            <button disabled={page * 50 >= data.total} onClick={() => setPage((p) => p + 1)}>
-              下一页
-            </button>
-          </nav>
-        </>
-      )}
+        ) : !data ? (
+          <div className={styles.loading} role="status">
+            <p>正在加载统计…</p>
+            <div />
+            <div />
+          </div>
+        ) : (
+          <>
+            <section className={styles.total} aria-label="画布累计消耗">
+              <span>
+                {Object.values(filters).some((value) => value && value !== 'all') ? '筛选结果消耗' : '累计消耗'}
+              </span>
+              <strong>{formatCredits(data.total_used_credits)} 积分</strong>
+              <span className={styles.totalNote}>实际扣费 · 包含重试 · 不含冻结积分</span>
+            </section>
+
+            <div className={styles.charts}>
+              <section className={styles.trend}>
+                <h2>消耗趋势</h2>
+                <small>有结算的日期 · 积分</small>
+                <UsageTrend points={data.trend || []} />
+              </section>
+              <UsageBars
+                title="成员消耗对比"
+                items={(data.member_totals || []).map((member) => ({
+                  id: String(member.user_id),
+                  label: `${member.display_name} #${member.user_id}`,
+                  value: member.used_credits,
+                }))}
+              />
+              <UsageBars
+                title="节点消耗排行 · 前 10 项"
+                items={(data.top_nodes || []).map((node) => ({
+                  id: node.node_id || 'unassigned',
+                  label: displayNodeName(node) + (node.deleted ? '（已删除）' : ''),
+                  value: node.used_credits,
+                }))}
+              />
+            </div>
+            <div className={styles.detailHeader}>
+              <h2>节点消耗明细</h2>
+              <span>共 {data.total} 项 · 含已删除节点</span>
+            </div>
+            <p className={styles.detailHint}>
+              无法可靠对应节点的历史费用及 Agent 推理归入“未关联节点”。仅统计计费任务，删除节点不影响历史记录。
+            </p>
+            <div className={styles.tableWrap}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>节点</th>
+                    <th>任务发起人 / 实际消耗</th>
+                    <th className={styles.numeric}>节点合计</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.items.map((node) => (
+                    <tr key={node.node_id || '__unassigned__'}>
+                      <td>
+                        <strong>{displayNodeName(node)}</strong>
+                        {node.deleted && <span className={styles.badge}>已删除</span>}
+                        {node.node_id && (
+                          <details className={styles.nodeIdentity}>
+                            <summary>节点 ID</summary>
+                            <small>{node.node_id}</small>
+                          </details>
+                        )}
+                      </td>
+                      <td>
+                        {node.members.length ? (
+                          node.members.map((member) => (
+                            <div className={styles.member} key={member.user_id}>
+                              <span>
+                                {member.display_name} <small>#{member.user_id}</small>
+                              </span>
+                              <span>{formatCredits(member.used_credits)} 积分</span>
+                            </div>
+                          ))
+                        ) : (
+                          <span className={styles.muted}>暂无计费任务</span>
+                        )}
+                      </td>
+                      <td>{formatCredits(node.used_credits)} 积分</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {data.total === 0 && <p>暂无节点或消费记录。</p>}
+            <nav className={styles.pager} aria-label="统计分页">
+              <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
+                上一页
+              </button>
+              <span>
+                第 {page} 页 · 共 {data.total} 项
+              </span>
+              <button disabled={page * 50 >= data.total} onClick={() => setPage((p) => p + 1)}>
+                下一页
+              </button>
+            </nav>
+          </>
+        )}
+      </div>
     </main>
   )
 }
@@ -244,19 +281,23 @@ function UsageTrend({ points }: { points: CanvasStatistics['trend'] }) {
   const maximum = Math.max(1, ...points.map((point) => point.used_credits))
   const width = 640,
     plotHeight = 140,
-    step = width / points.length
+    step = width / points.length,
+    barWidth = Math.min(32, step * 0.7)
   return (
     <div className={styles.trendPlot}>
       <svg viewBox="0 0 660 190" role="img" aria-label="按结算日期统计的积分消耗趋势">
-        <line x1="10" y1="160" x2="650" y2="160" stroke="#505a6e" />
+        {[20, 90, 160].map((y) => (
+          <line key={y} x1="10" y1={y} x2="650" y2={y} stroke="currentColor" opacity="0.12" />
+        ))}
         {points.map((point, i) => (
           <rect
             key={point.date}
-            x={10 + i * step}
+            x={10 + i * step + (step - barWidth) / 2}
             y={160 - (point.used_credits / maximum) * plotHeight}
-            width={Math.max(0.25, step * 0.7)}
+            width={Math.max(0.25, barWidth)}
+            rx="2"
             height={(point.used_credits / maximum) * plotHeight}
-            fill="#77a9ed"
+            fill="#a296ed"
           >
             <title>
               {point.date}：{formatCredits(point.used_credits)} 积分
@@ -275,4 +316,8 @@ function UsageTrend({ points }: { points: CanvasStatistics['trend'] }) {
       </svg>
     </div>
   )
+}
+
+function displayNodeName(node: { title: string; node_id: string }) {
+  return node.node_id && node.title === `节点 ${node.node_id}` ? '未保留名称的节点' : node.title
 }
