@@ -252,6 +252,16 @@ for (const renamed of [false, true]) {
       path: '/api/v1/canvases/120/elements',
       workspaceId: WORKSPACE_ID,
     })
+    await page.route('**/api/v1/canvases/120/node-locks?**', (route) => {
+      expect(route.request().method()).toBe('POST')
+      const { nodes } = route.request().postDataJSON() as { nodes: string[] }
+      return route.fulfill({
+        json: {
+          granted: true,
+          nodes: Object.fromEntries(nodes.map((id) => [id, [{ user_id: 7, name: 'E2E 用户', editing: true }]])),
+        },
+      })
+    })
     await page.goto('/canvas/120')
     await ready
     const source = page.locator('.react-flow__node[data-id="image-source"]')
@@ -629,6 +639,16 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
       }
       return fetch(input, init)
     }
+  })
+  await page.route('**/api/v1/canvases/120/node-locks?**', (route) => {
+    expect(route.request().method()).toBe('POST')
+    const { nodes } = route.request().postDataJSON() as { nodes: string[] }
+    return route.fulfill({
+      json: {
+        granted: true,
+        nodes: Object.fromEntries(nodes.map((id) => [id, [{ user_id: 7, name: 'E2E 用户', editing: true }]])),
+      },
+    })
   })
   await page.goto('/canvas/120')
   const source = page.locator('.react-flow__node[data-id="panorama-source"]')

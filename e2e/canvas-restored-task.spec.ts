@@ -4,7 +4,7 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } fr
 for (const source of ['cloud', 'draft']) {
   for (const status of ['processing', 'failed', 'missing']) {
     test(`reopening a canvas verifies ${source} failure before displaying ${status}`, async ({ page }) => {
-      const api = await installStrictAuthenticatedApp(page)
+      const api = await installStrictAuthenticatedApp(page, { preserveStorage: source === 'draft' })
       await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { code: 0, data: [] } }))
       const cachedError = 'read google image response: context canceled'
       const latestError = 'Latest confirmed provider error'
@@ -48,6 +48,8 @@ for (const source of ['cloud', 'draft']) {
               edges: [],
               textContents: {},
               boundCanvasId: 110,
+              pendingSync: true,
+              syncBaseline: { nodes: [], edges: [] },
               updatedAt: Date.now(),
             }),
           )

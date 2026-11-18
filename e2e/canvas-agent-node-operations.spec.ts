@@ -51,6 +51,16 @@ for (const width of [1440, 760]) {
       }
     })
 
+    await page.route(`**/api/v1/canvases/${CANVAS_ID}/node-locks?**`, (route) => {
+      expect(route.request().method()).toBe('POST')
+      const { nodes } = route.request().postDataJSON() as { nodes: string[] }
+      return route.fulfill({
+        json: {
+          granted: true,
+          nodes: Object.fromEntries(nodes.map((id) => [id, [{ user_id: 7, name: 'E2E 用户', editing: true }]])),
+        },
+      })
+    })
     await page.goto(`/canvas/${CANVAS_ID}`)
     await page.getByRole('button', { name: '打开 DoDo Agent' }).click()
     const agent = page.getByRole('region', { name: 'DoDo Agent' })
