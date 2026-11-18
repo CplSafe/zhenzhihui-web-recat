@@ -670,7 +670,7 @@ describe('Director interactions', () => {
     expect(starts[0]).toMatchObject({
       message: '只制作第一集',
       selection: { image: 29, video: 18, mode: 'auto' },
-      skill: '',
+      skills: [],
       attachments: [],
     })
   })
@@ -2052,6 +2052,8 @@ it('saves configuration without consuming the unsent requirements or starting pr
   })
   fireEvent.change(screen.getByRole('textbox'), { target: { value: '只讨论风格，先别制作' } })
   await screen.findByText('已识别 2 集 · 已选 0 集')
+  fireEvent.click(screen.getByRole('button', { name: 'Skill', exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: /故事导演/ }))
   expect(started).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
   await screen.findByRole('checkbox', { name: '选择 第2集' })
@@ -2062,8 +2064,20 @@ it('saves configuration without consuming the unsent requirements or starting pr
   expect(screen.getByRole('textbox')).toHaveValue('只讨论风格，先别制作')
   expect(started.mock.calls[0][0].start_production).toBeUndefined()
   expect(started.mock.calls[0][0]).toMatchObject({
+    skills: ['director'],
     attachments: ['episode-file'],
     selection: { image: 29, video: 18, mode: 'manual' },
     episode_plan: { fingerprint: 'script-revision', episodes: [{ id: '42:2' }] },
   })
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送创作要求' })).toBeEnabled())
+  expect(screen.getByRole('button', { name: '移除 Skill 故事导演' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await waitFor(() => expect(started).toHaveBeenCalledTimes(2))
+  expect(started.mock.calls[1][0]).toMatchObject({
+    message: '只讨论风格，先别制作',
+    skills: ['director'],
+    previous: 'saved',
+    attachments: [],
+  })
+  expect(started.mock.calls[1][0].episode_plan).toBeUndefined()
 })

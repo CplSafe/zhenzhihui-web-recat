@@ -93,7 +93,7 @@ export default function DeepAgentStudio({
     [mode, setMode] = useState<'manual' | 'auto'>('manual')
   const [image, setImage] = useState<number>(),
     [video, setVideo] = useState<number>(),
-    [skill, setSkill] = useState('')
+    [skills, setSkills] = useState<string[]>([])
   const [dialog, setDialog] = useState<
     'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'attachments' | 'assets' | null
   >(null)
@@ -123,11 +123,12 @@ export default function DeepAgentStudio({
   const threadRef = useRef(current),
     currentId = useRef(current),
     lastCanvas = useRef<Data | null>(null)
-  const savedConfigurationDraft = useRef<{ id: string; text: string } | null>(null)
+  const savedConfigurationDraft = useRef<{ id: string; text: string; skills: string[] } | null>(null)
   currentId.current = current
   const running = run?.status === 'running',
     unfinished = !!run && run.status !== 'complete'
-  const disabled = loading || actionBusy || running || uploading || mismatch
+  const draftDisabled = loading || actionBusy || mismatch || uploading
+  const disabled = draftDisabled || running
   const ready = state.connected && !mismatch && !!image && !!video && !!catalog.planning_model
   const selectedDoc = run?.documents?.find((d) => d.id === selectedDocument) || run?.documents?.[0]
 
@@ -139,8 +140,10 @@ export default function DeepAgentStudio({
     if (threadRef.current !== current) {
       threadRef.current = current
       setAttachments([])
+      const savedDraft = savedConfigurationDraft.current?.id === current ? savedConfigurationDraft.current : null
+      setSkills(savedDraft?.skills || [])
       setCanvasReferences([])
-      setMessage(savedConfigurationDraft.current?.id === current ? savedConfigurationDraft.current.text : '')
+      setMessage(savedDraft?.text || '')
       savedConfigurationDraft.current = null
       setResults(false)
       setSelectedDocument('')
@@ -149,9 +152,8 @@ export default function DeepAgentStudio({
       setImage(run.selection.image)
       setVideo(run.selection.video)
       setMode(run.selection.mode)
-      setSkill(run.skill_name || '')
     }
-  }, [current, run?.selection, run?.skill_name])
+  }, [current, run?.selection])
   useEffect(() => {
     if (!canvasReference || !canvasId || actionBusy || consumedCanvasReference.current === canvasReference) return
     consumedCanvasReference.current = canvasReference
@@ -234,7 +236,7 @@ export default function DeepAgentStudio({
     setMessage('')
     setAttachments([])
     setCanvasReferences([])
-    setSkill('')
+    setSkills([])
     setHistory(false)
     setResults(false)
     setUncertain(false)
@@ -259,6 +261,10 @@ export default function DeepAgentStudio({
     setEpisodeDialog(false)
     await action(async () => {
       const draft = message
+      const selectedSkills = skills.map((name) => ({
+        name,
+        description: catalog.skills.find((s) => s.name === name)?.description,
+      }))
       const optimistic: StudioRun = {
         ...(run || { id: 'pending', cursor: 0, title: '新对话', events: [] }),
         status: 'complete',
@@ -268,7 +274,11 @@ export default function DeepAgentStudio({
             id: 'pending-send',
             kind: 'user',
             text: draft.trim() || '已添加附件',
-            data: { delivery: 'sending', canvas_references: canvasReferences },
+            data: {
+              delivery: 'sending',
+              canvas_references: canvasReferences,
+              skills: selectedSkills,
+            },
           },
         ],
       }
@@ -283,7 +293,7 @@ export default function DeepAgentStudio({
           ...(startProduction ? { start_production: true } : {}),
           message: message.trim(),
           selection: { image, video, mode },
-          skill,
+          skills,
           attachments: attachments.map((a) => a.id),
           canvas_references: canvasReferences.map((item) => item.id),
           previous: run?.status === 'complete' ? current : null,
@@ -308,13 +318,22 @@ export default function DeepAgentStudio({
           id: response.id,
           status: savingConfiguration ? 'complete' : 'running',
           events: optimistic.events.map((event) =>
-            event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event,
+            event.id === 'pending-send'
+              ? {
+                  ...event,
+                  data: {
+                    canvas_references: canvasReferences,
+                    skills: selectedSkills,
+                  },
+                }
+              : event,
           ),
         },
       })
-      if (savingConfiguration) savedConfigurationDraft.current = { id: response.id, text: draft }
+      if (savingConfiguration) savedConfigurationDraft.current = { id: response.id, text: draft, skills }
       studio.setCurrent(response.id)
       setMessage(savingConfiguration ? draft : '')
+      if (!savingConfiguration) setSkills([])
       setAttachments([])
       setCanvasReferences([])
       setResults(false)
@@ -417,7 +436,6 @@ export default function DeepAgentStudio({
       }
     })
   }
-  const currentSkill = catalog.skills.find((s) => s.name === skill)
   const context = contextInfo(run, catalog)
   const contextLabel =
     context.context.status === 'compacting'
@@ -875,9 +893,24 @@ export default function DeepAgentStudio({
               void upload([...e.dataTransfer.files])
             }}
           >
-            {currentSkill && (
-              <div className={styles.chips}>
-                <span>Skill · {currentSkill.description || currentSkill.name}</span>
+            {!!skills.length && (
+              <div className={styles.chips} aria-label="已添加的 Skill">
+                {skills.map((name) => {
+                  const label = catalog.skills.find((s) => s.name === name)?.description || name
+                  return (
+                    <span key={name}>
+                      Skill · {label}
+                      <button
+                        type="button"
+                        aria-label={`移除 Skill ${label}`}
+                        disabled={draftDisabled}
+                        onClick={() => setSkills((old) => old.filter((item) => item !== name))}
+                      >
+                        <X size={13} />
+                      </button>
+                    </span>
+                  )
+                })}
               </div>
             )}
             {!!attachments.length && (
@@ -989,7 +1022,9 @@ export default function DeepAgentStudio({
             <textarea
               ref={prompt}
               aria-label="创作要求"
-              placeholder="开始你的创作，或者上传图片与剧本文档…"
+              placeholder={
+                unfinished ? '可先输入下一条要求，当前任务结束后发送…' : '开始你的创作，或者上传图片与剧本文档…'
+              }
               maxLength={12000}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -1007,7 +1042,7 @@ export default function DeepAgentStudio({
                 e.preventDefault()
                 if (!e.repeat) void send()
               }}
-              disabled={disabled || unfinished}
+              disabled={draftDisabled}
               onPaste={(e) => {
                 if (e.clipboardData.files.length) {
                   e.preventDefault()
@@ -1044,7 +1079,7 @@ export default function DeepAgentStudio({
                   aria-label="Skill"
                   data-tooltip="选择 Skill"
                   aria-expanded={dialog === 'skills'}
-                  disabled={disabled || unfinished}
+                  disabled={draftDisabled}
                   onClick={() => openDialog('skills')}
                 >
                   <StudioIcon name="skill" size={16} />
@@ -1280,17 +1315,18 @@ export default function DeepAgentStudio({
                         )}
                       </button>
                     ))
-                : [{ name: '', description: '未选择', id: 0 }, ...catalog.skills]
+                : catalog.skills
                     .filter((item) => `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase()))
                     .map((item) => (
                       <button
                         type="button"
                         key={item.name}
-                        disabled={disabled || unfinished}
-                        aria-pressed={skill === item.name}
+                        disabled={draftDisabled || (!skills.includes(item.name) && skills.length >= 8)}
+                        aria-pressed={skills.includes(item.name)}
                         onClick={() => {
-                          setSkill(item.name)
+                          setSkills((old) => (old.includes(item.name) ? old : [...old, item.name].slice(0, 8)))
                           setDialog(null)
+                          prompt.current?.focus()
                         }}
                       >
                         <span className={styles.optionIcon}>
@@ -1300,7 +1336,7 @@ export default function DeepAgentStudio({
                           <strong>{item.description || item.name}</strong>
                           {item.name && <small>/{item.name}</small>}
                         </span>
-                        {skill === item.name && <Check size={16} />}
+                        {skills.includes(item.name) && <Check size={16} />}
                       </button>
                     ))}
             </div>

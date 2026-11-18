@@ -487,6 +487,9 @@
   flex-wrap: wrap;
 }
 .chips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   line-height: 1.5;
   color: #aaaaaa;
@@ -1436,4 +1439,18 @@
   padding: 6px 10px;
   color: #777;
   font-size: 12px;
+}
+
+.chips span button {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 3px;
+  cursor: pointer;
+}
+.chips span button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
