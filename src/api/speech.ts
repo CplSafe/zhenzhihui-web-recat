@@ -14,6 +14,8 @@ export interface SpeechTranscription {
 }
 
 export interface TranscribeAudioOptions {
+  workspaceId?: number
+  canvasId?: number
   /** 语种提示,如 zh / en;留空由模型自动识别。 */
   language?: string
   /** 热词上下文(产品名、专有名词等),提升专有名词识别率。 */
@@ -32,6 +34,8 @@ export async function transcribeAudio(audio: Blob, options: TranscribeAudioOptio
   const form = new FormData()
   // 后端只认 part 的 Content-Type(取自 Blob.type),文件名无人消费。
   form.append('file', new File([audio], 'voice', { type: audio.type }))
+  if (options.workspaceId) form.append('workspace_id', String(options.workspaceId))
+  if (options.canvasId) form.append('canvas_id', String(options.canvasId))
   if (options.language) form.append('language', options.language)
   if (options.context) form.append('context', options.context)
 

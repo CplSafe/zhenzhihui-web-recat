@@ -40,6 +40,7 @@ const OPERATION_CODE = 'responses.multimodal'
  * “旧模型 ID + 新 workspaceId”的交叉请求。
  */
 export interface AiResponseRequestContext {
+  canvasId?: number
   workspaceId: number
   modelPlanCandidates?: readonly string[]
   /** 与 modelVersion 快照绑定的规范化模型版本 ID。 */
@@ -299,6 +300,7 @@ export async function runResponseText(args: ResponseTextArgs): Promise<string> {
   const modelVersion = args.requestContext?.modelVersion
   const payload = {
     workspaceId,
+    ...(args.requestContext?.canvasId ? { canvasId: args.requestContext.canvasId } : {}),
     operationCode: OPERATION_CODE,
     prompt: buildPrompt(args.system, args.user),
     inputAssets,
@@ -332,6 +334,7 @@ export async function runResponseText(args: ResponseTextArgs): Promise<string> {
 
 /** 从画布图片理解并反推出可直接编辑/复用的中文图片生成提示词。 */
 export async function reverseImagePrompt(args: {
+  canvasId?: number
   imageAssetId: number
   workspaceId: number
   detail?: 'balanced' | 'detailed'
@@ -356,6 +359,7 @@ export async function reverseImagePrompt(args: {
     modelVersionId,
     requestContext: {
       workspaceId,
+      canvasId: args.canvasId,
       modelVersionId,
       modelVersion: model,
     },
@@ -431,6 +435,7 @@ export async function streamResponseText(args: ResponseStreamArgs): Promise<stri
   const modelVersion = args.requestContext?.modelVersion
   const payload = {
     workspaceId,
+    ...(args.requestContext?.canvasId ? { canvasId: args.requestContext.canvasId } : {}),
     operationCode: OPERATION_CODE,
     prompt: buildPrompt(args.system, args.user),
     inputAssets,

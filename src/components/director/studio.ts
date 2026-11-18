@@ -295,8 +295,15 @@ export function mediaURLs(data: unknown, canvas?: Data | null): string[] {
 export function isSettled(event: StudioEvent) {
   return ['succeeded', 'success', 'completed'].includes(event.data?.status)
 }
-export function defaultModel(catalog: StudioCatalog, kind: 'image' | 'video'): number | undefined {
+export function defaultModel(
+  catalog: StudioCatalog,
+  kind: 'image' | 'video',
+  canvasChoice?: number,
+): number | undefined {
   const operation = kind === 'image' ? 'image.text_to_image' : 'video.generate'
+  if (canvasChoice) {
+    return catalog.models.find((model) => model.id === canvasChoice && model.operation_codes.includes(operation))?.id
+  }
   const match = kind === 'image' ? /nano\s*banana\s*pro/i : /seedance\s*2\.5/i
   return catalog.models.find(
     (model) => model.operation_codes.includes(operation) && match.test(model.display_name || model.model),

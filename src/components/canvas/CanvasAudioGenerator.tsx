@@ -1,3 +1,4 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import { useMentionNavigation } from '@/composables/useMentionNavigation'
@@ -86,6 +87,7 @@ export default function CanvasAudioGenerator({
   active?: boolean
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
+  const canvasId = useCanvasBillingScope()?.canvasId
   const { updateNodeData, getEdges, getNode, getNodes } = useReactFlow()
   const linkedMediaFingerprint = useStore((state) =>
     JSON.stringify(
@@ -936,6 +938,7 @@ export default function CanvasAudioGenerator({
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const modelVersionId = getBackendGenerationModelVersionId(selected.model)
     const quote: any = await estimateAiTaskCost({
+      canvasId,
       workspaceId,
       modelVersionId,
       operationCode: selected.operationCode,
@@ -984,6 +987,7 @@ export default function CanvasAudioGenerator({
     linkedText,
     data.audioReferences,
     linkedMediaFingerprint,
+    canvasId,
     workspaceId,
     models,
     running,
@@ -1039,6 +1043,7 @@ export default function CanvasAudioGenerator({
       })
       submitted = true
       const task = await createAiTask({
+        canvasId,
         workspaceId,
         modelVersionId,
         modelVersion: selected.model,

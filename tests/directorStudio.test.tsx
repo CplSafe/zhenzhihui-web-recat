@@ -601,6 +601,9 @@ describe('Studio transport', () => {
     expect(url.search).toBe('?after=12')
     expect(defaultModel(catalog, 'image')).toBe(29)
     expect(defaultModel(catalog, 'video')).toBe(18)
+    const other = { id: 31, model: 'studio-image', operation_codes: ['image.text_to_image'] }
+    expect(defaultModel({ ...catalog, models: [...catalog.models, other] }, 'image', 31)).toBe(31)
+    expect(defaultModel(catalog, 'image', 18)).toBeUndefined()
   })
   it('deduplicates replayed tasks and replaces billing snapshots', () => {
     let run = snapshot({ status: 'running', events: [{ id: 'task-1', kind: 'cost', text: 'running' }] })

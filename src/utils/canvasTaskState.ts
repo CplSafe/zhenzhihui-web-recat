@@ -37,7 +37,7 @@ export const CANVAS_SUBMIT_INTERRUPTED_MESSAGE = '上次提交没有完成（页
  */
 export function classifyOrphanSubmission(
   data: Record<string, unknown> = {},
-  options: { now: number; submittingInThisPage: boolean },
+  options: { now: number; submittingInThisPage: boolean; currentUserId?: number },
 ): 'none' | 'resume' | 'interrupted' {
   if (options.submittingInThisPage) return 'none'
   if (normalizeAiTaskStatus(data.taskStatus) !== 'submitting') return 'none'
@@ -47,10 +47,10 @@ export function classifyOrphanSubmission(
   const key = String(data.taskIdempotencyKey || '').trim()
   const request = data.generationRequest || data.videoUpscaleRequest
   const hasRequest = Boolean(request && typeof request === 'object')
-  if (age < CANVAS_SUBMIT_STALE_MS && key && hasRequest) return 'resume'
-  // 时间戳在未来（设备时钟不准）也按窗口内处理，但没存幂等键的仍只能标中断
-  if (age < 0 && key && hasRequest) return 'resume'
-  return 'interrupted'
+  if (age >= CANVAS_SUBMIT_STALE_MS) return 'interrupted'
+  // 协作者看到 submitting 时，原发起人可能仍在等待生成请求返回。
+  if (options.currentUserId !== undefined && Number(data.taskSubmitterId) !== options.currentUserId) return 'none'
+  return key && hasRequest ? 'resume' : 'interrupted'
 }
 
 /** 重新生成时能否沿用上次中断那一次的幂等键：只有上次确实是提交中断、且请求内容原样未变才行 */

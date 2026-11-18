@@ -1,3 +1,5 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
+import type { CanvasModelDefaults } from '@/api/canvasApi'
 /**
  * 节点编辑面板 — 始终显示在页面底部，内容根据选中节点类型切换
  *
@@ -555,6 +557,7 @@ export interface CanvasNodeInfo {
 
 interface CanvasNodePanelProps {
   node: CanvasNodeInfo | null
+  modelDefaults?: CanvasModelDefaults
   /** Number of direct incoming media wires. Unlike sourceRefs, this deliberately counts repeated asset IDs. */
   mediaConnectionCounts?: { images: number; videos: number }
   /** 工作空间 ID：预估费用 / 提交生成需要 */
@@ -850,6 +853,7 @@ const readPromptHistory = (nodeId?: string): string[] => (nodeId && promptHistor
 
 export default function CanvasNodePanel({
   node,
+  modelDefaults,
   mediaConnectionCounts,
   workspaceId,
   currentUserId,
@@ -1319,7 +1323,14 @@ export default function CanvasNodePanel({
     kind === 'image' &&
     kindModels.some((m) => m.modelVersionId === node?.modelVersionId && isCanvasToolOnlyImageModel(m))
 
-  // 选中模型：优先节点自己选过的；没选过时用同类节点上次生成用的模型（见 canvasLastModel）；再不行取第一个可用
+  const defaultVersionId =
+    kind === 'image'
+      ? modelDefaults?.imageModelVersionId
+      : targetOperationCode === 'video.generate'
+        ? modelDefaults?.videoModelVersionId
+        : undefined
+
+  // 节点自选优先；新节点使用本画布的默认模型。
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
     // 旧草稿不能静默改用另一个付费模型；必须由用户重新选择。
     if (requiresImageModelSelection) return undefined
@@ -1329,6 +1340,7 @@ export default function CanvasNodePanel({
     if (explicitOption) return explicitOption.unavailableReason ? undefined : explicitOption
     const usable = availableModels.filter((m) => !m.unavailableReason)
     if (!node?.modelVersionId) {
+      if (defaultVersionId) return usable.find((model) => model.modelVersionId === defaultVersionId)
       const rememberedId = pickRememberedCanvasModel(
         kind,
         targetOperationCode,
@@ -1338,7 +1350,7 @@ export default function CanvasNodePanel({
       if (remembered) return remembered
     }
     return usable[0]
-  }, [availableModels, node?.modelVersionId, kind, targetOperationCode, requiresImageModelSelection])
+  }, [availableModels, node?.modelVersionId, kind, targetOperationCode, requiresImageModelSelection, defaultVersionId])
 
   useEffect(() => {
     if (node?.id) onResolvedModel?.(node.id, selectedModel?.modelVersionId)
@@ -1464,6 +1476,14 @@ export default function CanvasNodePanel({
     ) {
       return `已连接的配音约 ${Math.ceil(requiredAudioVideoDurationSec)} 秒；请选择支持该时长的视频模型`
     }
+    if (
+      !node?.modelVersionId &&
+      defaultVersionId &&
+      !selectedModel &&
+      availableModels.some((model) => !model.unavailableReason)
+    ) {
+      return '画布默认模型不适用于当前操作，请重新选择'
+    }
     const labels: Record<string, string> = {
       'image.image_to_image': '暂无可用的图生图模型',
       'image.text_to_image': '暂无可用的文生图模型',
@@ -1479,6 +1499,9 @@ export default function CanvasNodePanel({
   }, [
     targetOperationCode,
     needsVideoInputAsset,
+    node?.modelVersionId,
+    defaultVersionId,
+    selectedModel,
     modelsLoading,
     catalogOperationState,
     kind,
@@ -1873,6 +1896,7 @@ export default function CanvasNodePanel({
     return { images, videos, texts, total: images + videos + texts }
   }, [sourceRefs])
 
+  const canvasId = useCanvasBillingScope()?.canvasId
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const [costEstimate, setCostEstimate] = useState<{
     estimated_cost?: number
@@ -1895,6 +1919,7 @@ export default function CanvasNodePanel({
     setCostEstimate((prev) => ({ ...prev, loading: true }))
     costTimerRef.current = window.setTimeout(() => {
       estimateAiTaskCost({
+        canvasId,
         workspaceId,
         modelVersionId,
         operationCode,
@@ -1923,6 +1948,7 @@ export default function CanvasNodePanel({
     }
   }, [
     costRetry,
+    canvasId,
     selectedModel?.modelVersionId,
     operationCode,
     prompt,

@@ -238,6 +238,27 @@
 .cl-brief-content {
   padding: 28px;
 }
+.cl-setup-fields,
+.cl-member-field {
+  display: grid;
+  gap: 16px;
+}
+.cl-member-field {
+  gap: 6px;
+}
+.cl-setup-fields small {
+  color: var(--cl-muted);
+}
+.cl-brief-name select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #b4c1ba;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--cl-ink);
+  background: var(--cl-surface);
+  font: inherit;
+}
 .cl-brief-name {
   position: relative;
   display: grid;

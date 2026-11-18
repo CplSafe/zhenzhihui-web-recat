@@ -13,6 +13,7 @@ import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import CanvasCreateDialog from '@/components/canvas/CanvasCreateDialog'
 import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import { getBusinessErrorMessage } from '@/api/business'
 import {
@@ -23,6 +24,7 @@ import {
   listCanvases,
   patchCanvas,
   type CanvasSummary,
+  type CanvasCreateOptions,
 } from '@/api/canvasApi'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
@@ -92,7 +94,6 @@ export default function CanvasListView() {
   const [creating, setCreating] = useState(false)
   // 新建画布弹窗：可输入画布名称
   const [createOpen, setCreateOpen] = useState(false)
-  const [newName, setNewName] = useState('')
   useEffect(() => {
     if (initialCreateHandledRef.current || !createCanvasAction) return
     initialCreateHandledRef.current = true
@@ -309,46 +310,42 @@ export default function CanvasListView() {
   }, [openMenuId])
 
   // 新建画布：使用弹窗中输入的名称创建，成功后直接进入编辑器
-  const handleCreate = useCallback(async () => {
-    const wsId = Number(workspaceIdRef.current || 0)
-    if (!wsId) {
-      showToast('workspace_id 缺失,无法创建', 'error')
-      return
-    }
-    if (creating) return
-    const title = newName.trim()
-    if (!title) {
-      showToast('请输入画布名称', 'info')
-      return
-    }
-    setCreating(true)
-    try {
-      const created = await createCanvas({ workspaceId: wsId, title })
-      const newId = Number(created?.id || 0)
-      if (Number(workspaceIdRef.current || 0) !== wsId) return
-      if (!newId) throw new Error('创建画布失败')
-      showToast('画布已创建', 'success')
-      setCreateOpen(false)
-      setNewName('')
-      navigate(`/canvas/${newId}`, {
-        state: {
-          ...(carriedState || {}),
-          ...(createCanvasActionRef.current ? { initialCanvasAction: createCanvasActionRef.current } : {}),
-        },
-      })
-    } catch (error) {
-      if (Number(workspaceIdRef.current || 0) === wsId) {
-        showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
+  const handleCreate = useCallback(
+    async (title: string, options: CanvasCreateOptions) => {
+      const wsId = Number(workspaceIdRef.current || 0)
+      if (!wsId) {
+        showToast('workspace_id 缺失,无法创建', 'error')
+        return
       }
-    } finally {
-      setCreating(false)
-    }
-  }, [creating, newName, navigate, showToast, carriedState])
+      if (creating) return
+      setCreating(true)
+      try {
+        const created = await createCanvas({ workspaceId: wsId, title, ...options })
+        const newId = Number(created?.id || 0)
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        if (!newId) throw new Error('创建画布失败')
+        showToast('画布已创建', 'success')
+        setCreateOpen(false)
+        navigate(`/canvas/${newId}`, {
+          state: {
+            ...(carriedState || {}),
+            ...(createCanvasActionRef.current ? { initialCanvasAction: createCanvasActionRef.current } : {}),
+          },
+        })
+      } catch (error) {
+        if (Number(workspaceIdRef.current || 0) === wsId) {
+          showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
+        }
+      } finally {
+        setCreating(false)
+      }
+    },
+    [creating, navigate, showToast, carriedState],
+  )
 
   // 关闭新建弹窗：同时清空输入框，避免下次打开残留上次内容
   const closeCreateModal = useCallback(() => {
     setCreateOpen(false)
-    setNewName('')
     initialCreateHandledRef.current = false
     createCanvasActionRef.current = undefined
     navigate(`${location.pathname}${location.search}`, {
@@ -489,7 +486,14 @@ export default function CanvasListView() {
           item.title,
           canvases.map((c) => c.title),
         )
-        const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: item.id, title })
+        const created = await duplicateCanvas({
+          workspaceId: wsId,
+          sourceCanvasId: item.id,
+          title,
+          imageModelVersionId: item.imageModelVersionId,
+          videoModelVersionId: item.videoModelVersionId,
+          memberUserIds: item.membersRestricted === false ? undefined : [],
+        })
         if (Number(workspaceIdRef.current || 0) !== wsId) return
         const now = new Date().toISOString()
         setCanvases((prev) => [
@@ -731,59 +735,15 @@ export default function CanvasListView() {
         )}
       </div>
 
-      {/* 创建画布：只收集名称，创建成功后进入空白画布自由添加节点。 */}
       {createOpen && (
-        <div className="cl-brief-mask" onClick={() => !creating && closeCreateModal()}>
-          <section
-            className="cl-brief-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="canvas-brief-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="cl-brief-head">
-              <div>
-                <h2 id="canvas-brief-title">创建新画布</h2>
-                <p>为画布起一个便于识别的名称，创建后即可自由添加文本、图片和视频。</p>
-              </div>
-              <button
-                type="button"
-                className="cl-brief-close"
-                aria-label="关闭"
-                disabled={creating}
-                onClick={closeCreateModal}
-              >
-                ×
-              </button>
-            </header>
-
-            <div className="cl-brief-content">
-              <label className="cl-brief-name">
-                <span>画布名称</span>
-                <input
-                  value={newName}
-                  autoFocus
-                  maxLength={60}
-                  placeholder="请输入画布名称"
-                  onChange={(event) => setNewName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && newName.trim() && !creating) void handleCreate()
-                  }}
-                />
-                <small>{newName.length}/60</small>
-              </label>
-            </div>
-
-            <footer className="cl-brief-foot">
-              <button type="button" className="cl-brief-cancel" disabled={creating} onClick={closeCreateModal}>
-                取消
-              </button>
-              <button type="button" disabled={creating || !newName.trim()} onClick={handleCreate}>
-                {creating ? '正在创建…' : '创建画布'}
-              </button>
-            </footer>
-          </section>
-        </div>
+        <CanvasCreateDialog
+          key={`${activeWsId}:${currentUserId}`}
+          workspaceId={activeWsId}
+          currentUserId={currentUserId}
+          creating={creating}
+          onClose={closeCreateModal}
+          onCreate={handleCreate}
+        />
       )}
       {/* 重命名画布弹窗 */}
       {renameTarget &&

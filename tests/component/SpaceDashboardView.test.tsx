@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   getWorkspaceMemberStatistics: vi.fn(),
   getWorkspaceOverview: vi.fn(),
+  requestBusinessJson: vi.fn(),
   listAiTasks: vi.fn(),
   listCreditLedgers: vi.fn(),
   listCreativeProjects: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('@/api/business', () => ({
   getBusinessErrorMessage: (error: any, fallback: string) => error?.message || fallback,
   getWorkspaceMemberStatistics: mocks.getWorkspaceMemberStatistics,
   getWorkspaceOverview: mocks.getWorkspaceOverview,
+  requestBusinessJson: mocks.requestBusinessJson,
   listAiTasks: mocks.listAiTasks,
   listCreditLedgers: mocks.listCreditLedgers,
   listCreativeProjects: mocks.listCreativeProjects,
@@ -78,6 +80,7 @@ describe('SpaceDashboardView request isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     clearSpaceDashboardTrendCache()
+    mocks.requestBusinessJson.mockResolvedValue({ items: [], total: 0, total_used_credits: 0 })
     mocks.workspace.id = 21
     mocks.workspace.current = { id: 21, type: 'team', owner_user_id: 999 }
     mocks.workspace.member = { user_id: 7, workspace_id: 21, role: 'admin' }
@@ -163,6 +166,58 @@ describe('SpaceDashboardView request isolation', () => {
     expect(mocks.listCreditLedgers).toHaveBeenCalledTimes(1)
   })
 
+  it('按所选月份查询画布、展示跨页合计与各成员实际用量', async () => {
+    mocks.getWorkspaceOverview.mockResolvedValue({})
+    mocks.getWorkspaceMemberStatistics.mockResolvedValue([])
+    mocks.listCreativeProjects.mockResolvedValue([])
+    const pages: URLSearchParams[] = []
+    mocks.requestBusinessJson.mockImplementation(async (url: string) => {
+      const query = new URL(url, 'https://app.test').searchParams
+      pages.push(query)
+      const secondPage = query.get('offset') === '20'
+      return {
+        total: 21,
+        total_used_credits: 25.003,
+        items: [
+          {
+            canvas_id: secondPage ? 21 : 1,
+            title: secondPage ? '片尾制作' : '片头制作',
+            deleted: true,
+            used_credits: 6.001,
+            members: [{ user_id: 7, display_name: '剪辑师', used_credits: 6.001 }],
+          },
+        ],
+      }
+    })
+    render(
+      <MemoryRouter>
+        <SpaceDashboardView />
+      </MemoryRouter>,
+    )
+    await screen.findByText('片头制作')
+    await act(async () => {
+      screen.getByRole('button', { name: '月份选择器' }).click()
+    })
+    await screen.findByText('片头制作')
+    expect(pages[pages.length - 1]?.get('month')).toBe('2026-06')
+    expect(pages[pages.length - 1]?.get('workspace_id')).toBe('21')
+    expect(screen.getByText('25.003')).toBeInTheDocument()
+    const title = screen.getByText('片头制作')
+    await act(async () => {
+      title.click()
+    })
+    expect(title.closest('details')).toHaveAttribute('open')
+    expect(screen.getByText('剪辑师')).toBeVisible()
+    expect(screen.getAllByText('6.001 积分')).toHaveLength(2)
+    expect(screen.getByText('已删除')).toBeInTheDocument()
+    await act(async () => {
+      screen.getByRole('button', { name: '下一页' }).click()
+    })
+    await screen.findByText('片尾制作')
+    expect(pages[pages.length - 1]?.get('offset')).toBe('20')
+    expect(screen.queryByText('片头制作')).not.toBeInTheDocument()
+  })
+
   it('总生成视频数按成功视频任务计数，不使用 overview 的 works 数', async () => {
     mocks.getWorkspaceOverview.mockResolvedValue({
       total: { member_count: 1, video_count: 99, total_works: 99, total_credits: 300 },
@@ -232,6 +287,7 @@ describe('SpaceDashboardView request isolation', () => {
     })
 
     expect(await screen.findByRole('heading', { name: '每日消耗积分' })).toBeInTheDocument()
+    expect(mocks.requestBusinessJson).not.toHaveBeenCalled()
     expect(screen.queryByText('成员人数')).not.toBeInTheDocument()
     expect(screen.queryByText('成员贡献排行榜')).not.toBeInTheDocument()
     await waitFor(() => {

@@ -261,6 +261,7 @@ export default function CanvasUpscale(props: {
     source && model && inputReady
       ? {
           workspaceId: props.workspaceId,
+          canvasId: props.canvasId,
           modelVersionId: modelId,
           operationCode: model.operation_codes!.find((op) => op === operation),
           // 图片超分仅使用素材和模型参数；视频超分保留现有描述契约。

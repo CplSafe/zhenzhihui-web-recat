@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, LayoutGrid, RotateCw } from 'lucide-react'
-import { fetchCanvasElements } from '@/api/canvasApi'
+import { fetchCanvasElements, type CanvasModelDefaults } from '@/api/canvasApi'
 import {
   useCurrentUser,
   useWorkspaceId,
@@ -60,6 +60,7 @@ function CanvasAccessNotice({
 }
 
 function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; workspaceId: number; userId: number }) {
+  const [defaults, setDefaults] = useState<CanvasModelDefaults>({})
   const [attempt, setAttempt] = useState(0)
   const [state, setState] = useState<'loading' | 'ready' | 'missing' | 'error' | 'ambiguous'>('loading')
   useEffect(() => {
@@ -73,8 +74,14 @@ function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; wor
     setState('loading')
     void (async () => {
       try {
-        await probe(workspaceId)
-        if (isCurrent()) setState('ready')
+        const details = await probe(workspaceId)
+        if (isCurrent()) {
+          setDefaults({
+            imageModelVersionId: details.image_model_version_id,
+            videoModelVersionId: details.video_model_version_id,
+          })
+          setState('ready')
+        }
         return
       } catch (error) {
         if (!isCurrent()) return
@@ -136,7 +143,7 @@ function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; wor
   if (state === 'ready')
     return (
       <Suspense fallback={<div className="route-loading" aria-label="正在加载画布" />}>
-        <CanvasView />
+        <CanvasView modelDefaults={defaults} />
       </Suspense>
     )
   if (state === 'loading')

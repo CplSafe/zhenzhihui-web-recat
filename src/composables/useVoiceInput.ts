@@ -1,3 +1,4 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 /**
  * 录音式语音输入:MediaRecorder 录一段 → 上传后端 → 阿里百炼识别 → 回调文本。
  *
@@ -66,6 +67,7 @@ interface LevelMeter {
 }
 
 export function useVoiceInput({ onText, maxSeconds = 120 }: UseVoiceInputOptions) {
+  const scope = useCanvasBillingScope()
   const [status, setStatus] = useState<VoiceInputStatus>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [levels, setLevels] = useState<number[]>(() => new Array<number>(VOICE_LEVEL_BARS).fill(0))
@@ -147,7 +149,7 @@ export function useVoiceInput({ onText, maxSeconds = 120 }: UseVoiceInputOptions
       const controller = new AbortController()
       abortRef.current = controller
       try {
-        const result = await transcribeAudio(blob, { signal: controller.signal })
+        const result = await transcribeAudio(blob, { ...scope, signal: controller.signal })
         if (controller.signal.aborted) return
         if (result.text) emitText(result.text)
         else setError(NO_SPEECH_MESSAGE)
@@ -160,7 +162,7 @@ export function useVoiceInput({ onText, maxSeconds = 120 }: UseVoiceInputOptions
         if (!controller.signal.aborted) setStatus('idle')
       }
     },
-    [emitText],
+    [emitText, scope],
   )
 
   /** 结束录音并识别;真正的收尾在 onstop 里,等最后一块数据到齐再拼 blob 上传。 */

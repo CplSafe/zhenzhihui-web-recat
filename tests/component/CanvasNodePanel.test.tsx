@@ -332,6 +332,50 @@ describe.each([
 })
 
 describe('CanvasNodePanel 模型选择器', () => {
+  const twoModels = [
+    { modelVersionId: 21, displayName: '通用模型', operationCodes: ['image.text_to_image'] },
+    { modelVersionId: 22, displayName: '画布指定模型', operationCodes: ['image.text_to_image'] },
+  ]
+
+  it('使用画布默认模型预估并提交同一任务', async () => {
+    const onGenerate = vi.fn()
+    renderPanel(
+      twoModels,
+      { id: 'image', kind: 'image', prompt: '新品海报' },
+      {
+        modelDefaults: { imageModelVersionId: 22 },
+        onGenerate,
+      },
+    )
+    expect(screen.getByRole('button', { name: '画布指定模型' })).toBeVisible()
+    await screen.findByText('预计消耗：10 积分')
+    await userEvent.click(screen.getByRole('button', { name: '制作' }))
+    await waitFor(() => expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 22 })))
+  })
+
+  it('节点已经选择的模型优先于画布默认模型', () => {
+    renderPanel(
+      twoModels,
+      { id: 'image', kind: 'image', modelVersionId: 21, prompt: '新品海报' },
+      {
+        modelDefaults: { imageModelVersionId: 22 },
+      },
+    )
+    expect(screen.getByRole('button', { name: '通用模型' })).toBeVisible()
+  })
+
+  it('画布默认模型下线时要求重新选择，避免静默替换模型', () => {
+    renderPanel(
+      twoModels,
+      { id: 'image', kind: 'image', prompt: '新品海报' },
+      {
+        modelDefaults: { imageModelVersionId: 99 },
+      },
+    )
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /默认模型不适用于当前操作/ })).toBeVisible()
+  })
+
   it('模型列表仅点击展开，移出后保持展开', async () => {
     const user = userEvent.setup()
     renderPanel([

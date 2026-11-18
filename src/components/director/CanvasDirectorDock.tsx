@@ -9,12 +9,13 @@ const DeepAgentStudio = lazy(() => import('./DeepAgentStudio'))
 export default function CanvasDirectorDock({
   workspaceId,
   canvasId,
+  modelDefaults,
   onCanvasChange,
   opened,
   onCollapse,
   canvasReference,
 }: Required<Pick<DeepAgentStudioProps, 'workspaceId' | 'canvasId' | 'onCollapse'>> &
-  Pick<DeepAgentStudioProps, 'onCanvasChange' | 'canvasReference'> & { opened: boolean }) {
+  Pick<DeepAgentStudioProps, 'onCanvasChange' | 'canvasReference' | 'modelDefaults'> & { opened: boolean }) {
   const [mounted, setMounted] = useState(opened)
   useEffect(() => {
     if (opened) setMounted(true)
@@ -44,6 +45,7 @@ export default function CanvasDirectorDock({
             <DeepAgentStudio
               workspaceId={workspaceId}
               canvasId={canvasId}
+              modelDefaults={modelDefaults}
               authMode="business"
               onCanvasChange={onCanvasChange}
               onCollapse={onCollapse}

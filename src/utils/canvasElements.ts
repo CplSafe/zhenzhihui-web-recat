@@ -115,6 +115,7 @@ interface SerializableNodeData {
   taskId?: number
   taskFailure?: import('./generationFailure').GenerationFailure
   taskFailureHistory?: import('./generationFailure').GenerationFailure[]
+  taskSubmitterId?: number
   taskIdempotencyKey?: string
   taskSubmissionFingerprint?: string
   videoAudioComposition?: import('./canvasVideoAudio').VideoAudioComposition
@@ -211,6 +212,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'taskFailure',
   'taskFailureHistory',
   'taskIdempotencyKey',
+  'taskSubmitterId',
   'taskSubmissionFingerprint',
   'videoAudioComposition',
   'taskSubmitInterrupted',
@@ -765,4 +767,20 @@ export function diffCanvasMutations(
   }
 
   return mutations
+}
+
+/** Compare changes since the same baseline, so disjoint changes and identical retries merge without a prompt. */
+export function conflictingCanvasElementIds(
+  local: CanvasElementMutation[],
+  remote: CanvasElementMutation[],
+): Set<string> {
+  const remoteById = new Map(remote.map((change) => [change.element_id, change]))
+  return new Set(
+    local
+      .filter((change) => {
+        const other = remoteById.get(change.element_id)
+        return other && (change.op !== other.op || JSON.stringify(change.payload) !== JSON.stringify(other.payload))
+      })
+      .map((change) => change.element_id),
+  )
 }

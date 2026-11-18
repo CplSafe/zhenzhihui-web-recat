@@ -13,6 +13,8 @@ import { useNavigate } from 'react-router-dom'
 import { DatePicker } from 'antd'
 import dayjs from 'dayjs'
 import AppSidebar from '@/components/home/AppSidebar'
+import CanvasUsagePanel from '@/components/billing/CanvasUsagePanel'
+import { isWorkspaceBillingManager } from '@/utils/workspaceBillingAccess'
 import AppTopbar from '@/components/layout/AppTopbar'
 import {
   getBusinessErrorMessage,
@@ -887,19 +889,8 @@ export default function SpaceDashboardView() {
     .trim()
     .toLowerCase()
   const isPersonalWorkspace = workspaceType === 'personal'
-  const ownerUserId = Number(currentWorkspace?.owner_user_id || currentWorkspace?.ownerUserId || 0)
   const currentUserId = Number(currentUser?.id || currentUser?.user_id || 0)
-  const currentRole = String(
-    currentMember?.workspace_role ||
-      currentMember?.workspaceRole ||
-      currentMember?.role ||
-      currentMember?.member_role ||
-      '',
-  )
-    .trim()
-    .toLowerCase()
-  const isTeamManager =
-    ['owner', 'creator', 'admin'].includes(currentRole) || (ownerUserId > 0 && currentUserId === ownerUserId)
+  const isTeamManager = isWorkspaceBillingManager(currentWorkspace, currentMember, currentUserId)
   const defaultDashboardTab: DashboardTab = isTeamManager ? 'team' : 'personal'
   const [activeTab, setActiveTab] = useState<DashboardTab>(defaultDashboardTab)
   const isPersonalTab = activeTab === 'personal'
@@ -1485,6 +1476,14 @@ export default function SpaceDashboardView() {
                     emptyText={trendLoading ? '趋势数据加载中' : creditTrendError || '暂无积分消耗数据'}
                   />
                 </section>
+
+                {!isPersonalTab && canViewDashboard && (
+                  <CanvasUsagePanel
+                    key={`${workspaceId}-${selectedMonth}`}
+                    workspaceId={workspaceId}
+                    month={selectedMonth}
+                  />
+                )}
 
                 {isPersonalTab ? (
                   <section className="space-dashboard-ranking" aria-labelledby="space-dashboard-personal-title">

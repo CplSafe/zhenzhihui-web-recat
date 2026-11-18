@@ -41,6 +41,8 @@ export interface SaveCanvasElementsRequest {
 
 /** 画布元素增量同步响应（服务端 response.Response.data）。 */
 export interface CanvasElementsPage {
+  image_model_version_id?: number
+  video_model_version_id?: number
   /** 元素列表：op=upsert 的活元素；after_revision>0 时含 op=delete 的 tombstone。 */
   elements: CanvasElementMutation[]
   /** 服务端当前 revision，客户端保存时作为 base_revision。 */
@@ -55,8 +57,19 @@ export interface CanvasElementsPage {
   has_more?: boolean
 }
 
+export interface CanvasModelDefaults {
+  imageModelVersionId?: number
+  videoModelVersionId?: number
+}
+
+export interface CanvasCreateOptions extends CanvasModelDefaults {
+  /** 省略为工作空间全员，空数组为仅创建者。 */
+  memberUserIds?: number[]
+}
+
 /** 画布元信息（列表/详情）。 */
-export interface CanvasSummary {
+export interface CanvasSummary extends CanvasModelDefaults {
+  membersRestricted?: boolean
   id: number
   title?: string
   status?: 'active' | 'archived'
@@ -91,6 +104,9 @@ function normalizeCanvas(raw: unknown): CanvasSummary {
     ...(updated_at ? { updated_at } : {}),
     ...(revision ? { revision } : {}),
     ...(userId ? { userId } : {}),
+    ...(typeof o.members_restricted === 'boolean' ? { membersRestricted: o.members_restricted } : {}),
+    ...(Number(o.image_model_version_id) > 0 ? { imageModelVersionId: Number(o.image_model_version_id) } : {}),
+    ...(Number(o.video_model_version_id) > 0 ? { videoModelVersionId: Number(o.video_model_version_id) } : {}),
   }
 }
 
@@ -132,7 +148,10 @@ function requirePositiveInteger(value: unknown, message: string): number {
 export async function createCanvas({
   workspaceId,
   title = '',
-}: {
+  imageModelVersionId,
+  videoModelVersionId,
+  memberUserIds,
+}: CanvasCreateOptions & {
   workspaceId: number
   title?: string
 }): Promise<CanvasSummary> {
@@ -140,9 +159,38 @@ export async function createCanvas({
   const payload = await requestBusinessJson<unknown>(`/api/v1/canvases?workspace_id=${wsId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: String(title || '') }),
+    body: JSON.stringify({
+      title: String(title || ''),
+      image_model_version_id: imageModelVersionId,
+      video_model_version_id: videoModelVersionId,
+      member_user_ids: memberUserIds,
+    }),
   })
   return normalizeCanvas(unwrap<unknown>(payload))
+}
+
+export interface CanvasMembers {
+  members_restricted: boolean
+  member_user_ids: number[]
+  can_manage: boolean
+}
+
+export async function getCanvasMembers(workspaceId: number, canvasId: number): Promise<CanvasMembers> {
+  const response = await requestBusinessJson(`/api/v1/canvases/${canvasId}/members?workspace_id=${workspaceId}`)
+  return unwrap<CanvasMembers>(response)
+}
+
+export async function addCanvasMembers(
+  workspaceId: number,
+  canvasId: number,
+  memberUserIds: number[],
+): Promise<CanvasMembers> {
+  const response = await requestBusinessJson(`/api/v1/canvases/${canvasId}/members?workspace_id=${workspaceId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_user_ids: memberUserIds }),
+  })
+  return unwrap<CanvasMembers>(response)
 }
 
 /** 分页列出工作空间画布（GET /canvases）。 */
@@ -255,7 +303,12 @@ export async function fetchCanvasElements({
     ({} as CanvasElementsPage & { items?: CanvasElementMutation[] })
   const rawElements = Array.isArray(page.elements) ? page.elements : Array.isArray(page.items) ? page.items : []
   return {
-    elements: rawElements,
+    elements: rawElements.map((row: CanvasElementMutation & { deleted?: boolean }) => ({
+      ...row,
+      op: row.deleted === true || row.op === 'delete' ? 'delete' : 'upsert',
+    })),
+    image_model_version_id: page.image_model_version_id ?? undefined,
+    video_model_version_id: page.video_model_version_id ?? undefined,
     sync_revision: Number(page.sync_revision) || 0,
     history_floor_revision: Number(page.history_floor_revision) || 0,
     state: page.state || undefined,
@@ -303,10 +356,8 @@ export async function fetchAllCanvasElements({
 
     if (!page.has_more) {
       return {
-        ...page,
+        ...firstPage,
         elements,
-        state: firstPage.state,
-        schema_version: firstPage.schema_version,
         history_floor_revision: Math.max(firstPage.history_floor_revision, page.history_floor_revision),
         next_cursor: undefined,
         has_more: false,
@@ -431,7 +482,8 @@ export async function duplicateCanvas({
   workspaceId,
   sourceCanvasId,
   title,
-}: {
+  ...options
+}: CanvasCreateOptions & {
   workspaceId: number
   sourceCanvasId: number
   title: string
@@ -440,7 +492,7 @@ export async function duplicateCanvas({
   const sourceId = requirePositiveInteger(sourceCanvasId, '画布 ID 无效')
   // 先读源画布再建新画布：读失败时不会凭空多出一张空画布
   const source = await fetchAllCanvasElements({ workspaceId: wsId, canvasId: sourceId, afterRevision: 0 })
-  const created = await createCanvas({ workspaceId: wsId, title })
+  const created = await createCanvas({ workspaceId: wsId, title, ...options })
   const newId = requirePositiveInteger(created?.id, '创建画布副本失败')
   const mutations: CanvasElementMutation[] = source.elements
     .filter((element) => element?.op !== 'delete' && element?.element_id)
@@ -472,22 +524,38 @@ export async function duplicateCanvas({
  * 仅团队版 + ≥2 启用成员可用；非团队 workspace 由服务端返回 403。
  * after_revision 表示客户端已应用到本地的版本。
  */
-export async function subscribeCanvasEvents({
+export function subscribeCanvasEvents({
   workspaceId,
   canvasId,
   afterRevision = 0,
-  signal,
+  onRevision,
+  onDeleted,
 }: {
   workspaceId: number
   canvasId: number
   afterRevision?: number
-  signal?: AbortSignal
-}): Promise<unknown> {
+  onRevision: (revision: number) => void
+  onDeleted: () => void
+}): () => void {
   const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
   const id = requirePositiveInteger(canvasId, '画布 ID 无效')
   const query = new URLSearchParams({
     workspace_id: String(wsId),
-    after_revision: String(Math.max(0, Math.floor(Number(afterRevision) || 0))),
+    after_revision: String(Math.max(0, Math.floor(afterRevision))),
   })
-  return requestBusinessJson(`/api/v1/canvases/${id}/events?${query}`, { signal })
+  const stream = new EventSource(`/api/v1/canvases/${id}/events?${query}`, { withCredentials: true })
+  const close = () => stream.close()
+  const handleRevision = (event: MessageEvent<string>) => {
+    const revision = Number(JSON.parse(event.data).revision)
+    if (Number.isSafeInteger(revision) && revision >= 0) onRevision(revision)
+  }
+  stream.addEventListener('canvas.connected', handleRevision)
+  stream.addEventListener('canvas.revision', handleRevision)
+  stream.addEventListener('canvas.deleted', () => {
+    close()
+    onDeleted()
+  })
+  stream.addEventListener('canvas.collaboration_disabled', close)
+  // EventSource reconnects on a transient disconnect or the server's stream-age limit.
+  return close
 }

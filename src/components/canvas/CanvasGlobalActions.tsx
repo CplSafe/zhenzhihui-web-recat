@@ -13,6 +13,7 @@ interface Props {
   onClose: () => void
   onGuide: () => void
   onImportScript: () => void
+  onMembers?: () => void
   onShare?: () => void
 }
 
@@ -28,6 +29,7 @@ export default function CanvasGlobalActions({
   onClose,
   onGuide,
   onImportScript,
+  onMembers,
   onShare,
 }: Props) {
   return (
@@ -68,6 +70,11 @@ export default function CanvasGlobalActions({
           </button>
         )}
         <TutorialButton variant="pill" tutorialKey="canvas" />
+        {onMembers && canvasId > 0 && workspaceId > 0 && (
+          <button type="button" className="canvas-share-btn" onClick={onMembers}>
+            创作成员
+          </button>
+        )}
         {onShare && canvasId > 0 && workspaceId > 0 && (
           <button className="canvas-share-btn" onClick={onShare} title="分享这块画布" aria-label="分享这块画布">
             <svg

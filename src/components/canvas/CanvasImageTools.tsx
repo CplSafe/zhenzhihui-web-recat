@@ -1,3 +1,4 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import CanvasToolSelect from './CanvasToolSelect'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
@@ -208,6 +209,7 @@ function ToolEditor({
   onReload,
   ...props
 }: Props & { tool: CreativeTool; models: Model[]; onSwitchToGeneration?: () => void; onReload: () => void }) {
+  const canvasId = useCanvasBillingScope()?.canvasId
   const browser = tool.execution === 'browser' && tool.code === 'panorama.view'
   const { onHeightChange } = props
   const compactRoot = useRef<HTMLDivElement>(null)
@@ -323,6 +325,7 @@ function ToolEditor({
       try {
         const body = JSON.parse(requestKey) as ToolGeneration
         const result = await estimateAiTaskCost({
+          canvasId,
           workspaceId: props.workspaceId,
           modelVersionId: body.modelVersionId,
           operationCode: body.operationCode,
@@ -356,7 +359,7 @@ function ToolEditor({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [requestKey, browser, props.workspaceId, retryQuote])
+  }, [requestKey, browser, canvasId, props.workspaceId, retryQuote])
   const currentQuote = quote?.key === requestKey ? quote : null
   const viewFields: ToolField[] = [
     { name: 'yaw', display_name: '水平视角', type: 'number', min: 0, max: 360, step: 1 },

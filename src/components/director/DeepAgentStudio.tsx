@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
+import type { CanvasModelDefaults } from '@/api/canvasApi'
 import { RequestAbortError } from '@/api/requestTimeout'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
 import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
@@ -21,6 +22,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 export interface DeepAgentStudioProps {
   apiBase?: string
   workspaceId?: number
+  modelDefaults?: CanvasModelDefaults
   canvasId?: number
   authMode?: 'business' | 'oauth'
   onCanvasChange?: (canvas: Data) => void
@@ -33,6 +35,7 @@ export default function DeepAgentStudio({
   apiBase = '/agent-studio',
   workspaceId,
   canvasId,
+  modelDefaults,
   authMode,
   onCanvasChange,
   onCollapse,
@@ -132,10 +135,12 @@ export default function DeepAgentStudio({
   const ready = state.connected && !mismatch && !!image && !!video && !!catalog.planning_model
   const selectedDoc = run?.documents?.find((d) => d.id === selectedDocument) || run?.documents?.[0]
 
+  const initialImage = defaultModel(catalog, 'image', modelDefaults?.imageModelVersionId)
+  const initialVideo = defaultModel(catalog, 'video', modelDefaults?.videoModelVersionId)
   useEffect(() => {
-    setImage((old) => old ?? defaultModel(catalog, 'image'))
-    setVideo((old) => old ?? defaultModel(catalog, 'video'))
-  }, [catalog])
+    setImage((old) => old ?? initialImage)
+    setVideo((old) => old ?? initialVideo)
+  }, [initialImage, initialVideo])
   useEffect(() => {
     if (threadRef.current !== current) {
       threadRef.current = current
@@ -233,6 +238,8 @@ export default function DeepAgentStudio({
     setShowBottom(false)
     setPendingSend(null)
     studio.setCurrent(null)
+    if (modelDefaults?.imageModelVersionId) setImage(initialImage)
+    if (modelDefaults?.videoModelVersionId) setVideo(initialVideo)
     setMessage('')
     setAttachments([])
     setCanvasReferences([])
@@ -623,6 +630,16 @@ export default function DeepAgentStudio({
             推理模型暂不可用，无法发送消息。请管理员检查指定模型是否已启用，以及当前账号是否有使用权限。
           </div>
         )}
+        {!loading &&
+          state.connected &&
+          !mismatch &&
+          !studio.error &&
+          !run &&
+          ((modelDefaults?.imageModelVersionId && !image) || (modelDefaults?.videoModelVersionId && !video)) && (
+            <div role="alert" className={styles.alert}>
+              画布预选的模型已不可用，请在「选择模型」中重新选择。
+            </div>
+          )}
         {studio.error && (
           <div role="alert" className={styles.alert}>
             {studio.error}
