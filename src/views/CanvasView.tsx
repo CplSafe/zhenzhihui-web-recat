@@ -2696,7 +2696,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
     reload: reloadModels,
   } = useGenerationModelCatalog(workspaceId)
   // 按节点类型提取模型列表；分组键 → 节点类型的映射与「视频必须合并两组」的原因见 canvasModelBuckets。
-  const canvasModels = useMemo(() => buildCanvasModelBuckets(groups), [groups])
+  const canvasModels = useMemo(() => buildCanvasModelBuckets(groups, modelDefaults), [groups, modelDefaults])
   /**
    * modelVersionId → 该模型的后端约束。
    *

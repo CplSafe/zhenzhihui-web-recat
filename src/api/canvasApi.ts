@@ -41,7 +41,9 @@ export interface SaveCanvasElementsRequest {
 
 /** 画布元素增量同步响应（服务端 response.Response.data）。 */
 export interface CanvasElementsPage {
+  image_model_version_ids?: number[]
   image_model_version_id?: number
+  video_model_version_ids?: number[]
   video_model_version_id?: number
   /** 元素列表：op=upsert 的活元素；after_revision>0 时含 op=delete 的 tombstone。 */
   elements: CanvasElementMutation[]
@@ -58,7 +60,9 @@ export interface CanvasElementsPage {
 }
 
 export interface CanvasModelDefaults {
+  imageModelVersionIds?: number[]
   imageModelVersionId?: number
+  videoModelVersionIds?: number[]
   videoModelVersionId?: number
 }
 
@@ -105,7 +109,13 @@ function normalizeCanvas(raw: unknown): CanvasSummary {
     ...(revision ? { revision } : {}),
     ...(userId ? { userId } : {}),
     ...(typeof o.members_restricted === 'boolean' ? { membersRestricted: o.members_restricted } : {}),
+    ...(Array.isArray(o.image_model_version_ids)
+      ? { imageModelVersionIds: o.image_model_version_ids.map(Number) }
+      : {}),
     ...(Number(o.image_model_version_id) > 0 ? { imageModelVersionId: Number(o.image_model_version_id) } : {}),
+    ...(Array.isArray(o.video_model_version_ids)
+      ? { videoModelVersionIds: o.video_model_version_ids.map(Number) }
+      : {}),
     ...(Number(o.video_model_version_id) > 0 ? { videoModelVersionId: Number(o.video_model_version_id) } : {}),
   }
 }
@@ -148,7 +158,9 @@ function requirePositiveInteger(value: unknown, message: string): number {
 export async function createCanvas({
   workspaceId,
   title = '',
+  imageModelVersionIds,
   imageModelVersionId,
+  videoModelVersionIds,
   videoModelVersionId,
   memberUserIds,
 }: CanvasCreateOptions & {
@@ -161,7 +173,9 @@ export async function createCanvas({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title: String(title || ''),
+      image_model_version_ids: imageModelVersionIds,
       image_model_version_id: imageModelVersionId,
+      video_model_version_ids: videoModelVersionIds,
       video_model_version_id: videoModelVersionId,
       member_user_ids: memberUserIds,
     }),
@@ -170,6 +184,7 @@ export async function createCanvas({
 }
 
 export interface CanvasMembers {
+  creator_id?: number
   members_restricted: boolean
   member_user_ids: number[]
   can_manage: boolean
@@ -180,15 +195,16 @@ export async function getCanvasMembers(workspaceId: number, canvasId: number): P
   return unwrap<CanvasMembers>(response)
 }
 
-export async function addCanvasMembers(
+export async function changeCanvasMembers(
   workspaceId: number,
   canvasId: number,
   memberUserIds: number[],
+  removeUserIds: number[],
 ): Promise<CanvasMembers> {
   const response = await requestBusinessJson(`/api/v1/canvases/${canvasId}/members?workspace_id=${workspaceId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ member_user_ids: memberUserIds }),
+    body: JSON.stringify({ member_user_ids: memberUserIds, remove_user_ids: removeUserIds }),
   })
   return unwrap<CanvasMembers>(response)
 }
@@ -307,7 +323,9 @@ export async function fetchCanvasElements({
       ...row,
       op: row.deleted === true || row.op === 'delete' ? 'delete' : 'upsert',
     })),
+    image_model_version_ids: page.image_model_version_ids ?? undefined,
     image_model_version_id: page.image_model_version_id ?? undefined,
+    video_model_version_ids: page.video_model_version_ids ?? undefined,
     video_model_version_id: page.video_model_version_id ?? undefined,
     sync_revision: Number(page.sync_revision) || 0,
     history_floor_revision: Number(page.history_floor_revision) || 0,

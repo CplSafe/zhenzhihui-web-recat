@@ -17,6 +17,7 @@
  * 面板自己会按当前 operation_code 再过滤一次，所以这里必须给出「该节点类型可能用到的全部模型」，
  * 而不是某一个 operation 的子集。
  */
+import type { CanvasModelDefaults } from '@/api/canvasApi'
 import type { GenerationModelGroup, GenerationModelOption } from './generationModelCatalog'
 import { getManualVideoOperation } from '@/api/manualVideo'
 
@@ -73,9 +74,16 @@ export function resolveCanvasModelForOperation(
   return source ? { ...model, source } : model
 }
 
+export function canvasAllowsModel(defaults: CanvasModelDefaults | undefined, kind: 'image' | 'video', id: number) {
+  const choices = kind === 'image' ? defaults?.imageModelVersionIds : defaults?.videoModelVersionIds
+  const legacy = kind === 'image' ? defaults?.imageModelVersionId : defaults?.videoModelVersionId
+  return choices?.length ? choices.includes(id) : !legacy || legacy === id
+}
+
 /** 把目录分组投影为画布面板需要的三份模型列表。 */
 export function buildCanvasModelBuckets(
   groups: readonly GenerationModelGroup[] | null | undefined,
+  defaults?: CanvasModelDefaults,
 ): CanvasModelBuckets {
   const list = Array.isArray(groups) ? groups : []
   const collect = (keys: readonly string[]): GenerationModelOption[] =>
@@ -83,8 +91,13 @@ export function buildCanvasModelBuckets(
 
   return {
     text: collect(GROUP_KEYS_BY_NODE_KIND.text),
-    image: collect(GROUP_KEYS_BY_NODE_KIND.image),
+    image: collect(GROUP_KEYS_BY_NODE_KIND.image).filter((model) =>
+      canvasAllowsModel(defaults, 'image', model.modelVersionId),
+    ),
     // 人工交付任务有独立的状态与交付流程，不能作为画布普通视频节点运行。
-    video: collect(GROUP_KEYS_BY_NODE_KIND.video).filter((model) => !getManualVideoOperation(model.source as any)),
+    video: collect(GROUP_KEYS_BY_NODE_KIND.video).filter(
+      (model) =>
+        canvasAllowsModel(defaults, 'video', model.modelVersionId) && !getManualVideoOperation(model.source as any),
+    ),
   }
 }

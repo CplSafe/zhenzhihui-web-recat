@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Modal, Select } from 'antd'
+import { Avatar, Button, ConfigProvider, Modal, Select, theme } from 'antd'
 import { listWorkspaceMembers } from '@/api/auth'
-import { addCanvasMembers, getCanvasMembers, type CanvasMembers } from '@/api/canvasApi'
+import styles from './CanvasMembers.module.css'
+import { changeCanvasMembers, getCanvasMembers, type CanvasMembers } from '@/api/canvasApi'
 import { getBusinessErrorMessage } from '@/api/business'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { memberDisplayName } from '@/utils/memberOwnerFilter'
@@ -107,6 +108,7 @@ export function CanvasMembersDialog({
   const [access, setAccess] = useState<CanvasMembers | null>(null)
   const [selected, setSelected] = useState<number[]>([])
   const [error, setError] = useState('')
+  const [removed, setRemoved] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -124,65 +126,112 @@ export function CanvasMembersDialog({
     }
   }, [workspaceId, canvasId, attempt])
 
-  async function add() {
-    if (!selected.length || saving || !access?.can_manage) return
+  async function save() {
+    if ((!selected.length && !removed.length) || saving || !access?.can_manage) return
     setSaving(true)
     setError('')
     try {
-      setAccess(await addCanvasMembers(workspaceId, canvasId, selected))
+      setAccess(await changeCanvasMembers(workspaceId, canvasId, selected, removed))
       setSelected([])
+      setRemoved([])
     } catch (err) {
-      setError(getBusinessErrorMessage(err, '添加成员失败，请重试'))
+      setError(getBusinessErrorMessage(err, '保存成员变更失败，请重试'))
     } finally {
       setSaving(false)
     }
   }
 
-  const canAdd = access?.members_restricted && access.can_manage
+  const canManage = access?.can_manage
+  const ids = access?.member_user_ids || []
   return (
-    <Modal
-      open
-      zIndex={1400}
-      title="创作成员"
-      onCancel={saving ? undefined : onClose}
-      closable={!saving}
-      cancelText="关闭"
-      okText="添加成员"
-      onOk={add}
-      okButtonProps={{ disabled: !selected.length, style: canAdd ? undefined : { display: 'none' } }}
-      cancelButtonProps={{ disabled: saving }}
-      confirmLoading={saving}
+    <ConfigProvider
+      theme={{
+        algorithm: theme.darkAlgorithm,
+        token: { colorPrimary: '#4fd5b7', colorBgContainer: '#292c30', colorBgElevated: '#222427', borderRadius: 9 },
+      }}
+      button={{ autoInsertSpace: false }}
     >
-      {error && (
-        <p role="alert">
-          {error}{' '}
-          {!access && (
-            <button type="button" onClick={() => setAttempt((v) => v + 1)}>
-              重试
-            </button>
-          )}
-        </p>
-      )}
-      {!access && !error && <p role="status">正在加载画布成员…</p>}
-      {access && (
-        <>
-          <p>{access.members_restricted ? '可打开并编辑此画布的成员' : '当前团队全体成员均可打开并编辑此画布'}</p>
-          <ul style={{ maxHeight: '30vh', overflow: 'auto' }}>
-            {access.member_user_ids.map((id) => (
-              <li key={id}>{directory.options.find((o) => o.value === id)?.label || `成员 ${id}`}</li>
-            ))}
-          </ul>
-          {canAdd && (
-            <MemberPicker
-              directory={directory}
-              excluded={access.member_user_ids}
-              value={selected}
-              onChange={setSelected}
-              disabled={saving}
-            />
-          )}
-        </>
-      )}
-    </Modal>
+      <Modal
+        open
+        centered
+        width={452}
+        zIndex={1400}
+        title="创作成员"
+        onCancel={saving ? undefined : onClose}
+        closable={!saving}
+        cancelText={canManage ? '取消' : '关闭'}
+        okText="保存更改"
+        onOk={save}
+        confirmLoading={saving}
+        okButtonProps={{
+          disabled: !selected.length && !removed.length,
+          style: canManage ? undefined : { display: 'none' },
+        }}
+        cancelButtonProps={{ disabled: saving }}
+      >
+        {error && (
+          <p role="alert">
+            {error}{' '}
+            {!access && (
+              <Button type="link" onClick={() => setAttempt((v) => v + 1)}>
+                重试
+              </Button>
+            )}
+          </p>
+        )}
+        {!access && !error && <p role="status">正在加载成员…</p>}
+        {access && (
+          <div className={styles.body}>
+            {canManage && (
+              <div className={styles.field}>
+                <span>添加团队成员</span>
+                <MemberPicker
+                  directory={directory}
+                  excluded={ids}
+                  value={selected}
+                  onChange={setSelected}
+                  disabled={saving}
+                />
+              </div>
+            )}
+            <div className={styles.rosterHeading}>
+              <span>{access.members_restricted ? '已有成员' : '团队全体成员'}</span>
+              <span>{ids.length} 人</span>
+            </div>
+            <ul className={styles.roster}>
+              {ids.map((id) => {
+                const name = directory.options.find((option) => option.value === id)?.label || `成员 ${id}`
+                const pending = removed.includes(id)
+                return (
+                  <li key={id} className={styles.row}>
+                    <Avatar size={32} className={styles.avatar}>
+                      {Array.from(name)[0]?.toUpperCase()}
+                    </Avatar>
+                    <span className={styles.name}>{name}</span>
+                    {id === access.creator_id ? (
+                      <span className={styles.role}>创建者</span>
+                    ) : (
+                      canManage && (
+                        <Button
+                          type="text"
+                          size="small"
+                          disabled={saving}
+                          danger={!pending}
+                          aria-label={`${pending ? '撤销移除' : '移除'} ${name}`}
+                          onClick={() => setRemoved((old) => (pending ? old.filter((x) => x !== id) : [...old, id]))}
+                        >
+                          {pending ? '撤销移除' : '移除'}
+                        </Button>
+                      )
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+            {!access.members_restricted && removed.length > 0 && <small>保存后，仅保留的成员可打开此画布。</small>}
+          </div>
+        )}
+      </Modal>
+    </ConfigProvider>
   )
 }

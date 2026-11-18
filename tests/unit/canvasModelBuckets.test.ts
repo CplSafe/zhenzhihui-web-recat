@@ -23,6 +23,13 @@ function model(id: number, displayName: string, operationCodes: string[]) {
 }
 
 describe('buildCanvasModelBuckets', () => {
+  it('画布只列出选定的模型，兼容旧画布的单个选项', () => {
+    const groups = buildGenerationModelGroups([1, 2, 3].map((id) => model(id, `视频 ${id}`, ['video.generate'])))
+    const ids = (defaults: Parameters<typeof buildCanvasModelBuckets>[1]) =>
+      buildCanvasModelBuckets(groups, defaults).video.map((m) => m.modelVersionId)
+    expect(ids({ videoModelVersionIds: [1, 3] })).toEqual([1, 3])
+    expect(ids({ videoModelVersionId: 2 })).toEqual([2])
+  })
   it('不在画布中展示人工 T+1 模型', () => {
     const groups = buildGenerationModelGroups([
       { ...model(1, 'T+1 模型', ['video.generate']), model: 'video.t1', provider: 'manual-video' },

@@ -77,7 +77,9 @@ function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; wor
         const details = await probe(workspaceId)
         if (isCurrent()) {
           setDefaults({
+            imageModelVersionIds: details.image_model_version_ids,
             imageModelVersionId: details.image_model_version_id,
+            videoModelVersionIds: details.video_model_version_ids,
             videoModelVersionId: details.video_model_version_id,
           })
           setState('ready')

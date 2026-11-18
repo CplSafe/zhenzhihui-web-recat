@@ -1,3 +1,4 @@
+import { Select } from 'antd'
 import { useState } from 'react'
 import type { CanvasCreateOptions } from '@/api/canvasApi'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
@@ -21,8 +22,8 @@ export default function CanvasCreateDialog({
   onClose: () => void
 }) {
   const [title, setTitle] = useState('')
-  const [imageModelVersionId, setImage] = useState<number>()
-  const [videoModelVersionId, setVideo] = useState<number>()
+  const [imageModelVersionIds, setImage] = useState<number[]>([])
+  const [videoModelVersionIds, setVideo] = useState<number[]>([])
   const [scope, setScope] = useState<'all' | 'selected'>('selected')
   const [members, setMembers] = useState<number[]>([])
   const team = isTeamWorkspace(useCurrentWorkspace())
@@ -33,14 +34,14 @@ export default function CanvasCreateDialog({
       label: '生图模型',
       operation: 'image.text_to_image' as const,
       models: catalog.image.filter((model) => !isCanvasToolOnlyImageModel(model)),
-      value: imageModelVersionId,
+      value: imageModelVersionIds,
       change: setImage,
     },
     {
       label: '生视频模型',
       operation: 'video.generate' as const,
       models: catalog.video,
-      value: videoModelVersionId,
+      value: videoModelVersionIds,
       change: setVideo,
     },
   ]
@@ -56,8 +57,8 @@ export default function CanvasCreateDialog({
           event.preventDefault()
           if (title.trim() && !creating)
             onCreate(title.trim(), {
-              imageModelVersionId,
-              videoModelVersionId,
+              imageModelVersionIds,
+              videoModelVersionIds,
               memberUserIds: team && scope === 'selected' ? members : undefined,
             })
         }}
@@ -84,24 +85,30 @@ export default function CanvasCreateDialog({
             const state = operationStates[operation]
             return (
               <div key={operation}>
-                <label className="cl-brief-name">
-                  {label}
-                  <select value={value || ''} onChange={(e) => change(Number(e.target.value) || undefined)}>
-                    <option value="">创作时选择</option>
-                    {models
+                <div className="cl-brief-name">
+                  <span>{label}</span>
+                  <Select
+                    mode="multiple"
+                    aria-label={label}
+                    placeholder="不限模型"
+                    value={value}
+                    onChange={change}
+                    loading={loading}
+                    disabled={creating}
+                    allowClear
+                    optionFilterProp="label"
+                    size="large"
+                    style={{ width: '100%' }}
+                    styles={{ popup: { root: { zIndex: 1500 } } }}
+                    options={models
                       .filter((model) => model.operationCodes.includes(operation))
-                      .map((model) => (
-                        <option
-                          key={model.modelVersionId}
-                          value={model.modelVersionId}
-                          disabled={Boolean(model.unavailableReason)}
-                        >
-                          {model.displayName}
-                          {model.unavailableReason ? '（暂不可用）' : ''}
-                        </option>
-                      ))}
-                  </select>
-                </label>
+                      .map((model) => ({
+                        value: model.modelVersionId,
+                        label: model.displayName + (model.unavailableReason ? '（暂不可用）' : ''),
+                        disabled: !!model.unavailableReason,
+                      }))}
+                  />
+                </div>
                 {loading && <small>正在加载模型…</small>}
                 {!loading && state?.status === 'error' && (
                   <small role="alert">

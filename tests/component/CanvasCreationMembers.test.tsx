@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import CanvasCreateDialog from '@/components/canvas/CanvasCreateDialog'
 import { CanvasMembersDialog } from '@/components/canvas/CanvasMembers'
-import { addCanvasMembers, getCanvasMembers } from '@/api/canvasApi'
+import { changeCanvasMembers, getCanvasMembers } from '@/api/canvasApi'
 
 vi.mock('@/stores/workspaceSession', () => ({ useCurrentWorkspace: () => ({ type: 'team' }) }))
 vi.mock('@/api/auth', () => ({
@@ -14,13 +14,16 @@ vi.mock('@/api/auth', () => ({
     { user_id: 7, nickname: '已停用成员', status: 'disabled' },
   ]),
 }))
-vi.mock('@/api/canvasApi', () => ({ getCanvasMembers: vi.fn(), addCanvasMembers: vi.fn() }))
+vi.mock('@/api/canvasApi', () => ({ getCanvasMembers: vi.fn(), changeCanvasMembers: vi.fn() }))
 vi.mock('@/composables/useGenerationModelCatalog', () => ({
   useGenerationModelCatalog: () => ({
     groups: [
       {
         key: 'image',
-        models: [{ modelVersionId: 11, displayName: '图片 A', operationCodes: ['image.text_to_image'], source: {} }],
+        models: [
+          { modelVersionId: 11, displayName: '图片 A', operationCodes: ['image.text_to_image'], source: {} },
+          { modelVersionId: 12, displayName: '图片 C', operationCodes: ['image.text_to_image'], source: {} },
+        ],
       },
       {
         key: 'video',
@@ -40,12 +43,17 @@ it('保存所选模型和可创作成员，切到全员后省略成员限制', a
     <CanvasCreateDialog workspaceId={4} currentUserId={5} creating={false} onCreate={onCreate} onClose={vi.fn()} />,
   )
   await user.type(screen.getByPlaceholderText('请输入画布名称'), '产品图')
-  await user.selectOptions(screen.getByLabelText('生图模型'), '11')
-  await user.selectOptions(screen.getByLabelText('生视频模型'), '22')
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '生图模型' }))
+  await user.click(await screen.findByText('图片 A'))
+  await user.click(await screen.findByText('图片 C'))
+  fireEvent.keyDown(screen.getByRole('combobox', { name: '生图模型' }), { key: 'Escape' })
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '生视频模型' }))
+  await user.click(await screen.findByText('视频 B'))
+  fireEvent.keyDown(screen.getByRole('combobox', { name: '生视频模型' }), { key: 'Escape' })
   await user.click(screen.getByRole('button', { name: '创建画布' }))
   expect(onCreate).toHaveBeenLastCalledWith('产品图', {
-    imageModelVersionId: 11,
-    videoModelVersionId: 22,
+    imageModelVersionIds: [11, 12],
+    videoModelVersionIds: [22],
     memberUserIds: [],
   })
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '选择创作成员' }))
@@ -60,23 +68,37 @@ it('保存所选模型和可创作成员，切到全员后省略成员限制', a
 
 it('创作中只追加新选成员，并按服务器返回名单立即更新', async () => {
   const user = userEvent.setup()
-  vi.mocked(getCanvasMembers).mockResolvedValue({ members_restricted: true, member_user_ids: [5], can_manage: true })
-  vi.mocked(addCanvasMembers).mockResolvedValue({ members_restricted: true, member_user_ids: [5, 6], can_manage: true })
+  vi.mocked(getCanvasMembers).mockResolvedValue({
+    creator_id: 5,
+    members_restricted: true,
+    member_user_ids: [5],
+    can_manage: true,
+  })
+  vi.mocked(changeCanvasMembers).mockResolvedValue({
+    creator_id: 5,
+    members_restricted: true,
+    member_user_ids: [5, 6],
+    can_manage: true,
+  })
   render(
     <ConfigProvider theme={{ token: { motion: false } }}>
       <CanvasMembersDialog workspaceId={4} canvasId={9} onClose={vi.fn()} />
     </ConfigProvider>,
   )
-  await waitFor(() => expect(screen.getByText('创建者')).toBeVisible())
+  await waitFor(() => expect(screen.getAllByText('创建者')[0]).toBeVisible())
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '选择创作成员' }))
   await user.click(await screen.findByText('王敏'))
-  await user.click(screen.getByRole('button', { name: '添加成员' }))
-  await waitFor(() => expect(addCanvasMembers).toHaveBeenCalledWith(4, 9, [6]))
+  await user.click(screen.getByRole('button', { name: '保存更改' }))
+  await waitFor(() => expect(changeCanvasMembers).toHaveBeenCalledWith(4, 9, [6], []))
   expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  await user.click(screen.getByRole('button', { name: '移除 王敏' }))
+  await user.click(screen.getByRole('button', { name: '保存更改' }))
+  await waitFor(() => expect(changeCanvasMembers).toHaveBeenLastCalledWith(4, 9, [], [6]))
 })
 
 it('普通参与者能查看已有名单', async () => {
   vi.mocked(getCanvasMembers).mockResolvedValue({
+    creator_id: 5,
     members_restricted: true,
     member_user_ids: [5, 6],
     can_manage: false,

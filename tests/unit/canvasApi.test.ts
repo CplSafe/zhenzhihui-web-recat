@@ -16,7 +16,13 @@ vi.mock('@/api/business', () => ({
   },
 }))
 
-import { addCanvasMembers, createCanvas, duplicateCanvas, fetchAllCanvasElements, listCanvases } from '@/api/canvasApi'
+import {
+  changeCanvasMembers,
+  createCanvas,
+  duplicateCanvas,
+  fetchAllCanvasElements,
+  listCanvases,
+} from '@/api/canvasApi'
 
 describe('fetchAllCanvasElements', () => {
   beforeEach(() => mocks.requestBusinessJson.mockReset())
@@ -104,16 +110,16 @@ describe('画布成员和默认模型协议', () => {
     expect(result).toMatchObject({ imageModelVersionId: 11, videoModelVersionId: 22, membersRestricted: true })
   })
 
-  it('追加成员请求只发送新名单', async () => {
+  it('成员管理请求只发送添加和移除的差量', async () => {
     mocks.requestBusinessJson.mockResolvedValueOnce({
       data: { members_restricted: true, can_manage: true, member_user_ids: [3, 4] },
     })
-    const result = await addCanvasMembers(7, 9, [4])
+    const result = await changeCanvasMembers(7, 9, [4], [8])
     expect(mocks.requestBusinessJson).toHaveBeenCalledWith(
       '/api/v1/canvases/9/members?workspace_id=7',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ member_user_ids: [4] }),
+        body: JSON.stringify({ member_user_ids: [4], remove_user_ids: [8] }),
       }),
     )
     expect(result.member_user_ids).toEqual([3, 4])

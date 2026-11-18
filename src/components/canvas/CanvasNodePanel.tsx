@@ -1337,6 +1337,12 @@ export default function CanvasNodePanel({
     const explicitOption = node?.modelVersionId
       ? availableModels.find((m) => m.modelVersionId === node.modelVersionId)
       : undefined
+    if (
+      node?.modelVersionId &&
+      !explicitOption &&
+      (kind === 'image' ? modelDefaults?.imageModelVersionId : kind === 'video' && modelDefaults?.videoModelVersionId)
+    )
+      return undefined
     if (explicitOption) return explicitOption.unavailableReason ? undefined : explicitOption
     const usable = availableModels.filter((m) => !m.unavailableReason)
     if (!node?.modelVersionId) {
@@ -1350,7 +1356,15 @@ export default function CanvasNodePanel({
       if (remembered) return remembered
     }
     return usable[0]
-  }, [availableModels, node?.modelVersionId, kind, targetOperationCode, requiresImageModelSelection, defaultVersionId])
+  }, [
+    availableModels,
+    node?.modelVersionId,
+    kind,
+    targetOperationCode,
+    requiresImageModelSelection,
+    defaultVersionId,
+    modelDefaults,
+  ])
 
   useEffect(() => {
     if (node?.id) onResolvedModel?.(node.id, selectedModel?.modelVersionId)

@@ -496,7 +496,9 @@ export default function CanvasListView() {
           workspaceId: wsId,
           sourceCanvasId: item.id,
           title,
+          imageModelVersionIds: item.imageModelVersionIds,
           imageModelVersionId: item.imageModelVersionId,
+          videoModelVersionIds: item.videoModelVersionIds,
           videoModelVersionId: item.videoModelVersionId,
           memberUserIds: item.membersRestricted === false ? undefined : [],
         })

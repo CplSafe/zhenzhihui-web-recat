@@ -356,12 +356,12 @@ describe('CanvasNodePanel 模型选择器', () => {
     await waitFor(() => expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 22 })))
   })
 
-  it('节点已经选择的模型优先于画布默认模型', () => {
+  it('节点已选的允许模型优先于画布默认模型', () => {
     renderPanel(
       twoModels,
       { id: 'image', kind: 'image', modelVersionId: 21, prompt: '新品海报' },
       {
-        modelDefaults: { imageModelVersionId: 22 },
+        modelDefaults: { imageModelVersionId: 22, imageModelVersionIds: [21, 22] },
       },
     )
     expect(screen.getByRole('button', { name: '通用模型' })).toBeVisible()

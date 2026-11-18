@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
+import { canvasAllowsModel } from '@/utils/canvasModelBuckets'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
 import { RequestAbortError } from '@/api/requestTimeout'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
@@ -47,7 +48,17 @@ export default function DeepAgentStudio({
   const business =
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
   const studio = useStudio(apiBase, workspaceId, canvasId, business)
-  const { api, state, catalog, current, run: serverRun, loading, mismatch } = studio
+  const { api, state, catalog: workspaceCatalog, current, run: serverRun, loading, mismatch } = studio
+  const catalog = useMemo(() => {
+    if (!modelDefaults) return workspaceCatalog
+    const models = workspaceCatalog.models.filter(
+      (model) =>
+        (!model.operation_codes.includes('image.text_to_image') ||
+          canvasAllowsModel(modelDefaults, 'image', model.id)) &&
+        (!model.operation_codes.includes('video.generate') || canvasAllowsModel(modelDefaults, 'video', model.id)),
+    )
+    return { ...workspaceCatalog, models }
+  }, [workspaceCatalog, modelDefaults])
   const notifiedFailure = useRef<string | null>(null)
   const [retryTarget, setRetryTarget] = useState<{ runId: string; id: number; version: number }>()
   const [notificationMessage, setNotificationMessage] = useState('')
@@ -154,11 +165,11 @@ export default function DeepAgentStudio({
       setSelectedDocument('')
     }
     if (run?.selection) {
-      setImage(run.selection.image)
-      setVideo(run.selection.video)
+      setImage(catalog.models.some((m) => m.id === run.selection.image) ? run.selection.image : undefined)
+      setVideo(catalog.models.some((m) => m.id === run.selection.video) ? run.selection.video : undefined)
       setMode(run.selection.mode)
     }
-  }, [current, run?.selection])
+  }, [current, run?.selection, catalog.models])
   useEffect(() => {
     if (!canvasReference || !canvasId || actionBusy || consumedCanvasReference.current === canvasReference) return
     consumedCanvasReference.current = canvasReference
