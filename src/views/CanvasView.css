@@ -896,7 +896,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 /* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
-.react-flow__node.selected {
+.react-flow__node.selected:not(.canvas-node-leased) {
   outline: #cbd5d9 solid 1.5px !important;
   outline-offset: 0;
   border-radius: 14px;
@@ -2751,7 +2751,7 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   filter: drop-shadow(0 0 8px rgb(0 229 190 / 60%));
   animation-duration: 1.2s;
 }
-.canvas-view .react-flow__node.selected {
+.canvas-view .react-flow__node.selected:not(.canvas-node-leased) {
   outline-color: var(--canvas-border-active, #cbd5d9) !important;
 }
 .canvas-view .react-flow__node.selected .canvas-default-node {
@@ -2821,8 +2821,9 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 .canvas-view .react-flow__node.canvas-node-leased::after {
   content: attr(data-editor-label);
   position: absolute;
-  top: 8px;
-  right: 8px;
+  /* A separate top-right row avoids covering either the title or node content. */
+  bottom: calc(100% + 30px);
+  right: 0;
   z-index: 10;
   box-sizing: border-box;
   max-width: calc(100% - 16px);
