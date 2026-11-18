@@ -29,6 +29,7 @@ export default function ViewportFloatingPanel({
     const element = ref.current
     const target = anchorElement || anchor.current?.parentElement
     if (!element || (!target && (anchorX === undefined || anchorY === undefined))) return
+    element.style.removeProperty('height')
     const reservedHeight = expansionSpace ? element.getBoundingClientRect().height + expansionSpace : 0
     let frame = 0
     const update = () => {

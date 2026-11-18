@@ -92,6 +92,43 @@ describe('CanvasNodePanel unified real-person material entry', () => {
     expect(status).toHaveAttribute('title', '模型参数无效，请检查参数后重试。')
   })
 
+  it('预冻结报价显示金额和结算说明', async () => {
+    vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({
+      estimated_cost: 180,
+      balance: 500,
+      can_afford: true,
+      estimate_kind: 'reservation',
+      estimate_note: '完成后按实际用量结算。',
+    })
+    renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
+    expect(await screen.findByText('预冻结：180 积分', {}, { timeout: 2000 })).toHaveAttribute(
+      'title',
+      '完成后按实际用量结算。',
+    )
+  })
+
+  it('普通视频等待当前报价后才允许确认费用', async () => {
+    const onGenerate = vi.fn()
+    renderPanel(
+      [],
+      { id: 'video', kind: 'video', prompt: '测试视频', sourceRefs: [] },
+      {
+        models: {
+          text: [],
+          image: [],
+          video: [{ modelVersionId: 41, displayName: '万相', operationCodes: ['video.generate'] }],
+        },
+        onGenerate,
+      },
+    )
+    const button = screen.getByRole('button', { name: '制作' })
+    expect(button).toBeDisabled()
+    await screen.findByText('预计消耗：10 积分', {}, { timeout: 2000 })
+    await userEvent.setup().click(button)
+    expect(uiStore.requestConfirm).toHaveBeenCalledWith(expect.stringContaining('预计消耗 10 积分'), expect.anything())
+    expect(onGenerate).toHaveBeenCalledOnce()
+  })
+
   it('零费用预估也显示金额', async () => {
     vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({ estimated_cost: 0, balance: 100, can_afford: true })
     renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
@@ -270,7 +307,10 @@ describe('CanvasNodePanel 素材预检', () => {
 
     await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onPreflightAssets).toHaveBeenCalledWith(
-      imageNodeWithReference().sourceRefs,
+      imageNodeWithReference().sourceRefs.map((ref) => ({
+        ...ref,
+        thumbnailUrl: '/api/v1/assets/77/download?workspace_id=7',
+      })),
       [{ asset_id: 77, role: 'reference_image' }],
       false,
     )
@@ -332,6 +372,64 @@ describe.each([
 })
 
 describe('CanvasNodePanel 模型选择器', () => {
+  const twoModels = [
+    { modelVersionId: 21, displayName: '通用模型', operationCodes: ['image.text_to_image'] },
+    { modelVersionId: 22, displayName: '画布指定模型', operationCodes: ['image.text_to_image'] },
+  ]
+
+  it('使用画布默认模型预估并提交同一任务', async () => {
+    const onGenerate = vi.fn()
+    renderPanel(
+      twoModels,
+      { id: 'image', kind: 'image', prompt: '新品海报' },
+      {
+        modelDefaults: { imageModelVersionId: 22 },
+        onGenerate,
+      },
+    )
+    expect(screen.getByRole('button', { name: '画布指定模型' })).toBeVisible()
+    await screen.findByText('预计消耗：10 积分')
+    await userEvent.click(screen.getByRole('button', { name: '制作' }))
+    await waitFor(() => expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 22 })))
+  })
+
+  it('节点已选的允许模型优先于画布默认模型', () => {
+    renderPanel(
+      twoModels,
+      { id: 'image', kind: 'image', modelVersionId: 21, prompt: '新品海报' },
+      {
+        modelDefaults: { imageModelVersionId: 22, imageModelVersionIds: [21, 22] },
+      },
+    )
+    expect(screen.getByRole('button', { name: '通用模型' })).toBeVisible()
+  })
+
+  it('画布默认模型下线时要求重新选择，避免静默替换模型', () => {
+    renderPanel(
+      twoModels,
+      { id: 'image', kind: 'image', prompt: '新品海报' },
+      {
+        modelDefaults: { imageModelVersionId: 99 },
+      },
+    )
+    expect(screen.getByRole('button', { name: '制作' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /默认模型不适用于当前操作/ })).toBeVisible()
+  })
+
+  it('只有一个模型时直接展开说明并按内容适配菜单高度', async () => {
+    renderPanel([
+      {
+        modelVersionId: 21,
+        displayName: '模型一',
+        operationCodes: IMAGE_OPERATIONS,
+        source: { description: '参考图编辑' },
+      },
+    ])
+    await userEvent.click(screen.getByRole('button', { name: '模型一' }))
+    const menu = await screen.findByRole('listbox', { name: '生成模型列表' })
+    expect(menu.style.height).toBe('')
+    expect(within(menu).getByRole('option')).toHaveAttribute('data-expanded', 'true')
+  })
   it('模型列表仅点击展开，移出后保持展开', async () => {
     const user = userEvent.setup()
     renderPanel([
@@ -582,6 +680,7 @@ describe('CanvasNodePanel 模型选择器', () => {
     expect(readMentionInput(input)).toBe('1. 开场（时长 5）\n咖啡杯特写')
     await user.clear(input)
     await user.type(input, '改为咖啡豆俯拍')
+    await screen.findByText('预计消耗：10 积分')
     await user.click(screen.getByRole('button', { name: '制作' }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '改为咖啡豆俯拍' }))
     await user.clear(input)
@@ -1250,7 +1349,7 @@ describe('CanvasNodePanel @参考素材引用', () => {
     expect(screen.getByText('@图片1')).toBeInTheDocument()
     expect(screen.getByText('@图片2')).toBeInTheDocument()
     // 点第二张 → 在提示词里插入 @图片2（光标默认在开头）
-    await user.click(screen.getByTitle(/@图片2/))
+    await user.click(screen.getByRole('button', { name: '@图片2' }))
     expect(onPromptChange).toHaveBeenCalledWith('@图片2 ')
   })
 
@@ -1306,7 +1405,7 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     renderPanel(MODEL, renamedRefsNode, { onPromptChange })
     expect(screen.getByText('@天安门')).toBeInTheDocument()
     expect(screen.getByText('@图片2')).toBeInTheDocument()
-    await user.click(screen.getByTitle(/@天安门/))
+    await user.click(screen.getByRole('button', { name: '@天安门' }))
     expect(onPromptChange).toHaveBeenCalledWith('@天安门 ')
   })
 
@@ -1811,6 +1910,7 @@ it.each([
   await user.click(screen.getByRole('button', { name: '无水印' }))
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   expect(screen.getByRole('button', { name: '自由生成 · 无水印' })).toBeInTheDocument()
+  await screen.findByText('预计消耗：10 积分')
   await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   expect(onGenerate.mock.calls[0]![0].params[field.name]).toBe(false)
@@ -1865,6 +1965,7 @@ it.each(['generate_audio', 'audio', 'with_audio', 'enable_audio'])(
       },
       { models: { text: [], image: [], video: [model] }, onGenerate, onParamsChange },
     )
+    await screen.findByText('预计消耗：10 积分')
     await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate.mock.calls[0]![0].params[name]).toBe(false)
     await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(false))
@@ -1909,6 +2010,7 @@ it('新视频节点默认有声音', async () => {
   await user.click(screen.getByRole('button', { name: /自由生成.*有声音/ }))
   expect(screen.getByRole('button', { name: '有声音' })).toHaveAttribute('aria-pressed', 'true')
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await screen.findByText('预计消耗：10 积分')
   await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate.mock.lastCall?.[0].params.generate_audio).toBe(true)
 })
@@ -1968,6 +2070,7 @@ it('模型未声明声音能力时不显示声音控件，也不提交声音参�
   await user.click(screen.getByRole('button', { name: /自由生成/ }))
   expect(screen.queryByText('生成声音')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await screen.findByText('预计消耗：10 积分')
   await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   for (const key of ['generate_audio', 'audio', 'with_audio', 'enable_audio'])

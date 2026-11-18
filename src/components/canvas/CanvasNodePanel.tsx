@@ -1,3 +1,5 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
+import type { CanvasModelDefaults } from '@/api/canvasApi'
 /**
  * 节点编辑面板 — 始终显示在页面底部，内容根据选中节点类型切换
  *
@@ -555,6 +557,7 @@ export interface CanvasNodeInfo {
 
 interface CanvasNodePanelProps {
   node: CanvasNodeInfo | null
+  modelDefaults?: CanvasModelDefaults
   /** Number of direct incoming media wires. Unlike sourceRefs, this deliberately counts repeated asset IDs. */
   mediaConnectionCounts?: { images: number; videos: number }
   /** 工作空间 ID：预估费用 / 提交生成需要 */
@@ -850,6 +853,7 @@ const readPromptHistory = (nodeId?: string): string[] => (nodeId && promptHistor
 
 export default function CanvasNodePanel({
   node,
+  modelDefaults,
   mediaConnectionCounts,
   workspaceId,
   currentUserId,
@@ -1319,16 +1323,30 @@ export default function CanvasNodePanel({
     kind === 'image' &&
     kindModels.some((m) => m.modelVersionId === node?.modelVersionId && isCanvasToolOnlyImageModel(m))
 
-  // 选中模型：优先节点自己选过的；没选过时用同类节点上次生成用的模型（见 canvasLastModel）；再不行取第一个可用
+  const defaultVersionId =
+    kind === 'image'
+      ? modelDefaults?.imageModelVersionId
+      : targetOperationCode === 'video.generate'
+        ? modelDefaults?.videoModelVersionId
+        : undefined
+
+  // 节点自选优先；新节点使用本画布的默认模型。
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
     // 旧草稿不能静默改用另一个付费模型；必须由用户重新选择。
     if (requiresImageModelSelection) return undefined
     const explicitOption = node?.modelVersionId
       ? availableModels.find((m) => m.modelVersionId === node.modelVersionId)
       : undefined
+    if (
+      node?.modelVersionId &&
+      !explicitOption &&
+      (kind === 'image' ? modelDefaults?.imageModelVersionId : kind === 'video' && modelDefaults?.videoModelVersionId)
+    )
+      return undefined
     if (explicitOption) return explicitOption.unavailableReason ? undefined : explicitOption
     const usable = availableModels.filter((m) => !m.unavailableReason)
     if (!node?.modelVersionId) {
+      if (defaultVersionId) return usable.find((model) => model.modelVersionId === defaultVersionId)
       const rememberedId = pickRememberedCanvasModel(
         kind,
         targetOperationCode,
@@ -1338,7 +1356,15 @@ export default function CanvasNodePanel({
       if (remembered) return remembered
     }
     return usable[0]
-  }, [availableModels, node?.modelVersionId, kind, targetOperationCode, requiresImageModelSelection])
+  }, [
+    availableModels,
+    node?.modelVersionId,
+    kind,
+    targetOperationCode,
+    requiresImageModelSelection,
+    defaultVersionId,
+    modelDefaults,
+  ])
 
   useEffect(() => {
     if (node?.id) onResolvedModel?.(node.id, selectedModel?.modelVersionId)
@@ -1464,6 +1490,14 @@ export default function CanvasNodePanel({
     ) {
       return `已连接的配音约 ${Math.ceil(requiredAudioVideoDurationSec)} 秒；请选择支持该时长的视频模型`
     }
+    if (
+      !node?.modelVersionId &&
+      defaultVersionId &&
+      !selectedModel &&
+      availableModels.some((model) => !model.unavailableReason)
+    ) {
+      return '画布默认模型不适用于当前操作，请重新选择'
+    }
     const labels: Record<string, string> = {
       'image.image_to_image': '暂无可用的图生图模型',
       'image.text_to_image': '暂无可用的文生图模型',
@@ -1479,6 +1513,9 @@ export default function CanvasNodePanel({
   }, [
     targetOperationCode,
     needsVideoInputAsset,
+    node?.modelVersionId,
+    defaultVersionId,
+    selectedModel,
     modelsLoading,
     catalogOperationState,
     kind,
@@ -1873,10 +1910,12 @@ export default function CanvasNodePanel({
     return { images, videos, texts, total: images + videos + texts }
   }, [sourceRefs])
 
+  const canvasId = useCanvasBillingScope()?.canvasId
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const quoteRequest =
     selectedModel?.modelVersionId && operationCode && workspaceId
       ? JSON.stringify({
+          canvasId,
           workspaceId,
           modelVersionId: selectedModel.modelVersionId,
           operationCode,
@@ -1888,8 +1927,8 @@ export default function CanvasNodePanel({
   const [storedQuote, setCostEstimate] = useState<{
     request?: string
     estimated_cost?: number
-    estimate_kind?: string
-    balance?: number
+    reservation?: boolean
+    note?: string
     can_afford?: boolean
     loading: boolean
     error?: string
@@ -1905,16 +1944,19 @@ export default function CanvasNodePanel({
       estimateAiTaskCost(JSON.parse(quoteRequest))
         .then((result: any) => {
           if (cancelled) return
-          const cost = Number(result?.estimated_cost)
-          if (result?.estimated_cost == null || !Number.isFinite(cost) || cost < 0) {
-            throw new Error('服务未返回有效的预估积分')
+          if (
+            !Number.isFinite(result?.estimated_cost) ||
+            result.estimated_cost < 0 ||
+            typeof result.can_afford !== 'boolean'
+          ) {
+            throw new Error('报价数据不完整，请重新预估。')
           }
           setCostEstimate({
             request: quoteRequest,
-            estimated_cost: cost,
-            estimate_kind: result?.estimate_kind,
-            balance: Number(result?.balance) || 0,
-            can_afford: typeof result?.can_afford === 'boolean' ? result.can_afford : undefined,
+            estimated_cost: result.estimated_cost,
+            reservation: result.estimate_kind === 'reservation',
+            note: result.estimate_note,
+            can_afford: result.can_afford,
             loading: false,
           })
         })
@@ -1940,7 +1982,7 @@ export default function CanvasNodePanel({
       return
     }
     if (taskRunning || checkingAssets || maskUploading) return
-    if (isSeedanceModel && inputAssets.length && (costEstimate.loading || costEstimate.estimated_cost === undefined)) {
+    if (kind === 'video' && costEstimate.estimated_cost === undefined) {
       if (costEstimate.error) setCostRetry((value) => value + 1)
       return
     }
@@ -1949,7 +1991,7 @@ export default function CanvasNodePanel({
       const operationLabel = selfVideoAssetId > 0 ? '修改当前视频' : '使用新模型生成视频'
       const ratioNote = videoRatioValue && !followSourceVideo ? `，画面比例 ${videoRatioValue}` : ''
       const confirmed = await requestConfirm(
-        `${operationLabel}${ratioNote}，${costEstimate.estimate_kind === 'reservation' ? '预冻结' : '预计消耗'} ${creditsLabel(cost)}，是否继续？`,
+        `${operationLabel}${ratioNote}，${costEstimate.reservation ? '预冻结' : '预计消耗'} ${creditsLabel(cost)}。${costEstimate.note || ''}是否继续？`,
         { title: '确认制作费用', confirmLabel: '继续制作', cancelLabel: '再想想' },
       )
       if (confirmed !== true) return
@@ -2872,7 +2914,7 @@ export default function CanvasNodePanel({
           {/* 预估费用是说明文字，不与右侧生成按钮共用点击区域。 */}
           {
             <span
-              title={costEstimate.error}
+              title={costEstimate.error || costEstimate.note}
               className={`${styles.costText} ${
                 costEstimate.loading
                   ? styles.costTextLoading
@@ -2888,7 +2930,7 @@ export default function CanvasNodePanel({
                   : costEstimate.can_afford === false
                     ? '积分不足'
                     : costEstimate.estimated_cost !== undefined
-                      ? `${costEstimate.estimate_kind === 'reservation' ? '预冻结' : '预计消耗'}：${creditsLabel(costEstimate.estimated_cost)}`
+                      ? `${costEstimate.reservation ? '预冻结' : '预计消耗'}：${creditsLabel(costEstimate.estimated_cost)}`
                       : '—'}
             </span>
           }
@@ -2920,17 +2962,21 @@ export default function CanvasNodePanel({
             title={
               checkingAssets
                 ? '正在检查参考素材…'
-                : costEstimate.loading
-                  ? '正在预估积分…'
-                  : isSeedanceModel && inputAssets.length > 0 && costEstimate.error
-                    ? '积分预估失败，点击重试'
-                    : taskRunning
-                      ? '生成过程中不能修改，请添加新的节点使用其他模型'
-                      : !selectedModel
-                        ? requiresImageModelSelection
-                          ? '原模型已不支持普通图片节点，请重新选择模型'
-                          : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                        : referenceLimitError || inputValidationError || (hasExistingResult ? '重新制作' : '开始制作')
+                : inputValidationError || referenceLimitError
+                  ? inputValidationError || referenceLimitError || undefined
+                  : costEstimate.loading
+                    ? '正在预估积分…'
+                    : kind === 'video' && costEstimate.error
+                      ? '积分预估失败，点击重试'
+                      : taskRunning
+                        ? '生成过程中不能修改，请添加新的节点使用其他模型'
+                        : !selectedModel
+                          ? requiresImageModelSelection
+                            ? '原模型已不支持普通图片节点，请重新选择模型'
+                            : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                          : hasExistingResult
+                            ? '重新制作'
+                            : '开始制作'
             }
           >
             {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}

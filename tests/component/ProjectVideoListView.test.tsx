@@ -236,6 +236,7 @@ describe('ProjectVideoListView reliability', () => {
       '/hot-copy/1?workspace_id=21&video_id=version%2F42+%2B+final&video_asset_id=42',
       {
         state: {
+          hotCopyEdit: true,
           projectVideoSelection: {
             projectId: 1,
             workspaceId: 21,

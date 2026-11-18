@@ -91,10 +91,16 @@ describe('SmartEntry 积分预估的 input_assets', () => {
         workspaceId={7}
         onSubmit={vi.fn()}
         initial={{
+          generateAudio: false,
+          duration: '5s',
           text: '三只猫在空间站打架',
           images: ['https://a/1.png', 'https://a/2.png'],
           imageAssetIds: [731, 732],
         }}
+        resolveModel={() => ({
+          id: 701,
+          params_schema: { fields: [{ name: 'generate_audio', type: 'bool', default: true }] },
+        })}
         modelGroups={[
           {
             key: 'video',
@@ -112,6 +118,7 @@ describe('SmartEntry 积分预估的 input_assets', () => {
     expect(mocks.estimateAiTaskCost).toHaveBeenLastCalledWith(
       expect.objectContaining({
         operationCode: 'video.generate',
+        params: expect.objectContaining({ generate_audio: false }),
         inputAssets: [
           { asset_id: 731, role: 'image' },
           { asset_id: 732, role: 'image' },

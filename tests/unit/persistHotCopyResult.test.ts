@@ -383,6 +383,15 @@ describe('persistHotCopyResultToBackend', () => {
 
 describe('persistHotCopyCompletedEntryCleanupToBackend', () => {
   it('清理已完成项目的入口文案与原素材，但保留成片结果和历史版本', async () => {
+    const completed = hotCopyDraft()
+    completed.smart.videoGenerating = false
+    completed.smart.vidGenTaskId = 0
+    completed.smart.videoGenerations = [{ id: 'generation-target', status: 'published', taskId: 0 }]
+    completed.smart.entryInitial = { text: '旧入口' }
+    completed.smart.sourceVideo = { assetId: 50, url: '/source.mp4' }
+    completed.smart.productAssetIds = [51]
+    mocks.getCreativeProject.mockResolvedValue({ draft_revision: 4, draft_json: completed })
+
     const persisted = await persistHotCopyCompletedEntryCleanupToBackend({
       projectId: 88,
       workspaceId: 21,

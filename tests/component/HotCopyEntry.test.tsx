@@ -131,22 +131,34 @@ function openCreativeParams() {
   return screen.getByRole('button', { name: /创作参数/ })
 }
 
-/** 打开弹层并点中某一档；时长是 radiogroup 里的 radio，其余行是 button。 */
+/** Exercise the accessible duration slider rather than obsolete radio buttons. */
 async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, value: string) {
   await user.click(openCreativeParams())
   const panel = within(screen.getByRole('dialog', { name: '创作参数' }))
-  const target = panel.queryByRole('radio', { name: value }) || panel.getByRole('button', { name: value })
-  await user.click(target)
+  if (/^\d+s$/.test(value)) {
+    const slider = panel.getByRole('slider', { name: '视频时长' })
+    fireEvent.keyDown(slider, { key: 'Home' })
+    for (let index = 0; index < 100 && slider.getAttribute('aria-valuetext') !== value; index++) {
+      fireEvent.keyDown(slider, { key: 'ArrowRight' })
+    }
+    expect(slider).toHaveAttribute('aria-valuetext', value)
+  } else {
+    await user.click(panel.getByRole('button', { name: value }))
+  }
   await user.keyboard('{Escape}')
 }
 
-/** 读取时长档位条当前列出的秒数。 */
 async function readDurationOptions(user: ReturnType<typeof userEvent.setup>) {
   await user.click(openCreativeParams())
-  const group = screen.getByRole('radiogroup', { name: '视频时长' })
-  const options = within(group)
-    .getAllByRole('radio')
-    .map((radio) => radio.textContent?.trim())
+  const slider = screen.getByRole('slider', { name: '视频时长' })
+  fireEvent.keyDown(slider, { key: 'Home' })
+  const options: string[] = []
+  for (let index = 0; index < 100; index++) {
+    const value = slider.getAttribute('aria-valuetext') || ''
+    if (options.includes(value)) break
+    options.push(value)
+    fireEvent.keyDown(slider, { key: 'ArrowRight' })
+  }
   await user.keyboard('{Escape}')
   return options
 }
@@ -412,7 +424,7 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it('lets the duration be chosen before any model, starting unselected', async () => {
+  it('lets duration be chosen after selecting a model, starting unselected', async () => {
     const user = userEvent.setup()
     render(
       <HotCopyEntry
@@ -426,7 +438,7 @@ describe('HotCopyEntry project asset access', () => {
     // 时长默认未选（摘要里是占位文案），但不锁：秒数是需求、模型是实现选择，谁先定都合理。
     expect(openCreativeParams()).toHaveTextContent('选择时长')
     await user.click(openCreativeParams())
-    expect(screen.getByRole('radiogroup', { name: '视频时长' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: '视频时长' })).toBeInTheDocument()
     expect(mocks.showToast).not.toHaveBeenCalledWith('请先选择视频模型', 'info')
   })
 

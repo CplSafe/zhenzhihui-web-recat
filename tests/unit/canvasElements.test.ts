@@ -4,6 +4,7 @@ import {
   buildEdgeId,
   applyCanvasElementMutations,
   collectCanvasElementAssetIds,
+  conflictingCanvasElementIds,
   comparableEdge,
   comparableNode,
   collectCanvasSourceRefs,
@@ -15,6 +16,28 @@ import {
 } from '@/utils/canvasElements'
 
 describe('canvasElements', () => {
+  it('flags conflicting edits and deletions but permits disjoint and already-applied edits', () => {
+    const change = (id: string, text: string) => ({
+      element_id: id,
+      kind: 'node',
+      op: 'upsert' as const,
+      payload: { text },
+    })
+    const edits = [
+      change('first', 'mine'),
+      change('only-local', 'mine'),
+      change('already-committed', 'same'),
+      change('deleted', 'mine'),
+    ]
+    const team = [
+      change('first', 'theirs'),
+      change('only-remote', 'theirs'),
+      change('already-committed', 'same'),
+      { element_id: 'deleted', kind: 'node', op: 'delete' as const },
+    ]
+    expect([...conflictingCanvasElementIds(edits, team)]).toEqual(['first', 'deleted'])
+  })
+
   it('Agent 旧节点读取正文、素材和尺寸，移动保存不丢制作关联', () => {
     const elements = [
       {

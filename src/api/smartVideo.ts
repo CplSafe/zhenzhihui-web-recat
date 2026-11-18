@@ -988,6 +988,7 @@ export async function editFullVideo(args: {
  */
 export async function estimateVideoEditCost(args: {
   workspaceId: number
+  videoAssetId?: number
   prompt?: string
   ratio?: string
   /** 用户在入口选择的出片分辨率；必须与提交保持一致，保证「预估 = 实扣」。 */
@@ -1006,6 +1007,7 @@ export async function estimateVideoEditCost(args: {
     workspaceId: args.workspaceId,
     modelVersionId: request.modelVersionId,
     operationCode: 'video.edit',
+    inputAssets: buildFullVideoInputAssets({ sourceVideoAssetId: args.videoAssetId }),
     prompt: request.prompt,
     params: request.params,
   })
@@ -1035,6 +1037,8 @@ export async function estimateFullVideoCost(args: {
   referenceImageCount?: number
   /** 本次会提交的参考图 asset_id；未给 referenceImageCount 时按它推导。 */
   imageAssetIds?: number[]
+  sourceVideoAssetId?: number
+  sourceVideoAssetIds?: number[]
   /** 分段修改时向模型申请的片段时长；必须与提交一致，否则「预估 ≠ 实扣」。 */
   durationSec?: number
 }): Promise<any> {
@@ -1053,6 +1057,7 @@ export async function estimateFullVideoCost(args: {
     workspaceId: args.workspaceId,
     modelVersionId: request.modelVersionId,
     operationCode: 'video.generate',
+    inputAssets: buildFullVideoInputAssets({ ...args, imageRole: request.inputAssetRole }),
     params: request.params,
   })
 }

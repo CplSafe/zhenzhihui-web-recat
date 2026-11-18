@@ -492,6 +492,7 @@ function getModelForOperationFromPlan(operationCode, preferredKeywords = [], _pl
  */
 export async function createAiResponse({
   workspaceId,
+  canvasId,
   operationCode,
   prompt,
   messages,
@@ -511,6 +512,7 @@ export async function createAiResponse({
       try {
         return await submitAiResponse({
           workspaceId,
+          canvasId,
           modelId: modelVersionId,
           operationCode,
           idempotencyKey,
@@ -546,6 +548,7 @@ export async function createAiResponse({
         try {
           return await submitAiResponse({
             workspaceId,
+            canvasId,
             modelId: model.id,
             operationCode,
             idempotencyKey,
@@ -577,6 +580,7 @@ export async function createAiResponse({
 /** 发起 SSE AI Responses 请求，同一模型的重试复用幂等键，避免供应商重复计费。 */
 export async function streamAiResponse({
   workspaceId,
+  canvasId,
   operationCode,
   prompt,
   messages,
@@ -595,6 +599,7 @@ export async function streamAiResponse({
       try {
         return await openAiResponseStream({
           workspaceId,
+          canvasId,
           modelId: modelVersionId,
           operationCode,
           idempotencyKey,
@@ -630,6 +635,7 @@ export async function streamAiResponse({
         try {
           return await openAiResponseStream({
             workspaceId,
+            canvasId,
             modelId: model.id,
             operationCode,
             idempotencyKey,
@@ -661,6 +667,7 @@ export async function streamAiResponse({
 /** 打开并解析一次 SSE 响应流，聚合文本增量并返回最终任务。 */
 async function openAiResponseStream({
   workspaceId,
+  canvasId,
   modelId,
   operationCode,
   idempotencyKey,
@@ -690,6 +697,7 @@ async function openAiResponseStream({
         body: JSON.stringify(
           removeEmptyFields({
             workspace_id: workspaceId,
+            canvas_id: canvasId,
             model_version_id: modelId,
             operation_code: operationCode,
             idempotency_key: idempotencyKey,
@@ -987,6 +995,7 @@ function extractStreamDelta(payload) {
  */
 export async function createAiTask({
   workspaceId,
+  canvasId,
   capability,
   operationCode,
   prompt,
@@ -1004,6 +1013,7 @@ export async function createAiTask({
   const submitTask = ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) =>
     submitAiTask({
       workspaceId,
+      canvasId,
       modelId,
       operationCode,
       idempotencyKey,
@@ -1231,6 +1241,7 @@ async function resolveExplicitTaskModel({ modelVersionId, modelVersion, capabili
 /** 将已选模型的 Responses 请求序列化并交给统一请求层。 */
 function submitAiResponse({
   workspaceId,
+  canvasId,
   modelId,
   operationCode,
   idempotencyKey,
@@ -1253,6 +1264,7 @@ function submitAiResponse({
     body: JSON.stringify(
       removeEmptyFields({
         workspace_id: workspaceId,
+        canvas_id: canvasId,
         model_version_id: modelId,
         operation_code: operationCode,
         idempotency_key: idempotencyKey,
@@ -1366,6 +1378,7 @@ async function requestJsonWithRetry(path, options: any = {}, cfg: any = {}) {
 /** 使用稳定幂等键提交一个 AI 任务，并验证响应中存在有效 task_id。 */
 async function submitAiTask({
   workspaceId,
+  canvasId,
   modelId,
   operationCode,
   idempotencyKey,
@@ -1388,6 +1401,7 @@ async function submitAiTask({
   if (params?.stream === true && operationCode?.startsWith('image.')) {
     const result = await openAiResponseStream({
       workspaceId,
+      canvasId,
       modelId,
       operationCode,
       idempotencyKey,
@@ -1402,6 +1416,7 @@ async function submitAiTask({
   }
   const requestBody = removeEmptyFields({
     workspace_id: workspaceId,
+    canvas_id: canvasId,
     model_version_id: modelId,
     operation_code: operationCode,
     idempotency_key: idempotencyKey,
@@ -1699,6 +1714,7 @@ export function listBillingPlans() {
 /** 按与正式提交一致的模型、操作码和参数预估 AI 任务积分。 */
 export function estimateAiTaskCost({
   workspaceId,
+  canvasId,
   modelVersionId,
   operationCode,
   prompt = '',
@@ -1729,6 +1745,7 @@ export function estimateAiTaskCost({
     body: JSON.stringify(
       removeEmptyFields({
         workspace_id: wsId,
+        canvas_id: canvasId,
         model_version_id: modelId,
         operation_code: op,
         prompt: op === 'image.upscale' ? undefined : normalizeCanvasToolPrompt(String(prompt || ''), params),

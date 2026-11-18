@@ -16,7 +16,13 @@ vi.mock('@/api/business', () => ({
   },
 }))
 
-import { duplicateCanvas, fetchAllCanvasElements, listCanvases } from '@/api/canvasApi'
+import {
+  changeCanvasMembers,
+  createCanvas,
+  duplicateCanvas,
+  fetchAllCanvasElements,
+  listCanvases,
+} from '@/api/canvasApi'
 
 describe('fetchAllCanvasElements', () => {
   beforeEach(() => mocks.requestBusinessJson.mockReset())
@@ -29,6 +35,8 @@ describe('fetchAllCanvasElements', () => {
           sync_revision: 12,
           history_floor_revision: 3,
           state: { viewport: 'first-page-only' },
+          image_model_version_id: 11,
+          video_model_version_id: 22,
           next_cursor: 'page-2',
           has_more: true,
         },
@@ -50,6 +58,8 @@ describe('fetchAllCanvasElements', () => {
         ],
         sync_revision: 12,
         state: { viewport: 'first-page-only' },
+        image_model_version_id: 11,
+        video_model_version_id: 22,
         has_more: false,
       }),
     )
@@ -69,6 +79,50 @@ describe('fetchAllCanvasElements', () => {
       })
 
     await expect(fetchAllCanvasElements({ workspaceId: 7, canvasId: 9 })).rejects.toThrow('画布分页游标异常')
+  })
+})
+
+describe('画布成员和默认模型协议', () => {
+  beforeEach(() => mocks.requestBusinessJson.mockReset())
+
+  it('发送用户所选模型和明确空的成员名单，并解析服务端的画布配置', async () => {
+    mocks.requestBusinessJson.mockResolvedValueOnce({
+      data: {
+        id: 9,
+        image_model_version_id: 11,
+        video_model_version_id: 22,
+        members_restricted: true,
+      },
+    })
+    const result = await createCanvas({
+      workspaceId: 7,
+      title: '新品海报',
+      imageModelVersionId: 11,
+      videoModelVersionId: 22,
+      memberUserIds: [],
+    })
+    expect(JSON.parse(mocks.requestBusinessJson.mock.calls[0][1].body)).toEqual({
+      title: '新品海报',
+      image_model_version_id: 11,
+      video_model_version_id: 22,
+      member_user_ids: [],
+    })
+    expect(result).toMatchObject({ imageModelVersionId: 11, videoModelVersionId: 22, membersRestricted: true })
+  })
+
+  it('成员管理请求只发送添加和移除的差量', async () => {
+    mocks.requestBusinessJson.mockResolvedValueOnce({
+      data: { members_restricted: true, can_manage: true, member_user_ids: [3, 4] },
+    })
+    const result = await changeCanvasMembers(7, 9, [4], [8])
+    expect(mocks.requestBusinessJson).toHaveBeenCalledWith(
+      '/api/v1/canvases/9/members?workspace_id=7',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ member_user_ids: [4], remove_user_ids: [8] }),
+      }),
+    )
+    expect(result.member_user_ids).toEqual([3, 4])
   })
 })
 
@@ -136,15 +190,15 @@ describe('listCanvases', () => {
     mocks.requestBusinessJson.mockResolvedValueOnce({
       data: {
         items: [
-          { id: 3, title: 'A', user_id: 8 },
-          { id: 4, title: 'B' },
+          { id: 3, title: 'A', user_id: 8, used_credits: 1.362 },
+          { id: 4, title: 'B', used_credits: 0 },
         ],
       },
     })
 
     await expect(listCanvases({ workspaceId: 7 })).resolves.toEqual([
-      { id: 3, title: 'A', userId: 8 },
-      { id: 4, title: 'B' },
+      { id: 3, title: 'A', userId: 8, usedCredits: 1.362 },
+      { id: 4, title: 'B', usedCredits: 0 },
     ])
   })
 })

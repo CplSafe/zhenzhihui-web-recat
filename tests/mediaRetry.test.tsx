@@ -70,7 +70,7 @@ it('switches model with fresh parameters and atomically confirms and starts', as
     }),
   )
   render(<MediaRetry api={createStudioAPI()} runId="r" models={models} reload={reload} />)
-  fireEvent.click(screen.getByText('重试失败素材 / 更换模型'))
+  fireEvent.click(await screen.findByRole('button', { name: '查看失败原因与处理方案' }))
   fireEvent.change(await screen.findByLabelText('重试模型'), { target: { value: '4' } })
   fireEvent.click(screen.getByText('查看预计积分'))
   await screen.findByText(/预计 7.5 积分/)
@@ -87,7 +87,7 @@ it('reopens the actual approved model and prompt, not the failed original parame
     ),
   )
   render(<MediaRetry api={createStudioAPI()} runId="r" models={models} reload={vi.fn()} />)
-  fireEvent.click(screen.getByText('重试失败素材 / 更换模型'))
+  fireEvent.click(await screen.findByRole('button', { name: '查看失败原因与处理方案' }))
   expect(await screen.findByLabelText('重试模型')).toHaveValue('4')
   expect(screen.getByLabelText('提示词')).toHaveValue('Approved prompt')
   expect(screen.getByLabelText('ratio')).toHaveValue('"1:1"')

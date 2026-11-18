@@ -127,7 +127,7 @@ export default function LoginView() {
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false)
   // 注册 / 重置密码 弹窗;以及「验证码登录时手机号未注册」触发的补全注册弹窗
   const [authModal, setAuthModal] = useState<AuthActionMode | null>(null)
-  const [smsRegister, setSmsRegister] = useState<{ mobile: string; smsCode: string } | null>(null)
+  const [smsRegister, setSmsRegister] = useState<{ mobile: string } | null>(null)
 
   // 'login' | 'view'：协议弹窗的来源上下文
   const agreementModalContextRef = useRef('login')
@@ -421,9 +421,9 @@ export default function LoginView() {
         setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
         return
       }
-      // 验证码登录 + 该手机号未注册(后端 code 20003)→ 弹「设置密码完成注册并登录」(密码可不填)
+      // 验证码登录 + 该手机号未注册(后端 code 20003)→ 获取独立的注册验证码完成注册
       if (loginMode === 'sms' && Number((error as any)?.code) === 20003) {
-        setSmsRegister({ mobile, smsCode: credential })
+        setSmsRegister({ mobile })
         return
       }
       const fallback = loginMode === 'password' ? '手机号或密码错误' : '手机号或验证码错误'
@@ -922,13 +922,19 @@ export default function LoginView() {
         />
       )}
 
-      {/* 验证码登录·手机号未注册 → 设置密码完成注册并登录 */}
+      {/* 验证码登录未成功 → 获取注册验证码并补全账号 */}
       {smsRegister && (
         <AuthActionModal
           mode="sms-register"
           ensureAuthStart={ensureAuthStart}
           authStart={authStartRef.current}
           prefill={smsRegister}
+          smsCooldown={codeCountdown}
+          onAlreadyRegistered={(m) => {
+            setSmsRegister(null)
+            switchMode('password')
+            setPhone(m)
+          }}
           onClose={() => setSmsRegister(null)}
           onAuthed={(as, result) => {
             setSmsRegister(null)

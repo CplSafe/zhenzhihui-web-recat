@@ -1,3 +1,4 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import { useEffect } from 'react'
 import { reverseImagePrompt } from '@/api/aiResponses'
 
@@ -19,9 +20,11 @@ interface Props {
 
 /** Headless request runner; the result is written into the output node. */
 export default function CanvasReversePromptPanel({ target, onComplete, onError }: Props) {
+  const canvasId = useCanvasBillingScope()?.canvasId
   useEffect(() => {
     const controller = new AbortController()
     void reverseImagePrompt({
+      canvasId,
       imageAssetId: target.assetId,
       workspaceId: target.workspaceId,
       detail: 'balanced',
@@ -34,7 +37,7 @@ export default function CanvasReversePromptPanel({ target, onComplete, onError }
         if (!controller.signal.aborted) onError(String((reason as Error)?.message || '反推失败，请重试'))
       })
     return () => controller.abort()
-  }, [target.assetId, target.workspaceId, onComplete, onError])
+  }, [canvasId, target.assetId, target.workspaceId, onComplete, onError])
 
   return null
 }

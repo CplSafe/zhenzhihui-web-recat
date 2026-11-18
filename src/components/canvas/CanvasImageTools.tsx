@@ -1,3 +1,4 @@
+import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import CanvasToolSelect from './CanvasToolSelect'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
@@ -208,6 +209,7 @@ function ToolEditor({
   onReload,
   ...props
 }: Props & { tool: CreativeTool; models: Model[]; onSwitchToGeneration?: () => void; onReload: () => void }) {
+  const canvasId = useCanvasBillingScope()?.canvasId
   const browser = tool.execution === 'browser' && tool.code === 'panorama.view'
   const { onHeightChange } = props
   const compactRoot = useRef<HTMLDivElement>(null)
@@ -229,7 +231,8 @@ function ToolEditor({
       ),
     [models, tool.model_version_ids, tool.operation_code],
   )
-  const [modelId, setModelId] = useState(Number(allowed[0]?.id || 0))
+  const defaultModel = allowed.find((model) => Number(model.id) === tool.default_model_version_id) ?? allowed[0]
+  const [modelId, setModelId] = useState(Number(defaultModel?.id || 0))
   const fields = tool.params_schema?.fields || []
   const defaults = () => {
     const initial = schemaDefaults(fields)
@@ -257,11 +260,11 @@ function ToolEditor({
   const [nativeValues, setNativeValues] = useState(initialNativeValues)
   useEffect(() => {
     if (allowed.some((model) => Number(model.id) === modelId)) return
-    const next = allowed[0]
+    const next = defaultModel
     setModelId(Number(next?.id || 0))
     const nextFields = modelFields(next, tool.operation_code)
     setNativeValues(nativeDefaults(nextFields))
-  }, [allowed, modelId, nativeDefaults, tool.operation_code])
+  }, [allowed, defaultModel, modelId, nativeDefaults, tool.operation_code])
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const [submitError, setSubmitError] = useState('')
@@ -314,6 +317,7 @@ function ToolEditor({
       try {
         const body = JSON.parse(requestKey) as ToolGeneration
         const result = await estimateAiTaskCost({
+          canvasId,
           workspaceId: props.workspaceId,
           modelVersionId: body.modelVersionId,
           operationCode: body.operationCode,
@@ -347,7 +351,7 @@ function ToolEditor({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [requestKey, browser, props.workspaceId, retryQuote])
+  }, [requestKey, browser, canvasId, props.workspaceId, retryQuote])
   const currentQuote = quote?.key === requestKey ? quote : null
   const viewFields: ToolField[] = [
     { name: 'yaw', display_name: '水平视角', type: 'number', min: 0, max: 360, step: 1 },

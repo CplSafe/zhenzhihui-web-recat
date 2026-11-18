@@ -9,6 +9,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import AppSidebar from '@/components/home/AppSidebar'
+import CanvasUsagePanel from '@/components/billing/CanvasUsagePanel'
+import { isWorkspaceBillingManager } from '@/utils/workspaceBillingAccess'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { getBusinessErrorMessage, listCreditLedgers } from '@/api/business'
 import {
@@ -23,6 +25,8 @@ import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { openMemberCenterTab } from '@/stores/ui'
 import {
   useCurrentWorkspace,
+  useCurrentMember,
+  useCurrentUser,
   useWalletCredits,
   useWorkspaceId,
   useWorkspaceSessionStore,
@@ -44,6 +48,13 @@ export default function CreditsView() {
   const handleNavigate = useSidebarNavigate()
   const workspaceId = useWorkspaceId()
   const currentWorkspace = useCurrentWorkspace()
+  const currentMember = useCurrentMember()
+  const currentUser = useCurrentUser()
+  const canViewUsage =
+    ['team', 'enterprise'].includes(currentWorkspace?.type) &&
+    isWorkspaceBillingManager(currentWorkspace, currentMember, Number(currentUser?.id || currentUser?.user_id || 0))
+  const [usageWorkspaceId, setUsageWorkspaceId] = useState(0)
+  const showUsage = canViewUsage && workspaceId > 0 && usageWorkspaceId === workspaceId
   const available = useWalletCredits()
   const wallet = useWorkspaceSessionStore((s) => s.currentWallet)
   const frozen = Math.max(0, Number((wallet as any)?.frozen ?? 0) || 0)
@@ -71,7 +82,7 @@ export default function CreditsView() {
 
   // 拉当前页流水：服务端分页（limit/offset）+ kind 过滤。
   useEffect(() => {
-    if (!(workspaceId > 0)) {
+    if (!(workspaceId > 0) || showUsage) {
       setRecords([])
       setTotal(null)
       return
@@ -99,7 +110,7 @@ export default function CreditsView() {
     return () => {
       alive = false
     }
-  }, [workspaceId, kind, page])
+  }, [workspaceId, kind, page, showUsage])
 
   // 有 total 用它算总页数；后端不返回 total 时按「本页是否满页」推断能否翻下一页。
   const hasPrev = page > 1
@@ -127,6 +138,15 @@ export default function CreditsView() {
                 工作空间 <b>{workspaceName}</b> · 每一笔积分的消费、退回与冻结都在这里
               </p>
             </div>
+            {canViewUsage && (
+              <button
+                type="button"
+                className="credits__view-switch"
+                onClick={() => setUsageWorkspaceId(showUsage ? 0 : workspaceId)}
+              >
+                {showUsage ? '返回积分流水' : '查看画布用量'}
+              </button>
+            )}
           </header>
 
           <section className="credits__cards">
@@ -157,7 +177,8 @@ export default function CreditsView() {
             </div>
           </section>
 
-          <div className="credits__panel">
+          {showUsage && <CanvasUsagePanel key={workspaceId} workspaceId={workspaceId} />}
+          <div className="credits__panel" hidden={showUsage}>
             <div className="credits__filters" role="tablist" aria-label="流水类型筛选">
               {CREDIT_LEDGER_FILTERS.map((item) => (
                 <button

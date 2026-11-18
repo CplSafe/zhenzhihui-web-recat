@@ -5,12 +5,13 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BookOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import { ApiOutlined, BookOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
 import { useConfirmDialog } from '@/composables/useToast'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useNavigate } from 'react-router-dom'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
 import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
@@ -27,6 +28,9 @@ const IconLock = <LockOutlined className="settings-menu__ico-vector" aria-hidden
 
 /** 使用手册菜单图标。 */
 const IconManual = <BookOutlined className="settings-menu__ico-vector" aria-hidden="true" />
+
+/** MCP 接入菜单图标。 */
+const IconMCP = <ApiOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
 /** 退出登录菜单图标。 */
 const IconLogout = <LogoutOutlined className="settings-menu__ico-vector" aria-hidden="true" />
@@ -50,6 +54,7 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const { logout, isLoggingOut } = useLogout()
   const { requestConfirm } = useConfirmDialog()
   const requireAuth = useRequireAuth()
+  const navigate = useNavigate()
 
   // 菜单向上展开(设置项在侧栏底部):菜单底边对齐按钮顶边上方 8px。用 portal 避免被侧栏裁切。
   const toggle = () => {
@@ -105,6 +110,13 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const openManual = () => {
     setOpen(false)
     onAfterAction?.()
+  }
+  const openMCP = () => {
+    setOpen(false)
+    onAfterAction?.()
+    // /mcp is reserved for the Streamable HTTP endpoint, so the management UI
+    // lives under a separate route and never gets swallowed by the dev proxy.
+    navigate('/settings/mcp')
   }
   const doLogout = async () => {
     if (logoutConfirmRef.current || isLoggingOut) return
@@ -169,6 +181,10 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               <span className="settings-menu__ico settings-menu__ico--manual">{IconManual}</span>
               <span className="settings-menu__label">使用手册</span>
             </a>
+            <button type="button" className="settings-menu__item" role="menuitem" onClick={openMCP}>
+              <span className="settings-menu__ico settings-menu__ico--blue">{IconMCP}</span>
+              <span className="settings-menu__label">MCP 接入</span>
+            </button>
             <button
               type="button"
               className="settings-menu__item"

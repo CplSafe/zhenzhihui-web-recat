@@ -2811,3 +2811,36 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
     background: var(--canvas-text-muted, #7a8496);
   }
 }
+
+.canvas-view .react-flow__node.canvas-node-leased {
+  outline: 2px solid #66d8ca;
+  outline-offset: 3px;
+  border-radius: 12px;
+  box-shadow: 0 0 14px rgb(80 216 190 / 38%);
+}
+.canvas-view .react-flow__node.canvas-node-leased::after {
+  content: attr(data-editor-label);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 0;
+  max-width: 100%;
+  padding: 3px 8px;
+  overflow: hidden;
+  border: 1px solid #427b75;
+  border-radius: 6px;
+  background: #163733;
+  color: #cdfaf1;
+  font:
+    600 12px/1.5 system-ui,
+    sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.canvas-view .canvas-node-occupied :is(button, input, textarea, select, [contenteditable='true']) {
+  pointer-events: none;
+}
+.canvas-view .canvas-node-occupied .react-flow__handle.source,
+.canvas-view .canvas-node-occupied .react-flow__handle.source button {
+  pointer-events: auto;
+}

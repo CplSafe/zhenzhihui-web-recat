@@ -31,6 +31,29 @@ const catalog = {
   skills: [{ id: 1, name: 'director', description: '故事导演' }],
   planning_model: { id: 21, model: 'Qwen3.8-Max', operation_codes: [] },
 }
+it.each([
+  ['锁定并运行', '1'],
+  ['保持协作并运行', '0'],
+])('画布 Agent 先询问锁定，再按「%s」提交一次', async (label, choice) => {
+  const requests: (string | null)[] = []
+  server.use(
+    http.post('*/agent-studio/api/runs', ({ request }) => {
+      requests.push(request.headers.get('X-Agent-Lock-Canvas'))
+      return HttpResponse.json({ id: 'run1' })
+    }),
+  )
+  render(<CanvasDirectorDock workspaceId={54} canvasId={40} opened onCollapse={() => {}} />)
+  const input = await screen.findByRole('textbox')
+  fireEvent.change(input, { target: { value: '制作产品图' } })
+  const send = screen.getByRole('button', { name: '发送创作要求' })
+  await waitFor(() => expect(send).toBeEnabled())
+  fireEvent.click(send)
+  const dialog = await screen.findByRole('dialog', { name: '本轮 Agent 运行时锁定画布？' })
+  expect(requests).toEqual([])
+  fireEvent.click(within(dialog).getByRole('button', { name: label }))
+  await waitFor(() => expect(requests).toEqual([choice]))
+})
+
 function snapshot(overrides: Partial<StudioRun> = {}): StudioRun {
   return {
     id: 'run1',
@@ -601,6 +624,9 @@ describe('Studio transport', () => {
     expect(url.search).toBe('?after=12')
     expect(defaultModel(catalog, 'image')).toBe(29)
     expect(defaultModel(catalog, 'video')).toBe(18)
+    const other = { id: 31, model: 'studio-image', operation_codes: ['image.text_to_image'] }
+    expect(defaultModel({ ...catalog, models: [...catalog.models, other] }, 'image', 31)).toBe(31)
+    expect(defaultModel(catalog, 'image', 18)).toBeUndefined()
   })
   it('deduplicates replayed tasks and replaces billing snapshots', () => {
     let run = snapshot({ status: 'running', events: [{ id: 'task-1', kind: 'cost', text: 'running' }] })
@@ -670,7 +696,7 @@ describe('Director interactions', () => {
     expect(starts[0]).toMatchObject({
       message: '只制作第一集',
       selection: { image: 29, video: 18, mode: 'auto' },
-      skill: '',
+      skills: [],
       attachments: [],
     })
   })
@@ -2052,6 +2078,8 @@ it('saves configuration without consuming the unsent requirements or starting pr
   })
   fireEvent.change(screen.getByRole('textbox'), { target: { value: '只讨论风格，先别制作' } })
   await screen.findByText('已识别 2 集 · 已选 0 集')
+  fireEvent.click(screen.getByRole('button', { name: 'Skill' }))
+  fireEvent.click(screen.getByRole('button', { name: /故事导演/ }))
   expect(started).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
   await screen.findByRole('checkbox', { name: '选择 第2集' })
@@ -2062,8 +2090,72 @@ it('saves configuration without consuming the unsent requirements or starting pr
   expect(screen.getByRole('textbox')).toHaveValue('只讨论风格，先别制作')
   expect(started.mock.calls[0][0].start_production).toBeUndefined()
   expect(started.mock.calls[0][0]).toMatchObject({
+    skills: ['director'],
     attachments: ['episode-file'],
     selection: { image: 29, video: 18, mode: 'manual' },
     episode_plan: { fingerprint: 'script-revision', episodes: [{ id: '42:2' }] },
   })
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送创作要求' })).toBeEnabled())
+  expect(screen.getByRole('button', { name: '移除 Skill 故事导演' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
+  await waitFor(() => expect(started).toHaveBeenCalledTimes(2))
+  expect(started.mock.calls[1][0]).toMatchObject({
+    message: '只讨论风格，先别制作',
+    skills: ['director'],
+    previous: 'saved',
+    attachments: [],
+  })
+  expect(started.mock.calls[1][0].episode_plan).toBeUndefined()
+})
+
+it('interrupts the running turn with selected node references without starting another run', async () => {
+  const received: Record<string, unknown>[] = []
+  const start = vi.fn()
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running' }))),
+    http.post('*/agent-studio/api/runs', () => {
+      start()
+      return HttpResponse.json({ id: 'wrong' })
+    }),
+    http.post('*/agent-studio/api/runs/run1/steer', async ({ request }) => {
+      received.push((await request.json()) as Record<string, unknown>)
+      return HttpResponse.json({ ok: true })
+    }),
+  )
+  const { rerender } = render(<DeepAgentStudio canvasId={57} />)
+  await openHistory()
+  rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'node-1', title: '原视频', kind: 'video' }} />)
+  const input = screen.getByRole('textbox', { name: '创作要求' })
+  fireEvent.change(input, { target: { value: '只处理这个视频，停止旧计划' } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  await waitFor(() => expect(received).toHaveLength(1))
+  expect(received[0]).toMatchObject({ message: '只处理这个视频，停止旧计划', canvas_references: ['node-1'] })
+  expect(received[0].message_id).toEqual(expect.any(String))
+  await waitFor(() => expect(input).toHaveValue(''))
+  expect(screen.queryByRole('button', { name: '移除引用 原视频' })).not.toBeInTheDocument()
+  expect(start).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
+})
+
+it('keeps an uncertain running message and reuses its ID on resend', async () => {
+  const received: Record<string, unknown>[] = []
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running' }))),
+    http.post('*/agent-studio/api/runs/run1/steer', async ({ request }) => {
+      received.push((await request.json()) as Record<string, unknown>)
+      return received.length === 1 ? HttpResponse.error() : HttpResponse.json({ ok: true })
+    }),
+  )
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const input = screen.getByRole('textbox', { name: '创作要求' })
+  fireEvent.change(input, { target: { value: '先别生成' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送补充要求' }))
+  await waitFor(() => expect(received).toHaveLength(1))
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送补充要求' })).toBeEnabled())
+  expect(input).toHaveValue('先别生成')
+  fireEvent.click(screen.getByRole('button', { name: '发送补充要求' }))
+  await waitFor(() => expect(received).toHaveLength(2))
+  expect(received[1]).toEqual(received[0])
+  await waitFor(() => expect(input).toHaveValue(''))
 })

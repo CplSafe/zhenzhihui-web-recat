@@ -20,7 +20,12 @@ const position = (nodeCard: Locator) =>
   })
 
 async function dragBy(page: Page, target: Locator, dx: number, dy: number) {
-  const box = await target.boundingBox()
+  // Fit-to-view after resizing changes screen coordinates asynchronously.
+  // Wait for geometry only: media surfaces intentionally delegate pointer events to their wrapper.
+  const element = await target.elementHandle()
+  if (!element) throw new Error('拖动目标应当存在')
+  await element.waitForElementState('stable')
+  const box = await element.boundingBox()
   if (!box) throw new Error('拖动目标应当在画布中可见')
   const x = box.x + box.width / 2
   const y = box.y + box.height / 2

@@ -216,6 +216,14 @@ describe('orphan canvas submissions (stuck in submitting without a task id)', ()
     expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: false })).toBe('resume')
   })
 
+  it('only lets the submitting member resume a paid request on a shared canvas', () => {
+    const own = { now, currentUserId: 7, submittingInThisPage: false }
+    expect(classifyOrphanSubmission(orphan(2, { taskSubmitterId: 7 }), own)).toBe('resume')
+    expect(classifyOrphanSubmission(orphan(2, { taskSubmitterId: 8 }), own)).toBe('none')
+    expect(classifyOrphanSubmission(orphan(2), own)).toBe('none')
+    expect(classifyOrphanSubmission(orphan(20, { taskSubmitterId: 8 }), own)).toBe('interrupted')
+  })
+
   it('leaves submissions this page is still sending alone', () => {
     expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: true })).toBe('none')
   })

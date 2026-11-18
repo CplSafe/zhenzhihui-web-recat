@@ -465,6 +465,16 @@ export function EventCard({
     >
       <Markdown>{event.text}</Markdown>
       {event.kind === 'user' && data.delivery === 'sending' && <small role="status">发送中…</small>}
+      {event.kind === 'user' && Array.isArray(data.skills) && (
+        <div className={styles.chips} aria-label="本条消息选择的 Skill">
+          {data.skills
+            .slice(0, 8)
+            .filter((item: Data) => item && typeof item.name === 'string')
+            .map((item: Data) => (
+              <span key={item.name}>Skill · {String(item.description || item.name).slice(0, 120)}</span>
+            ))}
+        </div>
+      )}
       {event.kind === 'user' && Array.isArray(data.canvas_references) && (
         <div className={styles.chips} aria-label="本条消息引用的节点">
           {data.canvas_references.slice(0, 8).map((item: Data) => (

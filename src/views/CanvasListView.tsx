@@ -13,6 +13,9 @@ import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import CanvasModelSettings from '@/components/canvas/CanvasModelSettings'
+import { formatCredits } from '@/utils/creditsFormat'
+import CanvasCreateDialog from '@/components/canvas/CanvasCreateDialog'
 import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import { getBusinessErrorMessage } from '@/api/business'
 import {
@@ -23,6 +26,7 @@ import {
   listCanvases,
   patchCanvas,
   type CanvasSummary,
+  type CanvasCreateOptions,
 } from '@/api/canvasApi'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
@@ -92,7 +96,6 @@ export default function CanvasListView() {
   const [creating, setCreating] = useState(false)
   // 新建画布弹窗：可输入画布名称
   const [createOpen, setCreateOpen] = useState(false)
-  const [newName, setNewName] = useState('')
   useEffect(() => {
     if (initialCreateHandledRef.current || !createCanvasAction) return
     initialCreateHandledRef.current = true
@@ -104,6 +107,7 @@ export default function CanvasListView() {
     })
   }, [carriedMaterial, createCanvasAction, location.pathname, navigate])
   // 重命名弹窗：renameTarget 非空即打开
+  const [modelTarget, setModelTarget] = useState<{ ws: number; id: number } | null>(null)
   const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
   const [renameName, setRenameName] = useState('')
   const [renaming, setRenaming] = useState(false)
@@ -113,6 +117,10 @@ export default function CanvasListView() {
   // 值为 null 表示这张画布确实没有可用媒体，避免反复拉同一张画布的元素。
   const [covers, setCovers] = useState<Record<number, CanvasCover | null>>({})
   const coverLoadedRef = useRef(new Set<string>())
+  const coverRequestsRef = useRef(0)
+  const [coverSettled, setCoverSettled] = useState(0)
+  const coverKeysRef = useRef(new Set<string>())
+
   // 只有「曾经进入视口」的画布才去取封面，见下方 IntersectionObserver 副作用
   const [coverVisibleIds, setCoverVisibleIds] = useState<Set<number>>(() => new Set())
   const gridRef = useRef<HTMLDivElement | null>(null)
@@ -135,6 +143,8 @@ export default function CanvasListView() {
     () => (canvasesWorkspaceId === activeWsId ? canvases : []),
     [canvasesWorkspaceId, activeWsId, canvases],
   )
+
+  coverKeysRef.current = new Set(effectiveCanvases.map((item) => `${activeWsId}:${item.id}:${item.revision || 0}`))
 
   // 前端分页：每页 12 张（响应式网格下 2~4 行）。切换空间回到第一页；删到当前页为空时夹回最后一页。
   const pageSize = 12
@@ -204,40 +214,40 @@ export default function CanvasListView() {
   useEffect(() => {
     const wsId = activeWsId
     if (!wsId || !pagedCanvases.length) return
-    let disposed = false
 
     const pending = pagedCanvases
       .map((item) => ({ id: Number(item.id || 0), key: `${wsId}:${item.id}:${item.revision || 0}` }))
       .filter((item) => item.id > 0 && coverVisibleIds.has(item.id) && !coverLoadedRef.current.has(item.key))
-    if (!pending.length) return
+      .slice(0, Math.max(0, 3 - coverRequestsRef.current))
 
-    const loadOne = async ({ id, key }: { id: number; key: string }) => {
+    for (const { id, key } of pending) {
       coverLoadedRef.current.add(key)
-      try {
-        const page = await fetchAllCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
-        if (disposed) return
-        setCovers((prev) => ({ ...prev, [id]: pickCanvasCover(page.elements, wsId) }))
-      } catch {
-        // 单张封面取不到不影响列表：卡片继续显示占位图，下次 revision 变化再试
-        coverLoadedRef.current.delete(key)
-      }
+      coverRequestsRef.current += 1
+      void fetchAllCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
+        .then((page) => {
+          // New visible cards must not invalidate an existing request. Only a changed
+          // workspace/revision invalidates its result; stale results can be fetched on return.
+          if (!coverKeysRef.current.has(key)) {
+            coverLoadedRef.current.delete(key)
+            return
+          }
+          setCovers((prev) => ({ ...prev, [id]: pickCanvasCover(page.elements, wsId) }))
+        })
+        .catch(() => {
+          // Keep the placeholder until revision changes; never loop on a failing cover request.
+        })
+        .finally(() => {
+          coverRequestsRef.current -= 1
+          setCoverSettled((value) => value + 1)
+        })
     }
+  }, [activeWsId, pagedCanvases, coverVisibleIds, coverSettled])
 
-    void (async () => {
-      const queue = [...pending]
-      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
-        while (queue.length && !disposed) {
-          const next = queue.shift()
-          if (next) await loadOne(next)
-        }
-      })
-      await Promise.all(workers)
-    })()
-
-    return () => {
-      disposed = true
-    }
-  }, [activeWsId, pagedCanvases, coverVisibleIds])
+  useEffect(() => {
+    setCovers({})
+    setCoverVisibleIds(new Set())
+    coverLoadedRef.current.clear()
+  }, [activeWsId])
 
   // 拉取画布列表；请求序号 + workspace 快照共同阻止过期响应覆盖当前页面
   const loadCanvases = useCallback(async () => {
@@ -309,46 +319,42 @@ export default function CanvasListView() {
   }, [openMenuId])
 
   // 新建画布：使用弹窗中输入的名称创建，成功后直接进入编辑器
-  const handleCreate = useCallback(async () => {
-    const wsId = Number(workspaceIdRef.current || 0)
-    if (!wsId) {
-      showToast('workspace_id 缺失,无法创建', 'error')
-      return
-    }
-    if (creating) return
-    const title = newName.trim()
-    if (!title) {
-      showToast('请输入画布名称', 'info')
-      return
-    }
-    setCreating(true)
-    try {
-      const created = await createCanvas({ workspaceId: wsId, title })
-      const newId = Number(created?.id || 0)
-      if (Number(workspaceIdRef.current || 0) !== wsId) return
-      if (!newId) throw new Error('创建画布失败')
-      showToast('画布已创建', 'success')
-      setCreateOpen(false)
-      setNewName('')
-      navigate(`/canvas/${newId}`, {
-        state: {
-          ...(carriedState || {}),
-          ...(createCanvasActionRef.current ? { initialCanvasAction: createCanvasActionRef.current } : {}),
-        },
-      })
-    } catch (error) {
-      if (Number(workspaceIdRef.current || 0) === wsId) {
-        showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
+  const handleCreate = useCallback(
+    async (title: string, options: CanvasCreateOptions) => {
+      const wsId = Number(workspaceIdRef.current || 0)
+      if (!wsId) {
+        showToast('workspace_id 缺失,无法创建', 'error')
+        return
       }
-    } finally {
-      setCreating(false)
-    }
-  }, [creating, newName, navigate, showToast, carriedState])
+      if (creating) return
+      setCreating(true)
+      try {
+        const created = await createCanvas({ workspaceId: wsId, title, ...options })
+        const newId = Number(created?.id || 0)
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        if (!newId) throw new Error('创建画布失败')
+        showToast('画布已创建', 'success')
+        setCreateOpen(false)
+        navigate(`/canvas/${newId}`, {
+          state: {
+            ...(carriedState || {}),
+            ...(createCanvasActionRef.current ? { initialCanvasAction: createCanvasActionRef.current } : {}),
+          },
+        })
+      } catch (error) {
+        if (Number(workspaceIdRef.current || 0) === wsId) {
+          showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
+        }
+      } finally {
+        setCreating(false)
+      }
+    },
+    [creating, navigate, showToast, carriedState],
+  )
 
   // 关闭新建弹窗：同时清空输入框，避免下次打开残留上次内容
   const closeCreateModal = useCallback(() => {
     setCreateOpen(false)
-    setNewName('')
     initialCreateHandledRef.current = false
     createCanvasActionRef.current = undefined
     navigate(`${location.pathname}${location.search}`, {
@@ -489,12 +495,22 @@ export default function CanvasListView() {
           item.title,
           canvases.map((c) => c.title),
         )
-        const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: item.id, title })
+        const created = await duplicateCanvas({
+          workspaceId: wsId,
+          sourceCanvasId: item.id,
+          title,
+          imageModelVersionIds: item.imageModelVersionIds,
+          imageModelVersionId: item.imageModelVersionId,
+          videoModelVersionIds: item.videoModelVersionIds,
+          videoModelVersionId: item.videoModelVersionId,
+          memberUserIds: item.membersRestricted === false ? undefined : [],
+        })
         if (Number(workspaceIdRef.current || 0) !== wsId) return
         const now = new Date().toISOString()
         setCanvases((prev) => [
           {
             ...created,
+            usedCredits: 0,
             title: created.title || title,
             status: 'active',
             updated_at: created.updated_at || now,
@@ -666,6 +682,17 @@ export default function CanvasListView() {
                               <button
                                 type="button"
                                 className="pm2-folder-menu-item"
+                                disabled={item.status === 'archived'}
+                                onClick={() => {
+                                  setOpenMenuId(0)
+                                  setModelTarget({ ws: activeWsId, id: item.id })
+                                }}
+                              >
+                                模型设置
+                              </button>
+                              <button
+                                type="button"
+                                className="pm2-folder-menu-item"
                                 disabled={isOthersCanvas(item)}
                                 onClick={(e) => {
                                   e.stopPropagation()
@@ -703,6 +730,9 @@ export default function CanvasListView() {
                         </div>
                         <div className="pm2-pcard-meta">
                           <span className="pm2-pcard-time">
+                            累计消耗 {item.usedCredits == null ? '—' : formatCredits(item.usedCredits)} 积分
+                          </span>
+                          <span className="pm2-pcard-time">
                             {item.updated_at ? `更新于 ${formatTime(item.updated_at)}` : '暂无更新'}
                           </span>
                         </div>
@@ -731,59 +761,25 @@ export default function CanvasListView() {
         )}
       </div>
 
-      {/* 创建画布：只收集名称，创建成功后进入空白画布自由添加节点。 */}
+      {modelTarget && modelTarget.ws === activeWsId && (
+        <CanvasModelSettings
+          workspaceId={activeWsId}
+          canvasId={modelTarget.id}
+          onClose={() => setModelTarget(null)}
+          onSaved={() => {
+            void loadCanvases()
+          }}
+        />
+      )}
       {createOpen && (
-        <div className="cl-brief-mask" onClick={() => !creating && closeCreateModal()}>
-          <section
-            className="cl-brief-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="canvas-brief-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="cl-brief-head">
-              <div>
-                <h2 id="canvas-brief-title">创建新画布</h2>
-                <p>为画布起一个便于识别的名称，创建后即可自由添加文本、图片和视频。</p>
-              </div>
-              <button
-                type="button"
-                className="cl-brief-close"
-                aria-label="关闭"
-                disabled={creating}
-                onClick={closeCreateModal}
-              >
-                ×
-              </button>
-            </header>
-
-            <div className="cl-brief-content">
-              <label className="cl-brief-name">
-                <span>画布名称</span>
-                <input
-                  value={newName}
-                  autoFocus
-                  maxLength={60}
-                  placeholder="请输入画布名称"
-                  onChange={(event) => setNewName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && newName.trim() && !creating) void handleCreate()
-                  }}
-                />
-                <small>{newName.length}/60</small>
-              </label>
-            </div>
-
-            <footer className="cl-brief-foot">
-              <button type="button" className="cl-brief-cancel" disabled={creating} onClick={closeCreateModal}>
-                取消
-              </button>
-              <button type="button" disabled={creating || !newName.trim()} onClick={handleCreate}>
-                {creating ? '正在创建…' : '创建画布'}
-              </button>
-            </footer>
-          </section>
-        </div>
+        <CanvasCreateDialog
+          key={`${activeWsId}:${currentUserId}`}
+          workspaceId={activeWsId}
+          currentUserId={currentUserId}
+          creating={creating}
+          onClose={closeCreateModal}
+          onCreate={handleCreate}
+        />
       )}
       {/* 重命名画布弹窗 */}
       {renameTarget &&

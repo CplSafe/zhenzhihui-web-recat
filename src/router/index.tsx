@@ -121,6 +121,8 @@ const MyCollaborationsView = lazy(routeImporters.collaborations)
 /** 积分明细路由组件。 */
 const CreditsView = lazy(() => import('../views/CreditsView'))
 const DirectorStudioView = lazy(() => import('../views/DirectorStudioView'))
+/** MCP 工作空间接入与授权配置页。 */
+const MCPSettingsView = lazy(() => import('../views/MCPSettingsView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -364,6 +366,9 @@ export const router = createBrowserRouter([
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
       { path: 'credits', element: lazyPage(<CreditsView />) },
+      // Keep the UI away from /mcp: that path is the MCP Streamable HTTP endpoint
+      // and is intentionally proxied to the business backend.
+      { path: 'settings/mcp', element: lazyPage(<MCPSettingsView />) },
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
       { path: 'distribution', element: <DistributionAccessRoute /> },
       { path: 'agent', element: lazyPage(<AgentChatView />) },

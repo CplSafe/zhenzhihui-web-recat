@@ -120,7 +120,17 @@ export class StudioHTTPError extends Error {
   }
 }
 
+export function startsCanvasAgentRun(path: string, data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false
+  const body = data as Record<string, unknown>
+  if (path === '/api/runs') return !body.episode_plan || !!body.start_production
+  if (/^\/api\/runs\/[^/]+\/(resume|repairs\/[^/]+\/(resume|remerge))$/.test(path)) return true
+  if (/^\/api\/runs\/[^/]+\/repairs\/[^/]+\/decision$/.test(path)) return body.decision === 'approve'
+  return /^\/api\/runs\/[^/]+\/media-retries\/[^/]+\/decision$/.test(path) && body.start === true
+}
+
 export interface StudioBusinessBinding {
+  chooseRunLock?: () => Promise<boolean>
   workspaceId: number
   canvasId: number
 }
@@ -145,12 +155,15 @@ export function createStudioAPI(base = '/agent-studio', business?: StudioBusines
   }
   async function request<T>(path: string, data?: unknown, signal?: AbortSignal, renewed = false): Promise<T> {
     // Renew through a read before submitting work; never replay a paid mutation.
+    const lock =
+      business?.chooseRunLock && startsCanvasAgentRun(path, data) ? await business.chooseRunLock() : undefined
     if (data !== undefined) await ensureBusinessLogin(signal)
     const response = await fetch(prefix + path, {
       credentials: 'same-origin',
       signal,
       headers: {
         ...authHeaders,
+        ...(lock === undefined ? {} : { 'X-Agent-Lock-Canvas': lock ? '1' : '0' }),
         ...(data === undefined ? {} : { 'Content-Type': 'application/json', 'X-Agent-Request': '1' }),
       },
       ...(data === undefined
@@ -295,8 +308,15 @@ export function mediaURLs(data: unknown, canvas?: Data | null): string[] {
 export function isSettled(event: StudioEvent) {
   return ['succeeded', 'success', 'completed'].includes(event.data?.status)
 }
-export function defaultModel(catalog: StudioCatalog, kind: 'image' | 'video'): number | undefined {
+export function defaultModel(
+  catalog: StudioCatalog,
+  kind: 'image' | 'video',
+  canvasChoice?: number,
+): number | undefined {
   const operation = kind === 'image' ? 'image.text_to_image' : 'video.generate'
+  if (canvasChoice) {
+    return catalog.models.find((model) => model.id === canvasChoice && model.operation_codes.includes(operation))?.id
+  }
   const match = kind === 'image' ? /nano\s*banana\s*pro/i : /seedance\s*2\.5/i
   return catalog.models.find(
     (model) => model.operation_codes.includes(operation) && match.test(model.display_name || model.model),

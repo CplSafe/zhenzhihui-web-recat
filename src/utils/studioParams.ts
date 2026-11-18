@@ -81,7 +81,9 @@ export function resolveParamOptions(mode: StudioMode, constraints?: GenerationMo
     ? [...declaredResolutions]
     : mode === 'video'
       ? [...FALLBACK_VIDEO_RESOLUTIONS]
-      : [...FALLBACK_IMAGE_RESOLUTIONS]
+      : constraints
+        ? []
+        : [...FALLBACK_IMAGE_RESOLUTIONS]
 
   const ratioValues = declaredRatios.length
     ? declaredRatios

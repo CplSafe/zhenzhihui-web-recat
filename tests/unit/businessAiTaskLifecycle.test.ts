@@ -38,6 +38,7 @@ describe('AI task identifier boundaries', () => {
       const request = {
         workspaceId: 11,
         modelVersionId: 47,
+        canvasId: 123,
         operationCode: `${kind}.upscale`,
         prompt: scenario === 'image-saved' ? '旧草稿描述' : '',
         params: { scale: 2 },
@@ -52,6 +53,7 @@ describe('AI task identifier boundaries', () => {
         expect(estimate).not.toHaveProperty('prompt')
         expect(submitted).not.toHaveProperty('prompt')
       } else expect(estimate.prompt.trim()).not.toBe('')
+      expect(estimate.canvas_id).toBe(123)
       expect(submitted).toMatchObject(estimate)
     },
   )

@@ -94,7 +94,11 @@ async function flushAsync() {
 
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router-dom')>()
-  return { ...actual, useNavigate: () => mocks.navigate, useLocation: () => ({ pathname: '/canvas', state: null }) }
+  return {
+    ...actual,
+    useNavigate: () => mocks.navigate,
+    useLocation: () => ({ pathname: '/canvas', search: '?manage=1', state: null }),
+  }
 })
 
 vi.mock('@/components/home/AppSidebar', () => ({ default: () => <nav aria-label="应用侧边栏" /> }))
@@ -156,6 +160,16 @@ describe('CanvasListView 封面加载', () => {
     mocks.fetchAllCanvasElements.mockResolvedValue({ elements: [], sync_revision: 1 })
   })
 
+  it('每张卡片显示自己的累计积分，包括零消耗', async () => {
+    mocks.listCanvases.mockResolvedValue([
+      { ...canvas(101, '甲'), usedCredits: 1.25 },
+      { ...canvas(102, '乙'), usedCredits: 0 },
+    ])
+    render(<CanvasListView />)
+    expect(await screen.findByText('累计消耗 1.25 积分')).toBeInTheDocument()
+    expect(screen.getByText('累计消耗 0 积分')).toBeInTheDocument()
+  })
+
   it(
     '列表渲染后不预取任何封面，只有进入视口的卡片才请求',
     async () => {
@@ -208,6 +222,110 @@ describe('CanvasListView 封面加载', () => {
     },
     TEST_TIMEOUT_MS,
   )
+})
+
+describe('CanvasListView pending covers', () => {
+  it('does not loop or block the queue when a cover request fails', async () => {
+    observers.length = 0
+    vi.clearAllMocks()
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    mocks.listCanvases.mockResolvedValue([canvas(101, '甲'), canvas(102, '乙')])
+    mocks.fetchAllCanvasElements.mockRejectedValue(new Error('cover unavailable'))
+    render(<CanvasListView />)
+    await screen.findByLabelText('打开画布 甲')
+    await intersect(101, 102)
+    await flushAsync()
+    expect(requestedCanvasIds()).toEqual([101, 102])
+    expect(screen.getByLabelText('打开画布 甲')).toBeInTheDocument()
+    expect(screen.getByLabelText('打开画布 乙')).toBeInTheDocument()
+  })
+
+  it('limits all pending cover requests to three even as visibility changes', async () => {
+    observers.length = 0
+    vi.clearAllMocks()
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    mocks.listCanvases.mockResolvedValue(Array.from({ length: 6 }, (_, i) => canvas(101 + i, `卡片${i}`)))
+    const finish = new Map<number, (value: unknown) => void>()
+    mocks.fetchAllCanvasElements.mockImplementation(
+      ({ canvasId }) => new Promise((resolve) => finish.set(canvasId, resolve)),
+    )
+    render(<CanvasListView />)
+    await screen.findByLabelText('打开画布 卡片0')
+    await intersect(101, 102, 103)
+    // Announce more visible cards without waiting for their requests: slots are occupied.
+    for (const observer of [...observers]) {
+      const targets = [...observer.targets].filter((el) => Number((el as HTMLElement).dataset.canvasId) >= 104)
+      await act(async () =>
+        observer.callback(
+          targets.map((target) => ({ isIntersecting: true, target }) as IntersectionObserverEntry),
+          observer.instance,
+        ),
+      )
+    }
+    expect(requestedCanvasIds()).toEqual([101, 102, 103])
+    await act(async () => finish.get(101)!({ elements: [] }))
+    await waitFor(() => expect(requestedCanvasIds()).toEqual([101, 102, 103, 104]))
+    // Finish remaining requests so nothing leaks into subsequent tests.
+    for (const id of [102, 103, 104, 105, 106]) await act(async () => finish.get(id)!({ elements: [] }))
+    expect(requestedCanvasIds()).toEqual([101, 102, 103, 104, 105, 106])
+  })
+  it('discards the old workspace cover and fetches it again when returning', async () => {
+    observers.length = 0
+    vi.clearAllMocks()
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    mocks.workspaceId = 21
+    mocks.listCanvases.mockImplementation(async ({ workspaceId }) => [canvas(workspaceId === 21 ? 101 : 201, '目标')])
+    let finish!: (value: unknown) => void
+    mocks.fetchAllCanvasElements.mockImplementation(({ canvasId }) =>
+      canvasId === 101
+        ? new Promise((resolve) => {
+            finish = resolve
+          })
+        : Promise.resolve({ elements: [] }),
+    )
+    const view = render(<CanvasListView />)
+    await screen.findByLabelText('打开画布 目标')
+    await intersect(101)
+    mocks.workspaceId = 22
+    view.rerender(<CanvasListView />)
+    await waitFor(() =>
+      expect(mocks.listCanvases).toHaveBeenLastCalledWith(expect.objectContaining({ workspaceId: 22 })),
+    )
+    await act(async () => finish({ elements: [{ kind: 'node', payload: { data: { kind: 'image', assetId: 501 } } }] }))
+    expect(view.container.querySelector('img')).not.toBeInTheDocument()
+    mocks.workspaceId = 21
+    view.rerender(<CanvasListView />)
+    await waitFor(() =>
+      expect(mocks.listCanvases).toHaveBeenLastCalledWith(expect.objectContaining({ workspaceId: 21 })),
+    )
+    await intersect(101)
+    await waitFor(() => expect(requestedCanvasIds()).toEqual([101, 101]))
+    await act(async () => finish({ elements: [] }))
+  })
+
+  it('keeps an in-flight cover when another card enters the viewport', async () => {
+    observers.length = 0
+    vi.clearAllMocks()
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    mocks.listCanvases.mockResolvedValue([canvas(101, '甲'), canvas(102, '乙')])
+    let finish!: (value: unknown) => void
+    mocks.fetchAllCanvasElements.mockImplementation(({ canvasId }) =>
+      canvasId === 101
+        ? new Promise((resolve) => {
+            finish = resolve
+          })
+        : Promise.resolve({ elements: [], sync_revision: 1 }),
+    )
+    render(<CanvasListView />)
+    const first = await screen.findByLabelText('打开画布 甲')
+    await intersect(101)
+    await intersect(102)
+    await act(async () =>
+      finish({ elements: [{ kind: 'node', payload: { data: { kind: 'image', assetId: 501 } } }], sync_revision: 1 }),
+    )
+    await waitFor(() => expect(first.querySelector('img')).toHaveAttribute('src', expect.stringContaining('/501/')))
+    expect(requestedCanvasIds()).toEqual([101, 102])
+  })
 })
 
 describe('CanvasListView 分页', () => {

@@ -611,6 +611,11 @@ export async function installStrictAuthenticatedApp(
       await json(route, { items: [], total: 0, offset: 0, limit: 100 })
       return
     }
+    if (method === 'GET' && /^\/api\/v1\/canvases\/\d+\/events$/.test(path)) {
+      // Most fixtures exercise HTTP autosave. 204 tells EventSource to stop reconnecting.
+      await route.fulfill({ status: 204 })
+      return
+    }
     if (method === 'GET' && /^\/api\/v1\/canvases\/\d+\/elements$/.test(path)) {
       await json(route, { items: [], sync_revision: 0, history_floor_revision: 0, has_more: false })
       return

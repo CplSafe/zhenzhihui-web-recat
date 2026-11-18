@@ -24,6 +24,7 @@ export interface CreativeTool {
   operation_code?: string
   min_input_images?: number
   max_input_images?: number
+  default_model_version_id?: number
   model_version_ids: number[]
   projection?: string
   params_schema?: { fields?: ToolField[] }

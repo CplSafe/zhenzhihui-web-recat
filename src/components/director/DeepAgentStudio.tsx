@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
+import { canvasAllowsModel } from '@/utils/canvasModelBuckets'
+import type { CanvasModelDefaults } from '@/api/canvasApi'
 import { RequestAbortError } from '@/api/requestTimeout'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
 import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
@@ -21,7 +23,9 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 export interface DeepAgentStudioProps {
   apiBase?: string
   workspaceId?: number
+  modelDefaults?: CanvasModelDefaults
   canvasId?: number
+  chooseRunLock?: () => Promise<boolean>
   authMode?: 'business' | 'oauth'
   onCanvasChange?: (canvas: Data) => void
   onCollapse?: () => void
@@ -33,7 +37,9 @@ export default function DeepAgentStudio({
   apiBase = '/agent-studio',
   workspaceId,
   canvasId,
+  modelDefaults,
   authMode,
+  chooseRunLock,
   onCanvasChange,
   onCollapse,
   className = '',
@@ -43,8 +49,18 @@ export default function DeepAgentStudio({
   const tooltipScope = useRef<HTMLElement>(null)
   const business =
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
-  const studio = useStudio(apiBase, workspaceId, canvasId, business)
-  const { api, state, catalog, current, run: serverRun, loading, mismatch } = studio
+  const studio = useStudio(apiBase, workspaceId, canvasId, business, JSON.stringify(modelDefaults), chooseRunLock)
+  const { api, state, catalog: workspaceCatalog, current, run: serverRun, loading, mismatch } = studio
+  const catalog = useMemo(() => {
+    if (!modelDefaults) return workspaceCatalog
+    const models = workspaceCatalog.models.filter(
+      (model) =>
+        (!model.operation_codes.includes('image.text_to_image') ||
+          canvasAllowsModel(modelDefaults, 'image', model.id)) &&
+        (!model.operation_codes.includes('video.generate') || canvasAllowsModel(modelDefaults, 'video', model.id)),
+    )
+    return { ...workspaceCatalog, models }
+  }, [workspaceCatalog, modelDefaults])
   const notifiedFailure = useRef<string | null>(null)
   const [retryTarget, setRetryTarget] = useState<{ runId: string; id: number; version: number }>()
   const [notificationMessage, setNotificationMessage] = useState('')
@@ -93,7 +109,7 @@ export default function DeepAgentStudio({
     [mode, setMode] = useState<'manual' | 'auto'>('manual')
   const [image, setImage] = useState<number>(),
     [video, setVideo] = useState<number>(),
-    [skill, setSkill] = useState('')
+    [skills, setSkills] = useState<string[]>([])
   const [dialog, setDialog] = useState<
     'models' | 'skills' | 'mode' | 'connection' | 'documents' | 'attachments' | 'assets' | null
   >(null)
@@ -108,6 +124,7 @@ export default function DeepAgentStudio({
   const consumedCanvasReference = useRef<CanvasReference>()
   const [stopping, setStopping] = useState(false)
   const stopLock = useRef(false)
+  const steeringDraft = useRef<{ key: string; id: string } | null>(null)
   const [actionBusy, setActionBusy] = useState(false),
     [uncertain, setUncertain] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState<string>('')
@@ -123,35 +140,39 @@ export default function DeepAgentStudio({
   const threadRef = useRef(current),
     currentId = useRef(current),
     lastCanvas = useRef<Data | null>(null)
-  const savedConfigurationDraft = useRef<{ id: string; text: string } | null>(null)
+  const savedConfigurationDraft = useRef<{ id: string; text: string; skills: string[] } | null>(null)
   currentId.current = current
   const running = run?.status === 'running',
     unfinished = !!run && run.status !== 'complete'
-  const disabled = loading || actionBusy || running || uploading || mismatch
+  const draftDisabled = loading || actionBusy || mismatch || uploading
+  const disabled = draftDisabled || running
   const ready = state.connected && !mismatch && !!image && !!video && !!catalog.planning_model
   const selectedDoc = run?.documents?.find((d) => d.id === selectedDocument) || run?.documents?.[0]
 
+  const initialImage = defaultModel(catalog, 'image', modelDefaults?.imageModelVersionId)
+  const initialVideo = defaultModel(catalog, 'video', modelDefaults?.videoModelVersionId)
   useEffect(() => {
-    setImage((old) => old ?? defaultModel(catalog, 'image'))
-    setVideo((old) => old ?? defaultModel(catalog, 'video'))
-  }, [catalog])
+    setImage((old) => (catalog.models.some((model) => model.id === old) ? old : initialImage))
+    setVideo((old) => (catalog.models.some((model) => model.id === old) ? old : initialVideo))
+  }, [initialImage, initialVideo, catalog.models])
   useEffect(() => {
     if (threadRef.current !== current) {
       threadRef.current = current
       setAttachments([])
+      const savedDraft = savedConfigurationDraft.current?.id === current ? savedConfigurationDraft.current : null
+      setSkills(savedDraft?.skills || [])
       setCanvasReferences([])
-      setMessage(savedConfigurationDraft.current?.id === current ? savedConfigurationDraft.current.text : '')
+      setMessage(savedDraft?.text || '')
       savedConfigurationDraft.current = null
       setResults(false)
       setSelectedDocument('')
     }
     if (run?.selection) {
-      setImage(run.selection.image)
-      setVideo(run.selection.video)
+      setImage(catalog.models.some((m) => m.id === run.selection.image) ? run.selection.image : undefined)
+      setVideo(catalog.models.some((m) => m.id === run.selection.video) ? run.selection.video : undefined)
       setMode(run.selection.mode)
-      setSkill(run.skill_name || '')
     }
-  }, [current, run?.selection, run?.skill_name])
+  }, [current, run?.selection, catalog.models])
   useEffect(() => {
     if (!canvasReference || !canvasId || actionBusy || consumedCanvasReference.current === canvasReference) return
     consumedCanvasReference.current = canvasReference
@@ -231,17 +252,43 @@ export default function DeepAgentStudio({
     setShowBottom(false)
     setPendingSend(null)
     studio.setCurrent(null)
+    if (modelDefaults?.imageModelVersionId) setImage(initialImage)
+    if (modelDefaults?.videoModelVersionId) setVideo(initialVideo)
     setMessage('')
     setAttachments([])
     setCanvasReferences([])
-    setSkill('')
+    setSkills([])
     setHistory(false)
     setResults(false)
     setUncertain(false)
     studio.setError('')
     prompt.current?.focus()
   }
+  async function sendSteering() {
+    if (!ready || draftDisabled || !current || run?.stop || stopping || !message.trim()) return
+    const id = current
+    const text = message.trim()
+    const references = canvasReferences.map((item) => item.id)
+    const key = JSON.stringify([id, text, references])
+    // An uncertain transport response must reuse the same durable message ID.
+    if (steeringDraft.current?.key !== key) steeringDraft.current = { key, id: crypto.randomUUID() }
+    const messageId = steeringDraft.current.id
+    await action(async () => {
+      await api.request(`/api/runs/${id}/steer`, {
+        message_id: messageId,
+        message: text,
+        canvas_references: references,
+      })
+      if (activeAPI.current !== api || currentId.current !== id) return
+      steeringDraft.current = null
+      setMessage('')
+      setCanvasReferences([])
+      followUpdates.current = true
+      await studio.reload()
+    })
+  }
   async function send(episodeDecision?: EpisodeDecision, startProduction = false) {
+    if (running && !episodeDecision && !startProduction) return sendSteering()
     const savingConfiguration = !!episodeDecision && 'episode_plan' in episodeDecision
     if (
       !ready ||
@@ -259,6 +306,10 @@ export default function DeepAgentStudio({
     setEpisodeDialog(false)
     await action(async () => {
       const draft = message
+      const selectedSkills = skills.map((name) => ({
+        name,
+        description: catalog.skills.find((s) => s.name === name)?.description,
+      }))
       const optimistic: StudioRun = {
         ...(run || { id: 'pending', cursor: 0, title: '新对话', events: [] }),
         status: 'complete',
@@ -268,7 +319,11 @@ export default function DeepAgentStudio({
             id: 'pending-send',
             kind: 'user',
             text: draft.trim() || '已添加附件',
-            data: { delivery: 'sending', canvas_references: canvasReferences },
+            data: {
+              delivery: 'sending',
+              canvas_references: canvasReferences,
+              skills: selectedSkills,
+            },
           },
         ],
       }
@@ -283,7 +338,7 @@ export default function DeepAgentStudio({
           ...(startProduction ? { start_production: true } : {}),
           message: message.trim(),
           selection: { image, video, mode },
-          skill,
+          skills,
           attachments: attachments.map((a) => a.id),
           canvas_references: canvasReferences.map((item) => item.id),
           previous: run?.status === 'complete' ? current : null,
@@ -308,13 +363,22 @@ export default function DeepAgentStudio({
           id: response.id,
           status: savingConfiguration ? 'complete' : 'running',
           events: optimistic.events.map((event) =>
-            event.id === 'pending-send' ? { ...event, data: { canvas_references: canvasReferences } } : event,
+            event.id === 'pending-send'
+              ? {
+                  ...event,
+                  data: {
+                    canvas_references: canvasReferences,
+                    skills: selectedSkills,
+                  },
+                }
+              : event,
           ),
         },
       })
-      if (savingConfiguration) savedConfigurationDraft.current = { id: response.id, text: draft }
+      if (savingConfiguration) savedConfigurationDraft.current = { id: response.id, text: draft, skills }
       studio.setCurrent(response.id)
       setMessage(savingConfiguration ? draft : '')
+      if (!savingConfiguration) setSkills([])
       setAttachments([])
       setCanvasReferences([])
       setResults(false)
@@ -417,7 +481,6 @@ export default function DeepAgentStudio({
       }
     })
   }
-  const currentSkill = catalog.skills.find((s) => s.name === skill)
   const context = contextInfo(run, catalog)
   const contextLabel =
     context.context.status === 'compacting'
@@ -605,6 +668,16 @@ export default function DeepAgentStudio({
             推理模型暂不可用，无法发送消息。请管理员检查指定模型是否已启用，以及当前账号是否有使用权限。
           </div>
         )}
+        {!loading &&
+          state.connected &&
+          !mismatch &&
+          !studio.error &&
+          !run &&
+          ((modelDefaults?.imageModelVersionId && !image) || (modelDefaults?.videoModelVersionId && !video)) && (
+            <div role="alert" className={styles.alert}>
+              画布预选的模型已不可用，请在「选择模型」中重新选择。
+            </div>
+          )}
         {studio.error && (
           <div role="alert" className={styles.alert}>
             {studio.error}
@@ -875,9 +948,24 @@ export default function DeepAgentStudio({
               void upload([...e.dataTransfer.files])
             }}
           >
-            {currentSkill && (
-              <div className={styles.chips}>
-                <span>Skill · {currentSkill.description || currentSkill.name}</span>
+            {!!skills.length && (
+              <div className={styles.chips} aria-label="已添加的 Skill">
+                {skills.map((name) => {
+                  const label = catalog.skills.find((s) => s.name === name)?.description || name
+                  return (
+                    <span key={name}>
+                      Skill · {label}
+                      <button
+                        type="button"
+                        aria-label={`移除 Skill ${label}`}
+                        disabled={draftDisabled}
+                        onClick={() => setSkills((old) => old.filter((item) => item !== name))}
+                      >
+                        <X size={13} />
+                      </button>
+                    </span>
+                  )
+                })}
               </div>
             )}
             {!!attachments.length && (
@@ -989,7 +1077,13 @@ export default function DeepAgentStudio({
             <textarea
               ref={prompt}
               aria-label="创作要求"
-              placeholder="开始你的创作，或者上传图片与剧本文档…"
+              placeholder={
+                running
+                  ? '补充要求或引用节点，发送后调整当前任务…'
+                  : unfinished
+                    ? '可先输入下一条要求，恢复或结束后发送…'
+                    : '开始你的创作，或者上传图片与剧本文档…'
+              }
               maxLength={12000}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -1007,7 +1101,7 @@ export default function DeepAgentStudio({
                 e.preventDefault()
                 if (!e.repeat) void send()
               }}
-              disabled={disabled || unfinished}
+              disabled={draftDisabled}
               onPaste={(e) => {
                 if (e.clipboardData.files.length) {
                   e.preventDefault()
@@ -1044,7 +1138,7 @@ export default function DeepAgentStudio({
                   aria-label="Skill"
                   data-tooltip="选择 Skill"
                   aria-expanded={dialog === 'skills'}
-                  disabled={disabled || unfinished}
+                  disabled={draftDisabled}
                   onClick={() => openDialog('skills')}
                 >
                   <StudioIcon name="skill" size={16} />
@@ -1086,6 +1180,16 @@ export default function DeepAgentStudio({
                   )}
                 </svg>
               </span>
+              {running && (
+                <button
+                  type="submit"
+                  className={styles.send}
+                  aria-label="发送补充要求"
+                  disabled={!ready || draftDisabled || stopping || run?.stop || !message.trim()}
+                >
+                  <StudioIcon name="send" size={12} />
+                </button>
+              )}
               {run && ['running', 'waiting'].includes(run.status) ? (
                 <button
                   type="button"
@@ -1280,17 +1384,18 @@ export default function DeepAgentStudio({
                         )}
                       </button>
                     ))
-                : [{ name: '', description: '未选择', id: 0 }, ...catalog.skills]
+                : catalog.skills
                     .filter((item) => `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase()))
                     .map((item) => (
                       <button
                         type="button"
                         key={item.name}
-                        disabled={disabled || unfinished}
-                        aria-pressed={skill === item.name}
+                        disabled={draftDisabled || (!skills.includes(item.name) && skills.length >= 8)}
+                        aria-pressed={skills.includes(item.name)}
                         onClick={() => {
-                          setSkill(item.name)
+                          setSkills((old) => (old.includes(item.name) ? old : [...old, item.name].slice(0, 8)))
                           setDialog(null)
+                          prompt.current?.focus()
                         }}
                       >
                         <span className={styles.optionIcon}>
@@ -1300,7 +1405,7 @@ export default function DeepAgentStudio({
                           <strong>{item.description || item.name}</strong>
                           {item.name && <small>/{item.name}</small>}
                         </span>
-                        {skill === item.name && <Check size={16} />}
+                        {skills.includes(item.name) && <Check size={16} />}
                       </button>
                     ))}
             </div>

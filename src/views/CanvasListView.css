@@ -135,6 +135,8 @@
   color: var(--cl-ink);
 }
 .cl-page .pm2-pcard-meta {
+  flex-wrap: wrap;
+  gap: 4px 10px;
   margin-top: 6px;
   color: var(--cl-muted);
   font-size: 12px;
@@ -238,14 +240,27 @@
 .cl-brief-content {
   padding: 28px;
 }
+.cl-setup-fields,
+.cl-member-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.cl-member-field {
+  gap: 6px;
+}
+.cl-setup-fields small {
+  color: var(--cl-muted);
+}
 .cl-brief-name {
+  grid-template-columns: minmax(0, 1fr);
   position: relative;
   display: grid;
   gap: 10px;
   font-size: 14px;
   font-weight: 500;
 }
-.cl-brief-name input {
+.cl-brief-name > input {
   box-sizing: border-box;
   width: 100%;
   height: 46px;
@@ -256,7 +271,7 @@
   color: var(--cl-ink);
   font: inherit;
 }
-.cl-brief-name input:focus-visible {
+.cl-brief-name > input:focus-visible {
   outline: none;
 }
 .cl-brief-name small {
@@ -435,7 +450,7 @@
 .cl-page .pm2-modal-btn--primary:hover {
   background: #1ae9c5;
 }
-.cl-brief-name input,
+.cl-brief-name > input,
 .cl-page .pm2-modal-input {
   border-color: var(--cl-line);
   background: #0d0e14;
@@ -486,7 +501,7 @@
   --cl-line: #e5ebe8;
   --cl-accent: #087d60;
 }
-.cl-page:has(.canvas-entry-main) .cl-brief-name input {
+.cl-page:has(.canvas-entry-main) .cl-brief-name > input {
   background: #fff;
   color: #202b27;
 }

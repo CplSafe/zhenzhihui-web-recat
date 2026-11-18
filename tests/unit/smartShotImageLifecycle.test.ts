@@ -48,7 +48,8 @@ vi.mock('@/utils/storyboardTasks', () => ({
   buildStoryboardImageParams: mocks.buildStoryboardImageParams,
 }))
 
-vi.mock('@/utils/modelSchema', () => ({
+vi.mock('@/utils/modelSchema', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/modelSchema')>()),
   getModelParamFields: mocks.getModelParamFields,
   getModelParamFieldNames: (field: Record<string, unknown>) => [
     String(field.name || ''),
@@ -1189,16 +1190,17 @@ describe('estimateShotImageCost', () => {
       id: 612,
       display_name: '后端图片模型',
       operation_codes: ['image.text_to_image'],
-      params_schema: { fields: [{ name: 'watermark' }] },
+      params_schema: { fields: [{ name: 'resolution', options: ['1K', '4K'] }] },
     }
     mocks.createAiTask.mockResolvedValue({ task_id: 88, status: 'processing' })
     mocks.waitForAiTask.mockResolvedValue({ task_id: 88, status: 'completed' })
     mocks.buildStoryboardImageParams.mockReturnValue({ ratio: '16:9', count: 1 })
-    mocks.getModelParamFields.mockReturnValue([{ name: 'watermark' }])
+    mocks.getModelParamFields.mockReturnValue([{ name: 'resolution', options: ['1K', '4K'] }])
 
     const selection = {
       workspaceId: 7,
       ratio: '16:9',
+      resolution: '4K',
       modelVersionId: selectedModel.id,
       modelVersion: selectedModel,
     }
@@ -1216,6 +1218,7 @@ describe('estimateShotImageCost', () => {
       modelVersionId: 612,
       operationCode: 'image.text_to_image',
     })
+    expect(estimated.params.resolution).toBe('4K')
     expect(submitted.params(selectedModel)).toEqual(estimated.params)
     expect(mocks.resolveTaskModel).not.toHaveBeenCalled()
   })
