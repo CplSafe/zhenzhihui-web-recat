@@ -78,7 +78,7 @@ beforeEach(() => {
 describe('CanvasImageTools', () => {
   it('多角度保留场景补充，预览与估价提交一致，超长时禁止生成', async () => {
     const props = mount()
-    const button = await screen.findByRole('button', { name: '生成新图片' })
+    const button = await screen.findByRole('button', { name: '制作新图片' })
     await waitFor(() => expect(button).toBeEnabled())
     fireEvent.click(screen.getByText('场景约束与提示词', { exact: true }))
     const input = screen.getByRole('textbox', { name: '多角度补充场景信息' })
@@ -86,7 +86,7 @@ describe('CanvasImageTools', () => {
     fireEvent.click(screen.getByRole('button', { name: '背面视角' }))
     expect(input).toHaveValue('红衣女子站在窗边，桌上有白杯')
     const preview = screen.getByLabelText('多角度生成提示词')
-    expect(preview).toHaveTextContent('人物、背景、道具作为同一三维场景共同换机位')
+    expect(preview).toHaveTextContent('纵深场景从另一端回望同一空间')
     expect(preview).toHaveTextContent('水平环绕180°')
     await waitFor(() => expect(button).toBeEnabled())
     expect(mocks.estimateAiTaskCost).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: preview.textContent }))
@@ -108,7 +108,7 @@ describe('CanvasImageTools', () => {
       { id: 99, display_name: '普通图片模型', operation_codes: ['image.image_to_image'] },
     ])
     const props = mount('image.relight')
-    const button = await screen.findByRole('button', { name: '生成新图片' })
+    const button = await screen.findByRole('button', { name: '制作新图片' })
     await waitFor(() => expect(button).toBeEnabled())
     expect(mocks.listAiModels).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -128,7 +128,7 @@ describe('CanvasImageTools', () => {
     async (code) => {
       mocks.listCanvasTools.mockResolvedValue([{ ...angle, code }])
       const props = mount(code)
-      const button = await screen.findByRole('button', { name: '生成新图片' })
+      const button = await screen.findByRole('button', { name: '制作新图片' })
       await waitFor(() => expect(button).toBeEnabled())
       if (code === 'image.relight') {
         expect(screen.getByRole('combobox', { name: '生成模型' })).toBeInTheDocument()
@@ -145,7 +145,7 @@ describe('CanvasImageTools', () => {
     mocks.listCanvasTools.mockResolvedValue([{ ...angle, operation_code: 'image.multi_angle_tool' }])
     mount()
     expect(await screen.findByText('当前空间暂无可用模型')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '生成新图片' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作新图片' })).toBeDisabled()
     expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
   })
   it('模型查询失败保留重试入口', async () => {
@@ -153,7 +153,7 @@ describe('CanvasImageTools', () => {
     mount()
     expect(await screen.findByText('模型服务暂不可用')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '生成新图片' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '制作新图片' })).toBeEnabled())
   })
   it('多个可用模型时展示选择，并按所选模型更新报价和提交', async () => {
     mocks.listCanvasTools.mockResolvedValue([{ ...angle, model_version_ids: [42, 43] }])
@@ -165,14 +165,14 @@ describe('CanvasImageTools', () => {
     const selector = await screen.findByRole('combobox', { name: '生成模型' })
     await userEvent.click(selector)
     await userEvent.click(await screen.findByText('模型二', { selector: '.ant-select-item-option-content' }))
-    const button = screen.getByRole('button', { name: '生成新图片' })
+    const button = screen.getByRole('button', { name: '制作新图片' })
     await waitFor(() => expect(button).toBeEnabled())
     await userEvent.click(button)
     expect(props.onGenerate.mock.calls[0][0].request.modelVersionId).toBe(43)
   })
   it('uses the same versioned parameters and assets for estimation and one paid submission', async () => {
     const props = mount()
-    const button = await screen.findByRole('button', { name: '生成新图片' })
+    const button = await screen.findByRole('button', { name: '制作新图片' })
     await waitFor(() => expect(button).toBeEnabled())
     fireEvent.change(screen.getByRole('spinbutton', { name: '水平角' }), { target: { value: '90' } })
     expect(button).toBeDisabled()
@@ -200,11 +200,11 @@ describe('CanvasImageTools', () => {
     await screen.findByRole('group', { name: '模式' })
     await userEvent.click(screen.getByRole('button', { name: '参考图布光' }))
     expect(screen.queryByRole('spinbutton', { name: '亮度' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '生成新图片' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作新图片' })).toBeDisabled()
     await userEvent.click(screen.getByRole('combobox', { name: '打光参考图' }))
     await userEvent.click(await screen.findByText('参考图', { selector: '.ant-select-item-option-content' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '生成新图片' })).toBeEnabled())
-    await userEvent.click(screen.getByRole('button', { name: '生成新图片' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '制作新图片' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: '制作新图片' }))
     expect(props.onGenerate.mock.calls[0][0].request).toMatchObject({
       params: { tool: 'image.relight', tool_params: { mode: 'reference' } },
       inputAssets: [
@@ -219,7 +219,7 @@ describe('CanvasImageTools', () => {
     expect(
       await screen.findByText('当前空间尚未开放此工具，请选择其他工具；如需开通，请联系平台管理员。'),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '生成新图片' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '制作新图片' })).not.toBeInTheDocument()
     expect(mocks.listAiModels).not.toHaveBeenCalled()
     expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
   })
@@ -230,16 +230,16 @@ describe('CanvasImageTools', () => {
     expect(props.onViewChange).toHaveBeenCalledWith(expect.objectContaining({ yaw: 90 }))
     expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
     expect(mocks.listAiModels).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: '生成新图片' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '制作新图片' })).not.toBeInTheDocument()
   })
   it('blocks malformed and unaffordable quotes', async () => {
     mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 10, balance: 1, can_afford: false })
     mount()
     await screen.findByText('积分不足，请充值后重新估价')
-    expect(screen.getByRole('button', { name: '生成新图片' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作新图片' })).toBeDisabled()
     mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: -1 })
     await userEvent.click(screen.getByRole('button', { name: '重新估价' }))
     expect(await screen.findByText('估价返回不完整，请重试')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '生成新图片' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '制作新图片' })).toBeDisabled()
   })
 })

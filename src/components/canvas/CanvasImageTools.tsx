@@ -249,17 +249,8 @@ function ToolEditor({
     [selectedModel, tool.operation_code, tool.code],
   )
   const nativeDefaults = useCallback(
-    (list: ToolField[]) => {
-      const defaults =
-        tool.code === 'image.panorama' ? panoramaModelDefaults(list, schemaDefaults(list)) : schemaDefaults(list)
-      if (tool.code === 'image.multi_angle' && list.some((field) => field.name === 'negative_prompt')) {
-        const backViewNegativePrompt = '正面视角，正面主标可见，正面标签朝向镜头，商品包装缺失，参考物件被删除或替换'
-        defaults.negative_prompt = [String(defaults.negative_prompt || '').trim(), backViewNegativePrompt]
-          .filter(Boolean)
-          .join('，')
-      }
-      return defaults
-    },
+    (list: ToolField[]) =>
+      tool.code === 'image.panorama' ? panoramaModelDefaults(list, schemaDefaults(list)) : schemaDefaults(list),
     [tool.code],
   )
   const initialNativeValues = useMemo(() => nativeDefaults(nativeFields), [nativeDefaults, nativeFields])
@@ -519,12 +510,14 @@ function ToolEditor({
         {angle && (
           <details className={styles.angleContext}>
             <summary>场景约束与提示词</summary>
-            <p className={styles.hint}>背面视角下瓶身与包装盒分别转到背面，背标和条码朝向镜头；保留所有配件。</p>
+            <p className={styles.hint}>
+              默认只改变拍摄机位，保留原场景。背面视角可从走廊另一端回望。需要商品翻面时，请在下方说明。
+            </p>
             <label className={styles.field}>
               <span>补充场景信息（可选）</span>
               <textarea
                 aria-label="多角度补充场景信息"
-                placeholder="例如：红衣女子站在咖啡馆窗边，桌上有白色杯子"
+                placeholder="例如：保持商品位置不变，让瓶身转到背面"
                 value={prompt}
                 disabled={busy}
                 rows={2}
