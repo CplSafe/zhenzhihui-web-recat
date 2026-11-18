@@ -515,7 +515,7 @@ function ToolEditor({
           <details className={styles.angleContext}>
             <summary>场景约束与提示词</summary>
             <p className={styles.hint}>
-              默认只改变拍摄机位，保留原场景。背面视角可从走廊另一端回望。需要商品翻面时，请在下方说明。
+              默认只改变拍摄机位，保留原场景。背面视角会要求相机移到场景另一端回拍，人物和物件保持原位。需要商品翻面时，请在下方说明。
             </p>
             <label className={styles.field}>
               <span>补充场景信息（可选）</span>
