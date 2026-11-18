@@ -161,6 +161,10 @@ for (const renamed of [false, true]) {
       })
     })
     await page.route('**/api/v1/canvases/120**', async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith('/events')) {
+        await route.fulfill({ status: 204 })
+        return
+      }
       if (route.request().method() === 'PATCH') {
         saved.push(route.request().postDataJSON())
         await route.fulfill({ json: { revision: 2 } })
@@ -563,6 +567,10 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     }),
   )
   await page.route('**/api/v1/canvases/120**', async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/events')) {
+      await route.fulfill({ status: 204 })
+      return
+    }
     if (route.request().method() === 'PATCH') {
       saved.push(route.request().postDataJSON())
       await route.fulfill({ json: { revision: 2 } })
@@ -612,9 +620,9 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   })
   await page.route('https://canvas-test.oss-cn-beijing.aliyuncs.com/upload', async (route) => {
     // WebKit 的网络协议可能省略 multipart 文件字节；从实际传给 fetch 的 File 读取，仍校验真实上传内容。
-    const bytes = await page.evaluate(() => (window as any).__panoramaUploadBytes as number[])
-    expect(bytes).toBeDefined()
-    const body = Buffer.from(bytes)
+    const dataUrl = await page.evaluate(() => (window as any).__panoramaUploadDataUrl as string)
+    expect(dataUrl).toMatch(/^data:image\/png;base64,/)
+    const body = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
     const start = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     expect(start).toBeGreaterThanOrEqual(0)
     const end = body.indexOf(Buffer.from('49454e44ae426082', 'hex'), start) + 8
@@ -635,7 +643,14 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
         init.body.forEach((value) => {
           if (!file && value instanceof Blob) file = value
         })
-        if (file) (window as any).__panoramaUploadBytes = [...new Uint8Array(await file.arrayBuffer())]
+        if (file) {
+          ;(window as any).__panoramaUploadDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result))
+            reader.onerror = () => reject(reader.error)
+            reader.readAsDataURL(file)
+          })
+        }
       }
       return fetch(input, init)
     }

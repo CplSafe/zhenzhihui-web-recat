@@ -59,6 +59,7 @@ for (const width of [1440, 390]) {
     await page.route('**/api/v1/canvases/125/node-locks?**', (route) =>
       route.fulfill({ json: { granted: true, nodes: {} } }),
     )
+    await page.route('**/api/v1/canvases/125/events?**', (route) => route.fulfill({ status: 204 }))
     const estimates: unknown[] = []
     await page.route('**/api/v1/ai/tasks/estimate-cost', (route) => {
       estimates.push(route.request().postDataJSON())

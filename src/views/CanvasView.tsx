@@ -5487,6 +5487,15 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             }
           }
           const merged = applyCanvasElementMutations({ nodes: cloudNodes, edges: cloudEdges }, localChanges)
+          const restoredNodeIds = new Set(
+            localChanges
+              .filter((mutation) => mutation.kind === 'node' && mutation.op === 'upsert')
+              .map((mutation) => mutation.element_id),
+          )
+          // 本机节点经过同步序列化后，需恢复用于判定历史任务不存在的运行态标记。
+          merged.nodes = merged.nodes.map((node) =>
+            restoredNodeIds.has(node.id) ? { ...node, data: restoreCanvasTaskState(node.data) } : node,
+          )
           pendingCanvasStateRef.current = { ...(draftForPaint.pendingState || {}) }
           syncRef.current = {
             nodes: cloudNodes.map((node) => comparableNode(node, cloudText)),
