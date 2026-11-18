@@ -155,6 +155,18 @@ describe('CanvasImageTools', () => {
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '制作新图片' })).toBeEnabled())
   })
+  it('多角度优先自动选用工具配置的默认模型，直接报价并提交', async () => {
+    mocks.listCanvasTools.mockResolvedValue([{ ...angle, default_model_version_id: 43, model_version_ids: [42, 43] }])
+    mocks.listAiModels.mockResolvedValue([
+      { id: 42, display_name: '另一个模型', operation_codes: [angle.operation_code] },
+      { id: 43, display_name: '默认模型', operation_codes: [angle.operation_code] },
+    ])
+    const props = mount()
+    const button = await screen.findByRole('button', { name: '制作新图片' })
+    await waitFor(() => expect(button).toBeEnabled())
+    await userEvent.click(button)
+    expect(props.onGenerate.mock.calls[0][0].request.modelVersionId).toBe(43)
+  })
   it('多个可用模型时展示选择，并按所选模型更新报价和提交', async () => {
     mocks.listCanvasTools.mockResolvedValue([{ ...angle, model_version_ids: [42, 43] }])
     mocks.listAiModels.mockResolvedValue([

@@ -25,6 +25,7 @@ export interface DeepAgentStudioProps {
   workspaceId?: number
   modelDefaults?: CanvasModelDefaults
   canvasId?: number
+  chooseRunLock?: () => Promise<boolean>
   authMode?: 'business' | 'oauth'
   onCanvasChange?: (canvas: Data) => void
   onCollapse?: () => void
@@ -38,6 +39,7 @@ export default function DeepAgentStudio({
   canvasId,
   modelDefaults,
   authMode,
+  chooseRunLock,
   onCanvasChange,
   onCollapse,
   className = '',
@@ -47,7 +49,7 @@ export default function DeepAgentStudio({
   const tooltipScope = useRef<HTMLElement>(null)
   const business =
     authMode === 'business' || (authMode === undefined && workspaceId !== undefined && canvasId !== undefined)
-  const studio = useStudio(apiBase, workspaceId, canvasId, business)
+  const studio = useStudio(apiBase, workspaceId, canvasId, business, JSON.stringify(modelDefaults), chooseRunLock)
   const { api, state, catalog: workspaceCatalog, current, run: serverRun, loading, mismatch } = studio
   const catalog = useMemo(() => {
     if (!modelDefaults) return workspaceCatalog
@@ -150,9 +152,9 @@ export default function DeepAgentStudio({
   const initialImage = defaultModel(catalog, 'image', modelDefaults?.imageModelVersionId)
   const initialVideo = defaultModel(catalog, 'video', modelDefaults?.videoModelVersionId)
   useEffect(() => {
-    setImage((old) => old ?? initialImage)
-    setVideo((old) => old ?? initialVideo)
-  }, [initialImage, initialVideo])
+    setImage((old) => (catalog.models.some((model) => model.id === old) ? old : initialImage))
+    setVideo((old) => (catalog.models.some((model) => model.id === old) ? old : initialVideo))
+  }, [initialImage, initialVideo, catalog.models])
   useEffect(() => {
     if (threadRef.current !== current) {
       threadRef.current = current

@@ -13,6 +13,8 @@ import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import CanvasModelSettings from '@/components/canvas/CanvasModelSettings'
+import { formatCredits } from '@/utils/creditsFormat'
 import CanvasCreateDialog from '@/components/canvas/CanvasCreateDialog'
 import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 import { getBusinessErrorMessage } from '@/api/business'
@@ -105,6 +107,7 @@ export default function CanvasListView() {
     })
   }, [carriedMaterial, createCanvasAction, location.pathname, navigate])
   // 重命名弹窗：renameTarget 非空即打开
+  const [modelTarget, setModelTarget] = useState<{ ws: number; id: number } | null>(null)
   const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
   const [renameName, setRenameName] = useState('')
   const [renaming, setRenaming] = useState(false)
@@ -507,6 +510,7 @@ export default function CanvasListView() {
         setCanvases((prev) => [
           {
             ...created,
+            usedCredits: 0,
             title: created.title || title,
             status: 'active',
             updated_at: created.updated_at || now,
@@ -678,6 +682,17 @@ export default function CanvasListView() {
                               <button
                                 type="button"
                                 className="pm2-folder-menu-item"
+                                disabled={item.status === 'archived'}
+                                onClick={() => {
+                                  setOpenMenuId(0)
+                                  setModelTarget({ ws: activeWsId, id: item.id })
+                                }}
+                              >
+                                模型设置
+                              </button>
+                              <button
+                                type="button"
+                                className="pm2-folder-menu-item"
                                 disabled={isOthersCanvas(item)}
                                 onClick={(e) => {
                                   e.stopPropagation()
@@ -715,6 +730,9 @@ export default function CanvasListView() {
                         </div>
                         <div className="pm2-pcard-meta">
                           <span className="pm2-pcard-time">
+                            累计消耗 {item.usedCredits == null ? '—' : formatCredits(item.usedCredits)} 积分
+                          </span>
+                          <span className="pm2-pcard-time">
                             {item.updated_at ? `更新于 ${formatTime(item.updated_at)}` : '暂无更新'}
                           </span>
                         </div>
@@ -743,6 +761,16 @@ export default function CanvasListView() {
         )}
       </div>
 
+      {modelTarget && modelTarget.ws === activeWsId && (
+        <CanvasModelSettings
+          workspaceId={activeWsId}
+          canvasId={modelTarget.id}
+          onClose={() => setModelTarget(null)}
+          onSaved={() => {
+            void loadCanvases()
+          }}
+        />
+      )}
       {createOpen && (
         <CanvasCreateDialog
           key={`${activeWsId}:${currentUserId}`}

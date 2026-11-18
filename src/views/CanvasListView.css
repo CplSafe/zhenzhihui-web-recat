@@ -135,6 +135,8 @@
   color: var(--cl-ink);
 }
 .cl-page .pm2-pcard-meta {
+  flex-wrap: wrap;
+  gap: 4px 10px;
   margin-top: 6px;
   color: var(--cl-muted);
   font-size: 12px;

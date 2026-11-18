@@ -160,6 +160,16 @@ describe('CanvasListView 封面加载', () => {
     mocks.fetchAllCanvasElements.mockResolvedValue({ elements: [], sync_revision: 1 })
   })
 
+  it('每张卡片显示自己的累计积分，包括零消耗', async () => {
+    mocks.listCanvases.mockResolvedValue([
+      { ...canvas(101, '甲'), usedCredits: 1.25 },
+      { ...canvas(102, '乙'), usedCredits: 0 },
+    ])
+    render(<CanvasListView />)
+    expect(await screen.findByText('累计消耗 1.25 积分')).toBeInTheDocument()
+    expect(screen.getByText('累计消耗 0 积分')).toBeInTheDocument()
+  })
+
   it(
     '列表渲染后不预取任何封面，只有进入视口的卡片才请求',
     async () => {

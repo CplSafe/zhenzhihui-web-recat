@@ -164,6 +164,9 @@ import CanvasNodePanel, {
   isAutoRatio,
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
+import CanvasAgentReadOnly from '@/components/canvas/CanvasAgentReadOnly'
+import CanvasModelSettings from '@/components/canvas/CanvasModelSettings'
+import { pageModelDefaults } from '@/api/canvasApi'
 import { CanvasMembersDialog } from '@/components/canvas/CanvasMembers'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
@@ -193,7 +196,12 @@ import { buildCanvasModelBuckets, resolveCanvasModelForOperation } from '@/utils
 import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
 import { findFreeNodePosition } from '@/utils/canvasNodePlacement'
 import { resolveCanvasConnectDropTarget, type CanvasNodeScreenRect } from '@/utils/canvasConnectDrop'
-import { fetchAllCanvasElements, saveCanvasElementsBatched, subscribeCanvasEvents } from '@/api/canvasApi'
+import {
+  fetchAllCanvasElements,
+  isPermanentCanvasSaveError,
+  saveCanvasElementsBatched,
+  subscribeCanvasEvents,
+} from '@/api/canvasApi'
 import {
   cancelAiTask,
   createAiResponse,
@@ -2528,7 +2536,11 @@ export default function CanvasView({ modelDefaults }: { modelDefaults?: CanvasMo
 const CanvasScriptImport = lazy(() => import('@/components/canvas/CanvasScriptImport'))
 
 /** 画布主体逻辑 */
-function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults }) {
+function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: CanvasModelDefaults }) {
+  const [modelDefaults, setModelDefaults] = useState(initialDefaults)
+  const modelSaveVersion = useRef(0)
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false)
+
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({})
   // 路由参数中的项目 id：画布 ID 的唯一真相源（只接受合法数字 id）
   const { id: routeProjectId } = useParams()
@@ -2912,6 +2924,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([])
   const lockSelection = selectedNodeIds.length ? selectedNodeIds : selectedNode ? [selectedNode.id] : []
   const {
+    agentOwner,
     blocked: busyNodes,
     labels: leaseLabels,
     reason: busyReason,
@@ -5180,12 +5193,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           )
           const isConflict =
             errorStatus === 409 && (!error?.response?.code_string || errorCode === 'CANVAS_REVISION_CONFLICT')
-          // 4xx（409/401/429 除外）与 CANVAS_INVALID_INPUT 是确定性拒绝：同一批数据重发多少次
-          // 都不会成功，指数退避只会变成请求风暴（超大 payload 被整批拒绝时曾刷出上千次请求）。
-          const isDeterministicReject =
-            errorCode === 'CANVAS_INVALID_INPUT' ||
-            errorCode === '10001' ||
-            (errorStatus >= 400 && errorStatus < 500 && !isConflict && errorStatus !== 401 && errorStatus !== 429)
+          const isDeterministicReject = isPermanentCanvasSaveError(errorStatus, errorCode, isConflict)
           // 只有乐观锁冲突才拉远端合并。网络/服务异常直接进入退避重试，避免制造额外请求。
           try {
             if (!isConflict && !lockedElements.size) throw error
@@ -5756,6 +5764,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
       }
       try {
         const knownRevision = syncRevisionRef.current
+        const settingsAtRequest = modelSaveVersion.current
         const graphAtRequest = latestRef.current
         // Generation can finish (and save) while a remote read is in flight.
         // Never install that older snapshot over the newer local graph/revision.
@@ -5775,6 +5784,10 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           },
         )
         if (disposed) return
+        if (settingsAtRequest === modelSaveVersion.current) {
+          const currentChoices = pageModelDefaults(page)
+          setModelDefaults((old) => (JSON.stringify(old) === JSON.stringify(currentChoices) ? old : currentChoices))
+        }
         if (localStateChanged()) return schedule(1500)
         if (!fullReload && knownRevision > 0 && page.history_floor_revision > knownRevision) {
           page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
@@ -11425,6 +11438,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           />
         </Suspense>
       ) : null}
+      {agentOwner && <CanvasAgentReadOnly owner={agentOwner} />}
       <div
         /*
           多选期间给根节点打个标记，供 CSS 收起节点上的单节点操作胶囊。
@@ -11584,6 +11598,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           onClose={() => setActionsMenuOpen(false)}
           onGuide={() => setGuideRequested((visible) => !visible)}
           onImportScript={() => setScriptImportOpen(true)}
+          onModels={() => setModelSettingsOpen(true)}
           onMembers={workspaceType === 'personal' ? undefined : () => setMembersOpen(true)}
           onShare={() => setShareOpen(true)}
         />
@@ -11596,6 +11611,23 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           !guideRequested &&
           !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
 
+        {modelSettingsOpen && (
+          <CanvasModelSettings
+            dark
+            workspaceId={workspaceId}
+            canvasId={canvasId}
+            onClose={() => setModelSettingsOpen(false)}
+            onSaved={(row) => {
+              modelSaveVersion.current++
+              setModelDefaults({
+                imageModelVersionId: row.imageModelVersionId,
+                videoModelVersionId: row.videoModelVersionId,
+                imageModelVersionIds: row.imageModelVersionIds,
+                videoModelVersionIds: row.videoModelVersionIds,
+              })
+            }}
+          />
+        )}
         {membersOpen && canvasId > 0 && workspaceId > 0 && (
           <CanvasMembersDialog
             key={canvasBindingKey}

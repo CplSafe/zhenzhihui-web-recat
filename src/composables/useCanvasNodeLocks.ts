@@ -7,6 +7,7 @@ interface Holder {
   editing: boolean
 }
 interface Snapshot {
+  agent_owner?: string
   nodes: Record<string, Holder[]>
   granted: boolean
 }
@@ -62,9 +63,9 @@ export function useCanvasNodeLocks(
         busy = false
         if (stopped) {
           if (held) void post([]).catch(() => {})
-          return
+        } else {
+          timer = setTimeout(refresh, key === desired.current ? 2500 : 0)
         }
-        timer = setTimeout(refresh, key === desired.current ? 2500 : 0)
       }
     }
     wake.current = refresh
@@ -108,10 +109,17 @@ export function useCanvasNodeLocks(
   blockedRef.current = blocked
   const reason = useCallback((id?: string | null) => (id ? blockedRef.current.get(id) : undefined), [])
   return {
+    agentOwner: reply?.scope === scope ? reply.state.agent_owner : undefined,
     blocked,
     labels,
     reason,
     granted: !enabled || (reply?.scope === scope && reply.key === selectionKey && reply.state.granted),
-    denied: !!(scope && reply?.scope === scope && reply.key === selectionKey && !reply.state.granted),
+    denied: !!(
+      selection.length &&
+      scope &&
+      reply?.scope === scope &&
+      reply.key === selectionKey &&
+      !reply.state.granted
+    ),
   }
 }

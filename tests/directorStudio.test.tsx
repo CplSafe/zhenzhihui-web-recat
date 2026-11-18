@@ -31,6 +31,29 @@ const catalog = {
   skills: [{ id: 1, name: 'director', description: '故事导演' }],
   planning_model: { id: 21, model: 'Qwen3.8-Max', operation_codes: [] },
 }
+it.each([
+  ['锁定并运行', '1'],
+  ['保持协作并运行', '0'],
+])('画布 Agent 先询问锁定，再按「%s」提交一次', async (label, choice) => {
+  const requests: (string | null)[] = []
+  server.use(
+    http.post('*/agent-studio/api/runs', ({ request }) => {
+      requests.push(request.headers.get('X-Agent-Lock-Canvas'))
+      return HttpResponse.json({ id: 'run1' })
+    }),
+  )
+  render(<CanvasDirectorDock workspaceId={54} canvasId={40} opened onCollapse={() => {}} />)
+  const input = await screen.findByRole('textbox')
+  fireEvent.change(input, { target: { value: '制作产品图' } })
+  const send = screen.getByRole('button', { name: '发送创作要求' })
+  await waitFor(() => expect(send).toBeEnabled())
+  fireEvent.click(send)
+  const dialog = await screen.findByRole('dialog', { name: '本轮 Agent 运行时锁定画布？' })
+  expect(requests).toEqual([])
+  fireEvent.click(within(dialog).getByRole('button', { name: label }))
+  await waitFor(() => expect(requests).toEqual([choice]))
+})
+
 function snapshot(overrides: Partial<StudioRun> = {}): StudioRun {
   return {
     id: 'run1',

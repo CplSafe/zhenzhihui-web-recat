@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchAllCanvasElements, subscribeCanvasEvents } from '@/api/canvasApi'
+import { isPermanentCanvasSaveError, fetchAllCanvasElements, subscribeCanvasEvents } from '@/api/canvasApi'
 
 const request = vi.hoisted(() => vi.fn())
 vi.mock('@/api/business', () => ({ requestBusinessJson: request, BusinessApiError: Error }))
@@ -10,6 +10,13 @@ afterEach(() => {
 })
 
 describe('live canvas synchronization', () => {
+  it('retries unchanged drafts after a temporary Agent lock and keeps terminal rejections blocked', () => {
+    expect(isPermanentCanvasSaveError(423, 'CANVAS_AGENT_LOCKED')).toBe(false)
+    expect(isPermanentCanvasSaveError(403, 'FORBIDDEN')).toBe(true)
+    expect(isPermanentCanvasSaveError(409, 'CANVAS_REVISION_CONFLICT', true)).toBe(false)
+    expect(isPermanentCanvasSaveError(400, 'CANVAS_INVALID_INPUT')).toBe(true)
+  })
+
   it('translates persisted tombstones and keeps the first page watermark across concurrent edits', async () => {
     request.mockResolvedValueOnce({
       data: {

@@ -59,6 +59,15 @@ export interface CanvasElementsPage {
   has_more?: boolean
 }
 
+export type CanvasModelSelection = { image_model_version_ids: number[]; video_model_version_ids: number[] }
+export function pageModelDefaults(page: CanvasElementsPage): CanvasModelDefaults {
+  return {
+    imageModelVersionId: page.image_model_version_id,
+    videoModelVersionId: page.video_model_version_id,
+    imageModelVersionIds: page.image_model_version_ids,
+    videoModelVersionIds: page.video_model_version_ids,
+  }
+}
 export interface CanvasModelDefaults {
   imageModelVersionIds?: number[]
   imageModelVersionId?: number
@@ -73,6 +82,7 @@ export interface CanvasCreateOptions extends CanvasModelDefaults {
 
 /** 画布元信息（列表/详情）。 */
 export interface CanvasSummary extends CanvasModelDefaults {
+  usedCredits?: number
   membersRestricted?: boolean
   id: number
   title?: string
@@ -102,6 +112,7 @@ function normalizeCanvas(raw: unknown): CanvasSummary {
   const userId = Number(o.user_id ?? o.userId ?? o.created_by ?? inner?.user_id ?? 0) || 0
   return {
     id,
+    ...(typeof o.used_credits === 'number' ? { usedCredits: o.used_credits } : {}),
     ...(title ? { title } : {}),
     ...(status === 'active' || status === 'archived' ? { status } : {}),
     ...(created_at ? { created_at } : {}),
@@ -253,9 +264,13 @@ export async function patchCanvas({
   canvasId,
   title,
   status,
+  models,
+  expectedModels,
 }: {
   workspaceId: number
   canvasId: number
+  models?: CanvasModelSelection
+  expectedModels?: CanvasModelSelection
   title?: string
   status?: 'active' | 'archived'
 }): Promise<CanvasSummary | null> {
@@ -264,6 +279,8 @@ export async function patchCanvas({
   const body: Record<string, unknown> = {}
   if (title !== undefined) body.title = String(title)
   if (status) body.status = status
+  if (models) body.models = models
+  if (expectedModels) body.expected_models = expectedModels
   const payload = await requestBusinessJson<unknown>(`/api/v1/canvases/${id}?workspace_id=${wsId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -393,6 +410,13 @@ export async function fetchAllCanvasElements({
   throw new BusinessApiError(`画布元素超过 ${maxPages} 页，已停止同步以避免数据不完整`, {
     response: lastPage,
   })
+}
+
+/** 临时占用、限流和登录续期均允许原草稿稍后重试。 */
+export function isPermanentCanvasSaveError(status: number, code: string, revisionConflict = false): boolean {
+  if (code === 'CANVAS_INVALID_INPUT' || code === '10001') return true
+  if (revisionConflict || (status === 423 && code === 'CANVAS_AGENT_LOCKED')) return false
+  return status >= 400 && status < 500 && status !== 401 && status !== 429
 }
 
 /**

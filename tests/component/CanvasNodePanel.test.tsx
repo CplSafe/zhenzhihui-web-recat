@@ -379,6 +379,20 @@ describe('CanvasNodePanel 模型选择器', () => {
     expect(screen.getByRole('button', { name: /默认模型不适用于当前操作/ })).toBeVisible()
   })
 
+  it('只有一个模型时直接展开说明并按内容适配菜单高度', async () => {
+    renderPanel([
+      {
+        modelVersionId: 21,
+        displayName: '模型一',
+        operationCodes: IMAGE_OPERATIONS,
+        source: { description: '参考图编辑' },
+      },
+    ])
+    await userEvent.click(screen.getByRole('button', { name: '模型一' }))
+    const menu = await screen.findByRole('listbox', { name: '生成模型列表' })
+    expect(menu.style.height).toBe('')
+    expect(within(menu).getByRole('option')).toHaveAttribute('data-expanded', 'true')
+  })
   it('模型列表仅点击展开，移出后保持展开', async () => {
     const user = userEvent.setup()
     renderPanel([

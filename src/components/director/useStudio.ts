@@ -2,10 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { applyStudioFrame, createStudioAPI, StudioHTTPError } from './studio'
 import type { StudioCatalog, StudioRun, StudioState } from './studio'
 
-export function useStudio(base: string, workspaceId?: number, canvasId?: number, business = false) {
+export function useStudio(
+  base: string,
+  workspaceId?: number,
+  canvasId?: number,
+  business = false,
+  catalogKey?: string,
+  chooseRunLock?: () => Promise<boolean>,
+) {
   const api = useMemo(
-    () => createStudioAPI(base, business ? { workspaceId: workspaceId!, canvasId: canvasId! } : undefined),
-    [base, workspaceId, canvasId, business],
+    () =>
+      createStudioAPI(base, business ? { workspaceId: workspaceId!, canvasId: canvasId!, chooseRunLock } : undefined),
+    [base, workspaceId, canvasId, business, chooseRunLock],
   )
   const activeAPI = useRef(api)
   activeAPI.current = api
@@ -75,16 +83,6 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
           setCurrentState(saved)
         }
         setError('')
-        if (next.connected && (!workspaceId || next.workspace_id === workspaceId)) {
-          try {
-            const value = await api.request<StudioCatalog>('/api/catalog', undefined, signal)
-            if (activeAPI.current !== api || signal?.aborted) return
-            setCatalog(value)
-          } catch (e) {
-            if (activeAPI.current !== api || signal?.aborted) return
-            setError(e instanceof Error ? e.message : '读取模型列表失败')
-          }
-        }
         setConnectionEpoch((value) => value + 1)
       } catch (e) {
         if (activeAPI.current === api && !signal?.aborted) {
@@ -112,6 +110,20 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
     return () => controller.abort()
   }, [initialize])
 
+  useEffect(() => {
+    if (!connectionEpoch || !state.connected || mismatch) return
+    const controller = new AbortController()
+    api
+      .request<StudioCatalog>('/api/catalog', undefined, controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setCatalog(value)
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(e instanceof Error ? e.message : '读取模型列表失败')
+      })
+    return () => controller.abort()
+  }, [api, connectionEpoch, state.connected, mismatch, catalogKey])
+
   const runId = run?.id,
     runStatus = run?.status
   useEffect(() => {
@@ -131,7 +143,7 @@ export function useStudio(base: string, workspaceId?: number, canvasId?: number,
       controller.abort()
       clearTimeout(timer)
     }
-  }, [api, state.connected, mismatch, runId, runStatus, catalog.models.length])
+  }, [api, state.connected, mismatch, runId, runStatus, catalog.models.length, catalogKey])
 
   const reload = useCallback(async () => {
     const id = currentRef.current,

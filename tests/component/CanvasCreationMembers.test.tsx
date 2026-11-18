@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import CanvasCreateDialog from '@/components/canvas/CanvasCreateDialog'
 import { CanvasMembersDialog } from '@/components/canvas/CanvasMembers'
-import { changeCanvasMembers, getCanvasMembers } from '@/api/canvasApi'
+import CanvasModelSettings from '@/components/canvas/CanvasModelSettings'
+import { changeCanvasMembers, getCanvasMembers, getCanvas, patchCanvas } from '@/api/canvasApi'
 
 vi.mock('@/stores/workspaceSession', () => ({ useCurrentWorkspace: () => ({ type: 'team' }) }))
 vi.mock('@/api/auth', () => ({
@@ -14,7 +15,12 @@ vi.mock('@/api/auth', () => ({
     { user_id: 7, nickname: '已停用成员', status: 'disabled' },
   ]),
 }))
-vi.mock('@/api/canvasApi', () => ({ getCanvasMembers: vi.fn(), changeCanvasMembers: vi.fn() }))
+vi.mock('@/api/canvasApi', () => ({
+  getCanvasMembers: vi.fn(),
+  changeCanvasMembers: vi.fn(),
+  getCanvas: vi.fn(),
+  patchCanvas: vi.fn(),
+}))
 vi.mock('@/composables/useGenerationModelCatalog', () => ({
   useGenerationModelCatalog: () => ({
     groups: [
@@ -153,4 +159,26 @@ it('普通参与者能查看已有名单', async () => {
   )
   await waitFor(() => expect(screen.getByText('王敏')).toBeVisible())
   expect(screen.queryByRole('combobox', { name: '选择创作成员' })).not.toBeInTheDocument()
+})
+
+it('从画布设置回显原模型，提交多选结果并检查原设置', async () => {
+  const user = userEvent.setup()
+  const row = { id: 8, title: '画布', imageModelVersionId: 11 }
+  vi.mocked(getCanvas).mockResolvedValue(row)
+  vi.mocked(getCanvasMembers).mockResolvedValue({ can_manage: true, member_user_ids: [], members_restricted: false })
+  vi.mocked(patchCanvas).mockResolvedValue(row)
+  const onSaved = vi.fn()
+  render(<CanvasModelSettings workspaceId={4} canvasId={8} onClose={vi.fn()} onSaved={onSaved} />)
+  expect(await screen.findByText('图片 A')).toBeInTheDocument()
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '生图模型' }))
+  await user.click(await screen.findByText('图片 C', { selector: '.ant-select-item-option-content' }))
+  await user.click(within(screen.getByText('已选 2 项').parentElement!).getByText('完成'))
+  await user.click(screen.getByRole('button', { name: /保\s*存/ }))
+  expect(patchCanvas).toHaveBeenCalledWith({
+    workspaceId: 4,
+    canvasId: 8,
+    expectedModels: { image_model_version_ids: [11], video_model_version_ids: [] },
+    models: { image_model_version_ids: [11, 12], video_model_version_ids: [] },
+  })
+  expect(onSaved).toHaveBeenCalledWith(row)
 })

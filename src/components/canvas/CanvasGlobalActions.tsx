@@ -13,6 +13,7 @@ interface Props {
   onClose: () => void
   onGuide: () => void
   onImportScript: () => void
+  onModels?: () => void
   onMembers?: () => void
   onShare?: () => void
 }
@@ -29,6 +30,7 @@ export default function CanvasGlobalActions({
   onClose,
   onGuide,
   onImportScript,
+  onModels,
   onMembers,
   onShare,
 }: Props) {
@@ -70,6 +72,11 @@ export default function CanvasGlobalActions({
           </button>
         )}
         <TutorialButton variant="pill" tutorialKey="canvas" />
+        {onModels && canvasId > 0 && (
+          <button type="button" className="canvas-share-btn" onClick={onModels}>
+            模型设置
+          </button>
+        )}
         {onMembers && canvasId > 0 && workspaceId > 0 && (
           <button type="button" className="canvas-share-btn" onClick={onMembers}>
             创作成员

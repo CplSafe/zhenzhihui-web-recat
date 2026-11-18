@@ -192,7 +192,7 @@ export default function CanvasModelSelector({
           open={open}
           anchorElement={triggerRef.current}
           // 留出模型简介展开空间，并确保长目录仍可显示约十行后内部滚动。
-          expansionSpace={models.length > 10 ? 360 : models.some((model) => readModelDescription(model)) ? 60 : 0}
+          expansionSpace={models.length > 10 ? 360 : 0}
           onClose={close}
         >
           {/* 可用的排在前面：被锁住的混在中间会让人以为列表到此为止 */}
@@ -200,7 +200,7 @@ export default function CanvasModelSelector({
             <ModelOptionRow
               key={m.modelVersionId}
               model={m}
-              expanded={inspected === m.modelVersionId}
+              expanded={models.length === 1 || inspected === m.modelVersionId}
               onInspect={() => inspect(m.modelVersionId)}
               onBlur={() => {
                 setInspected(null)
@@ -217,7 +217,7 @@ export default function CanvasModelSelector({
             <ModelOptionRow
               key={m.modelVersionId}
               model={m}
-              expanded={inspected === m.modelVersionId}
+              expanded={models.length === 1 || inspected === m.modelVersionId}
               onInspect={() => inspect(m.modelVersionId)}
               onBlur={() => {
                 setInspected(null)

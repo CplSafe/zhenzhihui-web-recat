@@ -190,15 +190,15 @@ describe('listCanvases', () => {
     mocks.requestBusinessJson.mockResolvedValueOnce({
       data: {
         items: [
-          { id: 3, title: 'A', user_id: 8 },
-          { id: 4, title: 'B' },
+          { id: 3, title: 'A', user_id: 8, used_credits: 1.362 },
+          { id: 4, title: 'B', used_credits: 0 },
         ],
       },
     })
 
     await expect(listCanvases({ workspaceId: 7 })).resolves.toEqual([
-      { id: 3, title: 'A', userId: 8 },
-      { id: 4, title: 'B' },
+      { id: 3, title: 'A', userId: 8, usedCredits: 1.362 },
+      { id: 4, title: 'B', usedCredits: 0 },
     ])
   })
 })
