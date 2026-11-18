@@ -142,7 +142,7 @@ describe('canvas tools backend contract', () => {
     })
     expect(angle.params).toMatchObject({ tool_version: 2, tool_params: { horizontal_angle: 0, watermark: false } })
     expect(angle.prompt).toContain('test')
-    expect(angle.prompt).toContain('保留参考图的主体、场景结构、物件位置和光照')
+    expect(angle.prompt).toContain('保持主体、场景结构和光照，人物与物件的数量和位置不变')
     const angleWithNegativePrompt = buildToolGeneration({
       ...input,
       tool: {

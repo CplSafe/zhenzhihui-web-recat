@@ -143,10 +143,10 @@ describe('continuous studio controls', () => {
   })
   it('describes newly visible surfaces instead of preserving the original view', () => {
     const back = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 180 })
-    expect(back).toContain('正后方背面机位；纵深场景从另一端回望同一空间')
-    expect(back).toContain('默认只改变机位，保留参考图的主体、场景结构、物件位置和光照')
+    expect(back).toContain('相机移到场景对侧，朝原机位回拍；纵深场景的原近端进入远景')
+    expect(back).toContain('人物与物件的数量和位置不变')
+    expect(back).toContain('按新机位重建透视与遮挡')
     expect(back).not.toMatch(/包装|条码|主标|原地旋转/)
-    expect(back).toContain('无人物参考不得新增人物')
     expect(back).not.toContain('俯视透视')
     const side = composeStudioPrompt('image.multi_angle', '', { horizontal_angle: 90, vertical_angle: 30 })
     expect(side).toContain('侧面轮廓和侧向纵深')

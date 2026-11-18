@@ -178,7 +178,12 @@ for (const renamed of [false, true]) {
                     type: 'image',
                     position: { x: 300, y: 200 },
                     style: { width: 320, height: 240 },
-                    data: { kind: 'image', assetId: 701, assetWorkspaceId: WORKSPACE_ID, title: '走廊原图' },
+                    data: {
+                      kind: 'image',
+                      assetId: 701,
+                      assetWorkspaceId: WORKSPACE_ID,
+                      title: renamed ? '会议室原图' : '走廊原图',
+                    },
                   },
                 },
                 {
@@ -330,9 +335,9 @@ for (const renamed of [false, true]) {
     await expect(modal.getByText(/默认只改变拍摄机位，保留原场景/)).toBeVisible()
     const sceneInput = modal.getByRole('textbox', { name: '多角度补充场景信息' })
     const promptPreview = modal.getByLabel('多角度生成提示词')
-    await expect(promptPreview).toContainText('纵深场景从另一端回望同一空间')
+    await expect(promptPreview).toContainText('相机移到场景对侧，朝原机位回拍')
     await expect(promptPreview).not.toContainText(/包装|条码|主标/)
-    const sceneDescription = '保留走廊的木门、壁灯和地板'
+    const sceneDescription = renamed ? '保留会议室的投影幕、会议桌和原有座位' : '保留走廊的木门、壁灯和地板'
     await sceneInput.fill(sceneDescription)
     await expect(promptPreview).toContainText(sceneDescription)
     await modal.getByRole('button', { name: '正面仰拍', exact: true }).click()
@@ -358,11 +363,11 @@ for (const renamed of [false, true]) {
     expect(submissions[0].params.tool_params).toMatchObject({ horizontal_angle: 180, vertical_angle: 0, zoom: 5 })
     expect(submissions[0].prompt).toContain('水平环绕180°')
     expect(submissions[0].input_assets).toEqual([{ asset_id: 701, role: 'reference_image' }])
-    expect(submissions[0].prompt).toContain('正后方背面机位；纵深场景从另一端回望同一空间')
-    expect(submissions[0].prompt).toContain('默认只改变机位，保留参考图的主体、场景结构、物件位置和光照')
+    expect(submissions[0].prompt).toContain('相机移到场景对侧，朝原机位回拍；纵深场景的原近端进入远景')
+    expect(submissions[0].prompt).toContain('按新机位重建透视与遮挡')
     expect(submissions[0].prompt).not.toMatch(/包装|条码|主标|原地旋转/)
     expect(submissions[0].params).not.toHaveProperty('negative_prompt')
-    expect(submissions[0].prompt).toContain('无人物参考不得新增人物')
+    expect(submissions[0].prompt).toContain('人物与物件的数量和位置不变')
     if (renamed) expect(submissions[0].prompt).toContain(sceneDescription)
     else expect(submissions[0].prompt).not.toContain(sceneDescription)
     expect(quotes.some((quote) => quote.prompt === submissions[0].prompt)).toBe(true)
