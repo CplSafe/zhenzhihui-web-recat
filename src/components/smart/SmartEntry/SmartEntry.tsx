@@ -72,7 +72,8 @@ import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/pr
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useCurrentUser } from '@/stores/workspaceSession'
 import { estimateAiTaskCost } from '@/api/business'
-import { estimateShotImageCost } from '@/api/smartShotImage'
+import { estimateFullVideoCost } from '@/api/smartVideo'
+import { ensureAssetId, estimateShotImageCost } from '@/api/smartShotImage'
 import { multiplyCredits, sumCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './SmartEntry.module.less'
 import RefineDemo from '@/components/smart/refine/RefineDemo'
@@ -1097,6 +1098,14 @@ export default function SmartEntry({
     const operationCode = (subgroupKey || groupKey) as GenerationOperationCode
     setGenerationModels((previous) => ({ ...previous, [operationCode]: modelId }))
   }
+  const uploadedImages = useRef<Record<string, number>>({})
+  const resolveImageIds = useCallback(async () => {
+    const ids = await Promise.all(
+      images.map((url, i) => imageAssetIds[i] || ensureAssetId(workspaceId, url, uploadedImages.current)),
+    )
+    if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('参考图尚未上传完成')
+    return ids
+  }, [images, imageAssetIds, workspaceId])
   const estimateSelectedModel = useCallback(
     async ({
       operationCode,
@@ -1104,38 +1113,41 @@ export default function SmartEntry({
     }: GenerationModelEstimateRequest): Promise<GenerationModelEstimateResult> => {
       if (!workspaceId) throw new Error('工作空间未就绪')
       const durationSec = parseDurationSeconds(duration) || 5
-      const params =
-        operationCode === 'responses.multimodal'
-          ? { temperature: 0.7, max_output_tokens: 1200 }
-          : operationCode.startsWith('image.')
-            ? { ratio, count: mode === 'image' ? outputCount : 1 }
-            : { duration: durationSec, ratio, resolution }
-      const result = operationCode.startsWith('image.')
-        ? await estimateShotImageCost({
-            workspaceId,
-            modelVersionId: Number(modelVersionId),
-            modelVersion: resolveModel?.(operationCode, modelVersionId) || { id: Number(modelVersionId) },
-            prompt: buildSmartImagePrompt(cleanText, imageAssetIds, realPersonReferences),
-            ratio,
-            referenceImageCount: operationCode === 'image.image_to_image' ? images.length : 0,
-            refAssetIds: operationCode === 'image.image_to_image' ? imageAssetIds : [],
-          })
-        : await estimateAiTaskCost({
-            workspaceId,
-            modelVersionId,
-            operationCode,
-            prompt: cleanText,
-            params,
-            // 后端 input_assets 是 { asset_id, role } 对象数组，与正式提交同构；传裸数字会被整体判为
-            // 「请求体格式不合法」。本地上传的图在入口阶段 id 还是 0 会被过滤掉，所以只有带素材库/
-            // 真人库/上次创作的图时才失败——这就是预估「偶发」失败的来源。
-            inputAssets: imageAssetIds
-              .filter((assetId) => assetId > 0)
-              .map((assetId) => ({
-                asset_id: assetId,
-                role: resolveModelInputAssetRoleSafe(undefined, operationCode),
-              })),
-          })
+      const model = resolveModel?.(operationCode, modelVersionId) || { id: Number(modelVersionId) }
+      const ids = await resolveImageIds()
+      const selection = { workspaceId, modelVersionId: Number(modelVersionId), modelVersion: model }
+      let result
+      if (operationCode === 'video.generate') {
+        result = await estimateFullVideoCost({
+          ...selection,
+          shots: [],
+          durationSec,
+          ratio,
+          resolution,
+          generateAudio,
+          imageAssetIds: ids,
+        })
+      } else if (operationCode.startsWith('image.')) {
+        result = await estimateShotImageCost({
+          ...selection,
+          prompt: buildSmartImagePrompt(cleanText, ids, realPersonReferences),
+          ratio,
+          refAssetIds: operationCode === 'image.image_to_image' ? ids : [],
+        })
+      } else {
+        result = await estimateAiTaskCost({
+          workspaceId,
+          modelVersionId,
+          operationCode,
+          prompt: cleanText,
+          params: { temperature: 0.7, max_output_tokens: 1200 },
+          inputAssets: ids.map((asset_id) => ({
+            asset_id,
+            role: resolveModelInputAssetRoleSafe(model, operationCode),
+          })),
+        })
+      }
+      if (!Number.isFinite(result?.estimated_cost) || result.estimated_cost < 0) throw new Error('积分报价无效')
       return {
         estimatedCost: operationCode.startsWith('image.')
           ? multiplyCredits(result?.estimated_cost ?? 0, mode === 'image' ? outputCount : 1)
@@ -1149,8 +1161,8 @@ export default function SmartEntry({
     [
       cleanText,
       duration,
-      imageAssetIds,
-      images.length,
+      resolveImageIds,
+      generateAudio,
       mode,
       outputCount,
       ratio,
@@ -1272,6 +1284,15 @@ export default function SmartEntry({
     submittingRef.current = true
     setSubmitting(true)
     try {
+      let readyIds = imageAssetIds
+      if (workspaceId && !authRequired) {
+        try {
+          readyIds = await resolveImageIds()
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : '参考图上传失败，请重试', 'error')
+          return
+        }
+      }
       const accepted = await onSubmit(cleanText, {
         mode,
         style: '',
@@ -1283,7 +1304,7 @@ export default function SmartEntry({
         ...(mode === 'video' && supportsAudio ? { generateAudio } : {}),
         imageCount: images.length,
         images,
-        ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
+        ...(readyIds.length ? { imageAssetIds: readyIds } : {}),
         ...(realPersonReferences.length ? { realPersonReferences } : {}),
         ...(mode === 'image' ? { outputCount } : {}),
         skill: mode === 'video' && skill ? skill : undefined,

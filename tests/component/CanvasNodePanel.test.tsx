@@ -92,6 +92,43 @@ describe('CanvasNodePanel unified real-person material entry', () => {
     expect(status).toHaveAttribute('title', '模型参数无效，请检查参数后重试。')
   })
 
+  it('预冻结报价显示金额和结算说明', async () => {
+    vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({
+      estimated_cost: 180,
+      balance: 500,
+      can_afford: true,
+      estimate_kind: 'reservation',
+      estimate_note: '完成后按实际用量结算。',
+    })
+    renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
+    expect(await screen.findByText('预冻结：180 积分', {}, { timeout: 2000 })).toHaveAttribute(
+      'title',
+      '完成后按实际用量结算。',
+    )
+  })
+
+  it('普通视频等待当前报价后才允许确认费用', async () => {
+    const onGenerate = vi.fn()
+    renderPanel(
+      [],
+      { id: 'video', kind: 'video', prompt: '测试视频', sourceRefs: [] },
+      {
+        models: {
+          text: [],
+          image: [],
+          video: [{ modelVersionId: 41, displayName: '万相', operationCodes: ['video.generate'] }],
+        },
+        onGenerate,
+      },
+    )
+    const button = screen.getByRole('button', { name: '制作' })
+    expect(button).toBeDisabled()
+    await screen.findByText('预计消耗：10 积分', {}, { timeout: 2000 })
+    await userEvent.setup().click(button)
+    expect(uiStore.requestConfirm).toHaveBeenCalledWith(expect.stringContaining('预计消耗 10 积分'), expect.anything())
+    expect(onGenerate).toHaveBeenCalledOnce()
+  })
+
   it('零费用预估也显示金额', async () => {
     vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({ estimated_cost: 0, balance: 100, can_afford: true })
     renderPanel([{ modelVersionId: 21, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }])
@@ -643,6 +680,7 @@ describe('CanvasNodePanel 模型选择器', () => {
     expect(readMentionInput(input)).toBe('1. 开场（时长 5）\n咖啡杯特写')
     await user.clear(input)
     await user.type(input, '改为咖啡豆俯拍')
+    await screen.findByText('预计消耗：10 积分')
     await user.click(screen.getByRole('button', { name: '制作' }))
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '改为咖啡豆俯拍' }))
     await user.clear(input)
@@ -1872,6 +1910,7 @@ it.each([
   await user.click(screen.getByRole('button', { name: '无水印' }))
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   expect(screen.getByRole('button', { name: '自由生成 · 无水印' })).toBeInTheDocument()
+  await screen.findByText('预计消耗：10 积分')
   await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   expect(onGenerate.mock.calls[0]![0].params[field.name]).toBe(false)
@@ -1926,6 +1965,7 @@ it.each(['generate_audio', 'audio', 'with_audio', 'enable_audio'])(
       },
       { models: { text: [], image: [], video: [model] }, onGenerate, onParamsChange },
     )
+    await screen.findByText('预计消耗：10 积分')
     await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onGenerate.mock.calls[0]![0].params[name]).toBe(false)
     await waitFor(() => expect(vi.mocked(estimateAiTaskCost).mock.lastCall?.[0].params[name]).toBe(false))
@@ -1970,6 +2010,7 @@ it('新视频节点默认有声音', async () => {
   await user.click(screen.getByRole('button', { name: /自由生成.*有声音/ }))
   expect(screen.getByRole('button', { name: '有声音' })).toHaveAttribute('aria-pressed', 'true')
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await screen.findByText('预计消耗：10 积分')
   await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   expect(onGenerate.mock.lastCall?.[0].params.generate_audio).toBe(true)
 })
@@ -2029,6 +2070,7 @@ it('模型未声明声音能力时不显示声音控件，也不提交声音参�
   await user.click(screen.getByRole('button', { name: /自由生成/ }))
   expect(screen.queryByText('生成声音')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await screen.findByText('预计消耗：10 积分')
   await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
   await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1))
   for (const key of ['generate_audio', 'audio', 'with_audio', 'enable_audio'])

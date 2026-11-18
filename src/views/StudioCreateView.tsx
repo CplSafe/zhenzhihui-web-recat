@@ -297,40 +297,35 @@ export default function StudioCreateView() {
     if (await runAiStoryboard()) showToast('智能分镜已生成，可继续调整每一镜')
   }, [requireAuth, runAiStoryboard, showToast])
 
-  /**
-   * 把本地参考图上传落库，返回与输入【同序】的 asset_id。
-   *
-   * 参考图按位置对应镜头画面，任一张失败都不能静默跳过——否则后面的图整体前移，
-   * 会拿着错位的参考帧创建计费任务。因此这里失败即抛，由调用方整批失败。
-   */
-  const resolveRefImageAssetIds = useCallback(
-    async (images: readonly StudioRefImage[]): Promise<number[]> => {
-      if (!images.length) return []
-      const cache: Record<string, number> = {}
-      const ids = await Promise.all(images.map((image) => ensureAssetId(ws, image.url, cache)))
-      const normalized = ids.map((id) => Number(id) || 0)
-      if (normalized.some((id) => id <= 0)) throw new Error('参考图上传失败，请重试')
-      return normalized
-    },
-    [ws],
-  )
-
-  /**
-   * 把参考视频上传落库。
-   *
-   * 不能复用 ensureAssetId：它只接受图片（会按 MIME 与 magic bytes 校验并拒绝视频）。
-   * 这里直接用原始 File 走 uploadAssetFile，由文件自身推断素材类型。
-   */
-  const resolveRefVideoAssetIds = useCallback(
-    async (videos: readonly StudioRefVideo[]): Promise<number[]> => {
-      if (!videos.length) return []
-      const results = await Promise.all(videos.map((video) => uploadAssetFile({ workspaceId: ws, file: video.file })))
-      const ids = results.map((out: any) => Number(out?.asset?.id || 0) || 0)
-      if (ids.some((id) => id <= 0)) throw new Error('参考视频上传失败，请重试')
-      return ids
-    },
-    [ws],
-  )
+  // Quoting and submitting share each upload, including in-flight uploads.
+  // A workspace change discards the cache. Failed uploads can be retried.
+  const uploadReference = useMemo(() => {
+    const uploads = new WeakMap<StudioRefImage | StudioRefVideo, Promise<number>>()
+    return (ref: StudioRefImage | StudioRefVideo) => {
+      const cached = uploads.get(ref)
+      if (cached) return cached
+      const pending = (async () => {
+        const id =
+          'file' in ref
+            ? Number((await uploadAssetFile({ workspaceId: ws, file: ref.file }))?.asset?.id)
+            : Number(await ensureAssetId(ws, ref.url, {}))
+        if (!Number.isSafeInteger(id) || id <= 0) throw new Error('参考素材上传失败，请重试')
+        return id
+      })().catch((error) => {
+        uploads.delete(ref)
+        throw error
+      })
+      uploads.set(ref, pending)
+      return pending
+    }
+  }, [ws])
+  const resolveReferenceAssets = useCallback(async () => {
+    const [imageAssetIds, sourceVideoAssetIds] = await Promise.all([
+      Promise.all(refImages.map(uploadReference)),
+      mode === 'video' ? Promise.all(refVideos.map(uploadReference)) : [],
+    ])
+    return { imageAssetIds, sourceVideoAssetIds }
+  }, [mode, uploadReference, refImages, refVideos])
 
   /** 把某个批次内的单条产物更新为完成/失败。 */
   const patchItem = useCallback(
@@ -408,7 +403,7 @@ export default function StudioCreateView() {
   /**
    * 送去生成与估价的时间线。
    * 开启智能分镜时用整份分镜，否则退化为「整段提示词 + 总时长」的单镜。
-   * 估价与提交共用这一份，保证「预估 = 实扣」。
+   * 估价与提交使用相同的分镜时长。
    */
   const timeline = useMemo(
     () =>
@@ -447,10 +442,14 @@ export default function StudioCreateView() {
     resolution: params.resolution,
     count: params.count,
     shots: estimateShots,
-    referenceImageCount: refImages.length,
+    prompt: promptText,
+    resolveReferenceAssets,
+    referenceMode: videoReferenceMode(videoMode),
     ...(paramOptions.supportsAudio ? { generateAudio: params.generateAudio } : {}),
     enabled: Boolean(selectedModel) && (Boolean(promptText) || refImages.length > 0),
   })
+
+  const costLabel = estimate ? `${estimate.reservation ? '预冻结' : '预计'} ${creditsLabel(estimate.total)}` : ''
 
   /** 提交前的统一校验；返回第一条阻塞原因，通过时返回空串。 */
   const findSubmitBlocker = (): string => {
@@ -540,10 +539,7 @@ export default function StudioCreateView() {
 
     try {
       // 图片与视频是彼此独立的上传，并行发起，避免用户白等一段串行时间。
-      const [refAssetIds, refVideoAssetIds] = await Promise.all([
-        resolveRefImageAssetIds(refImages),
-        mode === 'video' ? resolveRefVideoAssetIds(refVideos) : Promise.resolve<number[]>([]),
-      ])
+      const { imageAssetIds: refAssetIds, sourceVideoAssetIds: refVideoAssetIds } = await resolveReferenceAssets()
 
       // 每条产物并发生成，单条失败不影响同批其他产物。
       let succeeded = 0
@@ -555,6 +551,7 @@ export default function StudioCreateView() {
                 workspaceId: ws,
                 prompt: text,
                 refAssetIds,
+                resolution: params.resolution,
                 modelVersionId: selectedModel.id,
                 modelVersion: selectedModel.source,
                 ratio: params.ratio,
@@ -827,11 +824,11 @@ export default function StudioCreateView() {
                   disabled={submitting}
                 />
                 {/* 提交前的积分预估：与提交同口径，未登录/估价失败时不展示 */}
-                <span className="studio-cost" aria-live="polite">
+                <span className="studio-cost" aria-live="polite" title={estimate?.note}>
                   {estimating && '费用预估中…'}
                   {!estimating && estimate && (
                     <span className={`studio-cost__value${estimate.canAfford ? '' : ' is-short'}`}>
-                      {estimate.canAfford ? creditsLabel(estimate.total) : INSUFFICIENT_CREDITS_TEXT}
+                      {estimate.canAfford ? costLabel : INSUFFICIENT_CREDITS_TEXT}
                     </span>
                   )}
                 </span>
@@ -842,9 +839,9 @@ export default function StudioCreateView() {
                   : submitting
                     ? '生成中…'
                     : pendingConfirm
-                      ? `确认生成${estimate ? ` · ${creditsLabel(estimate.total)}` : ''}`
+                      ? `确认生成${estimate ? ` · ${costLabel}` : ''}`
                       : estimate
-                        ? `生成 · ${creditsLabel(estimate.total)}`
+                        ? `生成 · ${costLabel}`
                         : '生成'}
               </button>
               <p className="studio-console__disclaimer">内容由 AI 生成，请遵守平台规范，禁止用于违法用途。</p>

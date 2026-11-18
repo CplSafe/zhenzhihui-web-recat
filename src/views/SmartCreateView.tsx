@@ -400,10 +400,8 @@ async function prepareSegmentClip(args: {
   workspaceId: number
   sourceVideoUrl: string
   segment: VideoEditSegment
-  onPhase: (text: string) => void
 }): Promise<PreparedSegmentClip> {
   const { workspaceId, sourceVideoUrl, segment } = args
-  args.onPhase('正在准备选中的 5 秒画面…')
   const sourceResponse = await fetch(sourceVideoUrl)
   if (!sourceResponse.ok) throw new Error(`原视频读取失败（HTTP ${sourceResponse.status}）`)
   const originalVideoBuffer = await sourceResponse.arrayBuffer()
@@ -1032,6 +1030,18 @@ interface SmartCreateViewProps {
 
 /** 编排智能成片完整流程并负责草稿、任务、权限和结果恢复。 */
 export default function SmartCreateView({ routeSessionToken = '', flowMode = 'smart' }: SmartCreateViewProps) {
+  // The quote and generation must use the same uploaded, keyframe-aligned clip.
+  const segmentClip = useRef<{ key: string; result: Promise<PreparedSegmentClip> } | null>(null)
+  const getSegmentClip = (ws: number, source: { url: string; assetId: number }, segment: VideoEditSegment) => {
+    const key = JSON.stringify([ws, source.assetId, segment.start, segment.end])
+    if (segmentClip.current?.key === key) return segmentClip.current.result
+    const result = prepareSegmentClip({ workspaceId: ws, sourceVideoUrl: source.url, segment })
+    segmentClip.current = { key, result }
+    void result.catch(() => {
+      if (segmentClip.current?.result === result) segmentClip.current = null
+    })
+    return result
+  }
   const navigate = useNavigate()
   const { id: routeId } = useParams()
   const location = useLocation()
@@ -2962,8 +2972,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       })
     }
     // 创建付费任务前按锁定的修改模型重新核价，避免使用准备阶段的旧余额/旧价格。
+    let preparedClip: PreparedSegmentClip | null = null
     try {
+      if (segment) preparedClip = await getSegmentClip(ws, sourceVideo, segment)
       const currentEstimate = await estimateVideoEditCost({
+        videoAssetId: preparedClip?.clipAssetId || sourceVideo.assetId,
         workspaceId: ws,
         ratio: currentRatio,
         resolution: currentResolution,
@@ -2999,6 +3012,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           }
           // 真正创建视频任务前再按锁定快照核价，避免使用准备阶段的旧余额/旧价格。
           const submissionEstimate = await estimateVideoEditCost({
+            videoAssetId: preparedClip?.clipAssetId || sourceVideo.assetId,
             workspaceId: ws,
             ratio: currentRatio,
             resolution: currentResolution,
@@ -3009,19 +3023,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           })
           const submissionQuoteError = getLockedQuoteError(submissionEstimate)
           if (submissionQuoteError) throw new Error(submissionQuoteError)
-          let editSourceAssetId = Number(sourceVideo.assetId || 0)
-          let editSourceDurationSec = sourceVideoDurationSec
-          let preparedClip: PreparedSegmentClip | null = null
-          if (segment) {
-            preparedClip = await prepareSegmentClip({
-              workspaceId: ws,
-              sourceVideoUrl: sourceVideo.url,
-              segment,
-              onPhase: setBlurPhase,
-            })
-            editSourceAssetId = preparedClip.clipAssetId
-            editSourceDurationSec = Math.max(1, preparedClip.actualSegment.end - preparedClip.actualSegment.start)
-          }
+          const editSourceAssetId = preparedClip?.clipAssetId || sourceVideo.assetId
+          const editSourceDurationSec = preparedClip
+            ? Math.max(1, preparedClip.actualSegment.end - preparedClip.actualSegment.start)
+            : sourceVideoDurationSec
 
           const editPromise = editFullVideo({
             workspaceId: ws,
@@ -3248,7 +3253,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
 
     let lockedReferenceAssetIds: number[] = []
+    let preparedClip: PreparedSegmentClip | null = null
+    let referenceEditSourceAssetId = 0
     try {
+      if (context.modificationMode === 'reference') {
+        if (!context.sourceVideo?.assetId) throw new Error('缺少可修改的源视频')
+        if (referenceSegment) preparedClip = await getSegmentClip(ws, context.sourceVideo, referenceSegment)
+        referenceEditSourceAssetId = preparedClip?.clipAssetId || context.sourceVideo.assetId
+      }
       const catalogResponse = await listAiModels({
         workspaceId: ws,
         operationCode: context.operationCode,
@@ -3279,6 +3291,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ...(segmentGenerationDurationSec ? { durationSec: segmentGenerationDurationSec } : {}),
       })
       const currentEstimate = await estimateFullVideoCost({
+        sourceVideoAssetId: referenceEditSourceAssetId,
+        generateAudio: currentGenerateAudio,
         workspaceId: ws,
         shots: currentShots,
         ratio: currentRatio,
@@ -3358,17 +3372,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           // 「确认修改·参考生视频」：上一版整片以 role:'video' 一并下发，模型据此在原片基础上重新生成。
           // 只有入队时按后端 input_constraints 判定该模型声明收 video 输入才会进入此分支
           //（见 resolveVideoModificationPlan），不会再出现盲目回喂被后端拒绝的情况。
-          let referenceEditSourceAssetId =
-            context.modificationMode === 'reference' ? Number(context.sourceVideo?.assetId || 0) : 0
-          if (context.modificationMode === 'reference' && !referenceEditSourceAssetId) {
-            throw new Error('缺少可修改的源视频，尚未创建付费任务，请重新选择成片')
-          }
           const referenceEditNote = referenceEditSourceAssetId > 0 ? context.videoEditPrompt || job.note : ''
           if (Number(workspaceIdRef.current || 0) !== ws) {
             throw new Error('工作空间已切换，本次视频生成已安全停止')
           }
           // 真正创建视频任务前再按锁定快照核价，避免使用准备阶段的旧余额/旧价格。
           const submissionEstimate = await estimateFullVideoCost({
+            sourceVideoAssetId: referenceEditSourceAssetId,
+            generateAudio: currentGenerateAudio,
             workspaceId: ws,
             shots: currentShots,
             ratio: currentRatio,
@@ -3382,18 +3393,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           })
           const submissionQuoteError = getLockedQuoteError(submissionEstimate)
           if (submissionQuoteError) throw new Error(submissionQuoteError)
-          // 分段修改：先在浏览器端裁出选中的几秒作为源视频交给生成模型，完成后再拼回原片。
-          let preparedClip: PreparedSegmentClip | null = null
-          if (referenceSegment) {
-            if (!context.sourceVideo?.url) throw new Error('缺少可修改的源视频，尚未创建付费任务，请重新选择成片')
-            preparedClip = await prepareSegmentClip({
-              workspaceId: ws,
-              sourceVideoUrl: context.sourceVideo.url,
-              segment: referenceSegment,
-              onPhase: setBlurPhase,
-            })
-            referenceEditSourceAssetId = preparedClip.clipAssetId
-          }
           const generationPromise = generateFullVideo({
             workspaceId: ws,
             shots: activeShots,
@@ -3787,12 +3786,16 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       }
       // 「分段画面修改·参考生视频」向生成模型申请的片段时长；按模型档位向上取定后锁进队列上下文。
       let segmentGenerationDurationSec = 0
+      let editInputAssetId = 0
       if (opts?.edit) {
         // 「确认修改」先读源视频真实时长（video.edit 据此计费）；
         // 拿不到就说明这条修改根本无从提交，直接拦在创建付费任务之前。
         if (!Number(sourceVideo.assetId || 0) || !sourceVideo.url) {
           throw new Error('缺少可修改的视频，请重新选择成片')
         }
+        editInputAssetId = opts.segment
+          ? (await getSegmentClip(ws, sourceVideo, opts.segment)).clipAssetId
+          : sourceVideo.assetId
         sourceVideoMetadata = await readVideoMetadata(sourceVideo.url)
         sourceVideoDurationSec = opts.segment
           ? Math.max(1, Math.ceil(opts.segment.end - opts.segment.start))
@@ -3819,6 +3822,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         // 参考生视频的分段修改只申请片段时长，不按分镜总时长估价。
         const estimate: any = editingViaEditOp
           ? await estimateVideoEditCost({
+              videoAssetId: editInputAssetId,
               workspaceId: ws,
               ratio,
               resolution,
@@ -3838,6 +3842,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 ...durationOverride,
               })
               return estimateFullVideoCost({
+                sourceVideoAssetId: editInputAssetId,
                 workspaceId: ws,
                 shots: currentShots,
                 ratio,
@@ -4483,6 +4488,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const timer = window.setTimeout(async () => {
       try {
         const res: any = await estimateFullVideoCost({
+          imageAssetIds: entryMeta?.imageAssetIds,
           workspaceId: ws,
           shots,
           ratio: entryMeta?.ratio,
@@ -4511,7 +4517,19 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       window.clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actualVideoGenerating, projectId, shots, step, videoQueuePlanning, workspaceId, videoGenerationModelSelectionId])
+  }, [
+    actualVideoGenerating,
+    projectId,
+    shots,
+    step,
+    videoQueuePlanning,
+    workspaceId,
+    videoGenerationModelSelectionId,
+    entryMeta?.ratio,
+    entryMeta?.resolution,
+    entryMeta?.generateAudio,
+    entryMeta?.imageAssetIds,
+  ])
 
   // 「前瞻预估」:在当前步就显示「下一步生成要花多少」,让用户进下一步前先看成本。
   // 映射:分镜脚本/准备素材 → 下一步出图(image,单张);镜头编排 → 下一步生成视频(video,整片);
@@ -4584,6 +4602,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           const modelSelection = selectedGenerationModel('video.generate')
           if (!modelSelection) throw new Error('请先选择视频生成模型')
           const res: any = await estimateFullVideoCost({
+            imageAssetIds: entryMeta?.imageAssetIds,
             workspaceId: ws,
             shots,
             ratio: entryMeta?.ratio,
@@ -4620,8 +4639,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     workspaceId,
     isImageMode,
     started,
-    shots.length,
+    shots,
     entryMeta?.ratio,
+    entryMeta?.resolution,
+    entryMeta?.generateAudio,
+    entryMeta?.imageAssetIds,
     imageComposerRefCount,
     imageComposerRatio,
     imageComposerOutputCount,
@@ -8913,6 +8935,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           )
           // 分辨率与提交路径同一口径：原片像素对模型档位，对不上回到入口值。
           // 估价若用入口值、提交却用像素反推，会出现「估价通过、点确认后被拒」。
+          const editInputAssetId = segment
+            ? (await getSegmentClip(ws, fullVideo, segment)).clipAssetId
+            : fullVideo.assetId
           const sourceMetadata = await readVideoMetadata(fullVideo.url)
           const editResolution = resolveVideoEditResolution({
             model: plan.modelVersion,
@@ -8929,6 +8954,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
               getModelReferenceImageMinimum(plan.modelVersion, 'video.generate'),
             )
             const result: any = await estimateFullVideoCost({
+              sourceVideoAssetId: editInputAssetId,
               workspaceId: ws,
               shots,
               ratio: entryMeta?.ratio,
@@ -8964,6 +8990,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             throw new Error('当前视频不足 4 秒，所选视频修改模型无法处理')
           }
           const result: any = await estimateVideoEditCost({
+            videoAssetId: editInputAssetId,
             workspaceId: ws,
             ratio: entryMeta?.ratio,
             resolution: editResolution,

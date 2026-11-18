@@ -1914,6 +1914,8 @@ export default function CanvasNodePanel({
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const [costEstimate, setCostEstimate] = useState<{
     estimated_cost?: number
+    reservation?: boolean
+    note?: string
     balance?: number
     can_afford?: boolean
     loading: boolean
@@ -1930,7 +1932,7 @@ export default function CanvasNodePanel({
       setCostEstimate({ loading: false })
       return
     }
-    setCostEstimate((prev) => ({ ...prev, loading: true }))
+    setCostEstimate({ loading: true })
     costTimerRef.current = window.setTimeout(() => {
       estimateAiTaskCost({
         canvasId,
@@ -1944,8 +1946,17 @@ export default function CanvasNodePanel({
       })
         .then((result: any) => {
           if (cancelled) return
+          if (
+            !Number.isFinite(result?.estimated_cost) ||
+            result.estimated_cost < 0 ||
+            typeof result.can_afford !== 'boolean'
+          ) {
+            throw new Error('报价数据不完整，请重新预估。')
+          }
           setCostEstimate({
-            estimated_cost: Number(result?.estimated_cost) || 0,
+            estimated_cost: result.estimated_cost,
+            reservation: result.estimate_kind === 'reservation',
+            note: result.estimate_note,
             balance: Number(result?.balance) || 0,
             can_afford: Boolean(result?.can_afford),
             loading: false,
@@ -1983,7 +1994,7 @@ export default function CanvasNodePanel({
       return
     }
     if (taskRunning || checkingAssets || maskUploading) return
-    if (isSeedanceModel && inputAssets.length && (costEstimate.loading || costEstimate.estimated_cost === undefined)) {
+    if (kind === 'video' && (costEstimate.loading || costEstimate.estimated_cost === undefined)) {
       if (costEstimate.error) setCostRetry((value) => value + 1)
       return
     }
@@ -1992,7 +2003,7 @@ export default function CanvasNodePanel({
       const operationLabel = selfVideoAssetId > 0 ? '修改当前视频' : '使用新模型生成视频'
       const ratioNote = videoRatioValue && !followSourceVideo ? `，画面比例 ${videoRatioValue}` : ''
       const confirmed = await requestConfirm(
-        `${operationLabel}${ratioNote}，预计消耗 ${creditsLabel(cost)}，是否继续？`,
+        `${operationLabel}${ratioNote}，${costEstimate.reservation ? '预冻结' : '预计消耗'} ${creditsLabel(cost)}。${costEstimate.note || ''}是否继续？`,
         { title: '确认制作费用', confirmLabel: '继续制作', cancelLabel: '再想想' },
       )
       if (confirmed !== true) return
@@ -2915,7 +2926,7 @@ export default function CanvasNodePanel({
           {/* 预估费用是说明文字，不与右侧生成按钮共用点击区域。 */}
           {
             <span
-              title={costEstimate.error}
+              title={costEstimate.error || costEstimate.note}
               className={`${styles.costText} ${
                 costEstimate.loading
                   ? styles.costTextLoading
@@ -2931,7 +2942,7 @@ export default function CanvasNodePanel({
                   : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
                     ? '积分不足'
                     : costEstimate.estimated_cost !== undefined
-                      ? `预计消耗：${creditsLabel(costEstimate.estimated_cost)}`
+                      ? `${costEstimate.reservation ? '预冻结' : '预计消耗'}：${creditsLabel(costEstimate.estimated_cost)}`
                       : '—'}
             </span>
           }
@@ -2954,7 +2965,7 @@ export default function CanvasNodePanel({
             disabled={
               taskRunning ||
               checkingAssets ||
-              (Boolean(isSeedanceModel) && inputAssets.length > 0 && costEstimate.loading) ||
+              (kind === 'video' && costEstimate.loading) ||
               !selectedModel ||
               !operationCode ||
               Boolean(inputValidationError || referenceLimitError)
@@ -2963,17 +2974,21 @@ export default function CanvasNodePanel({
             title={
               checkingAssets
                 ? '正在检查参考素材…'
-                : isSeedanceModel && inputAssets.length > 0 && costEstimate.loading
-                  ? '正在预估积分…'
-                  : isSeedanceModel && inputAssets.length > 0 && costEstimate.error
-                    ? '积分预估失败，点击重试'
-                    : taskRunning
-                      ? '生成过程中不能修改，请添加新的节点使用其他模型'
-                      : !selectedModel
-                        ? requiresImageModelSelection
-                          ? '原模型已不支持普通图片节点，请重新选择模型'
-                          : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                        : referenceLimitError || inputValidationError || (hasExistingResult ? '重新制作' : '开始制作')
+                : inputValidationError || referenceLimitError
+                  ? inputValidationError || referenceLimitError || undefined
+                  : kind === 'video' && costEstimate.loading
+                    ? '正在预估积分…'
+                    : kind === 'video' && costEstimate.error
+                      ? '积分预估失败，点击重试'
+                      : taskRunning
+                        ? '生成过程中不能修改，请添加新的节点使用其他模型'
+                        : !selectedModel
+                          ? requiresImageModelSelection
+                            ? '原模型已不支持普通图片节点，请重新选择模型'
+                            : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                          : hasExistingResult
+                            ? '重新制作'
+                            : '开始制作'
             }
           >
             {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}

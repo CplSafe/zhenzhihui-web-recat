@@ -130,6 +130,7 @@ describe('smart video lifecycle', () => {
     await expect(
       estimateVideoEditCost({
         workspaceId: 61,
+        videoAssetId: 77,
         prompt: '提高亮度',
         durationSec: 7,
         sourceVideoDurationSec: 5.06,
@@ -144,6 +145,7 @@ describe('smart video lifecycle', () => {
       workspaceId: 61,
       modelVersionId: 9,
       operationCode: 'video.edit',
+      inputAssets: [{ asset_id: 77, role: 'video' }],
       // 用户意见之外统一追加禁画面文字硬约束(视频模型画中文必乱码)
       prompt: expect.stringContaining('提高亮度'),
       params: { resolution: '720p' },
@@ -585,15 +587,17 @@ describe('smart video lifecycle', () => {
     }
     // 估价与提交必须喂同一份素材：参考图数量参与模型兼容性判定，
     // 只给提交传、估价不传，两端就会得出相反结论。
-    await generateFullVideo({ ...selection, imageAssetIds: [101, 102] })
-    await estimateFullVideoCost({ ...selection, imageAssetIds: [101, 102] })
+    await generateFullVideo({ ...selection, imageAssetIds: [101, 102], sourceVideoAssetIds: [207] })
+    await estimateFullVideoCost({ ...selection, imageAssetIds: [101, 102], sourceVideoAssetIds: [207] })
 
     const submitted = mocks.createAiTask.mock.calls[0]![0]
     const estimated = mocks.estimateAiTaskCost.mock.calls[0]![0]
     expect(submitted.inputAssets).toEqual([
       { asset_id: 101, role: 'reference_image' },
       { asset_id: 102, role: 'reference_image' },
+      { asset_id: 207, role: 'video' },
     ])
+    expect(estimated.inputAssets).toEqual(submitted.inputAssets)
     expect(submitted.params).toEqual(estimated.params)
     expect(mocks.buildVideoGenerationParams).toHaveBeenCalledTimes(3)
     expect(mocks.buildVideoGenerationParams.mock.calls.every(([, params]) => params.generateAudio === false)).toBe(true)

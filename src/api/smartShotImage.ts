@@ -19,7 +19,7 @@ import {
 } from './business'
 import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
 import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
-import { getModelParamFields } from '@/utils/modelSchema'
+import { getModelParamFields, getModelParamOptionValues, matchModelParamOptionValue } from '@/utils/modelSchema'
 import { getBackendGenerationModelName, getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
 
@@ -40,12 +40,21 @@ function smallestSize(options: string[]): string {
  * 严格按模型 params_schema 构建出图参数，避免 provider 拒绝未声明字段。
  * lowRes 仅在模型声明 size 时选最小档，watermark 也只在 schema 存在时下发。
  */
-function buildImageParams(model: any, ratio?: string, lowRes?: boolean) {
+function buildImageParams(model: any, ratio?: string, lowRes?: boolean, resolution?: string) {
   const params: any = buildStoryboardImageParams(model, ratio)
   const fields = getModelParamFields(model)
   // 仅当模型声明了 watermark 字段才显式关水印(如 doubao-seedream);gpt-image-2 无此字段则不下发。
   if (fields.some((f: any) => f?.name === 'watermark')) params.watermark = false
-  if (lowRes) {
+  if (resolution) {
+    const field = fields.find(
+      (f: any) => ['resolution', 'size'].includes(f.name) && getModelParamOptionValues(f).length > 0,
+    )
+    if (field) {
+      const value = matchModelParamOptionValue(resolution, getModelParamOptionValues(field))
+      if (value === undefined) throw new Error('当前模型不支持所选图片分辨率')
+      params[field.name] = value
+    }
+  } else if (lowRes) {
     const sizeField = fields.find((f: any) => f?.name === 'size')
     const opts = Array.isArray(sizeField?.options) ? sizeField.options.map(String) : []
     if (opts.length) params[sizeField.name] = smallestSize(opts)
@@ -688,6 +697,7 @@ export async function generateShotImage(args: {
   ratio?: string
   /** 最低分辨率出图(素材元素用,省时省额度) */
   lowRes?: boolean
+  resolution?: string
   /** 前端中断当前等待链路 */
   signal?: AbortSignal
   /** 任务一创建就抛出 taskId,供上层在需要时主动 cancel */
@@ -737,7 +747,7 @@ export async function generateShotImage(args: {
               ratio: args.ratio,
               referenceImageCount: inputAssetIds.length,
             })
-            return buildImageParams(model, args.ratio, args.lowRes)
+            return buildImageParams(model, args.ratio, args.lowRes, args.resolution)
           },
         })
         const taskId = getAiTaskId(task)
@@ -835,6 +845,7 @@ export async function estimateShotImageCost(args: {
   hasRefs?: boolean
   ratio?: string
   lowRes?: boolean
+  resolution?: string
   /** 用户显式选择的图像模型版本 ID。 */
   modelVersionId?: number
   /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
@@ -879,7 +890,7 @@ export async function estimateShotImageCost(args: {
     ratio: args.ratio,
     referenceImageCount,
   })
-  const params = buildImageParams(model, args.ratio, args.lowRes)
+  const params = buildImageParams(model, args.ratio, args.lowRes, args.resolution)
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,
     modelVersionId: explicitModel?.id || model.id,
