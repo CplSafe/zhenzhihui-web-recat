@@ -2813,23 +2813,25 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 }
 
 .canvas-view .react-flow__node.canvas-node-leased {
-  outline: 2px solid #66d8ca;
+  outline: 2px solid hsl(var(--canvas-editor-hue, 164) 78% 68%);
   outline-offset: 3px;
   border-radius: 12px;
-  box-shadow: 0 0 14px rgb(80 216 190 / 38%);
+  box-shadow: 0 0 14px hsl(var(--canvas-editor-hue, 164) 78% 60% / 38%);
 }
 .canvas-view .react-flow__node.canvas-node-leased::after {
   content: attr(data-editor-label);
   position: absolute;
-  bottom: calc(100% + 7px);
-  left: 0;
-  max-width: 100%;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
   padding: 3px 8px;
   overflow: hidden;
-  border: 1px solid #427b75;
+  border: 1px solid hsl(var(--canvas-editor-hue, 164) 65% 55%);
   border-radius: 6px;
-  background: #163733;
-  color: #cdfaf1;
+  background: hsl(var(--canvas-editor-hue, 164) 35% 15%);
+  color: hsl(var(--canvas-editor-hue, 164) 85% 88%);
   font:
     600 12px/1.5 system-ui,
     sans-serif;

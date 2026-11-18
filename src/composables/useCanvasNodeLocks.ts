@@ -113,6 +113,18 @@ export function useCanvasNodeLocks(
       ),
     [holders, blocked],
   )
+  // Derive the color from server-owned identity, not name, viewer or response order.
+  // A writer takes precedence over shared readers; ties use the lowest user ID.
+  const hues = useMemo(
+    () =>
+      new Map(
+        Object.entries(holders).flatMap(([id, owners]) => {
+          const owner = [...owners].sort((a, b) => Number(b.editing) - Number(a.editing) || a.user_id - b.user_id)[0]
+          return owner ? [[id, (owner.user_id * 137.508) % 360] as const] : []
+        }),
+      ),
+    [holders],
+  )
   const agentOwner = reply?.scope === scope ? reply.state.agent_owner : undefined
   const agentLock = reply?.scope === scope ? reply.state.agent_lock : undefined
   const agentOwnerRef = useRef(agentOwner)
@@ -141,6 +153,7 @@ export function useCanvasNodeLocks(
     unlockAgent,
     blocked,
     labels,
+    hues,
     reason,
     granted: !enabled || (reply?.scope === scope && reply.key === selectionKey && reply.state.granted),
     denied: !!(

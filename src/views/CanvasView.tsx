@@ -2932,6 +2932,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     unlockAgent,
     blocked: busyNodes,
     labels: leaseLabels,
+    hues: leaseHues,
     reason: busyReason,
     granted: canEditSelection,
     denied: selectionDenied,
@@ -11225,11 +11226,12 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                     .filter(Boolean)
                     .join(' '),
                   domAttributes: { ...node.domAttributes, title: label, 'data-editor-label': label },
+                  style: { ...node.style, '--canvas-editor-hue': leaseHues.get(node.id) } as CSSProperties,
                 }
               : node
           })
         : displayNodes,
-    [displayNodes, busyNodes, leaseLabels],
+    [displayNodes, busyNodes, leaseLabels, leaseHues],
   )
   /**
    * 节点变更的入口：在 React Flow 把拖拽位置写进状态前拦一道，做对齐吸附。

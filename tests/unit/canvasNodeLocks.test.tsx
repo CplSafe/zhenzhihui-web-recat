@@ -21,6 +21,8 @@ it('uses the decoded lock response, distinguishes an editor from a shared refere
   expect(view.result.current.reason('A')).toBe('小王 正在引用')
   expect(view.result.current.reason('B')).toBe('小王 正在编辑')
   expect(view.result.current.reason('C')).toBeUndefined()
+  expect(view.result.current.hues.get('A')).toBe(view.result.current.hues.get('B'))
+  expect(view.result.current.hues.get('A')).not.toBe(view.result.current.hues.get('C'))
   view.rerender({ ids: ['B'] })
   await waitFor(() => expect(view.result.current.denied).toBe(true))
   view.rerender({ ids: ['C'] })
@@ -48,4 +50,29 @@ it('blocks all node commands under an Agent lock and sends only an explicit cond
     JSON.stringify({ lock_id: 'held-1' }),
   )
   view.unmount()
+})
+
+it('keeps collaborator colors consistent across viewers and prefers writers over unordered shared readers', async () => {
+  vi.mocked(requestBusinessJson).mockResolvedValue({
+    nodes: {
+      A: [
+        { user_id: 2, name: '编辑者', editing: true },
+        { user_id: 1, name: '引用者', editing: false },
+      ],
+      B: [
+        { user_id: 1, name: '引用者', editing: false },
+        { user_id: 2, name: '编辑者', editing: true },
+      ],
+      C: [{ user_id: 2, name: '编辑者的新名字', editing: true }],
+    },
+    granted: true,
+  })
+  const first = renderHook(() => useCanvasNodeLocks(4, 8, 1, true, []))
+  const second = renderHook(() => useCanvasNodeLocks(4, 8, 2, true, []))
+  await waitFor(() => expect(first.result.current.hues.size).toBe(3))
+  await waitFor(() => expect(second.result.current.hues.size).toBe(3))
+  expect(first.result.current.hues).toEqual(second.result.current.hues)
+  expect(new Set(first.result.current.hues.values()).size).toBe(1)
+  expect(first.result.current.reason('A')).toBe('编辑者 正在编辑')
+  expect(second.result.current.reason('A')).toBeUndefined()
 })
