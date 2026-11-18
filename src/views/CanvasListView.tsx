@@ -114,6 +114,10 @@ export default function CanvasListView() {
   // 值为 null 表示这张画布确实没有可用媒体，避免反复拉同一张画布的元素。
   const [covers, setCovers] = useState<Record<number, CanvasCover | null>>({})
   const coverLoadedRef = useRef(new Set<string>())
+  const coverRequestsRef = useRef(0)
+  const [coverSettled, setCoverSettled] = useState(0)
+  const coverKeysRef = useRef(new Set<string>())
+
   // 只有「曾经进入视口」的画布才去取封面，见下方 IntersectionObserver 副作用
   const [coverVisibleIds, setCoverVisibleIds] = useState<Set<number>>(() => new Set())
   const gridRef = useRef<HTMLDivElement | null>(null)
@@ -136,6 +140,8 @@ export default function CanvasListView() {
     () => (canvasesWorkspaceId === activeWsId ? canvases : []),
     [canvasesWorkspaceId, activeWsId, canvases],
   )
+
+  coverKeysRef.current = new Set(effectiveCanvases.map((item) => `${activeWsId}:${item.id}:${item.revision || 0}`))
 
   // 前端分页：每页 12 张（响应式网格下 2~4 行）。切换空间回到第一页；删到当前页为空时夹回最后一页。
   const pageSize = 12
@@ -205,40 +211,40 @@ export default function CanvasListView() {
   useEffect(() => {
     const wsId = activeWsId
     if (!wsId || !pagedCanvases.length) return
-    let disposed = false
 
     const pending = pagedCanvases
       .map((item) => ({ id: Number(item.id || 0), key: `${wsId}:${item.id}:${item.revision || 0}` }))
       .filter((item) => item.id > 0 && coverVisibleIds.has(item.id) && !coverLoadedRef.current.has(item.key))
-    if (!pending.length) return
+      .slice(0, Math.max(0, 3 - coverRequestsRef.current))
 
-    const loadOne = async ({ id, key }: { id: number; key: string }) => {
+    for (const { id, key } of pending) {
       coverLoadedRef.current.add(key)
-      try {
-        const page = await fetchAllCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
-        if (disposed) return
-        setCovers((prev) => ({ ...prev, [id]: pickCanvasCover(page.elements, wsId) }))
-      } catch {
-        // 单张封面取不到不影响列表：卡片继续显示占位图，下次 revision 变化再试
-        coverLoadedRef.current.delete(key)
-      }
+      coverRequestsRef.current += 1
+      void fetchAllCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
+        .then((page) => {
+          // New visible cards must not invalidate an existing request. Only a changed
+          // workspace/revision invalidates its result; stale results can be fetched on return.
+          if (!coverKeysRef.current.has(key)) {
+            coverLoadedRef.current.delete(key)
+            return
+          }
+          setCovers((prev) => ({ ...prev, [id]: pickCanvasCover(page.elements, wsId) }))
+        })
+        .catch(() => {
+          // Keep the placeholder until revision changes; never loop on a failing cover request.
+        })
+        .finally(() => {
+          coverRequestsRef.current -= 1
+          setCoverSettled((value) => value + 1)
+        })
     }
+  }, [activeWsId, pagedCanvases, coverVisibleIds, coverSettled])
 
-    void (async () => {
-      const queue = [...pending]
-      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
-        while (queue.length && !disposed) {
-          const next = queue.shift()
-          if (next) await loadOne(next)
-        }
-      })
-      await Promise.all(workers)
-    })()
-
-    return () => {
-      disposed = true
-    }
-  }, [activeWsId, pagedCanvases, coverVisibleIds])
+  useEffect(() => {
+    setCovers({})
+    setCoverVisibleIds(new Set())
+    coverLoadedRef.current.clear()
+  }, [activeWsId])
 
   // 拉取画布列表；请求序号 + workspace 快照共同阻止过期响应覆盖当前页面
   const loadCanvases = useCallback(async () => {

@@ -269,6 +269,8 @@ describe('ImageChat', () => {
     await user.type(composer, '产品')
     await user.click(screen.getByRole('button', { name: '引用参考素材' }))
     expect(composer).toHaveValue('产品@')
+    // 等待首次插入在下一帧恢复焦点，再模拟用户移动光标。
+    await waitFor(() => expect(composer).toHaveFocus())
 
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     await user.upload(input, new File(['x'], 'ref.png', { type: 'image/png' }))

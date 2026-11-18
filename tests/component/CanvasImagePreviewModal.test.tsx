@@ -30,7 +30,11 @@ describe('CanvasImagePreviewModal', () => {
       activeId: 'pano',
       onPanorama,
     })
-    await userEvent.click(screen.getByRole('button', { name: '360° 沉浸浏览／取景' }))
+    // The overlay is anchored to the loaded image, not the initial zero-sized placeholder.
+    const image = screen.getByRole('img', { name: '全景生成结果' })
+    Object.defineProperties(image, { naturalWidth: { value: 2048 }, naturalHeight: { value: 1024 } })
+    fireEvent.load(image)
+    await userEvent.click(screen.getByRole('button', { name: '打开 360° 沉浸浏览与取景' }))
     expect(onPanorama).toHaveBeenCalledWith('pano')
   })
   it('展示当前图片、标题与「第几张 / 共几张」序号', () => {
@@ -74,7 +78,11 @@ describe('CanvasImagePreviewModal', () => {
   })
 
   it('只有一张图片时不显示箭头与缩略图条', () => {
-    renderModal({ items: [ITEMS[0]], activeId: 'n1' })
+    renderModal({ items: [ITEMS[0]], activeId: 'n1', onPanorama: vi.fn() })
+    const image = screen.getByRole('img', { name: '图片 · 商品主图' })
+    Object.defineProperties(image, { naturalWidth: { value: 1024 }, naturalHeight: { value: 1024 } })
+    fireEvent.load(image)
+    expect(screen.queryByRole('button', { name: '打开 360° 沉浸浏览与取景' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /一张图片/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
     expect(screen.queryByText('1 / 1')).not.toBeInTheDocument()

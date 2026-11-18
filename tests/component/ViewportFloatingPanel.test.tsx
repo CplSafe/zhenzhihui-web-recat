@@ -6,16 +6,18 @@ it.each([0.5, 1, 2])('画布缩放 %s 时把越界菜单移回视口', (scale) =
   const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
     this: HTMLElement,
   ) {
-    const [x = 0, y = 0] = (this.style.translate || '').split(' ').map((value) => parseFloat(value) || 0)
-    const left = -50 + x * scale
-    const top = -30 + y * scale
+    // Portal panels use fixed screen coordinates; only the canvas anchor is scaled.
+    const panel = this.getAttribute('role') === 'listbox'
+    const left = panel ? parseFloat(this.style.left) || 0 : -50 * scale
+    const top = panel ? parseFloat(this.style.top) || 0 : -250 * scale
+
     return {
       left,
       top,
-      right: left + 200 * scale,
-      bottom: top + 100 * scale,
-      width: 200 * scale,
-      height: 100 * scale,
+      right: left + 200,
+      bottom: top + 100,
+      width: 200,
+      height: 100,
       x: left,
       y: top,
       toJSON() {},
@@ -25,7 +27,10 @@ it.each([0.5, 1, 2])('画布缩放 %s 时把越界菜单移回视口', (scale) =
   const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100)
   const view = render(<ViewportFloatingPanel role="listbox">候选</ViewportFloatingPanel>)
   try {
-    const bounds = screen.getByRole('listbox').getBoundingClientRect()
+    const panel = screen.getByRole('listbox')
+    expect(panel.parentElement).toBe(document.body)
+    expect(panel).toHaveStyle({ position: 'fixed' })
+    const bounds = panel.getBoundingClientRect()
     expect(bounds.left).toBe(12)
     expect(bounds.top).toBe(12)
     expect(bounds.right).toBeLessThanOrEqual(window.innerWidth - 12)

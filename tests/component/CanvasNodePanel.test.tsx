@@ -270,7 +270,10 @@ describe('CanvasNodePanel 素材预检', () => {
 
     await user.click(screen.getByRole('button', { name: /^(制作|重新制作|生成分镜)$/ }))
     expect(onPreflightAssets).toHaveBeenCalledWith(
-      imageNodeWithReference().sourceRefs,
+      imageNodeWithReference().sourceRefs.map((ref) => ({
+        ...ref,
+        thumbnailUrl: '/api/v1/assets/77/download?workspace_id=7',
+      })),
       [{ asset_id: 77, role: 'reference_image' }],
       false,
     )
@@ -1294,7 +1297,7 @@ describe('CanvasNodePanel @参考素材引用', () => {
     expect(screen.getByText('@图片1')).toBeInTheDocument()
     expect(screen.getByText('@图片2')).toBeInTheDocument()
     // 点第二张 → 在提示词里插入 @图片2（光标默认在开头）
-    await user.click(screen.getByTitle(/@图片2/))
+    await user.click(screen.getByRole('button', { name: '@图片2', exact: true }))
     expect(onPromptChange).toHaveBeenCalledWith('@图片2 ')
   })
 
@@ -1350,7 +1353,7 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     renderPanel(MODEL, renamedRefsNode, { onPromptChange })
     expect(screen.getByText('@天安门')).toBeInTheDocument()
     expect(screen.getByText('@图片2')).toBeInTheDocument()
-    await user.click(screen.getByTitle(/@天安门/))
+    await user.click(screen.getByRole('button', { name: '@天安门', exact: true }))
     expect(onPromptChange).toHaveBeenCalledWith('@天安门 ')
   })
 

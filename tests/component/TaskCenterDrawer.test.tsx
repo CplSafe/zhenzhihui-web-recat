@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TaskCenterTask } from '@/stores/taskCenter'
@@ -137,7 +137,7 @@ beforeEach(() => {
 })
 
 describe('TaskCenterDrawer isolation and reconciliation', () => {
-  it('在爆款成片中同时显示普通任务和当前账号的精制任务，不显示独立精制页签', async () => {
+  it('普通成片与精制任务分标签展示', async () => {
     seed(task({ status: 'succeeded', title: '普通成片任务', locallyInitiated: true }))
     useRefineDemoStore.setState({
       tasks: [
@@ -160,9 +160,11 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
       ],
     })
     render(<TaskCenterDrawer scope="smart" />)
-    expect(screen.queryByRole('tab', { name: '精制任务' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /精制成片任务/ })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '普通成片任务，已生成，打开项目' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /精制成片任务/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '精制任务' }))
+    expect(screen.getByRole('button', { name: /精制成片任务/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '普通成片任务，已生成，打开项目' })).not.toBeInTheDocument()
   })
   it('shows up to four lines of a hot-copy task prompt on hover', async () => {
     const user = userEvent.setup()

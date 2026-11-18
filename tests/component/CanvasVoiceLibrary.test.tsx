@@ -1,80 +1,90 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render as renderTesting, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ConfigProvider } from 'antd'
 import CanvasVoiceLibrary from '@/components/canvas/CanvasVoiceLibrary'
-import { saveVoiceSample } from '@/utils/voiceLibrary'
 
+// jsdom does not complete CSS animations; keep real visibility assertions without modal motion.
+function render(ui: React.ReactElement) {
+  return renderTesting(<ConfigProvider theme={{ token: { motion: false } }}>{ui}</ConfigProvider>)
+}
+
+const mocks = vi.hoisted(() => ({ list: vi.fn(), filters: vi.fn(), get: vi.fn() }))
+vi.mock('@/api/voices', async (original) => ({
+  ...(await original<typeof import('@/api/voices')>()),
+  listVoices: mocks.list,
+  getVoiceFilters: mocks.filters,
+  getVoice: mocks.get,
+}))
+const voice = { id: 5, name: '角色旁白', source: 'public', status: 'ready', workspace_id: 21 }
 const defaults = () => ({
   userId: 'user',
   workspaceId: 21,
   modelName: '配音模型',
-  fields: [
-    {
-      name: 'speaker',
-      required: true,
-      options: [
-        { value: 7, label: '沉稳旁白' },
-        { value: 'bright', label: '清亮旁白' },
-      ],
-    },
-  ],
-  values: { speaker: 7 },
+  modelVersionId: 91,
+  fields: [],
+  values: {},
   disabled: false,
   onApply: vi.fn(),
   onClose: vi.fn(),
   onUpload: vi.fn(),
   onReference: vi.fn(),
+  onSelectVoice: vi.fn(),
+})
+beforeEach(() => {
+  Object.values(mocks).forEach((mock) => mock.mockReset())
+  mocks.list.mockResolvedValue({ items: [voice], total: 1 })
+  mocks.filters.mockResolvedValue({ sources: ['public', 'cloned'], languages: ['en'] })
+  mocks.get.mockResolvedValue(voice)
 })
 
-describe('音色库', () => {
-  it('未选择模型且从声音样本打开时，仍展示三个分类并允许切换', () => {
-    render(<CanvasVoiceLibrary {...defaults()} modelName="" fields={[]} initialTab="samples" />)
-    expect(screen.getByRole('button', { name: '模型音色' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '声音样本' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: '公共音色' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '模型音色' }))
-    expect(screen.getByText('请先选择音频模型')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '确认使用' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '声音样本' }))
-    expect(screen.getByRole('button', { name: '声音样本' })).toHaveAttribute('aria-pressed', 'true')
-  })
-  it('选择保留为草稿，关闭不提交', () => {
+describe('画布统一音色库', () => {
+  it('提供系统、我的和收藏分类，关闭浏览不提交选择', async () => {
     const props = defaults()
     render(<CanvasVoiceLibrary {...props} />)
-    fireEvent.click(screen.getByRole('radio', { name: /清亮旁白/ }))
+    await screen.findByRole('button', { name: '选用' }, { timeout: 5000 })
+    for (const name of ['系统音色', '我的音色', '收藏'])
+      await waitFor(() => expect(screen.getByRole('button', { name })).toBeVisible())
+    fireEvent.click(screen.getByRole('button', { name: '关闭', exact: true }))
+    expect(props.onClose).toHaveBeenCalledOnce()
+    expect(props.onSelectVoice).not.toHaveBeenCalled()
     expect(props.onApply).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    expect(mocks.get).not.toHaveBeenCalled()
+  })
+  it('确认前重新核验音色，应用服务器编号并关闭，不启动配音', async () => {
+    const props = defaults()
+    render(<CanvasVoiceLibrary {...props} />)
+    fireEvent.click(await screen.findByRole('button', { name: '选用' }, { timeout: 5000 }))
+    await waitFor(() => expect(props.onSelectVoice).toHaveBeenCalledWith(voice))
+    expect(mocks.get).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 21 }), 5)
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(props.onApply).not.toHaveBeenCalled()
+    expect(props.onUpload).not.toHaveBeenCalled()
   })
-  it('搜索不丢失选择，确认保持后端原始数值类型', () => {
+  it.each(['running', 'unsupported'] as const)('%s 时允许浏览但不能选用', async (reason) => {
     const props = defaults()
+    render(
+      <CanvasVoiceLibrary
+        {...props}
+        disabled={reason === 'running'}
+        onSelectVoice={reason === 'unsupported' ? undefined : props.onSelectVoice}
+      />,
+    )
+    expect(await screen.findByRole('button', { name: '选用' }, { timeout: 5000 })).toBeDisabled()
+    expect(mocks.get).not.toHaveBeenCalled()
+    expect(props.onSelectVoice).not.toHaveBeenCalled()
+  })
+  it('没有模型时不能应用音色，也不传入虚构模型编号', async () => {
+    render(<CanvasVoiceLibrary {...defaults()} modelVersionId={undefined} />)
+    expect(await screen.findByRole('button', { name: '选用' }, { timeout: 5000 })).toBeDisabled()
+    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 21, modelVersionId: undefined }))
+  })
+  it('音色在选择前变为训练中时保留弹窗，不应用旧结果', async () => {
+    const props = defaults()
+    mocks.get.mockResolvedValue({ ...voice, status: 'training' })
     render(<CanvasVoiceLibrary {...props} />)
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索模型音色' }), { target: { value: '不存在' } })
-    expect(screen.getByRole('status')).toHaveTextContent('没有匹配的音色')
-    fireEvent.click(screen.getByRole('button', { name: '确认使用' }))
-    expect(props.onApply).toHaveBeenCalledWith({ speaker: 7 })
-  })
-  it('必填音色失效时必须重新选择，运行中不可提交', () => {
-    const props = defaults()
-    const { rerender } = render(<CanvasVoiceLibrary {...props} values={{ speaker: 'removed' }} />)
-    expect(screen.getByRole('button', { name: '确认使用' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('radio', { name: /沉稳旁白/ }))
-    expect(screen.getByRole('button', { name: '确认使用' })).toBeEnabled()
-    rerender(<CanvasVoiceLibrary {...props} disabled />)
-    expect(screen.getByRole('button', { name: '确认使用' })).toBeDisabled()
-  })
-  it('模型没有音色目录时明确说明，不自动提供不存在的选项', () => {
-    render(<CanvasVoiceLibrary {...defaults()} fields={[]} />)
-    expect(screen.getByText('当前模型未提供可选音色列表')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '确认使用' })).toBeDisabled()
-  })
-  it('声音样本继续引用当前空间的素材，和模型音色分别操作', async () => {
-    const props = defaults()
-    props.onReference.mockResolvedValue(true)
-    saveVoiceSample('user', 21, 55, '角色样本')
-    render(<CanvasVoiceLibrary {...props} initialTab="samples" />)
-    fireEvent.click(screen.getByRole('button', { name: '引用' }))
-    expect(props.onReference).toHaveBeenCalledWith(55, '角色样本')
-    expect(props.onApply).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: '选用' }, { timeout: 5000 }))
+    await screen.findByText('该音色尚不可用，请稍后重试或选择其他音色')
+    expect(props.onSelectVoice).not.toHaveBeenCalled()
+    expect(props.onClose).not.toHaveBeenCalled()
   })
 })

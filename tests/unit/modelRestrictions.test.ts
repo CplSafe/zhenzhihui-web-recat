@@ -8,6 +8,15 @@ import {
 } from '@/utils/modelRestrictions'
 
 describe('model restriction metadata', () => {
+  it.each([
+    [[4, 5, 6, 7], '4 秒~7 秒'],
+    [[15, 5, 10, 5], '5 秒、10 秒、15 秒'],
+    [[1.5, 2.5, 3.5], '1.5 秒、2.5 秒、3.5 秒'],
+  ])('describes only genuinely consecutive integer options as a range: %j', (options, label) => {
+    const result = buildModelRestrictionSummary({ params_schema: { fields: [{ name: 'duration', options }] } })
+    expect(result.messages).toContain(`时长仅支持：${label}`)
+  })
+
   it('returns the declared maximum duration without inventing one when absent', () => {
     expect(getModelMaximumDurationSec({ duration: { options: [5, 10, 15] } })).toBe(15)
     expect(getModelMaximumDurationSec({ duration: { maximum: 20 } })).toBe(20)

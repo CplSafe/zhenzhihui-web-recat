@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('react-router-dom', () => ({
-  useLocation: () => ({ pathname: '/canvas', state: null }),
+  useLocation: () => ({ pathname: '/canvas', search: '?manage=1', state: null }),
   useNavigate: () => mocks.navigate,
 }))
 vi.mock('antd', () => ({ Pagination: () => null }))
@@ -52,12 +52,13 @@ describe('CanvasListView 重命名权限', () => {
     ])
   })
 
-  it('他人画布点「重命名」只提示，不打开弹窗', async () => {
+  it('他人画布禁用重命名，不打开弹窗或提交', async () => {
     render(<CanvasListView />)
     await openMenu('同事画布')
     fireEvent.click(screen.getByRole('button', { name: '重命名' }))
 
-    expect(mocks.showToast).toHaveBeenCalledWith('这是其他人的画布，无法重命名', 'info')
+    expect(screen.getByRole('button', { name: '重命名' })).toBeDisabled()
+    expect(mocks.patchCanvas).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog', { name: '重命名画布' })).not.toBeInTheDocument()
   })
 
