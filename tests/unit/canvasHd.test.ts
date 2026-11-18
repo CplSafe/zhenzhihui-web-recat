@@ -149,6 +149,7 @@ describe('canvasHd', () => {
     expect(initial.edges).toHaveLength(1)
     expect(initial.nodes[1].data).toMatchObject({ taskStatus: 'processing' })
     expect(initial.nodes[1].data.assetId).toBeUndefined()
+    expect(initial.nodes.find((node) => node.id === 'hd-result-submission-test')?.data.taskIdempotencyKey).toBe('test')
     const failed = materializeHdResults(initial.nodes, initial.edges, [{ ...pending, status: 'failed' }], 21, 3)
     expect(failed.nodes[1].data).toMatchObject({ taskStatus: 'failed' })
     const completed = materializeHdResults(initial.nodes, initial.edges, [{ ...task, id: pending.id }], 21, 3)

@@ -1,3 +1,4 @@
+import { useCanvasReservation } from '@/composables/useCanvasReservation'
 import { imageGenerationInfo } from '@/utils/canvasImageInfo'
 import { useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
@@ -70,6 +71,7 @@ export default function CanvasUpscale(props: {
   onModalChange: (open: boolean) => void
   onVideoGenerate?: (submission: VideoUpscaleSubmission) => Promise<void>
 }) {
+  const persistReservation = useCanvasReservation()
   const source = hdSources(props.nodes.filter((node) => props.request?.ids.includes(node.id)))[0]
   const operation = source ? `${source.kind}.upscale` : ''
   const [catalogRetry, setCatalogRetry] = useState(0)
@@ -386,6 +388,9 @@ export default function CanvasUpscale(props: {
       props.onSubmitted()
       let task: any
       try {
+        if (!persistReservation) throw new Error('画布尚未就绪，请稍后重试')
+        await persistReservation(`hd-result-${base.id}`, submissionKey)
+        if (controller.current.signal.aborted) return
         task = await createAiTask({
           ...body,
           modelVersion: model,

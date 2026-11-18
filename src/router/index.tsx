@@ -108,6 +108,7 @@ const DistributionView = lazy(() => import('../views/DistributionView'))
 const StudioCreateView = lazy(routeImporters.studio)
 /** 创意画布路由组件。 */
 /** 无限画布列表路由组件。 */
+const CanvasStatisticsView = lazy(() => import('../views/CanvasStatisticsView'))
 const CanvasListView = lazy(routeImporters.canvasList)
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
 /** IP 创作者详情路由组件。 */
@@ -380,6 +381,7 @@ export const router = createBrowserRouter([
        */
       { path: 'canvas/share/:token', element: lazyPage(<CanvasShareView />), handle: { requiresAuth: false } },
       { path: 'canvas/:id', element: <CanvasAccessRoute /> },
+      { path: 'canvas/:id/statistics', element: lazyPage(<CanvasStatisticsView />) },
       { path: '*', element: <Navigate to={APP_HOME_PATH} replace />, handle: { requiresAuth: false } },
     ],
   },

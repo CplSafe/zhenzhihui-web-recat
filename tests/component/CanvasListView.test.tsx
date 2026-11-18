@@ -130,6 +130,7 @@ vi.mock('@/api/canvasApi', () => ({
 }))
 
 import CanvasListView from '@/views/CanvasListView'
+import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
 
 function canvas(id: number, title: string) {
   return { id, title, status: 'active', revision: 1, updated_at: '2026-08-17T07:00:00.000Z' }
@@ -158,6 +159,18 @@ describe('CanvasListView 封面加载', () => {
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
     mocks.listCanvases.mockResolvedValue([canvas(101, '甲'), canvas(102, '乙'), canvas(103, '丙')])
     mocks.fetchAllCanvasElements.mockResolvedValue({ elements: [], sync_revision: 1 })
+  })
+
+  it('首页最近项目也显示每张画布的积分及未知状态', async () => {
+    mocks.listCanvases.mockResolvedValue([
+      { ...canvas(101, '甲'), usedCredits: 1.25 },
+      { ...canvas(102, '乙'), usedCredits: 0 },
+      canvas(103, '丙'),
+    ])
+    render(<CanvasEmptyStateActions />)
+    expect(await screen.findByText('累计消耗 1.25 积分')).toBeInTheDocument()
+    expect(screen.getByText('累计消耗 0 积分')).toBeInTheDocument()
+    expect(screen.getByText('累计消耗 — 积分')).toBeInTheDocument()
   })
 
   it('每张卡片显示自己的累计积分，包括零消耗', async () => {

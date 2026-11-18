@@ -16,6 +16,7 @@ import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
 import styles from './CanvasEmptyStateActions.module.css'
+import { formatCredits } from '@/utils/creditsFormat'
 
 type Action = {
   label: string
@@ -367,6 +368,7 @@ export default function CanvasEmptyStateActions() {
                 </span>
                 <span className={styles.projectBody}>
                   <strong title={item.title || '未命名画布'}>{item.title || '未命名画布'}</strong>
+                  <small>累计消耗 {item.usedCredits == null ? '—' : formatCredits(item.usedCredits)} 积分</small>
                   <small>
                     更新于{' '}
                     {item.updated_at || item.created_at

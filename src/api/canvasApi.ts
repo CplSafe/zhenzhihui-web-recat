@@ -601,3 +601,26 @@ export function subscribeCanvasEvents({
   // EventSource reconnects on a transient disconnect or the server's stream-age limit.
   return close
 }
+
+export interface CanvasNodeUsage {
+  node_id: string
+  title: string
+  deleted: boolean
+  used_credits: number
+  members: { user_id: number; display_name: string; used_credits: number }[]
+}
+export interface CanvasStatistics {
+  items: CanvasNodeUsage[]
+  total: number
+  total_used_credits: number
+}
+export async function getCanvasStatistics(workspaceId: number, canvasId: number, page = 1): Promise<CanvasStatistics> {
+  const ws = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
+  const id = requirePositiveInteger(canvasId, '画布 ID 无效')
+  const payload = await requestBusinessJson<unknown>(
+    `/api/v1/canvases/${id}/statistics?workspace_id=${ws}&limit=50&offset=${(Math.max(1, page) - 1) * 50}`,
+  )
+  const data = unwrap<CanvasStatistics>(payload)
+  if (!data || !Array.isArray(data.items)) throw new BusinessApiError('统计数据暂不可用')
+  return data
+}

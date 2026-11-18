@@ -1,3 +1,4 @@
+import { useCanvasReservation } from '@/composables/useCanvasReservation'
 import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
@@ -88,6 +89,7 @@ export default function CanvasAudioGenerator({
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const canvasId = useCanvasBillingScope()?.canvasId
+  const persistReservation = useCanvasReservation()
   const { updateNodeData, getEdges, getNode, getNodes } = useReactFlow()
   const linkedMediaFingerprint = useStore((state) =>
     JSON.stringify(
@@ -1041,6 +1043,11 @@ export default function CanvasAudioGenerator({
         taskSubmissionFingerprint: fingerprint,
         taskIdempotencyKey: submissionId,
       })
+      if (canvasId) {
+        if (!persistReservation) throw new Error('画布尚未就绪，请稍后重试')
+        await persistReservation(nodeId, submissionId)
+      }
+      if (abort.signal.aborted || !alive.current) return
       submitted = true
       const task = await createAiTask({
         canvasId,

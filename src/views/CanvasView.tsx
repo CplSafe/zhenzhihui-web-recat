@@ -223,6 +223,7 @@ import {
   unwrapGenerationModelCatalogResponse,
 } from '@/utils/generationModelCatalog'
 import { CanvasBillingContext } from '@/composables/useCanvasBillingScope'
+import { CanvasReservationContext, verifySavedReservation } from '@/composables/useCanvasReservation'
 import { polishText } from '@/api/aiPolish'
 import { generationPolishContext } from '@/api/entryPromptPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
@@ -2531,14 +2532,20 @@ const nodeTypes: NodeTypes = {
 }
 
 /** 无限画布入口页（提供 ReactFlowProvider 上下文） */
-export default function CanvasView({ modelDefaults }: { modelDefaults?: CanvasModelDefaults }) {
+export default function CanvasView({
+  modelDefaults,
+  canManage = false,
+}: {
+  modelDefaults?: CanvasModelDefaults
+  canManage?: boolean
+}) {
   const { id } = useParams()
   const workspaceId = useWorkspaceId()
   const scope = useMemo(() => ({ workspaceId, canvasId: Number(id) }), [workspaceId, id])
   return (
     <ReactFlowProvider key={id}>
       <CanvasBillingContext.Provider value={scope}>
-        <CanvasInner modelDefaults={modelDefaults} />
+        <CanvasInner modelDefaults={modelDefaults} canManage={canManage} />
       </CanvasBillingContext.Provider>
     </ReactFlowProvider>
   )
@@ -2547,7 +2554,13 @@ export default function CanvasView({ modelDefaults }: { modelDefaults?: CanvasMo
 const CanvasScriptImport = lazy(() => import('@/components/canvas/CanvasScriptImport'))
 
 /** 画布主体逻辑 */
-function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: CanvasModelDefaults }) {
+function CanvasInner({
+  modelDefaults: initialDefaults,
+  canManage,
+}: {
+  modelDefaults?: CanvasModelDefaults
+  canManage: boolean
+}) {
   const [modelDefaults, setModelDefaults] = useState(initialDefaults)
   const modelSaveVersion = useRef(0)
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false)
@@ -5725,6 +5738,21 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     await syncQueueRef.current
   }
 
+  const persistReservation = useLatestCallback(async (nodeId: string, key: string) => {
+    if (!cloudLoadedRef.current || !latestRef.current.nodes.some((node) => node.id === nodeId)) {
+      throw new Error('节点尚未同步到画布，请稍后重试')
+    }
+    const withKey = (node: Node) =>
+      node.id === nodeId ? { ...node, data: { ...node.data, taskIdempotencyKey: key } } : node
+    latestRef.current = { ...latestRef.current, nodes: latestRef.current.nodes.map(withKey) }
+    setNodes((current) => current.map(withKey))
+    await verifySavedReservation(
+      () => flushCanvasSyncRef.current(),
+      () => syncRef.current.nodes.find((node) => node.id === nodeId)?.data?.taskIdempotencyKey,
+      key,
+    )
+  })
+
   // nodes/edges 变化 → 防抖调度保存
   useEffect(() => {
     if (!cloudLoadedRef.current) return
@@ -7355,7 +7383,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
           setSaveStatus('dirty')
           // 保存节点提示词和提交凭证后再发起请求，刷新页面时可恢复真实提交现场。
-          await flushCanvasSyncRef.current()
+          await persistReservation(targetNodeId, taskIdempotencyKey)
           // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
           const task =
             generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
@@ -7564,6 +7592,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       }
     },
     [
+      persistReservation,
       canvasModels,
       currentUserId,
       handleInsufficientCredits,
@@ -11516,6 +11545,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       if (hd?.taskId && node.data.assetId) deliveredHdRef.current.add(hd.taskId)
     }
     if (next.changed) {
+      latestRef.current = { nodes: next.nodes, edges: next.edges }
       setNodes(next.nodes)
       setEdges(next.edges)
       setSaveStatus('dirty')
@@ -11523,763 +11553,1752 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   })
 
   return (
-    <CanvasNodeActionsContext.Provider value={nodeActions}>
-      {!agentOwner && (
-        <Suspense fallback={null}>
-          <CanvasHdWorkspace
-            key={`${workspaceId}:${canvasId}`}
-            workspaceId={workspaceId}
-            canvasId={canvasId}
-            nodes={nodes}
-            request={hdRequest}
-            anchor={
-              hdRequest && selectedNodeScreenRect
-                ? {
-                    centerX: selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2,
-                    bottom: selectedNodeScreenRect.bottom,
-                  }
-                : null
-            }
-            onCloseRequest={closeHdRequest}
-            onTasks={receiveHdTasks}
-            onSubmitted={() => {
-              hdSelectionRef.current = null
-              setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
-              setSelectedNode(null)
-              setSelectedNodeIds([])
-            }}
-            onVideoGenerate={handleVideoUpscaleGenerate}
-            onModalChange={handleHdModalChange}
-          />
-        </Suspense>
-      )}
-      {!agentOwner && standaloneCrop && (
-        <Suspense fallback={null}>
-          <CanvasStandaloneImageCropModal
-            sourceUrl={standaloneCrop.sourceUrl}
-            title={standaloneCrop.title}
-            onClose={() => {
-              setStandaloneCropRequest(null)
-              canvasRootRef.current?.focus({ preventScroll: true })
-            }}
-            onSave={(file, width, height, signal) => saveStandaloneCrop(standaloneCrop, file, width, height, signal)}
-          />
-        </Suspense>
-      )}
-      {!agentOwner && imageCropRequest ? (
-        <Suspense fallback={null}>
-          <CanvasImageCropModal
-            images={imageCropRequest.images}
-            onClose={() => setImageCropRequest(null)}
-            onSave={async (image, file, width, height) => {
-              const targetId = imageCropRequest.targetId
-              const source = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
-              if (!source || !latestRef.current.nodes.some((node) => node.id === targetId))
-                throw new Error('素材节点已删除，请重新生成')
-              const uploaded = await uploadAssetFile({ workspaceId, file })
-              const assetId = Number(uploaded?.asset?.id)
-              if (!(assetId > 0)) throw new Error('裁切图片上传失败')
-              const latestSource = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
-              if (!latestSource || Number(latestSource.data.assetId) !== Number(source.data.assetId))
-                throw new Error('原素材已更换，请重新生成后裁切')
-              if (!latestRef.current.nodes.some((node) => node.id === targetId)) throw new Error('生成节点已删除')
-              const ratio = naturalImageRatio(width, height)
-              const resultUrl = assetStreamUrl(assetId, Number(workspaceId))
-              commitHistory()
-              const local = source.data.assetSource === 'upload'
-              setNodes((items) =>
-                items.map((node) => {
-                  if (local && node.id === targetId)
-                    return {
-                      ...node,
-                      data: {
-                        ...node.data,
-                        croppedInputAssets: {
-                          ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
-                          [image.ref.edgeId]: {
-                            originalAssetId: Number(source.data.assetId),
-                            assetId,
-                            workspaceId: Number(workspaceId),
+    <CanvasReservationContext.Provider value={persistReservation}>
+      <CanvasNodeActionsContext.Provider value={nodeActions}>
+        {!agentOwner && (
+          <Suspense fallback={null}>
+            <CanvasHdWorkspace
+              key={`${workspaceId}:${canvasId}`}
+              workspaceId={workspaceId}
+              canvasId={canvasId}
+              nodes={nodes}
+              request={hdRequest}
+              anchor={
+                hdRequest && selectedNodeScreenRect
+                  ? {
+                      centerX: selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2,
+                      bottom: selectedNodeScreenRect.bottom,
+                    }
+                  : null
+              }
+              onCloseRequest={closeHdRequest}
+              onTasks={receiveHdTasks}
+              onSubmitted={() => {
+                hdSelectionRef.current = null
+                setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
+                setSelectedNode(null)
+                setSelectedNodeIds([])
+              }}
+              onVideoGenerate={handleVideoUpscaleGenerate}
+              onModalChange={handleHdModalChange}
+            />
+          </Suspense>
+        )}
+        {!agentOwner && standaloneCrop && (
+          <Suspense fallback={null}>
+            <CanvasStandaloneImageCropModal
+              sourceUrl={standaloneCrop.sourceUrl}
+              title={standaloneCrop.title}
+              onClose={() => {
+                setStandaloneCropRequest(null)
+                canvasRootRef.current?.focus({ preventScroll: true })
+              }}
+              onSave={(file, width, height, signal) => saveStandaloneCrop(standaloneCrop, file, width, height, signal)}
+            />
+          </Suspense>
+        )}
+        {!agentOwner && imageCropRequest ? (
+          <Suspense fallback={null}>
+            <CanvasImageCropModal
+              images={imageCropRequest.images}
+              onClose={() => setImageCropRequest(null)}
+              onSave={async (image, file, width, height) => {
+                const targetId = imageCropRequest.targetId
+                const source = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
+                if (!source || !latestRef.current.nodes.some((node) => node.id === targetId))
+                  throw new Error('素材节点已删除，请重新生成')
+                const uploaded = await uploadAssetFile({ workspaceId, file })
+                const assetId = Number(uploaded?.asset?.id)
+                if (!(assetId > 0)) throw new Error('裁切图片上传失败')
+                const latestSource = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
+                if (!latestSource || Number(latestSource.data.assetId) !== Number(source.data.assetId))
+                  throw new Error('原素材已更换，请重新生成后裁切')
+                if (!latestRef.current.nodes.some((node) => node.id === targetId)) throw new Error('生成节点已删除')
+                const ratio = naturalImageRatio(width, height)
+                const resultUrl = assetStreamUrl(assetId, Number(workspaceId))
+                commitHistory()
+                const local = source.data.assetSource === 'upload'
+                setNodes((items) =>
+                  items.map((node) => {
+                    if (local && node.id === targetId)
+                      return {
+                        ...node,
+                        data: {
+                          ...node.data,
+                          croppedInputAssets: {
+                            ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
+                            [image.ref.edgeId]: {
+                              originalAssetId: Number(source.data.assetId),
+                              assetId,
+                              workspaceId: Number(workspaceId),
+                            },
                           },
                         },
-                      },
-                    }
-                  if (!local && node.id === source.id)
-                    return {
-                      ...node,
-                      data: { ...node.data, assetId, resultUrl, ratio },
-                      style: { ...node.style, ...canvasImageResultSize({ ...node.data, ratio }) },
-                    }
-                  return node
-                }),
-              )
-              setSaveStatus('dirty')
-              setImageCropRequest((current) => {
-                if (!current || current.targetId !== targetId) return current
-                const images = current.images.filter((item) => item.ref.edgeId !== image.ref.edgeId)
-                return images.length ? { ...current, images } : null
-              })
-              showToast('裁切已保存，请在全部处理后重新点击生成', 'success')
-            }}
-          />
-        </Suspense>
-      ) : null}
-      {agentOwner && <CanvasAgentReadOnly owner={agentOwner} lock={agentLock} onUnlock={unlockAgent} />}
-      <div
-        /*
+                      }
+                    if (!local && node.id === source.id)
+                      return {
+                        ...node,
+                        data: { ...node.data, assetId, resultUrl, ratio },
+                        style: { ...node.style, ...canvasImageResultSize({ ...node.data, ratio }) },
+                      }
+                    return node
+                  }),
+                )
+                setSaveStatus('dirty')
+                setImageCropRequest((current) => {
+                  if (!current || current.targetId !== targetId) return current
+                  const images = current.images.filter((item) => item.ref.edgeId !== image.ref.edgeId)
+                  return images.length ? { ...current, images } : null
+                })
+                showToast('裁切已保存，请在全部处理后重新点击生成', 'success')
+              }}
+            />
+          </Suspense>
+        ) : null}
+        {agentOwner && <CanvasAgentReadOnly owner={agentOwner} lock={agentLock} onUnlock={unlockAgent} />}
+        <div
+          /*
           多选期间给根节点打个标记，供 CSS 收起节点上的单节点操作胶囊。
           放在这里而不是逐个节点判断：节点组件拿不到多选状态，
           再往 data 里塞一个字段又会污染持久化。
         */
-        ref={canvasRootRef}
-        style={
-          directorOpen
-            ? ({
-                '--canvas-audio-editor-width': directorLeftBoundary
-                  ? `${(directorLeftBoundary - 48) / Math.max(1, viewportZoom)}px`
-                  : undefined,
-                '--canvas-audio-editor-height': stackedNodeControls
-                  ? `${Math.max(64, (canvasViewportHeight * 0.54 - 180) / 2) / Math.max(1, viewportZoom)}px`
-                  : undefined,
-              } as CSSProperties)
-            : undefined
-        }
-        tabIndex={-1}
-        onClickCapture={(event) => {
-          if (agentOwner) return guardCanvasReadOnlyInteraction(event)
-          const target = event.target as HTMLElement
-          const lock = busyReason(target.closest?.('.react-flow__node')?.getAttribute('data-id'))
-          if (
-            !lock ||
-            isPickingRef ||
-            target.closest('.react-flow__handle.source') ||
-            (directorOpen && isCanvasReferenceTarget(target))
-          )
-            return
-          event.stopPropagation()
-          event.preventDefault()
-          showToast(lock, 'error')
-        }}
-        onDoubleClickCapture={(event) => {
-          if (busyReason((event.target as HTMLElement).closest('.react-flow__node')?.getAttribute('data-id'))) {
+          ref={canvasRootRef}
+          style={
+            directorOpen
+              ? ({
+                  '--canvas-audio-editor-width': directorLeftBoundary
+                    ? `${(directorLeftBoundary - 48) / Math.max(1, viewportZoom)}px`
+                    : undefined,
+                  '--canvas-audio-editor-height': stackedNodeControls
+                    ? `${Math.max(64, (canvasViewportHeight * 0.54 - 180) / 2) / Math.max(1, viewportZoom)}px`
+                    : undefined,
+                } as CSSProperties)
+              : undefined
+          }
+          tabIndex={-1}
+          onClickCapture={(event) => {
+            if (agentOwner) return guardCanvasReadOnlyInteraction(event)
+            const target = event.target as HTMLElement
+            const lock = busyReason(target.closest?.('.react-flow__node')?.getAttribute('data-id'))
+            if (
+              !lock ||
+              isPickingRef ||
+              target.closest('.react-flow__handle.source') ||
+              (directorOpen && isCanvasReferenceTarget(target))
+            )
+              return
             event.stopPropagation()
-            return
-          }
-          if (isPickingRef) return
-          const target = event.target as HTMLElement
-          if (target.closest('button, input, textarea, video, audio, [contenteditable="true"]')) return
-          const id = target.closest('.react-flow__node')?.getAttribute('data-id')
-          const node = latestRef.current.nodes.find((item) => item.id === id)
-          const groupId = node ? getNodeGroupId(node as GroupableNode) : ''
-          if (!groupId || groupId === editingGroupRef.current) return
-          event.stopPropagation()
-          setEditingGroup(groupId)
-          setSelectedNodeIds([])
-          setNodes((items) => items.map((item) => ({ ...item, selected: item.id === id })))
-          handleSelectNodeOnDown(node)
-        }}
-        onPointerDownCapture={(event) => {
-          if (agentOwner) return guardCanvasReadOnlyInteraction(event)
-          const target = event.target as HTMLElement
-          pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
-          const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
-          // Production frames organize outputs; clicking a member inspects that shot.
-          // Group headers still select/move the whole frame.
-          if (busyReason(nodeId) && !isPickingRef && !directorOpen && !target.closest('.react-flow__handle.source')) {
-            event.stopPropagation()
-            return
-          }
-          const clickedNode = latestRef.current.nodes.find((node) => node.id === nodeId)
-          if (!isPickingRef && clickedNode?.data?.production_run_id && !event.ctrlKey && !event.metaKey) {
-            setEditingGroup(getNodeGroupId(clickedNode as GroupableNode))
-          }
-          nodePointerSelectionRef.current = nodeId
-            ? {
-                id: nodeId,
-                selectedIds: latestRef.current.nodes.filter((node) => node.selected).map((node) => node.id),
-              }
-            : null
-          if (!shortcutsBlockedRef.current && isCanvasShortcutTarget(canvasRootRef.current, event.target)) {
-            canvasRootRef.current?.focus({ preventScroll: true })
-          }
-        }}
-        onKeyDownCapture={(event) => {
-          if (agentOwner) return guardCanvasReadOnlyInteraction(event)
-          const target = event.target as HTMLElement
-          if (
-            event.key === 'Tab' ||
-            event.key === 'Escape' ||
-            isPickingRef ||
-            target.closest('.react-flow__handle.source')
-          )
-            return
-          const lock = busyReason(target.closest('.react-flow__node')?.getAttribute('data-id'))
-          if (lock) {
             event.preventDefault()
-            event.stopPropagation()
             showToast(lock, 'error')
-          }
-        }}
-        onFocusCapture={(event) => setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.target))}
-        onBlurCapture={(event) =>
-          setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.relatedTarget))
-        }
-        className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${selectionIsGroup ? ' has-group-selection' : ''}${canvasModalOpen ? ' has-modal' : ''}${spacePanning || panModeEnabled ? ' is-space-panning' : ''}${stackedNodeControls ? ' has-stacked-agent' : ''}`}
-        onDragEnterCapture={trackFileDrag}
-        onDragOverCapture={trackFileDrag}
-        onDragOver={handleFileDragOver}
-        onDragLeaveCapture={handleFileDragLeave}
-        onDragEndCapture={clearFileDrag}
-        onDropCapture={clearFileDrag}
-        onDrop={handleFileDrop}
-        // 有些外部拖放取消后没有结束事件。正常指针操作恢复时也清理提示。
-        onPointerMoveCapture={fileDragActive ? clearFileDrag : undefined}
-        /* 偏好「双击空白开菜单」：React Flow 没有 onPaneDoubleClick，在容器上按事件目标判断是否点在空白面上 */
-        onDoubleClick={(event) => {
-          if (preferences.paneMenuTrigger !== 'dblclick') return
-          const target = event.target as HTMLElement | null
-          if (!target?.classList?.contains('react-flow__pane')) return
-          setAddMenu(null)
-          setContextMenu({ x: event.clientX, y: event.clientY })
-        }}
-      >
-        {interactionHint && (
-          <div key={interactionHint.id} className="canvas-interaction-hint" role="status" aria-live="polite">
-            {interactionHint.text}
-          </div>
-        )}
-        {directorAvailable && !agentOwner && (
-          <CanvasDirectorDock
-            key={canvasBindingKey}
-            workspaceId={workspaceId}
-            canvasId={canvasId}
-            modelDefaults={modelDefaults}
-            onCanvasChange={onDirectorCanvasChange}
-            opened={directorOpen}
-            agentLock={agentLock}
-            onUnlock={unlockAgent}
-            canvasReference={directorReference?.binding === canvasBindingKey ? directorReference.reference : undefined}
-            onCollapse={() => setOpenDirectorBinding(null)}
-          />
-        )}
-        <div data-canvas-readonly-control>
-          <CanvasNavigationStatus
-            saveStatus={saveStatus}
-            cloudStatus={cloudStatus}
-            cloudMessage={cloudMessage}
-            onBack={() => {
-              if (
-                cloudLoadedRef.current &&
-                saveStatusRef.current === 'saved' &&
-                !syncInFlightRef.current &&
-                !syncPendingRef.current
-              ) {
-                navigate('/canvas')
-                return
-              }
-              void requestConfirm(
-                localDraftStoredRef.current
-                  ? '画布还有修改未确认保存到云端。离开后将尝试从本机草稿恢复，是否离开？'
-                  : '画布未能保存到云端或本机，离开可能丢失修改。是否离开？',
-                {
-                  title: '画布尚未保存',
-                  confirmLabel: '仍然离开',
-                  cancelLabel: '继续等待',
-                },
-              ).then((confirmed) => {
-                if (confirmed) navigate('/canvas')
-              })
-            }}
-          />
-        </div>
-        {!agentOwner && (
-          <CanvasGlobalActions
-            open={actionsMenuOpen}
-            credits={walletCredits}
-            showExtras={CANVAS_PHASE_ONE_EXTRAS_ENABLED}
-            canImportScript={cloudLoadedRef.current}
-            canvasId={canvasId}
-            workspaceId={Number(workspaceId || 0)}
-            onToggle={() => setActionsMenuOpen((open) => !open)}
-            onClose={() => setActionsMenuOpen(false)}
-            onGuide={() => setGuideRequested((visible) => !visible)}
-            onImportScript={() => setScriptImportOpen(true)}
-            onModels={() => setModelSettingsOpen(true)}
-            onMembers={workspaceType === 'personal' ? undefined : () => setMembersOpen(true)}
-            onShare={() => setShareOpen(true)}
-          />
-        )}
-
-        {cloudStatus !== 'loading' &&
-          nodes.length === 0 &&
-          edges.length === 0 &&
-          !drawerPanel &&
-          !scriptImportOpen &&
-          !guideRequested &&
-          !agentOwner &&
-          !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
-
-        {modelSettingsOpen && (
-          <CanvasModelSettings
-            dark
-            workspaceId={workspaceId}
-            canvasId={canvasId}
-            onClose={() => setModelSettingsOpen(false)}
-            onSaved={(row) => {
-              modelSaveVersion.current++
-              setModelDefaults({
-                imageModelVersionId: row.imageModelVersionId,
-                videoModelVersionId: row.videoModelVersionId,
-                imageModelVersionIds: row.imageModelVersionIds,
-                videoModelVersionIds: row.videoModelVersionIds,
-              })
-            }}
-          />
-        )}
-        {membersOpen && canvasId > 0 && workspaceId > 0 && (
-          <CanvasMembersDialog
-            key={canvasBindingKey}
-            workspaceId={workspaceId}
-            canvasId={canvasId}
-            onClose={() => setMembersOpen(false)}
-          />
-        )}
-
-        {shareOpen && canvasId > 0 && workspaceId > 0 && (
-          <CanvasShareDialog
-            workspaceId={workspaceId}
-            canvasId={canvasId}
-            onClose={() => setShareOpen(false)}
-            onToast={showToast}
-          />
-        )}
-
-        {CANVAS_PHASE_ONE_EXTRAS_ENABLED &&
-          guideRequested &&
-          cloudStatus === 'online' &&
-          !drawerPanel &&
-          !scriptImportOpen && (
-            <CanvasGettingStarted
-              onCreateScript={handleCreateScriptNode}
-              showScriptCreation={!scriptCreationHandled}
-              scriptOnly={!scriptCreationHandled}
-              onText={() => {
-                handleAddNode('text')
-                markScriptCreationHandled()
-                dismissGuide()
-              }}
-              onMaterials={() => {
-                openLocalImagePicker()
-                markScriptCreationHandled()
-                dismissGuide()
-              }}
-              onImport={() => {
-                markScriptCreationHandled()
-                setScriptImportOpen(true)
-              }}
-              onHelp={() => {
-                setShortcutsOpen(true)
-                markScriptCreationHandled()
-                dismissGuide()
-              }}
-              onDismiss={() => {
-                markScriptCreationHandled()
-                dismissGuide()
-              }}
-            />
-          )}
-        {CANVAS_PHASE_ONE_EXTRAS_ENABLED && scriptImportOpen && (
-          <Suspense fallback={null}>
-            <CanvasScriptImport
-              key={guideStorageKey}
-              onClose={() => setScriptImportOpen(false)}
-              onImport={handleScriptImport}
-            />
-          </Suspense>
-        )}
-
-        <CanvasBottomBar
-          overview={
-            nodes.length > 0 &&
-            minimapVisible && (
-              <MiniMap
-                className="canvas-minimap"
-                position="bottom-left"
-                pannable
-                zoomable
-                ariaLabel="画布缩略图"
-                nodeColor={miniMapNodeColor}
-                nodeStrokeWidth={0}
-                maskColor="rgba(8, 9, 13, 0.78)"
-              />
-            )
-          }
-          controls={
-            nodes.length > 0 && (
-              <div data-canvas-readonly-control>
-                {agentOwner ? (
-                  <CanvasViewControls
-                    readOnly
-                    zoom={transform[2]}
-                    onZoomReset={() => zoomTo(1, { duration: 160 })}
-                    onZoomIn={() => void zoomIn()}
-                    onZoomOut={() => void zoomOut()}
-                    onFitView={() => void fitView({ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 })}
-                    canResetLayout={false}
-                    onResetLayout={() => {}}
-                  />
-                ) : (
-                  <CanvasViewControls
-                    zoom={transform[2]}
-                    onArrange={() => void arrangeNodes()}
-                    onZoomReset={() => zoomTo(1, { duration: 160 })}
-                    snapEnabled={snapEnabled}
-                    onSnapToggle={() => setSnapEnabled((value) => !value)}
-                    minimapVisible={minimapVisible}
-                    onMinimapToggle={() =>
-                      setMinimapVisible((value) => {
-                        saveMinimapVisible(!value)
-                        return !value
-                      })
-                    }
-                    edgesHidden={edgesHidden}
-                    onEdgesToggle={() => setEdgesHidden((value) => !value)}
-                  />
-                )}
-              </div>
-            )
-          }
-        >
-          {!drawerPanel && !agentOwner && (
-            <CanvasFloatingToolbar
-              shortcuts={preferences.shortcuts}
-              leaving={toolbarLeaving}
-              onAddNode={handleAddNode}
-              panModeEnabled={panModeEnabled}
-              onPanModeToggle={handlePanModeToggle}
-              dragEnabled={dragEnabled}
-              onDragToggle={handleDragToggle}
-              onAddLocalImage={() => openLocalImagePicker()}
-              onOpenSearch={() => setSearchOpen(true)}
-              onOpenAssets={() => openDrawerPanel('assets')}
-              onOpenHistory={() => openDrawerPanel('history')}
-              onOpenHelp={() => setShortcutsOpen(true)}
-              directorOpen={directorOpen}
-              onToggleDirector={
-                directorAvailable
-                  ? () => setOpenDirectorBinding((current) => (current === canvasBindingKey ? null : canvasBindingKey))
-                  : undefined
-              }
-            />
-          )}
-        </CanvasBottomBar>
-
-        {/* 剪辑时间线编辑器：节点上的「精修」或双击打开，用于逐帧裁剪与分割；
-          加片段/删片段/合成在节点卡片上就能做，不必进这里 */}
-        {timelineEditorNode && (
-          <CanvasTimelineEditor
-            open
-            shortcuts={preferences.shortcuts}
-            workspaceId={Number(workspaceId || 0)}
-            state={timelineEditorState}
-            onChange={handleTimelineChange}
-            onClose={() => setTimelineEditorNodeId('')}
-            onCompose={() => void handleTimelineCompose(timelineEditorNodeId)}
-            onAddClip={(sourceNodeId) => handleAddTimelineClip(timelineEditorNodeId, sourceNodeId)}
-            addableSources={editorAddableSources}
-            addableAudioSources={editorAddableAudioSources}
-            onAddAudio={(sourceNodeId) => connectSourcesToTarget([sourceNodeId], timelineEditorNodeId)}
-            pendingSourceCount={timelineEditorPendingCount}
-            composing={timelineComposing}
-            composeProgress={composeProgress}
-            compatibilityNote={TIMELINE_COMPOSE_NOTE}
-            // 剪出选中片段：按它在成片时间轴上的起止换算成区间，交给同一套剪出逻辑
-            onAddClipToCanvas={(clip) => {
-              const offsets = getClipOffsets(timelineEditorState)
-              const index = (timelineEditorState.clips || []).findIndex((item) => item.id === clip.id)
-              if (index < 0) return
-              const fromSec = offsets[index]
-              void handleTimelineExtract(timelineEditorNodeId, fromSec, fromSec + getClipDuration(clip))
-            }}
-          />
-        )}
-
-        {/* 隐藏文件选择：由节点顶部上传按钮触发，接收本地图片/视频文件 */}
-        <input
-          ref={uploadInputRef}
-          type="file"
-          accept={selectedNode?.kind === 'video' ? 'video/*' : 'image/*'}
-          style={{ display: 'none' }}
-          onChange={handleUploadFile}
-        />
-
-        {/* 隐藏文件选择：由工具栏 / 右键菜单「本地素材」触发，支持一次选择多个图片或视频 */}
-        <input
-          ref={localImageInputRef}
-          type="file"
-          accept={CANVAS_AUDIO_NODES_ENABLED ? 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.aac' : 'image/*,video/*'}
-          multiple
-          style={{ display: 'none' }}
-          onChange={handleLocalImageInputChange}
-        />
-
-        {/* 拖拽文件到画布时的提示遮罩 */}
-        {fileDragActive && (
-          <div className="canvas-drop-overlay">
-            <div className="canvas-drop-overlay__card">
-              <svg
-                width="34"
-                height="34"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 16V4" />
-                <path d="m6 10 6-6 6 6" />
-                <path d="M4 20h16" />
-              </svg>
-              <strong>松开即可添加到画布</strong>
-              <span>
-                {CANVAS_AUDIO_NODES_ENABLED
-                  ? '支持拖入本地图片、视频与音频，也可以直接 Ctrl/Cmd+V 粘贴'
-                  : '支持拖入本地图片与视频，也可以直接 Ctrl/Cmd+V 粘贴'}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* 参考选择横幅 */}
-        {isPickingRef && (
-          <div className="canvas-pick-banner">
-            <span className="canvas-pick-banner__text">
-              {pickError || pickProgress || '从画布选择参考，可连续点选多个'}
-            </span>
-            <button className="canvas-pick-banner__exit" onClick={stopPickRef}>
-              {pickProgress ? '完成' : '退出'}
-            </button>
-          </div>
-        )}
-
-        {/* 节点内的动作（截帧、时间线增删与合成）经 context 交回这里执行：
-          回调不能塞进节点 data——data 会被持久化，放不了函数 */}
-        <CanvasNodeActionsContext.Provider value={nodeActions}>
-          <ReactFlow
-            nodes={collaborativeNodes}
-            edges={displayEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodesChange={handleNodesChange}
-            onEdgesChange={agentOwner ? undefined : onEdgesChange}
-            onConnect={agentOwner ? undefined : onConnect}
-            onConnectEnd={agentOwner ? undefined : onConnectEnd}
-            /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
-            isValidConnection={(connection) => {
-              if (!dragEnabled || !connection.source || !connection.target) return false
-              return !validateConnection(connection.source, connection.target)
-            }}
-            nodesConnectable={!agentOwner && dragEnabled}
-            /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步）。
-             * React Flow 默认 deleteKeyCode 只有 Backspace，用户按 Del 无反应；这里同时接受
-             * Delete 与 Backspace（输入框聚焦时 React Flow 自身会忽略，不会误删）。 */
-            /* Delete / Backspace 在统一快捷键入口处理，避免与库内监听重复删除。 */
-            deleteKeyCode={null}
-            onBeforeDelete={handleBeforeDelete}
-            onNodesDelete={handleNodesDelete}
-            onEdgesDelete={handleEdgesDelete}
-            connectionMode={ConnectionMode.Loose}
-            connectionRadius={60}
-            /* 与加号按钮的点击判定同一阈值：按住加号拖过它才画连线，轻微抖动仍算点击 */
-            connectionDragThreshold={HANDLE_CONNECTION_DRAG_THRESHOLD}
-            /*
-             * 手势分工（设计工具惯例，无需切模式）：
-             * - 空白处左键拖 = 框选（selectionOnDrag），Ctrl/Cmd+点击增减，Shift+拖同样框选；
-             * - 空格+左键 / 中键 / 右键拖 = 平移（空格临时开启左键平移）；
-             * - 滚轮 = 平移或缩放，按用户偏好（见 panOnScroll / zoomOnScroll）。
-             * 以前平移和框选各有一个开关让用户来回切，现在靠手势区分，两者互不打架。
-             * 右键拖过就不弹菜单、没拖过才弹：React Flow 在 mouseup 时自行判断（见 createPanZoomEndHandler）。
-             */
-            /* 空格状态统一管理，避免库内按键状态与节点拖动开关不同步。 */
-            panActivationKeyCode={null}
-            selectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? 'Shift' : null}
-            multiSelectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? ['Control', 'Meta'] : null}
-            /* 抓手模式下左键让给平移，框选退回 Shift+拖 */
-            selectionOnDrag={!agentOwner && !panModeEnabled && !spacePanning}
-            selectionMode={SelectionMode.Partial}
-            onSelectionChange={handleSelectionChange}
-            /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
-            onNodeDoubleClick={(_e, node) => {
-              if ((node.data as Record<string, unknown> | undefined)?.kind === 'timeline') {
-                setTimelineEditorNodeId(node.id)
-              }
-            }}
-            /* 拖动开始前记录历史：撤销可还原节点位置 */
-            onNodeDragStart={(event, node) => {
-              setDraggingNode(true)
-              // Alt 拖动在松手时一次性落副本，避免拖动中断留下半成品；撤销一步回到拖动前。
-              if (event.altKey && dragEnabled) {
-                const snapshot = nodePointerSelectionRef.current
-                const selectedBefore = snapshot?.id === node.id ? snapshot.selectedIds : selectedNodeIds
-                const ids = selectedBefore.length > 1 && selectedBefore.includes(node.id) ? selectedBefore : [node.id]
-                const positions = new Map(
-                  latestRef.current.nodes
-                    .filter((item) => ids.includes(item.id))
-                    .map((item) => [item.id, { ...item.position }]),
-                )
-                altCloneDragRef.current = {
-                  id: node.id,
-                  ids,
-                  origin: { ...node.position },
-                  positions,
-                  copyEdges: event.ctrlKey || event.metaKey,
-                  redoBefore: [...historyRef.current.redo],
+          }}
+          onDoubleClickCapture={(event) => {
+            if (busyReason((event.target as HTMLElement).closest('.react-flow__node')?.getAttribute('data-id'))) {
+              event.stopPropagation()
+              return
+            }
+            if (isPickingRef) return
+            const target = event.target as HTMLElement
+            if (target.closest('button, input, textarea, video, audio, [contenteditable="true"]')) return
+            const id = target.closest('.react-flow__node')?.getAttribute('data-id')
+            const node = latestRef.current.nodes.find((item) => item.id === id)
+            const groupId = node ? getNodeGroupId(node as GroupableNode) : ''
+            if (!groupId || groupId === editingGroupRef.current) return
+            event.stopPropagation()
+            setEditingGroup(groupId)
+            setSelectedNodeIds([])
+            setNodes((items) => items.map((item) => ({ ...item, selected: item.id === id })))
+            handleSelectNodeOnDown(node)
+          }}
+          onPointerDownCapture={(event) => {
+            if (agentOwner) return guardCanvasReadOnlyInteraction(event)
+            const target = event.target as HTMLElement
+            pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
+            const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
+            // Production frames organize outputs; clicking a member inspects that shot.
+            // Group headers still select/move the whole frame.
+            if (busyReason(nodeId) && !isPickingRef && !directorOpen && !target.closest('.react-flow__handle.source')) {
+              event.stopPropagation()
+              return
+            }
+            const clickedNode = latestRef.current.nodes.find((node) => node.id === nodeId)
+            if (!isPickingRef && clickedNode?.data?.production_run_id && !event.ctrlKey && !event.metaKey) {
+              setEditingGroup(getNodeGroupId(clickedNode as GroupableNode))
+            }
+            nodePointerSelectionRef.current = nodeId
+              ? {
+                  id: nodeId,
+                  selectedIds: latestRef.current.nodes.filter((node) => node.selected).map((node) => node.id),
                 }
-                commitHistory()
-                showToast(
-                  `松开后将复制 ${ids.length} 个节点${event.ctrlKey || event.metaKey ? '及其连线' : ''}`,
-                  'info',
-                )
-              } else {
-                altCloneDragRef.current = null
-                commitHistory()
+              : null
+            if (!shortcutsBlockedRef.current && isCanvasShortcutTarget(canvasRootRef.current, event.target)) {
+              canvasRootRef.current?.focus({ preventScroll: true })
+            }
+          }}
+          onKeyDownCapture={(event) => {
+            if (agentOwner) return guardCanvasReadOnlyInteraction(event)
+            const target = event.target as HTMLElement
+            if (
+              event.key === 'Tab' ||
+              event.key === 'Escape' ||
+              isPickingRef ||
+              target.closest('.react-flow__handle.source')
+            )
+              return
+            const lock = busyReason(target.closest('.react-flow__node')?.getAttribute('data-id'))
+            if (lock) {
+              event.preventDefault()
+              event.stopPropagation()
+              showToast(lock, 'error')
+            }
+          }}
+          onFocusCapture={(event) =>
+            setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.target))
+          }
+          onBlurCapture={(event) =>
+            setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.relatedTarget))
+          }
+          className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${selectionIsGroup ? ' has-group-selection' : ''}${canvasModalOpen ? ' has-modal' : ''}${spacePanning || panModeEnabled ? ' is-space-panning' : ''}${stackedNodeControls ? ' has-stacked-agent' : ''}`}
+          onDragEnterCapture={trackFileDrag}
+          onDragOverCapture={trackFileDrag}
+          onDragOver={handleFileDragOver}
+          onDragLeaveCapture={handleFileDragLeave}
+          onDragEndCapture={clearFileDrag}
+          onDropCapture={clearFileDrag}
+          onDrop={handleFileDrop}
+          // 有些外部拖放取消后没有结束事件。正常指针操作恢复时也清理提示。
+          onPointerMoveCapture={fileDragActive ? clearFileDrag : undefined}
+          /* 偏好「双击空白开菜单」：React Flow 没有 onPaneDoubleClick，在容器上按事件目标判断是否点在空白面上 */
+          onDoubleClick={(event) => {
+            if (preferences.paneMenuTrigger !== 'dblclick') return
+            const target = event.target as HTMLElement | null
+            if (!target?.classList?.contains('react-flow__pane')) return
+            setAddMenu(null)
+            setContextMenu({ x: event.clientX, y: event.clientY })
+          }}
+        >
+          {interactionHint && (
+            <div key={interactionHint.id} className="canvas-interaction-hint" role="status" aria-live="polite">
+              {interactionHint.text}
+            </div>
+          )}
+          {directorAvailable && !agentOwner && (
+            <CanvasDirectorDock
+              key={canvasBindingKey}
+              workspaceId={workspaceId}
+              canvasId={canvasId}
+              modelDefaults={modelDefaults}
+              onCanvasChange={onDirectorCanvasChange}
+              opened={directorOpen}
+              agentLock={agentLock}
+              onUnlock={unlockAgent}
+              canvasReference={
+                directorReference?.binding === canvasBindingKey ? directorReference.reference : undefined
               }
-              // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
-              // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
-              handleSelectNodeOnDown(node as unknown as Node)
-              // 记下起点：拖到时间线上时要把节点弹回原位，不能让它压在时间线底下
-              dragOriginRef.current = { id: node.id, position: { ...node.position } }
-            }}
-            /* 拖动中高亮可接收的时间线节点，让「能不能放进去」在松手前就看得见 */
-            onNodeDrag={(_e, node) => {
-              const nextTarget = findTimelineDropTarget(node)
-              if (timelineDropTargetRef.current === nextTarget) return
-              timelineDropTargetRef.current = nextTarget
-              setTimelineDropTargetId(nextTarget)
-            }}
-            onNodeDragStop={(_e, node) => {
-              // 放在最前面：下面「没命中时间线」会提前 return，写在后面面板就再也不出来了
-              setDraggingNode(false)
-              setAlignmentGuides((prev) => (prev.length ? [] : prev))
-              timelineDropTargetRef.current = ''
-              const targetId = findTimelineDropTarget(node)
-              setTimelineDropTargetId('')
-              const cloneDrag = altCloneDragRef.current
-              altCloneDragRef.current = null
-              if (cloneDrag?.id === node.id) {
-                try {
-                  const created = cloneNodes(cloneDrag.ids, {
-                    offset: { x: cloneDrag.origin.x - node.position.x, y: cloneDrag.origin.y - node.position.y },
-                    select: false,
-                    copyEdges: cloneDrag.copyEdges,
-                    skipHistory: true,
-                  })
-                  if (!created.length) throw new Error('副本创建失败')
-                } catch {
-                  setNodes((items) =>
-                    items.map((item) => {
-                      const origin = cloneDrag.positions.get(item.id)
-                      return origin ? { ...item, position: origin } : item
-                    }),
-                  )
-                  historyRef.current.undo.pop()
-                  historyRef.current.redo = cloneDrag.redoBefore
-                  const canUndo = historyRef.current.undo.length > 0
-                  setHistoryFlags({ canUndo, canRedo: historyRef.current.redo.length > 0 })
-                  showToast('复制失败，已恢复拖动前的位置', 'error')
+              onCollapse={() => setOpenDirectorBinding(null)}
+            />
+          )}
+          <div data-canvas-readonly-control>
+            <CanvasNavigationStatus
+              saveStatus={saveStatus}
+              cloudStatus={cloudStatus}
+              cloudMessage={cloudMessage}
+              onBack={() => {
+                if (
+                  cloudLoadedRef.current &&
+                  saveStatusRef.current === 'saved' &&
+                  !syncInFlightRef.current &&
+                  !syncPendingRef.current
+                ) {
+                  navigate('/canvas')
                   return
                 }
-              }
-              if (!targetId) return
-              handleAddTimelineClip(targetId, node.id)
-              // 弹回原位：视频节点是被「拖进」时间线的，本身不该留在时间线的位置上
-              const origin = dragOriginRef.current
-              if (origin?.id === node.id) {
-                setNodes((items) =>
-                  items.map((item) => (item.id === node.id ? { ...item, position: origin.position } : item)),
-                )
-              }
-            }}
-            /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
-            onPaneContextMenu={(e) => {
-              e.preventDefault()
-              if (agentOwner) return
-              setAddMenu(null)
-              setContextMenu({ x: e.clientX, y: e.clientY })
-            }}
-            onNodeContextMenu={(e, node) => {
-              if (busyReason(node.id)) {
-                e.preventDefault()
-                return
-              }
-              // 文本编辑框内保留默认菜单（复制/粘贴）
-              const target = e.target as HTMLElement
-              if (target.closest('textarea, input, [contenteditable="true"]')) return
-              e.preventDefault()
-              setAddMenu(null)
-              setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
-            }}
-            onEdgeContextMenu={(e) => {
-              e.preventDefault()
-              if (agentOwner) return
-              setAddMenu(null)
-              setContextMenu({ x: e.clientX, y: e.clientY })
-            }}
-            onNodeClick={(event, node) => {
-              if (agentOwner) return
-              if (isPickingRef) {
-                handlePickRefNode(node as unknown as Node)
-                return
-              }
-              if (
-                directorOpen &&
-                !event.altKey &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.shiftKey &&
-                isCanvasReferenceTarget(event.target as Element)
-              ) {
-                const reference = canvasReferenceFromNode(node)
-                if (reference) {
-                  setDirectorReference({ binding: canvasBindingKey, reference })
+                void requestConfirm(
+                  localDraftStoredRef.current
+                    ? '画布还有修改未确认保存到云端。离开后将尝试从本机草稿恢复，是否离开？'
+                    : '画布未能保存到云端或本机，离开可能丢失修改。是否离开？',
+                  {
+                    title: '画布尚未保存',
+                    confirmLabel: '仍然离开',
+                    cancelLabel: '继续等待',
+                  },
+                ).then((confirmed) => {
+                  if (confirmed) navigate('/canvas')
+                })
+              }}
+            />
+          </div>
+          {!agentOwner && (
+            <CanvasGlobalActions
+              open={actionsMenuOpen}
+              credits={walletCredits}
+              showExtras={CANVAS_PHASE_ONE_EXTRAS_ENABLED}
+              canImportScript={cloudLoadedRef.current}
+              canvasId={canvasId}
+              workspaceId={Number(workspaceId || 0)}
+              onToggle={() => setActionsMenuOpen((open) => !open)}
+              onClose={() => setActionsMenuOpen(false)}
+              onGuide={() => setGuideRequested((visible) => !visible)}
+              onImportScript={() => setScriptImportOpen(true)}
+              onModels={canManage ? () => setModelSettingsOpen(true) : undefined}
+              onMembers={canManage && workspaceType !== 'personal' ? () => setMembersOpen(true) : undefined}
+              onStatistics={canManage ? () => navigate(`/canvas/${canvasId}/statistics`) : undefined}
+              onShare={() => setShareOpen(true)}
+            />
+          )}
+
+          {cloudStatus !== 'loading' &&
+            nodes.length === 0 &&
+            edges.length === 0 &&
+            !drawerPanel &&
+            !scriptImportOpen &&
+            !guideRequested &&
+            !agentOwner &&
+            !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
+
+          {canManage && modelSettingsOpen && (
+            <CanvasModelSettings
+              dark
+              workspaceId={workspaceId}
+              canvasId={canvasId}
+              onClose={() => setModelSettingsOpen(false)}
+              onSaved={(row) => {
+                modelSaveVersion.current++
+                setModelDefaults({
+                  imageModelVersionId: row.imageModelVersionId,
+                  videoModelVersionId: row.videoModelVersionId,
+                  imageModelVersionIds: row.imageModelVersionIds,
+                  videoModelVersionIds: row.videoModelVersionIds,
+                })
+              }}
+            />
+          )}
+          {canManage && membersOpen && canvasId > 0 && workspaceId > 0 && (
+            <CanvasMembersDialog
+              key={canvasBindingKey}
+              workspaceId={workspaceId}
+              canvasId={canvasId}
+              onClose={() => setMembersOpen(false)}
+            />
+          )}
+
+          {shareOpen && canvasId > 0 && workspaceId > 0 && (
+            <CanvasShareDialog
+              workspaceId={workspaceId}
+              canvasId={canvasId}
+              onClose={() => setShareOpen(false)}
+              onToast={showToast}
+            />
+          )}
+
+          {CANVAS_PHASE_ONE_EXTRAS_ENABLED &&
+            guideRequested &&
+            cloudStatus === 'online' &&
+            !drawerPanel &&
+            !scriptImportOpen && (
+              <CanvasGettingStarted
+                onCreateScript={handleCreateScriptNode}
+                showScriptCreation={!scriptCreationHandled}
+                scriptOnly={!scriptCreationHandled}
+                onText={() => {
+                  handleAddNode('text')
+                  markScriptCreationHandled()
+                  dismissGuide()
+                }}
+                onMaterials={() => {
+                  openLocalImagePicker()
+                  markScriptCreationHandled()
+                  dismissGuide()
+                }}
+                onImport={() => {
+                  markScriptCreationHandled()
+                  setScriptImportOpen(true)
+                }}
+                onHelp={() => {
+                  setShortcutsOpen(true)
+                  markScriptCreationHandled()
+                  dismissGuide()
+                }}
+                onDismiss={() => {
+                  markScriptCreationHandled()
+                  dismissGuide()
+                }}
+              />
+            )}
+          {CANVAS_PHASE_ONE_EXTRAS_ENABLED && scriptImportOpen && (
+            <Suspense fallback={null}>
+              <CanvasScriptImport
+                key={guideStorageKey}
+                onClose={() => setScriptImportOpen(false)}
+                onImport={handleScriptImport}
+              />
+            </Suspense>
+          )}
+
+          <CanvasBottomBar
+            overview={
+              nodes.length > 0 &&
+              minimapVisible && (
+                <MiniMap
+                  className="canvas-minimap"
+                  position="bottom-left"
+                  pannable
+                  zoomable
+                  ariaLabel="画布缩略图"
+                  nodeColor={miniMapNodeColor}
+                  nodeStrokeWidth={0}
+                  maskColor="rgba(8, 9, 13, 0.78)"
+                />
+              )
+            }
+            controls={
+              nodes.length > 0 && (
+                <div data-canvas-readonly-control>
+                  {agentOwner ? (
+                    <CanvasViewControls
+                      readOnly
+                      zoom={transform[2]}
+                      onZoomReset={() => zoomTo(1, { duration: 160 })}
+                      onZoomIn={() => void zoomIn()}
+                      onZoomOut={() => void zoomOut()}
+                      onFitView={() => void fitView({ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 })}
+                      canResetLayout={false}
+                      onResetLayout={() => {}}
+                    />
+                  ) : (
+                    <CanvasViewControls
+                      zoom={transform[2]}
+                      onArrange={() => void arrangeNodes()}
+                      onZoomReset={() => zoomTo(1, { duration: 160 })}
+                      snapEnabled={snapEnabled}
+                      onSnapToggle={() => setSnapEnabled((value) => !value)}
+                      minimapVisible={minimapVisible}
+                      onMinimapToggle={() =>
+                        setMinimapVisible((value) => {
+                          saveMinimapVisible(!value)
+                          return !value
+                        })
+                      }
+                      edgesHidden={edgesHidden}
+                      onEdgesToggle={() => setEdgesHidden((value) => !value)}
+                    />
+                  )}
+                </div>
+              )
+            }
+          >
+            {!drawerPanel && !agentOwner && (
+              <CanvasFloatingToolbar
+                shortcuts={preferences.shortcuts}
+                leaving={toolbarLeaving}
+                onAddNode={handleAddNode}
+                panModeEnabled={panModeEnabled}
+                onPanModeToggle={handlePanModeToggle}
+                dragEnabled={dragEnabled}
+                onDragToggle={handleDragToggle}
+                onAddLocalImage={() => openLocalImagePicker()}
+                onOpenSearch={() => setSearchOpen(true)}
+                onOpenAssets={() => openDrawerPanel('assets')}
+                onOpenHistory={() => openDrawerPanel('history')}
+                onOpenHelp={() => setShortcutsOpen(true)}
+                directorOpen={directorOpen}
+                onToggleDirector={
+                  directorAvailable
+                    ? () =>
+                        setOpenDirectorBinding((current) => (current === canvasBindingKey ? null : canvasBindingKey))
+                    : undefined
                 }
-              }
-              if (busyReason(node.id)) {
-                showToast(busyReason(node.id)!, 'error')
-                return
-              }
-              const groupId = getNodeGroupId(node as GroupableNode)
-              if (event.altKey && groupId) setEditingGroup(groupId)
-              else if (groupId && groupId !== editingGroupRef.current && !event.ctrlKey && !event.metaKey) {
-                selectGroup(groupId)
-                return
-              } else if (editingGroupRef.current && groupId !== editingGroupRef.current) setEditingGroup('')
-              // 按下前的快照避免 React Flow 的全局组合键状态与焦点切换时序影响这次点击。
-              const snapshot = nodePointerSelectionRef.current
-              const wanted = new Set(
-                event.ctrlKey || event.metaKey
-                  ? snapshot?.id === node.id
-                    ? snapshot.selectedIds
-                    : latestRef.current.nodes.filter((item) => item.selected).map((item) => item.id)
-                  : [],
-              )
-              if ((event.ctrlKey || event.metaKey) && wanted.has(node.id)) wanted.delete(node.id)
-              else wanted.add(node.id)
-              setNodes((items) =>
-                items.map((item) =>
-                  Boolean(item.selected) === wanted.has(item.id) ? item : { ...item, selected: wanted.has(item.id) },
+              />
+            )}
+          </CanvasBottomBar>
+
+          {/* 剪辑时间线编辑器：节点上的「精修」或双击打开，用于逐帧裁剪与分割；
+          加片段/删片段/合成在节点卡片上就能做，不必进这里 */}
+          {timelineEditorNode && (
+            <CanvasTimelineEditor
+              open
+              shortcuts={preferences.shortcuts}
+              workspaceId={Number(workspaceId || 0)}
+              state={timelineEditorState}
+              onChange={handleTimelineChange}
+              onClose={() => setTimelineEditorNodeId('')}
+              onCompose={() => void handleTimelineCompose(timelineEditorNodeId)}
+              onAddClip={(sourceNodeId) => handleAddTimelineClip(timelineEditorNodeId, sourceNodeId)}
+              addableSources={editorAddableSources}
+              addableAudioSources={editorAddableAudioSources}
+              onAddAudio={(sourceNodeId) => connectSourcesToTarget([sourceNodeId], timelineEditorNodeId)}
+              pendingSourceCount={timelineEditorPendingCount}
+              composing={timelineComposing}
+              composeProgress={composeProgress}
+              compatibilityNote={TIMELINE_COMPOSE_NOTE}
+              // 剪出选中片段：按它在成片时间轴上的起止换算成区间，交给同一套剪出逻辑
+              onAddClipToCanvas={(clip) => {
+                const offsets = getClipOffsets(timelineEditorState)
+                const index = (timelineEditorState.clips || []).findIndex((item) => item.id === clip.id)
+                if (index < 0) return
+                const fromSec = offsets[index]
+                void handleTimelineExtract(timelineEditorNodeId, fromSec, fromSec + getClipDuration(clip))
+              }}
+            />
+          )}
+
+          {/* 隐藏文件选择：由节点顶部上传按钮触发，接收本地图片/视频文件 */}
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept={selectedNode?.kind === 'video' ? 'video/*' : 'image/*'}
+            style={{ display: 'none' }}
+            onChange={handleUploadFile}
+          />
+
+          {/* 隐藏文件选择：由工具栏 / 右键菜单「本地素材」触发，支持一次选择多个图片或视频 */}
+          <input
+            ref={localImageInputRef}
+            type="file"
+            accept={CANVAS_AUDIO_NODES_ENABLED ? 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.aac' : 'image/*,video/*'}
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleLocalImageInputChange}
+          />
+
+          {/* 拖拽文件到画布时的提示遮罩 */}
+          {fileDragActive && (
+            <div className="canvas-drop-overlay">
+              <div className="canvas-drop-overlay__card">
+                <svg
+                  width="34"
+                  height="34"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 16V4" />
+                  <path d="m6 10 6-6 6 6" />
+                  <path d="M4 20h16" />
+                </svg>
+                <strong>松开即可添加到画布</strong>
+                <span>
+                  {CANVAS_AUDIO_NODES_ENABLED
+                    ? '支持拖入本地图片、视频与音频，也可以直接 Ctrl/Cmd+V 粘贴'
+                    : '支持拖入本地图片与视频，也可以直接 Ctrl/Cmd+V 粘贴'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* 参考选择横幅 */}
+          {isPickingRef && (
+            <div className="canvas-pick-banner">
+              <span className="canvas-pick-banner__text">
+                {pickError || pickProgress || '从画布选择参考，可连续点选多个'}
+              </span>
+              <button className="canvas-pick-banner__exit" onClick={stopPickRef}>
+                {pickProgress ? '完成' : '退出'}
+              </button>
+            </div>
+          )}
+
+          {/* 节点内的动作（截帧、时间线增删与合成）经 context 交回这里执行：
+          回调不能塞进节点 data——data 会被持久化，放不了函数 */}
+          <CanvasNodeActionsContext.Provider value={nodeActions}>
+            <ReactFlow
+              nodes={collaborativeNodes}
+              edges={displayEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={agentOwner ? undefined : onEdgesChange}
+              onConnect={agentOwner ? undefined : onConnect}
+              onConnectEnd={agentOwner ? undefined : onConnectEnd}
+              /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
+              isValidConnection={(connection) => {
+                if (!dragEnabled || !connection.source || !connection.target) return false
+                return !validateConnection(connection.source, connection.target)
+              }}
+              nodesConnectable={!agentOwner && dragEnabled}
+              /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步）。
+               * React Flow 默认 deleteKeyCode 只有 Backspace，用户按 Del 无反应；这里同时接受
+               * Delete 与 Backspace（输入框聚焦时 React Flow 自身会忽略，不会误删）。 */
+              /* Delete / Backspace 在统一快捷键入口处理，避免与库内监听重复删除。 */
+              deleteKeyCode={null}
+              onBeforeDelete={handleBeforeDelete}
+              onNodesDelete={handleNodesDelete}
+              onEdgesDelete={handleEdgesDelete}
+              connectionMode={ConnectionMode.Loose}
+              connectionRadius={60}
+              /* 与加号按钮的点击判定同一阈值：按住加号拖过它才画连线，轻微抖动仍算点击 */
+              connectionDragThreshold={HANDLE_CONNECTION_DRAG_THRESHOLD}
+              /*
+               * 手势分工（设计工具惯例，无需切模式）：
+               * - 空白处左键拖 = 框选（selectionOnDrag），Ctrl/Cmd+点击增减，Shift+拖同样框选；
+               * - 空格+左键 / 中键 / 右键拖 = 平移（空格临时开启左键平移）；
+               * - 滚轮 = 平移或缩放，按用户偏好（见 panOnScroll / zoomOnScroll）。
+               * 以前平移和框选各有一个开关让用户来回切，现在靠手势区分，两者互不打架。
+               * 右键拖过就不弹菜单、没拖过才弹：React Flow 在 mouseup 时自行判断（见 createPanZoomEndHandler）。
+               */
+              /* 空格状态统一管理，避免库内按键状态与节点拖动开关不同步。 */
+              panActivationKeyCode={null}
+              selectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? 'Shift' : null}
+              multiSelectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? ['Control', 'Meta'] : null}
+              /* 抓手模式下左键让给平移，框选退回 Shift+拖 */
+              selectionOnDrag={!agentOwner && !panModeEnabled && !spacePanning}
+              selectionMode={SelectionMode.Partial}
+              onSelectionChange={handleSelectionChange}
+              /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
+              onNodeDoubleClick={(_e, node) => {
+                if ((node.data as Record<string, unknown> | undefined)?.kind === 'timeline') {
+                  setTimelineEditorNodeId(node.id)
+                }
+              }}
+              /* 拖动开始前记录历史：撤销可还原节点位置 */
+              onNodeDragStart={(event, node) => {
+                setDraggingNode(true)
+                // Alt 拖动在松手时一次性落副本，避免拖动中断留下半成品；撤销一步回到拖动前。
+                if (event.altKey && dragEnabled) {
+                  const snapshot = nodePointerSelectionRef.current
+                  const selectedBefore = snapshot?.id === node.id ? snapshot.selectedIds : selectedNodeIds
+                  const ids = selectedBefore.length > 1 && selectedBefore.includes(node.id) ? selectedBefore : [node.id]
+                  const positions = new Map(
+                    latestRef.current.nodes
+                      .filter((item) => ids.includes(item.id))
+                      .map((item) => [item.id, { ...item.position }]),
+                  )
+                  altCloneDragRef.current = {
+                    id: node.id,
+                    ids,
+                    origin: { ...node.position },
+                    positions,
+                    copyEdges: event.ctrlKey || event.metaKey,
+                    redoBefore: [...historyRef.current.redo],
+                  }
+                  commitHistory()
+                  showToast(
+                    `松开后将复制 ${ids.length} 个节点${event.ctrlKey || event.metaKey ? '及其连线' : ''}`,
+                    'info',
+                  )
+                } else {
+                  altCloneDragRef.current = null
+                  commitHistory()
+                }
+                // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
+                // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
+                handleSelectNodeOnDown(node as unknown as Node)
+                // 记下起点：拖到时间线上时要把节点弹回原位，不能让它压在时间线底下
+                dragOriginRef.current = { id: node.id, position: { ...node.position } }
+              }}
+              /* 拖动中高亮可接收的时间线节点，让「能不能放进去」在松手前就看得见 */
+              onNodeDrag={(_e, node) => {
+                const nextTarget = findTimelineDropTarget(node)
+                if (timelineDropTargetRef.current === nextTarget) return
+                timelineDropTargetRef.current = nextTarget
+                setTimelineDropTargetId(nextTarget)
+              }}
+              onNodeDragStop={(_e, node) => {
+                // 放在最前面：下面「没命中时间线」会提前 return，写在后面面板就再也不出来了
+                setDraggingNode(false)
+                setAlignmentGuides((prev) => (prev.length ? [] : prev))
+                timelineDropTargetRef.current = ''
+                const targetId = findTimelineDropTarget(node)
+                setTimelineDropTargetId('')
+                const cloneDrag = altCloneDragRef.current
+                altCloneDragRef.current = null
+                if (cloneDrag?.id === node.id) {
+                  try {
+                    const created = cloneNodes(cloneDrag.ids, {
+                      offset: { x: cloneDrag.origin.x - node.position.x, y: cloneDrag.origin.y - node.position.y },
+                      select: false,
+                      copyEdges: cloneDrag.copyEdges,
+                      skipHistory: true,
+                    })
+                    if (!created.length) throw new Error('副本创建失败')
+                  } catch {
+                    setNodes((items) =>
+                      items.map((item) => {
+                        const origin = cloneDrag.positions.get(item.id)
+                        return origin ? { ...item, position: origin } : item
+                      }),
+                    )
+                    historyRef.current.undo.pop()
+                    historyRef.current.redo = cloneDrag.redoBefore
+                    const canUndo = historyRef.current.undo.length > 0
+                    setHistoryFlags({ canUndo, canRedo: historyRef.current.redo.length > 0 })
+                    showToast('复制失败，已恢复拖动前的位置', 'error')
+                    return
+                  }
+                }
+                if (!targetId) return
+                handleAddTimelineClip(targetId, node.id)
+                // 弹回原位：视频节点是被「拖进」时间线的，本身不该留在时间线的位置上
+                const origin = dragOriginRef.current
+                if (origin?.id === node.id) {
+                  setNodes((items) =>
+                    items.map((item) => (item.id === node.id ? { ...item, position: origin.position } : item)),
+                  )
+                }
+              }}
+              /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
+              onPaneContextMenu={(e) => {
+                e.preventDefault()
+                if (agentOwner) return
+                setAddMenu(null)
+                setContextMenu({ x: e.clientX, y: e.clientY })
+              }}
+              onNodeContextMenu={(e, node) => {
+                if (busyReason(node.id)) {
+                  e.preventDefault()
+                  return
+                }
+                // 文本编辑框内保留默认菜单（复制/粘贴）
+                const target = e.target as HTMLElement
+                if (target.closest('textarea, input, [contenteditable="true"]')) return
+                e.preventDefault()
+                setAddMenu(null)
+                setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
+              }}
+              onEdgeContextMenu={(e) => {
+                e.preventDefault()
+                if (agentOwner) return
+                setAddMenu(null)
+                setContextMenu({ x: e.clientX, y: e.clientY })
+              }}
+              onNodeClick={(event, node) => {
+                if (agentOwner) return
+                if (isPickingRef) {
+                  handlePickRefNode(node as unknown as Node)
+                  return
+                }
+                if (
+                  directorOpen &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.shiftKey &&
+                  isCanvasReferenceTarget(event.target as Element)
+                ) {
+                  const reference = canvasReferenceFromNode(node)
+                  if (reference) {
+                    setDirectorReference({ binding: canvasBindingKey, reference })
+                  }
+                }
+                if (busyReason(node.id)) {
+                  showToast(busyReason(node.id)!, 'error')
+                  return
+                }
+                const groupId = getNodeGroupId(node as GroupableNode)
+                if (event.altKey && groupId) setEditingGroup(groupId)
+                else if (groupId && groupId !== editingGroupRef.current && !event.ctrlKey && !event.metaKey) {
+                  selectGroup(groupId)
+                  return
+                } else if (editingGroupRef.current && groupId !== editingGroupRef.current) setEditingGroup('')
+                // 按下前的快照避免 React Flow 的全局组合键状态与焦点切换时序影响这次点击。
+                const snapshot = nodePointerSelectionRef.current
+                const wanted = new Set(
+                  event.ctrlKey || event.metaKey
+                    ? snapshot?.id === node.id
+                      ? snapshot.selectedIds
+                      : latestRef.current.nodes.filter((item) => item.selected).map((item) => item.id)
+                    : [],
+                )
+                if ((event.ctrlKey || event.metaKey) && wanted.has(node.id)) wanted.delete(node.id)
+                else wanted.add(node.id)
+                setNodes((items) =>
+                  items.map((item) =>
+                    Boolean(item.selected) === wanted.has(item.id) ? item : { ...item, selected: wanted.has(item.id) },
+                  ),
+                )
+                setEdges((items) => items.map((item) => (item.selected ? { ...item, selected: false } : item)))
+                setSelectedNodeIds(wanted.size > 1 ? [...wanted] : [])
+                // 选中节点即关掉添加节点菜单（理由见 handleSelectNodeOnDown）
+                setAddMenu(null)
+                // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
+                setSelectedNode({
+                  id: node.id,
+                  kind: (node.data?.kind as string) || 'text',
+                  sourceRefs: getSourceRefs(node.id),
+                  ratio: (node.data as any)?.ratio,
+                  videoMode: (node.data as any)?.videoMode,
+                  modelVersionId: (node.data as any)?.modelVersionId,
+                  resultUrl: (node.data as any)?.resultUrl,
+                  assetId: (node.data as any)?.assetId,
+                  text: (node.data as any)?.text,
+                  prompt: (node.data as any)?.prompt,
+                  operationCode: (node.data as any)?.operationCode,
+                  params: (node.data as any)?.params,
+                })
+              }}
+              onPaneClick={() => {
+                if (pointerStartedInPanelRef.current) return
+                if (!isPickingRef) setEditingGroup('')
+                if (isPickingRef) {
+                  // 参考选择模式下点击空白不退出：只能通过「退出」按钮退出
+                  return
+                }
+                setAddMenu(null)
+                setSelectedNode(null)
+                setSelectedNodeIds([])
+              }}
+              /* 工具栏「锁定」：nodesDraggable 关掉后节点不可拖，画布照常平移 */
+              nodesDraggable={!agentOwner && dragEnabled && !spacePanning && !panModeEnabled}
+              /* 默认左键让给框选，平移走中键 [1] / 右键 [2]，空格+左键由 spacePanning 临时接管；
+               * 工具栏「拖动」（抓手）点亮后左键 [0] 也平移 */
+              panOnDrag={agentOwner || panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
+              /* 无限画布不限制平移范围，远离原点的节点和低倍率视口都必须可达。 */
+              /*
+               * 滚轮行为按偏好：
+               * - 平移（默认，设计工具习惯）：双指滚动自由平移，Ctrl/⌘ + 滚动缩放，捏合缩放；
+               * - 缩放（图编辑器习惯）：滚动即缩放。
+               * 两种下 Ctrl/⌘ + 滚动都是缩放（zoomActivationKeyCode），所以缩放模式下不再额外区分。
+               */
+              panOnScroll={preferences.wheelMode === 'pan'}
+              panOnScrollMode={PanOnScrollMode.Free}
+              panOnScrollSpeed={0.8}
+              zoomOnScroll={preferences.wheelMode === 'zoom'}
+              zoomOnPinch
+              zoomActivationKeyCode={canvasWheelActivationKeys(preferences.shortcuts.zoomWheel)}
+              /* 触控板双击很容易被误触；画布缩放统一走滚轮/捏合和底部缩放控件。 */
+              zoomOnDoubleClick={false}
+              preventScrolling
+              snapToGrid={snapEnabled}
+              snapGrid={CANVAS_SNAP_GRID}
+              elementsSelectable={!agentOwner}
+              /*
+               * 缩放范围。
+               *
+               * React Flow 默认 minZoom 是 0.5，节点一多就会「缩到一半再也缩不动」，
+               * 复位视图同样受此限制——画布装不下时 fitView 也只能停在 0.5，看不到全貌。
+               * 放到 0.01（100 倍）足以俯瞰几百个节点，且仍是有限值：
+               * 真的做成无下限会让视口在极小倍率下失去精度，反而拖不动、点不中。
+               */
+              minZoom={MIN_CANVAS_ZOOM}
+              maxZoom={MAX_CANVAS_ZOOM}
+              defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+              fitView
+              fitViewOptions={{ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 }}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="rgba(255, 255, 255, 0.18)" gap={24} size={2} />
+              {/*
+              分组框跟随视口；仅四边和标签接收拖动，内部仍可操作节点。
+            */}
+              <ViewportPortal>
+                {groupFrames.map((frame) => (
+                  <div
+                    key={frame.groupId}
+                    className={`canvas-group-frame${dragEnabled && !isPickingRef ? ' is-draggable' : ''}${editingGroupId === frame.groupId ? ' is-editing' : ''}${selectedGroupId === frame.groupId ? ' is-selected' : ''}`}
+                    data-group-id={frame.groupId}
+                    onPointerDownCapture={(event) => {
+                      if (event.button !== 0) return
+                      setAddMenu(null)
+                      setContextMenu(null)
+                    }}
+                    onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
+                    style={
+                      {
+                        transform: `translate(${frame.x}px, ${frame.y}px)`,
+                        width: frame.width,
+                        height: frame.height,
+                        '--group-edge-hit': `${16 / (transform[2] || 1)}px`,
+                      } as CSSProperties
+                    }
+                  >
+                    {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+                      <div
+                        key={side}
+                        className={`canvas-group-frame__edge is-${side} nodrag nopan`}
+                        onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
+                      />
+                    ))}
+                    {/*
+                    标签在视口图层里，默认会跟着画布一起缩小——38% 缩放时字号只剩 4px 左右，
+                    完全读不了。分组标签单独做反向补偿，保持屏幕上的阅读字号稳定。
+                  */}
+                    <div
+                      className="canvas-group-frame__header nodrag nopan"
+                      style={
+                        {
+                          transform: `scale(${groupLabelScale})`,
+                          '--group-label-scale': groupLabelScale,
+                        } as CSSProperties
+                      }
+                      onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
+                      role="group"
+                      aria-label="分组拖动区域"
+                    >
+                      <svg
+                        className="canvas-group-frame__grip"
+                        width="12"
+                        height="16"
+                        viewBox="0 0 12 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <circle cx="4" cy="4" r="1" />
+                        <circle cx="8" cy="4" r="1" />
+                        <circle cx="4" cy="8" r="1" />
+                        <circle cx="8" cy="8" r="1" />
+                        <circle cx="4" cy="12" r="1" />
+                        <circle cx="8" cy="12" r="1" />
+                      </svg>
+                      {renamingGroupId === frame.groupId ? (
+                        <input
+                          className="canvas-group-frame__input nodrag nopan"
+                          defaultValue={frame.displayName}
+                          maxLength={40}
+                          autoFocus
+                          onFocus={(event) => event.target.select()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          aria-label="分组名"
+                          onBlur={(event) => renameGroup(frame.groupId, event.target.value)}
+                          onKeyDown={(event) => {
+                            event.stopPropagation()
+                            if (event.nativeEvent.isComposing) return
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              event.currentTarget.blur()
+                            } else if (event.key === 'Escape') {
+                              event.preventDefault()
+                              setRenamingGroupId('')
+                            }
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="canvas-group-frame__label nodrag nopan"
+                          title={`${frame.displayName} · 双击重命名，拖动移动整组`}
+                          onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
+                          onClick={() => selectGroup(frame.groupId)}
+                          onDoubleClick={() => setRenamingGroupId(frame.groupId)}
+                        >
+                          {frame.displayName}
+                        </button>
+                      )}
+                      <span className="canvas-group-frame__count">{frame.memberCount} 个节点</span>
+                      <Dropdown
+                        trigger={['click']}
+                        dropdownRender={(menu) => (
+                          <div
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {menu}
+                          </div>
+                        )}
+                        menu={{
+                          items: [
+                            { key: 'rename', label: '重命名' },
+                            { key: 'ungroup', label: '解组' },
+                          ],
+                          onClick: ({ key, domEvent }) => {
+                            domEvent.stopPropagation()
+                            if (key === 'rename') setRenamingGroupId(frame.groupId)
+                            else {
+                              commitHistory()
+                              setNodes((items) =>
+                                items.map((node) => {
+                                  if (getNodeGroupId(node as GroupableNode) !== frame.groupId) return node
+                                  const { groupId: _id, groupName: _name, ...data } = node.data
+                                  return { ...node, data }
+                                }),
+                              )
+                              setSaveStatus('dirty')
+                            }
+                          },
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="canvas-group-frame__more"
+                          aria-label={`分组操作：${frame.displayName}`}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <circle cx="5" cy="12" r="1.5" />
+                            <circle cx="12" cy="12" r="1.5" />
+                            <circle cx="19" cy="12" r="1.5" />
+                          </svg>
+                        </button>
+                      </Dropdown>
+                      {editingGroupId === frame.groupId && (
+                        <button
+                          type="button"
+                          className="canvas-group-frame__exit"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={() => selectGroup(frame.groupId)}
+                        >
+                          退出编辑
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {/*
+                对齐辅助线：拖动节点时与邻居的边/中线对上就画一条穿过两者的线。
+                画在视口图层里跟着缩放走；线宽用 1/zoom 反向补偿，屏幕上始终 1px。
+              */}
+                {alignmentGuides.map((guide, index) => (
+                  <div
+                    key={`${guide.axis}-${guide.position}-${index}`}
+                    className={`canvas-align-guide is-${guide.axis}`}
+                    style={
+                      guide.axis === 'x'
+                        ? {
+                            transform: `translate(${guide.position}px, ${guide.from - 24}px)`,
+                            height: guide.to - guide.from + 48,
+                            width: 1 / (transform[2] || 1),
+                          }
+                        : {
+                            transform: `translate(${guide.from - 24}px, ${guide.position}px)`,
+                            width: guide.to - guide.from + 48,
+                            height: 1 / (transform[2] || 1),
+                          }
+                    }
+                  />
+                ))}
+              </ViewportPortal>
+            </ReactFlow>
+          </CanvasNodeActionsContext.Provider>
+
+          {/* 单选节点操作条贴在节点上方。 */}
+          {nodeToolbarAnchor &&
+            selectedNodeVisible &&
+            selectedNode &&
+            !imageTool &&
+            !standaloneCrop &&
+            !reversePromptTarget &&
+            !hdRequest &&
+            !hdModalOpen &&
+            !canvasModalOpen && (
+              <CanvasNodeToolbar
+                anchor={nodeToolbarAnchor}
+                rightBoundary={directorLeftBoundary}
+                kind={selectedNodeToolbarState.kind}
+                hasContent={selectedNodeToolbarState.hasContent}
+                uploading={selectedNodeToolbarState.uploading}
+                capturing={capturingNodeId === selectedNode.id}
+                onRename={() => setRenamingNodeId(selectedNode.id)}
+                onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
+                onHd={
+                  ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
+                    ? () => {
+                        setImageTool(null)
+                        setHdRequest({ ids: [selectedNode.id], key: Date.now() })
+                      }
+                    : undefined
+                }
+                hdDisabledReason={
+                  Number(nodes.find((node) => node.id === selectedNode.id)?.data.assetId) > 0
+                    ? ''
+                    : '请先上传或生成素材'
+                }
+                onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
+                onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
+                onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
+                onCrop={() => openStandaloneCrop(selectedNode.id)}
+                onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
+                imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
+                onImageTool={(code) => {
+                  const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                  const assetId = Number(node?.data.assetId)
+                  if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+                    showToast('请先上传或生成图片', 'error')
+                    return
+                  }
+                  const initial =
+                    code === 'image.panorama' &&
+                    imageToolCatalog?.codes.includes('panorama.view') &&
+                    (node.data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama'
+                      ? 'panorama.view'
+                      : code
+                  setImageTool({
+                    code: initial,
+                    source: { nodeId: node.id, assetId, title: String(node.data.title || '图片') },
+                  })
+                }}
+                onReversePrompt={() => {
+                  const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                  if (!node) return
+                  if (String(node.data.kind || node.type) === 'video') {
+                    void handleReversePrompt(node.id)
+                    return
+                  }
+                  const assetIds = canvasImageResultIds(node.data as Record<string, unknown>)
+                  void handleReversePrompt(node.id, Number(node.data.assetId) || assetIds[0])
+                }}
+              />
+            )}
+
+          {reversePromptTarget && (
+            <CanvasReversePromptPanel
+              key={`${reversePromptTarget.outputNodeId}:${reversePromptTarget.assetId}`}
+              target={reversePromptTarget}
+              onComplete={handleReversePromptComplete}
+              onError={handleReversePromptError}
+            />
+          )}
+
+          {imageTool && (
+            <Suspense fallback={null}>
+              <CanvasImageTools
+                key={`${workspaceId}:${imageTool.source.nodeId}:${imageTool.source.assetId}:${imageTool.code}`}
+                workspaceId={Number(workspaceId)}
+                source={imageTool.source}
+                initialTool={imageTool.code}
+                anchor={imageToolAnchor}
+                onHeightChange={setImageToolHeight}
+                initialView={
+                  latestRef.current.nodes.find((node) => node.id === imageTool.source.nodeId)?.data.panoramaView as
+                    | Record<string, unknown>
+                    | undefined
+                }
+                images={nodes
+                  .filter(
+                    (node) =>
+                      node.data.kind === 'image' &&
+                      Number(node.data.assetId) > 0 &&
+                      (!node.data.assetWorkspaceId || Number(node.data.assetWorkspaceId) === Number(workspaceId)),
+                  )
+                  .map((node) => ({
+                    nodeId: node.id,
+                    assetId: Number(node.data.assetId),
+                    title: String(node.data.title || `图片 ${node.id}`),
+                  }))}
+                onClose={() => setImageTool(null)}
+                onGenerate={handleImageToolGenerate}
+                onCapture={handlePanoramaCapture}
+                onViewChange={handlePanoramaViewChange}
+              />
+            </Suspense>
+          )}
+
+          {/* 图片放大预览：带全部图片的画廊导航（左右箭头 / 方向键 / 底部缩略图条） */}
+          {imagePreviewNodeId && imagePreviewItems.length > 0 && (
+            <CanvasImagePreviewModal
+              items={imagePreviewItems}
+              resolveInfo={resolvePreviewImageInfo}
+              activeId={imagePreviewNodeId}
+              onSelect={setImagePreviewNodeId}
+              onClose={() => setImagePreviewNodeId('')}
+              onPanorama={(id) => {
+                const node = latestRef.current.nodes.find((item) => item.id === id)
+                if (!node || !(Number(node.data.assetId) > 0)) return
+                setImagePreviewNodeId('')
+                setImageTool({
+                  code: 'panorama.view',
+                  source: {
+                    nodeId: id,
+                    assetId: Number(node.data.assetId),
+                    title: String(node.data.title || '全景图'),
+                  },
+                })
+              }}
+            />
+          )}
+
+          {selectionDragLine && (
+            <svg className="canvas-selection-drag-line" aria-hidden="true">
+              <path
+                className="react-flow__connection-path"
+                d={
+                  getBezierPath({
+                    sourceX: selectionDragLine.x1,
+                    sourceY: selectionDragLine.y1,
+                    sourcePosition: Position.Right,
+                    targetX: selectionDragLine.x2,
+                    targetY: selectionDragLine.y2,
+                    targetPosition: Position.Left,
+                  })[0]
+                }
+                style={{ strokeWidth: transform[2] }}
+              />
+            </svg>
+          )}
+          {selectionFrame && !canvasModalOpen && !imageTool && !isPickingRef && (
+            <div
+              className={`canvas-selection-frame${selectionIsGroup ? ' is-group-selection' : ''}`}
+              style={selectionFrame}
+            >
+              <button
+                type="button"
+                className="canvas-selection-frame__add nodrag nopan"
+                aria-label="从所选节点创建下游节点"
+                title="从所选节点创建下游节点"
+                aria-expanded={Boolean(addMenu?.sourceIds)}
+                onPointerMove={(event) => {
+                  const drag = selectionDragRef.current
+                  if (drag && drag.pointerId === event.pointerId) {
+                    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 6) drag.moved = true
+                    if (drag.moved) {
+                      setSelectionDragLine({ x1: drag.startX, y1: drag.startY, x2: event.clientX, y2: event.clientY })
+                      return
+                    }
+                  }
+                  if (
+                    event.pointerType !== 'mouse' ||
+                    addMenu?.sourceIds ||
+                    draggingNode ||
+                    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                  )
+                    return
+                  // 点击区域保持固定，只让内部圆形轻微靠近指针，避免追逐按钮。
+                  const button = event.currentTarget
+                  const rect = button.getBoundingClientRect()
+                  const offset = (value: number) => Math.max(-8, Math.min(8, value * 0.28))
+                  button.style.setProperty('--magnet-x', `${offset(event.clientX - rect.left - rect.width / 2)}px`)
+                  button.style.setProperty('--magnet-y', `${offset(event.clientY - rect.top - rect.height / 2)}px`)
+                }}
+                onPointerLeave={(event) => {
+                  event.currentTarget.style.removeProperty('--magnet-x')
+                  event.currentTarget.style.removeProperty('--magnet-y')
+                }}
+                onPointerDown={(event) => {
+                  event.stopPropagation()
+                  if (event.button !== 0) return
+                  suppressSelectionClickRef.current = false
+                  selectionDragRef.current = {
+                    pointerId: event.pointerId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    sourceIds: [...selectedNodeIds],
+                    moved: false,
+                  }
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                }}
+                onPointerCancel={() => {
+                  selectionDragRef.current = null
+                  setSelectionDragLine(null)
+                }}
+                onPointerUp={(event) => {
+                  const drag = selectionDragRef.current
+                  selectionDragRef.current = null
+                  setSelectionDragLine(null)
+                  if (!drag || drag.pointerId !== event.pointerId || !drag.moved) return
+                  suppressSelectionClickRef.current = true
+                  const x = event.clientX
+                  const y = event.clientY
+                  const rects = latestRef.current.nodes
+                    .filter((node) => !node.hidden && !drag.sourceIds.includes(node.id))
+                    .flatMap((node) => {
+                      const rect = document.querySelector(`[data-id="${node.id}"]`)?.getBoundingClientRect()
+                      return rect
+                        ? [{ nodeId: node.id, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }]
+                        : []
+                    })
+                  const hit = resolveCanvasConnectDropTarget({
+                    point: { x, y },
+                    sourceId: drag.sourceIds[0],
+                    rects,
+                    zoom: transform[2],
+                  })
+                  if (hit) {
+                    void (async () => {
+                      if (!(await confirmBatchConnection(drag.sourceIds, hit.nodeId))) return
+                      const count = connectSourcesToTarget(drag.sourceIds, hit.nodeId)
+                      if (count) showToast(`已把 ${count} 个节点连到目标`, 'success')
+                      else
+                        showToast(
+                          validateConnection(drag.sourceIds[0], hit.nodeId) || '这些节点无法连到该目标',
+                          'error',
+                        )
+                    })()
+                  } else {
+                    setContextMenu(null)
+                    setAddMenu({
+                      x: Math.max(170, Math.min(x, window.innerWidth - 170)),
+                      y: Math.max(16, Math.min(y, window.innerHeight - 520)),
+                      sourceId: drag.sourceIds[0],
+                      sourceIds: drag.sourceIds,
+                      dropPosition: screenToFlowPosition({ x, y }),
+                    })
+                  }
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (suppressSelectionClickRef.current) {
+                    suppressSelectionClickRef.current = false
+                    return
+                  }
+                  if (addMenu?.sourceIds) {
+                    setAddMenu(null)
+                    return
+                  }
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setContextMenu(null)
+                  setAddMenu({
+                    x: Math.max(170, Math.min(rect.right + 160, window.innerWidth - 170)),
+                    y: Math.max(16, Math.min(rect.top, window.innerHeight - 520)),
+                    sourceId: selectedNodeIds[0],
+                    sourceIds: [...selectedNodeIds],
+                  })
+                }}
+              >
+                <span className="canvas-selection-frame__add-face" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  </svg>
+                </span>
+              </button>
+            </div>
+          )}
+
+          {/* 多选批量操作条：贴在选区上方，只有选中 2 个及以上时出现 */}
+          {selectionAnchor && !canvasModalOpen && (
+            <CanvasSelectionToolbar
+              count={selectedNodeIds.length}
+              timelineReadyCount={timelineReadySelection.length}
+              anchor={selectionAnchor}
+              isGroup={selectionIsGroup}
+              onGroup={groupSelectedNodes}
+              onUngroup={ungroupSelectedNodes}
+              onCreateTimeline={createTimelineFromSelection}
+              onDelete={() => void deleteSelectedNodes()}
+              onClear={clearSelection}
+              onArrange={() => arrangeNodes(selectedNodeIds)}
+              downloadableCount={downloadableSelection.length}
+              onDownload={downloadSelectedNodes}
+            />
+          )}
+
+          {settingsOpen && (
+            <CanvasSettingsPanel
+              preferences={preferences}
+              onChange={updatePreferences}
+              onReset={resetPreferences}
+              onClose={() => setSettingsOpen(false)}
+            />
+          )}
+
+          {shortcutsOpen && (
+            <CanvasShortcutsHelp shortcuts={preferences.shortcuts} onClose={() => setShortcutsOpen(false)} />
+          )}
+
+          {/* 左下角复位视图按钮 */}
+          {searchOpen && (
+            <CanvasNodeSearch
+              nodes={searchableNodes}
+              onPick={focusNodeFromSearch}
+              onClose={() => setSearchOpen(false)}
+            />
+          )}
+
+          {/* 连线剪刀图标层 — 选中连线时显示 */}
+          <EdgeLabelRenderer>
+            {edges
+              .filter((e) => e.selected)
+              .map((edge) => {
+                const source = nodes.find((n) => n.id === edge.source)
+                const target = nodes.find((n) => n.id === edge.target)
+                if (!source || !target) return null
+
+                const sx = source.position.x + (source.measured?.width || (source.style?.width as number) || 250) / 2
+                const sy = source.position.y + (source.measured?.height || (source.style?.height as number) || 250) / 2
+                const tx = target.position.x + (target.measured?.width || (target.style?.width as number) || 250) / 2
+                const ty = target.position.y + (target.measured?.height || (target.style?.height as number) || 250) / 2
+
+                const [_, labelX, labelY] = getBezierPath({
+                  sourceX: sx,
+                  sourceY: sy,
+                  targetX: tx,
+                  targetY: ty,
+                })
+
+                return (
+                  <div
+                    key={edge.id}
+                    style={{
+                      position: 'absolute',
+                      transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+                      pointerEvents: 'all',
+                      zIndex: 100,
+                    }}
+                  >
+                    <button
+                      className="canvas-edge-delete"
+                      title="删除连线"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleEdgeDelete(edge.id)
+                      }}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      >
+                        <path d="M4 4l6 6M10 4l-6 6" />
+                        <circle cx="7" cy="7" r="5" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              })}
+          </EdgeLabelRenderer>
+
+          {/* 粘贴二选一：复制的节点带有上游时，粘贴前让用户选粘哪种 */}
+          {pasteChoice && (
+            <>
+              <div className="canvas-paste-choice__mask" onMouseDown={() => setPasteChoice(null)} />
+              <div
+                className="canvas-context-menu canvas-paste-choice"
+                style={{
+                  left: Math.min(pasteChoice.x, window.innerWidth - CONTEXT_MENU_WIDTH),
+                  top: Math.min(pasteChoice.y, window.innerHeight - 120),
+                }}
+              >
+                <div className="canvas-paste-choice__title">粘贴哪些节点？</div>
+                <button
+                  type="button"
+                  className="canvas-context-menu__item"
+                  onClick={() => pasteClipboardNodes(pasteChoice, 'only')}
+                >
+                  只含当前节点
+                  <span className="canvas-context-menu__kbd">{canvasClipboard?.nodes.length ?? 0} 个</span>
+                </button>
+                <button
+                  type="button"
+                  className="canvas-context-menu__item"
+                  onClick={() => pasteClipboardNodes(pasteChoice, 'upstream')}
+                >
+                  包含之前所有节点
+                  <span className="canvas-context-menu__kbd">{canvasClipboardWithUpstream?.nodes.length ?? 0} 个</span>
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* 右键浮动菜单：添加节点 / 撤销 / 重做 */}
+          {contextMenu && (
+            <div
+              className="canvas-context-menu"
+              style={{
+                left: Math.min(contextMenu.x, window.innerWidth - CONTEXT_MENU_WIDTH),
+                top: Math.max(
+                  8,
+                  Math.min(
+                    contextMenu.y,
+                    window.innerHeight - Math.min(CONTEXT_MENU_HEIGHT, window.innerHeight - 16) - 8,
+                  ),
                 ),
-              )
-              setEdges((items) => items.map((item) => (item.selected ? { ...item, selected: false } : item)))
-              setSelectedNodeIds(wanted.size > 1 ? [...wanted] : [])
-              // 选中节点即关掉添加节点菜单（理由见 handleSelectNodeOnDown）
-              setAddMenu(null)
-              // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
+                maxHeight: 'calc(100vh - 16px)',
+                overflowY: 'auto',
+              }}
+            >
+              {contextMenu.nodeId && (
+                <>
+                  <CanvasDuplicateMenu
+                    shortcut={formatCanvasShortcut(preferences.shortcuts.duplicate)}
+                    onDuplicate={() => duplicateNode(contextMenu.nodeId!)}
+                    onDuplicateWithUpstream={() => {
+                      setContextMenu(null)
+                      duplicateWithUpstream(contextMenu.nodeId!)
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="canvas-context-menu__item"
+                    onClick={() => {
+                      // 右键在选中集里的节点上复制整个选中集；右键在别的节点上就只复制它
+                      const targets = resolveActionTargets()
+                      copyNodes(targets.includes(contextMenu.nodeId!) ? targets : [contextMenu.nodeId!])
+                    }}
+                  >
+                    <span className="canvas-context-menu__icon">
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                      >
+                        <rect x="8" y="8" width="12" height="12" rx="2" />
+                        <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                      </svg>
+                    </span>
+                    复制
+                    <span className="canvas-context-menu__kbd">Ctrl+C</span>
+                  </button>
+                </>
+              )}
+              {/*
+              删除：右键在多选集里的节点上（或多选时右键空白处）删整个选中集，并把数量说出来；
+              右键在别的节点上只删它。以前右键菜单里根本没有删除，只能靠键盘或节点工具条。
+            */}
+              {(() => {
+                const inSelection = contextMenu.nodeId ? selectedNodeIds.includes(contextMenu.nodeId) : false
+                const batch = selectedNodeIds.length > 1 && (inSelection || !contextMenu.nodeId)
+                const targets = batch ? selectedNodeIds : contextMenu.nodeId ? [contextMenu.nodeId] : []
+                if (!targets.length) return null
+                return (
+                  <>
+                    <button
+                      type="button"
+                      className="canvas-context-menu__item canvas-context-menu__item--danger"
+                      onClick={() => {
+                        setContextMenu(null)
+                        if (batch) void deleteSelectedNodes()
+                        else void deleteNodeById(targets[0])
+                      }}
+                    >
+                      <span className="canvas-context-menu__icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="16"
+                          height="16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                        >
+                          <path d="M4 7h16M10 7V5h4v2M6 7l1 12h10l1-12" />
+                        </svg>
+                      </span>
+                      {batch ? `删除选中的 ${targets.length} 个节点` : '删除节点'}
+                      <span className="canvas-context-menu__kbd">Del</span>
+                    </button>
+                    <div className="canvas-context-menu__divider" />
+                  </>
+                )
+              })()}
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                disabled={!canvasClipboard}
+                onClick={() => pasteClipboardNodes({ x: contextMenu.x, y: contextMenu.y })}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <rect x="5" y="4" width="14" height="17" rx="2" />
+                    <path d="M9 4V3h6v1M9 11h6M9 15h4" strokeLinecap="round" />
+                  </svg>
+                </span>
+                粘贴
+                <span className="canvas-context-menu__kbd">Ctrl+V</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                disabled={nodes.length === 0}
+                onClick={selectAllNodes}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeDasharray="3 2.5"
+                  >
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                  </svg>
+                </span>
+                全选
+                <span className="canvas-context-menu__kbd">Ctrl+A</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                disabled={nodes.length < 2}
+                onClick={() => arrangeNodes(selectedNodeIds.length > 1 ? selectedNodeIds : undefined)}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <rect x="3" y="4" width="6" height="6" rx="1.2" />
+                    <rect x="3" y="14" width="6" height="6" rx="1.2" />
+                    <rect x="15" y="9" width="6" height="6" rx="1.2" />
+                    <path d="M9 7h2a2 2 0 0 1 2 2v3M9 17h2a2 2 0 0 0 2-2v-3M13 12h2" />
+                  </svg>
+                </span>
+                {selectedNodeIds.length > 1 ? '整理选中节点' : '整理全部布局'}
+              </button>
+              <div className="canvas-context-menu__divider" />
+              <div className="canvas-context-menu__label">添加节点</div>
+              {/* 可建类型与左侧工具栏共用 ADD_MENU_ITEMS：右键菜单曾漏掉「视频剪辑」，
+                只有从左侧工具栏才建得出时间线节点 */}
+              {ADD_MENU_ITEMS.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  className="canvas-context-menu__item"
+                  onClick={() => handleContextAddNode(item.type)}
+                >
+                  <span className="canvas-context-menu__icon">{getTypeIcon(item.type)}</span>
+                  {item.label}
+                </button>
+              ))}
+              {/* 素材库与本地上传并列：两个入口给的选择必须一致，
+                在这里少一条会让用户以为右键菜单下没有素材库这条路 */}
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                onClick={() => {
+                  setContextMenu(null)
+                  openDrawerPanel('assets')
+                }}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="5" width="14" height="14" rx="2" />
+                    <path d="M17 8h3a1 1 0 0 1 1 1v9a3 3 0 0 1-3 3H8" />
+                  </svg>
+                </span>
+                素材库
+              </button>
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                onClick={() => {
+                  const anchor = { x: contextMenu.x, y: contextMenu.y }
+                  setContextMenu(null)
+                  openLocalImagePicker(anchor)
+                }}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 16V4" />
+                    <path d="m6 10 6-6 6 6" />
+                    <path d="M4 20h16" />
+                  </svg>
+                </span>
+                本地上传
+              </button>
+              <div className="canvas-context-menu__divider" />
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                disabled={!historyFlags.canUndo}
+                onClick={undo}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9 14 4 9l5-5" />
+                    <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+                  </svg>
+                </span>
+                撤销
+                <span className="canvas-context-menu__kbd">{formatCanvasShortcut(preferences.shortcuts.undo)}</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                disabled={!historyFlags.canRedo}
+                onClick={redo}
+              >
+                <span className="canvas-context-menu__icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m15 14 5-5-5-5" />
+                    <path d="M20 9H10a6 6 0 0 0 0 12h3" />
+                  </svg>
+                </span>
+                重做
+                <span className="canvas-context-menu__kbd">{formatCanvasShortcut(preferences.shortcuts.redo)}</span>
+              </button>
+            </div>
+          )}
+
+          {/* 素材库弹窗（Figma "添加素材" 模态样式，5 个 tab 参考「我的素材」页面） */}
+          <CanvasMaterialPicker
+            workspaceId={workspaceId}
+            userId={currentUserId}
+            visible={drawerPanel === 'assets'}
+            variant="modal"
+            initialTab={libraryInitialTab}
+            // 「选参考」模式：可多选，上限为目标节点剩余的参考名额；普通「添加素材」仍是单个应用
+            selectionLimit={libraryRefTarget ? remainingRefCapacity(libraryRefTarget.targetId) : undefined}
+            onApplyMany={
+              libraryRefTarget
+                ? (materials) => {
+                    applyMaterialAsReference(materials)
+                    setLibraryRefTarget(null)
+                    closeDrawerPanel()
+                  }
+                : undefined
+            }
+            onClose={() => {
+              // 关掉弹窗即放弃这次「选参考」，否则下次打开素材库还会误连到上次那个节点
+              setLibraryRefTarget(null)
+              setLibraryInitialTab('all')
+              closeDrawerPanel()
+            }}
+            onApply={(material) => {
+              // 「选参考」模式优先：此时素材要连到发起的节点上，而不是当作新素材落在视口中央
+              if (!applyMaterialAsReference(material)) {
+                // 应用素材 → 创建对应类型的图片/视频节点到画布
+                handleApplyMaterial(material)
+              }
+              // 单次选择完成后关闭素材弹窗，避免节点已添加但弹窗仍停留在画布上。
+              setLibraryRefTarget(null)
+              closeDrawerPanel()
+            }}
+          />
+
+          {/* 历史记录抽屉 */}
+          <CanvasHistoryPanel
+            visible={drawerPanel === 'history'}
+            variant="drawer"
+            items={realHistoryItems}
+            onClose={closeDrawerPanel}
+            onSelect={(item: HistoryItem) => {
+              const node = nodes.find((candidate) => candidate.id === item.nodeId)
+              if (!node) return
+              setNodes((current) => current.map((candidate) => ({ ...candidate, selected: candidate.id === node.id })))
               setSelectedNode({
                 id: node.id,
-                kind: (node.data?.kind as string) || 'text',
+                kind: String((node.data as any)?.kind || node.type || 'image'),
                 sourceRefs: getSourceRefs(node.id),
                 ratio: (node.data as any)?.ratio,
                 videoMode: (node.data as any)?.videoMode,
@@ -12291,1241 +13310,290 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                 operationCode: (node.data as any)?.operationCode,
                 params: (node.data as any)?.params,
               })
-            }}
-            onPaneClick={() => {
-              if (pointerStartedInPanelRef.current) return
-              if (!isPickingRef) setEditingGroup('')
-              if (isPickingRef) {
-                // 参考选择模式下点击空白不退出：只能通过「退出」按钮退出
-                return
-              }
-              setAddMenu(null)
-              setSelectedNode(null)
-              setSelectedNodeIds([])
-            }}
-            /* 工具栏「锁定」：nodesDraggable 关掉后节点不可拖，画布照常平移 */
-            nodesDraggable={!agentOwner && dragEnabled && !spacePanning && !panModeEnabled}
-            /* 默认左键让给框选，平移走中键 [1] / 右键 [2]，空格+左键由 spacePanning 临时接管；
-             * 工具栏「拖动」（抓手）点亮后左键 [0] 也平移 */
-            panOnDrag={agentOwner || panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
-            /* 无限画布不限制平移范围，远离原点的节点和低倍率视口都必须可达。 */
-            /*
-             * 滚轮行为按偏好：
-             * - 平移（默认，设计工具习惯）：双指滚动自由平移，Ctrl/⌘ + 滚动缩放，捏合缩放；
-             * - 缩放（图编辑器习惯）：滚动即缩放。
-             * 两种下 Ctrl/⌘ + 滚动都是缩放（zoomActivationKeyCode），所以缩放模式下不再额外区分。
-             */
-            panOnScroll={preferences.wheelMode === 'pan'}
-            panOnScrollMode={PanOnScrollMode.Free}
-            panOnScrollSpeed={0.8}
-            zoomOnScroll={preferences.wheelMode === 'zoom'}
-            zoomOnPinch
-            zoomActivationKeyCode={canvasWheelActivationKeys(preferences.shortcuts.zoomWheel)}
-            /* 触控板双击很容易被误触；画布缩放统一走滚轮/捏合和底部缩放控件。 */
-            zoomOnDoubleClick={false}
-            preventScrolling
-            snapToGrid={snapEnabled}
-            snapGrid={CANVAS_SNAP_GRID}
-            elementsSelectable={!agentOwner}
-            /*
-             * 缩放范围。
-             *
-             * React Flow 默认 minZoom 是 0.5，节点一多就会「缩到一半再也缩不动」，
-             * 复位视图同样受此限制——画布装不下时 fitView 也只能停在 0.5，看不到全貌。
-             * 放到 0.01（100 倍）足以俯瞰几百个节点，且仍是有限值：
-             * 真的做成无下限会让视口在极小倍率下失去精度，反而拖不动、点不中。
-             */
-            minZoom={MIN_CANVAS_ZOOM}
-            maxZoom={MAX_CANVAS_ZOOM}
-            defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-            fitView
-            fitViewOptions={{ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 }}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="rgba(255, 255, 255, 0.18)" gap={24} size={2} />
-            {/*
-              分组框跟随视口；仅四边和标签接收拖动，内部仍可操作节点。
-            */}
-            <ViewportPortal>
-              {groupFrames.map((frame) => (
-                <div
-                  key={frame.groupId}
-                  className={`canvas-group-frame${dragEnabled && !isPickingRef ? ' is-draggable' : ''}${editingGroupId === frame.groupId ? ' is-editing' : ''}${selectedGroupId === frame.groupId ? ' is-selected' : ''}`}
-                  data-group-id={frame.groupId}
-                  onPointerDownCapture={(event) => {
-                    if (event.button !== 0) return
-                    setAddMenu(null)
-                    setContextMenu(null)
-                  }}
-                  onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
-                  style={
-                    {
-                      transform: `translate(${frame.x}px, ${frame.y}px)`,
-                      width: frame.width,
-                      height: frame.height,
-                      '--group-edge-hit': `${16 / (transform[2] || 1)}px`,
-                    } as CSSProperties
-                  }
-                >
-                  {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
-                    <div
-                      key={side}
-                      className={`canvas-group-frame__edge is-${side} nodrag nopan`}
-                      onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
-                    />
-                  ))}
-                  {/*
-                    标签在视口图层里，默认会跟着画布一起缩小——38% 缩放时字号只剩 4px 左右，
-                    完全读不了。分组标签单独做反向补偿，保持屏幕上的阅读字号稳定。
-                  */}
-                  <div
-                    className="canvas-group-frame__header nodrag nopan"
-                    style={
-                      {
-                        transform: `scale(${groupLabelScale})`,
-                        '--group-label-scale': groupLabelScale,
-                      } as CSSProperties
-                    }
-                    onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
-                    role="group"
-                    aria-label="分组拖动区域"
-                  >
-                    <svg
-                      className="canvas-group-frame__grip"
-                      width="12"
-                      height="16"
-                      viewBox="0 0 12 16"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <circle cx="4" cy="4" r="1" />
-                      <circle cx="8" cy="4" r="1" />
-                      <circle cx="4" cy="8" r="1" />
-                      <circle cx="8" cy="8" r="1" />
-                      <circle cx="4" cy="12" r="1" />
-                      <circle cx="8" cy="12" r="1" />
-                    </svg>
-                    {renamingGroupId === frame.groupId ? (
-                      <input
-                        className="canvas-group-frame__input nodrag nopan"
-                        defaultValue={frame.displayName}
-                        maxLength={40}
-                        autoFocus
-                        onFocus={(event) => event.target.select()}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        aria-label="分组名"
-                        onBlur={(event) => renameGroup(frame.groupId, event.target.value)}
-                        onKeyDown={(event) => {
-                          event.stopPropagation()
-                          if (event.nativeEvent.isComposing) return
-                          if (event.key === 'Enter') {
-                            event.preventDefault()
-                            event.currentTarget.blur()
-                          } else if (event.key === 'Escape') {
-                            event.preventDefault()
-                            setRenamingGroupId('')
-                          }
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className="canvas-group-frame__label nodrag nopan"
-                        title={`${frame.displayName} · 双击重命名，拖动移动整组`}
-                        onPointerDown={(event) => startGroupDrag(event, frame.groupId)}
-                        onClick={() => selectGroup(frame.groupId)}
-                        onDoubleClick={() => setRenamingGroupId(frame.groupId)}
-                      >
-                        {frame.displayName}
-                      </button>
-                    )}
-                    <span className="canvas-group-frame__count">{frame.memberCount} 个节点</span>
-                    <Dropdown
-                      trigger={['click']}
-                      dropdownRender={(menu) => (
-                        <div
-                          onPointerDown={(event) => event.stopPropagation()}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          {menu}
-                        </div>
-                      )}
-                      menu={{
-                        items: [
-                          { key: 'rename', label: '重命名' },
-                          { key: 'ungroup', label: '解组' },
-                        ],
-                        onClick: ({ key, domEvent }) => {
-                          domEvent.stopPropagation()
-                          if (key === 'rename') setRenamingGroupId(frame.groupId)
-                          else {
-                            commitHistory()
-                            setNodes((items) =>
-                              items.map((node) => {
-                                if (getNodeGroupId(node as GroupableNode) !== frame.groupId) return node
-                                const { groupId: _id, groupName: _name, ...data } = node.data
-                                return { ...node, data }
-                              }),
-                            )
-                            setSaveStatus('dirty')
-                          }
-                        },
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="canvas-group-frame__more"
-                        aria-label={`分组操作：${frame.displayName}`}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                          <circle cx="5" cy="12" r="1.5" />
-                          <circle cx="12" cy="12" r="1.5" />
-                          <circle cx="19" cy="12" r="1.5" />
-                        </svg>
-                      </button>
-                    </Dropdown>
-                    {editingGroupId === frame.groupId && (
-                      <button
-                        type="button"
-                        className="canvas-group-frame__exit"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={() => selectGroup(frame.groupId)}
-                      >
-                        退出编辑
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {/*
-                对齐辅助线：拖动节点时与邻居的边/中线对上就画一条穿过两者的线。
-                画在视口图层里跟着缩放走；线宽用 1/zoom 反向补偿，屏幕上始终 1px。
-              */}
-              {alignmentGuides.map((guide, index) => (
-                <div
-                  key={`${guide.axis}-${guide.position}-${index}`}
-                  className={`canvas-align-guide is-${guide.axis}`}
-                  style={
-                    guide.axis === 'x'
-                      ? {
-                          transform: `translate(${guide.position}px, ${guide.from - 24}px)`,
-                          height: guide.to - guide.from + 48,
-                          width: 1 / (transform[2] || 1),
-                        }
-                      : {
-                          transform: `translate(${guide.from - 24}px, ${guide.position}px)`,
-                          width: guide.to - guide.from + 48,
-                          height: 1 / (transform[2] || 1),
-                        }
-                  }
-                />
-              ))}
-            </ViewportPortal>
-          </ReactFlow>
-        </CanvasNodeActionsContext.Provider>
-
-        {/* 单选节点操作条贴在节点上方。 */}
-        {nodeToolbarAnchor &&
-          selectedNodeVisible &&
-          selectedNode &&
-          !imageTool &&
-          !standaloneCrop &&
-          !reversePromptTarget &&
-          !hdRequest &&
-          !hdModalOpen &&
-          !canvasModalOpen && (
-            <CanvasNodeToolbar
-              anchor={nodeToolbarAnchor}
-              rightBoundary={directorLeftBoundary}
-              kind={selectedNodeToolbarState.kind}
-              hasContent={selectedNodeToolbarState.hasContent}
-              uploading={selectedNodeToolbarState.uploading}
-              capturing={capturingNodeId === selectedNode.id}
-              onRename={() => setRenamingNodeId(selectedNode.id)}
-              onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
-              onHd={
-                ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
-                  ? () => {
-                      setImageTool(null)
-                      setHdRequest({ ids: [selectedNode.id], key: Date.now() })
-                    }
-                  : undefined
-              }
-              hdDisabledReason={
-                Number(nodes.find((node) => node.id === selectedNode.id)?.data.assetId) > 0 ? '' : '请先上传或生成素材'
-              }
-              onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
-              onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
-              onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
-              onCrop={() => openStandaloneCrop(selectedNode.id)}
-              onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
-              imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
-              onImageTool={(code) => {
-                const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                const assetId = Number(node?.data.assetId)
-                if (!Number.isSafeInteger(assetId) || assetId <= 0) {
-                  showToast('请先上传或生成图片', 'error')
-                  return
-                }
-                const initial =
-                  code === 'image.panorama' &&
-                  imageToolCatalog?.codes.includes('panorama.view') &&
-                  (node.data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama'
-                    ? 'panorama.view'
-                    : code
-                setImageTool({
-                  code: initial,
-                  source: { nodeId: node.id, assetId, title: String(node.data.title || '图片') },
-                })
-              }}
-              onReversePrompt={() => {
-                const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                if (!node) return
-                if (String(node.data.kind || node.type) === 'video') {
-                  void handleReversePrompt(node.id)
-                  return
-                }
-                const assetIds = canvasImageResultIds(node.data as Record<string, unknown>)
-                void handleReversePrompt(node.id, Number(node.data.assetId) || assetIds[0])
-              }}
-            />
-          )}
-
-        {reversePromptTarget && (
-          <CanvasReversePromptPanel
-            key={`${reversePromptTarget.outputNodeId}:${reversePromptTarget.assetId}`}
-            target={reversePromptTarget}
-            onComplete={handleReversePromptComplete}
-            onError={handleReversePromptError}
-          />
-        )}
-
-        {imageTool && (
-          <Suspense fallback={null}>
-            <CanvasImageTools
-              key={`${workspaceId}:${imageTool.source.nodeId}:${imageTool.source.assetId}:${imageTool.code}`}
-              workspaceId={Number(workspaceId)}
-              source={imageTool.source}
-              initialTool={imageTool.code}
-              anchor={imageToolAnchor}
-              onHeightChange={setImageToolHeight}
-              initialView={
-                latestRef.current.nodes.find((node) => node.id === imageTool.source.nodeId)?.data.panoramaView as
-                  | Record<string, unknown>
-                  | undefined
-              }
-              images={nodes
-                .filter(
-                  (node) =>
-                    node.data.kind === 'image' &&
-                    Number(node.data.assetId) > 0 &&
-                    (!node.data.assetWorkspaceId || Number(node.data.assetWorkspaceId) === Number(workspaceId)),
-                )
-                .map((node) => ({
-                  nodeId: node.id,
-                  assetId: Number(node.data.assetId),
-                  title: String(node.data.title || `图片 ${node.id}`),
-                }))}
-              onClose={() => setImageTool(null)}
-              onGenerate={handleImageToolGenerate}
-              onCapture={handlePanoramaCapture}
-              onViewChange={handlePanoramaViewChange}
-            />
-          </Suspense>
-        )}
-
-        {/* 图片放大预览：带全部图片的画廊导航（左右箭头 / 方向键 / 底部缩略图条） */}
-        {imagePreviewNodeId && imagePreviewItems.length > 0 && (
-          <CanvasImagePreviewModal
-            items={imagePreviewItems}
-            resolveInfo={resolvePreviewImageInfo}
-            activeId={imagePreviewNodeId}
-            onSelect={setImagePreviewNodeId}
-            onClose={() => setImagePreviewNodeId('')}
-            onPanorama={(id) => {
-              const node = latestRef.current.nodes.find((item) => item.id === id)
-              if (!node || !(Number(node.data.assetId) > 0)) return
-              setImagePreviewNodeId('')
-              setImageTool({
-                code: 'panorama.view',
-                source: { nodeId: id, assetId: Number(node.data.assetId), title: String(node.data.title || '全景图') },
-              })
+              void fitView({ nodes: [node], padding: 0.5, duration: 300, maxZoom: 1 })
+              closeDrawerPanel()
             }}
           />
-        )}
 
-        {selectionDragLine && (
-          <svg className="canvas-selection-drag-line" aria-hidden="true">
-            <path
-              className="react-flow__connection-path"
-              d={
-                getBezierPath({
-                  sourceX: selectionDragLine.x1,
-                  sourceY: selectionDragLine.y1,
-                  sourcePosition: Position.Right,
-                  targetX: selectionDragLine.x2,
-                  targetY: selectionDragLine.y2,
-                  targetPosition: Position.Left,
-                })[0]
-              }
-              style={{ strokeWidth: transform[2] }}
-            />
-          </svg>
-        )}
-        {selectionFrame && !canvasModalOpen && !imageTool && !isPickingRef && (
-          <div
-            className={`canvas-selection-frame${selectionIsGroup ? ' is-group-selection' : ''}`}
-            style={selectionFrame}
-          >
-            <button
-              type="button"
-              className="canvas-selection-frame__add nodrag nopan"
-              aria-label="从所选节点创建下游节点"
-              title="从所选节点创建下游节点"
-              aria-expanded={Boolean(addMenu?.sourceIds)}
-              onPointerMove={(event) => {
-                const drag = selectionDragRef.current
-                if (drag && drag.pointerId === event.pointerId) {
-                  if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 6) drag.moved = true
-                  if (drag.moved) {
-                    setSelectionDragLine({ x1: drag.startX, y1: drag.startY, x2: event.clientX, y2: event.clientY })
-                    return
-                  }
-                }
-                if (
-                  event.pointerType !== 'mouse' ||
-                  addMenu?.sourceIds ||
-                  draggingNode ||
-                  window.matchMedia('(prefers-reduced-motion: reduce)').matches
-                )
-                  return
-                // 点击区域保持固定，只让内部圆形轻微靠近指针，避免追逐按钮。
-                const button = event.currentTarget
-                const rect = button.getBoundingClientRect()
-                const offset = (value: number) => Math.max(-8, Math.min(8, value * 0.28))
-                button.style.setProperty('--magnet-x', `${offset(event.clientX - rect.left - rect.width / 2)}px`)
-                button.style.setProperty('--magnet-y', `${offset(event.clientY - rect.top - rect.height / 2)}px`)
-              }}
-              onPointerLeave={(event) => {
-                event.currentTarget.style.removeProperty('--magnet-x')
-                event.currentTarget.style.removeProperty('--magnet-y')
-              }}
-              onPointerDown={(event) => {
-                event.stopPropagation()
-                if (event.button !== 0) return
-                suppressSelectionClickRef.current = false
-                selectionDragRef.current = {
-                  pointerId: event.pointerId,
-                  startX: event.clientX,
-                  startY: event.clientY,
-                  sourceIds: [...selectedNodeIds],
-                  moved: false,
-                }
-                event.currentTarget.setPointerCapture(event.pointerId)
-              }}
-              onPointerCancel={() => {
-                selectionDragRef.current = null
-                setSelectionDragLine(null)
-              }}
-              onPointerUp={(event) => {
-                const drag = selectionDragRef.current
-                selectionDragRef.current = null
-                setSelectionDragLine(null)
-                if (!drag || drag.pointerId !== event.pointerId || !drag.moved) return
-                suppressSelectionClickRef.current = true
-                const x = event.clientX
-                const y = event.clientY
-                const rects = latestRef.current.nodes
-                  .filter((node) => !node.hidden && !drag.sourceIds.includes(node.id))
-                  .flatMap((node) => {
-                    const rect = document.querySelector(`[data-id="${node.id}"]`)?.getBoundingClientRect()
-                    return rect
-                      ? [{ nodeId: node.id, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }]
-                      : []
-                  })
-                const hit = resolveCanvasConnectDropTarget({
-                  point: { x, y },
-                  sourceId: drag.sourceIds[0],
-                  rects,
-                  zoom: transform[2],
-                })
-                if (hit) {
-                  void (async () => {
-                    if (!(await confirmBatchConnection(drag.sourceIds, hit.nodeId))) return
-                    const count = connectSourcesToTarget(drag.sourceIds, hit.nodeId)
-                    if (count) showToast(`已把 ${count} 个节点连到目标`, 'success')
-                    else
-                      showToast(validateConnection(drag.sourceIds[0], hit.nodeId) || '这些节点无法连到该目标', 'error')
-                  })()
-                } else {
-                  setContextMenu(null)
-                  setAddMenu({
-                    x: Math.max(170, Math.min(x, window.innerWidth - 170)),
-                    y: Math.max(16, Math.min(y, window.innerHeight - 520)),
-                    sourceId: drag.sourceIds[0],
-                    sourceIds: drag.sourceIds,
-                    dropPosition: screenToFlowPosition({ x, y }),
-                  })
-                }
-              }}
-              onClick={(event) => {
-                event.stopPropagation()
-                if (suppressSelectionClickRef.current) {
-                  suppressSelectionClickRef.current = false
-                  return
-                }
-                if (addMenu?.sourceIds) {
-                  setAddMenu(null)
-                  return
-                }
-                const rect = event.currentTarget.getBoundingClientRect()
-                setContextMenu(null)
-                setAddMenu({
-                  x: Math.max(170, Math.min(rect.right + 160, window.innerWidth - 170)),
-                  y: Math.max(16, Math.min(rect.top, window.innerHeight - 520)),
-                  sourceId: selectedNodeIds[0],
-                  sourceIds: [...selectedNodeIds],
-                })
-              }}
-            >
-              <span className="canvas-selection-frame__add-face" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                </svg>
-              </span>
-            </button>
-          </div>
-        )}
-
-        {/* 多选批量操作条：贴在选区上方，只有选中 2 个及以上时出现 */}
-        {selectionAnchor && !canvasModalOpen && (
-          <CanvasSelectionToolbar
-            count={selectedNodeIds.length}
-            timelineReadyCount={timelineReadySelection.length}
-            anchor={selectionAnchor}
-            isGroup={selectionIsGroup}
-            onGroup={groupSelectedNodes}
-            onUngroup={ungroupSelectedNodes}
-            onCreateTimeline={createTimelineFromSelection}
-            onDelete={() => void deleteSelectedNodes()}
-            onClear={clearSelection}
-            onArrange={() => arrangeNodes(selectedNodeIds)}
-            downloadableCount={downloadableSelection.length}
-            onDownload={downloadSelectedNodes}
-          />
-        )}
-
-        {settingsOpen && (
-          <CanvasSettingsPanel
-            preferences={preferences}
-            onChange={updatePreferences}
-            onReset={resetPreferences}
-            onClose={() => setSettingsOpen(false)}
-          />
-        )}
-
-        {shortcutsOpen && (
-          <CanvasShortcutsHelp shortcuts={preferences.shortcuts} onClose={() => setShortcutsOpen(false)} />
-        )}
-
-        {/* 左下角复位视图按钮 */}
-        {searchOpen && (
-          <CanvasNodeSearch nodes={searchableNodes} onPick={focusNodeFromSearch} onClose={() => setSearchOpen(false)} />
-        )}
-
-        {/* 连线剪刀图标层 — 选中连线时显示 */}
-        <EdgeLabelRenderer>
-          {edges
-            .filter((e) => e.selected)
-            .map((edge) => {
-              const source = nodes.find((n) => n.id === edge.source)
-              const target = nodes.find((n) => n.id === edge.target)
-              if (!source || !target) return null
-
-              const sx = source.position.x + (source.measured?.width || (source.style?.width as number) || 250) / 2
-              const sy = source.position.y + (source.measured?.height || (source.style?.height as number) || 250) / 2
-              const tx = target.position.x + (target.measured?.width || (target.style?.width as number) || 250) / 2
-              const ty = target.position.y + (target.measured?.height || (target.style?.height as number) || 250) / 2
-
-              const [_, labelX, labelY] = getBezierPath({
-                sourceX: sx,
-                sourceY: sy,
-                targetX: tx,
-                targetY: ty,
-              })
-
-              return (
-                <div
-                  key={edge.id}
-                  style={{
-                    position: 'absolute',
-                    transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-                    pointerEvents: 'all',
-                    zIndex: 100,
-                  }}
-                >
-                  <button
-                    className="canvas-edge-delete"
-                    title="删除连线"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleEdgeDelete(edge.id)
-                    }}
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 14 14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    >
-                      <path d="M4 4l6 6M10 4l-6 6" />
-                      <circle cx="7" cy="7" r="5" />
-                    </svg>
-                  </button>
-                </div>
-              )
-            })}
-        </EdgeLabelRenderer>
-
-        {/* 粘贴二选一：复制的节点带有上游时，粘贴前让用户选粘哪种 */}
-        {pasteChoice && (
-          <>
-            <div className="canvas-paste-choice__mask" onMouseDown={() => setPasteChoice(null)} />
-            <div
-              className="canvas-context-menu canvas-paste-choice"
-              style={{
-                left: Math.min(pasteChoice.x, window.innerWidth - CONTEXT_MENU_WIDTH),
-                top: Math.min(pasteChoice.y, window.innerHeight - 120),
-              }}
-            >
-              <div className="canvas-paste-choice__title">粘贴哪些节点？</div>
-              <button
-                type="button"
-                className="canvas-context-menu__item"
-                onClick={() => pasteClipboardNodes(pasteChoice, 'only')}
-              >
-                只含当前节点
-                <span className="canvas-context-menu__kbd">{canvasClipboard?.nodes.length ?? 0} 个</span>
-              </button>
-              <button
-                type="button"
-                className="canvas-context-menu__item"
-                onClick={() => pasteClipboardNodes(pasteChoice, 'upstream')}
-              >
-                包含之前所有节点
-                <span className="canvas-context-menu__kbd">{canvasClipboardWithUpstream?.nodes.length ?? 0} 个</span>
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* 右键浮动菜单：添加节点 / 撤销 / 重做 */}
-        {contextMenu && (
-          <div
-            className="canvas-context-menu"
-            style={{
-              left: Math.min(contextMenu.x, window.innerWidth - CONTEXT_MENU_WIDTH),
-              top: Math.max(
-                8,
-                Math.min(
-                  contextMenu.y,
-                  window.innerHeight - Math.min(CONTEXT_MENU_HEIGHT, window.innerHeight - 16) - 8,
-                ),
-              ),
-              maxHeight: 'calc(100vh - 16px)',
-              overflowY: 'auto',
-            }}
-          >
-            {contextMenu.nodeId && (
-              <>
-                <CanvasDuplicateMenu
-                  shortcut={formatCanvasShortcut(preferences.shortcuts.duplicate)}
-                  onDuplicate={() => duplicateNode(contextMenu.nodeId!)}
-                  onDuplicateWithUpstream={() => {
-                    setContextMenu(null)
-                    duplicateWithUpstream(contextMenu.nodeId!)
-                  }}
-                />
-                <button
-                  type="button"
-                  className="canvas-context-menu__item"
-                  onClick={() => {
-                    // 右键在选中集里的节点上复制整个选中集；右键在别的节点上就只复制它
-                    const targets = resolveActionTargets()
-                    copyNodes(targets.includes(contextMenu.nodeId!) ? targets : [contextMenu.nodeId!])
-                  }}
-                >
-                  <span className="canvas-context-menu__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <rect x="8" y="8" width="12" height="12" rx="2" />
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                    </svg>
-                  </span>
-                  复制
-                  <span className="canvas-context-menu__kbd">Ctrl+C</span>
-                </button>
-              </>
-            )}
-            {/*
-              删除：右键在多选集里的节点上（或多选时右键空白处）删整个选中集，并把数量说出来；
-              右键在别的节点上只删它。以前右键菜单里根本没有删除，只能靠键盘或节点工具条。
-            */}
-            {(() => {
-              const inSelection = contextMenu.nodeId ? selectedNodeIds.includes(contextMenu.nodeId) : false
-              const batch = selectedNodeIds.length > 1 && (inSelection || !contextMenu.nodeId)
-              const targets = batch ? selectedNodeIds : contextMenu.nodeId ? [contextMenu.nodeId] : []
-              if (!targets.length) return null
-              return (
-                <>
-                  <button
-                    type="button"
-                    className="canvas-context-menu__item canvas-context-menu__item--danger"
-                    onClick={() => {
-                      setContextMenu(null)
-                      if (batch) void deleteSelectedNodes()
-                      else void deleteNodeById(targets[0])
-                    }}
-                  >
-                    <span className="canvas-context-menu__icon">
-                      <svg
-                        viewBox="0 0 24 24"
-                        width="16"
-                        height="16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                      >
-                        <path d="M4 7h16M10 7V5h4v2M6 7l1 12h10l1-12" />
-                      </svg>
-                    </span>
-                    {batch ? `删除选中的 ${targets.length} 个节点` : '删除节点'}
-                    <span className="canvas-context-menu__kbd">Del</span>
-                  </button>
-                  <div className="canvas-context-menu__divider" />
-                </>
-              )
-            })()}
-            <button
-              type="button"
-              className="canvas-context-menu__item"
-              disabled={!canvasClipboard}
-              onClick={() => pasteClipboardNodes({ x: contextMenu.x, y: contextMenu.y })}
-            >
-              <span className="canvas-context-menu__icon">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <rect x="5" y="4" width="14" height="17" rx="2" />
-                  <path d="M9 4V3h6v1M9 11h6M9 15h4" strokeLinecap="round" />
-                </svg>
-              </span>
-              粘贴
-              <span className="canvas-context-menu__kbd">Ctrl+V</span>
-            </button>
-            <button
-              type="button"
-              className="canvas-context-menu__item"
-              disabled={nodes.length === 0}
-              onClick={selectAllNodes}
-            >
-              <span className="canvas-context-menu__icon">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="16"
-                  height="16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeDasharray="3 2.5"
-                >
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                </svg>
-              </span>
-              全选
-              <span className="canvas-context-menu__kbd">Ctrl+A</span>
-            </button>
-            <button
-              type="button"
-              className="canvas-context-menu__item"
-              disabled={nodes.length < 2}
-              onClick={() => arrangeNodes(selectedNodeIds.length > 1 ? selectedNodeIds : undefined)}
-            >
-              <span className="canvas-context-menu__icon">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="16"
-                  height="16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                >
-                  <rect x="3" y="4" width="6" height="6" rx="1.2" />
-                  <rect x="3" y="14" width="6" height="6" rx="1.2" />
-                  <rect x="15" y="9" width="6" height="6" rx="1.2" />
-                  <path d="M9 7h2a2 2 0 0 1 2 2v3M9 17h2a2 2 0 0 0 2-2v-3M13 12h2" />
-                </svg>
-              </span>
-              {selectedNodeIds.length > 1 ? '整理选中节点' : '整理全部布局'}
-            </button>
-            <div className="canvas-context-menu__divider" />
-            <div className="canvas-context-menu__label">添加节点</div>
-            {/* 可建类型与左侧工具栏共用 ADD_MENU_ITEMS：右键菜单曾漏掉「视频剪辑」，
-                只有从左侧工具栏才建得出时间线节点 */}
-            {ADD_MENU_ITEMS.map((item) => (
-              <button
-                key={item.type}
-                type="button"
-                className="canvas-context-menu__item"
-                onClick={() => handleContextAddNode(item.type)}
-              >
-                <span className="canvas-context-menu__icon">{getTypeIcon(item.type)}</span>
-                {item.label}
-              </button>
-            ))}
-            {/* 素材库与本地上传并列：两个入口给的选择必须一致，
-                在这里少一条会让用户以为右键菜单下没有素材库这条路 */}
-            <button
-              type="button"
-              className="canvas-context-menu__item"
-              onClick={() => {
-                setContextMenu(null)
-                openDrawerPanel('assets')
-              }}
-            >
-              <span className="canvas-context-menu__icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect x="3" y="5" width="14" height="14" rx="2" />
-                  <path d="M17 8h3a1 1 0 0 1 1 1v9a3 3 0 0 1-3 3H8" />
-                </svg>
-              </span>
-              素材库
-            </button>
-            <button
-              type="button"
-              className="canvas-context-menu__item"
-              onClick={() => {
-                const anchor = { x: contextMenu.x, y: contextMenu.y }
-                setContextMenu(null)
-                openLocalImagePicker(anchor)
-              }}
-            >
-              <span className="canvas-context-menu__icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 16V4" />
-                  <path d="m6 10 6-6 6 6" />
-                  <path d="M4 20h16" />
-                </svg>
-              </span>
-              本地上传
-            </button>
-            <div className="canvas-context-menu__divider" />
-            <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>
-              <span className="canvas-context-menu__icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M9 14 4 9l5-5" />
-                  <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
-                </svg>
-              </span>
-              撤销
-              <span className="canvas-context-menu__kbd">{formatCanvasShortcut(preferences.shortcuts.undo)}</span>
-            </button>
-            <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canRedo} onClick={redo}>
-              <span className="canvas-context-menu__icon">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="m15 14 5-5-5-5" />
-                  <path d="M20 9H10a6 6 0 0 0 0 12h3" />
-                </svg>
-              </span>
-              重做
-              <span className="canvas-context-menu__kbd">{formatCanvasShortcut(preferences.shortcuts.redo)}</span>
-            </button>
-          </div>
-        )}
-
-        {/* 素材库弹窗（Figma "添加素材" 模态样式，5 个 tab 参考「我的素材」页面） */}
-        <CanvasMaterialPicker
-          workspaceId={workspaceId}
-          userId={currentUserId}
-          visible={drawerPanel === 'assets'}
-          variant="modal"
-          initialTab={libraryInitialTab}
-          // 「选参考」模式：可多选，上限为目标节点剩余的参考名额；普通「添加素材」仍是单个应用
-          selectionLimit={libraryRefTarget ? remainingRefCapacity(libraryRefTarget.targetId) : undefined}
-          onApplyMany={
-            libraryRefTarget
-              ? (materials) => {
-                  applyMaterialAsReference(materials)
-                  setLibraryRefTarget(null)
-                  closeDrawerPanel()
-                }
-              : undefined
-          }
-          onClose={() => {
-            // 关掉弹窗即放弃这次「选参考」，否则下次打开素材库还会误连到上次那个节点
-            setLibraryRefTarget(null)
-            setLibraryInitialTab('all')
-            closeDrawerPanel()
-          }}
-          onApply={(material) => {
-            // 「选参考」模式优先：此时素材要连到发起的节点上，而不是当作新素材落在视口中央
-            if (!applyMaterialAsReference(material)) {
-              // 应用素材 → 创建对应类型的图片/视频节点到画布
-              handleApplyMaterial(material)
-            }
-            // 单次选择完成后关闭素材弹窗，避免节点已添加但弹窗仍停留在画布上。
-            setLibraryRefTarget(null)
-            closeDrawerPanel()
-          }}
-        />
-
-        {/* 历史记录抽屉 */}
-        <CanvasHistoryPanel
-          visible={drawerPanel === 'history'}
-          variant="drawer"
-          items={realHistoryItems}
-          onClose={closeDrawerPanel}
-          onSelect={(item: HistoryItem) => {
-            const node = nodes.find((candidate) => candidate.id === item.nodeId)
-            if (!node) return
-            setNodes((current) => current.map((candidate) => ({ ...candidate, selected: candidate.id === node.id })))
-            setSelectedNode({
-              id: node.id,
-              kind: String((node.data as any)?.kind || node.type || 'image'),
-              sourceRefs: getSourceRefs(node.id),
-              ratio: (node.data as any)?.ratio,
-              videoMode: (node.data as any)?.videoMode,
-              modelVersionId: (node.data as any)?.modelVersionId,
-              resultUrl: (node.data as any)?.resultUrl,
-              assetId: (node.data as any)?.assetId,
-              text: (node.data as any)?.text,
-              prompt: (node.data as any)?.prompt,
-              operationCode: (node.data as any)?.operationCode,
-              params: (node.data as any)?.params,
-            })
-            void fitView({ nodes: [node], padding: 0.5, duration: 300, maxZoom: 1 })
-            closeDrawerPanel()
-          }}
-        />
-
-        {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中。
+          {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中。
           时间线节点没有模型/提示词的概念，编辑入口是双击打开的剪辑编辑器，这里不渲染面板。
           多选期间一并让位给批量操作条：这个面板改的是「唯一那个节点」的参数，
           多选时它既指代不明，又会和批量条一起压满画布。
           添加节点菜单打开时同样收起：菜单从节点的 + 或拖线松手处弹出，位置常落在面板那一带，
           与其比谁的层级高，不如让正在做的那件事独占画面——选完节点类型面板自然回来。
           面板里的输入内容边打边写回节点（onPromptChange），收起再回来不会丢。 */}
-        {selectedNode &&
-          canEditSelection &&
-          selectedNode.kind !== 'timeline' &&
-          selectedNode.kind !== 'audio' &&
-          selectedNodeIds.length < 2 &&
-          !addMenu &&
-          !imageTool &&
-          !reversePromptTarget &&
-          !hdRequest &&
-          !hdModalOpen && (
-            <div
-              ref={panelRef}
-              aria-hidden={!selectedNodeVisible}
-              className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
-              style={
-                panelAnchor
-                  ? ({
-                      ...panelAnchor,
-                      '--canvas-node-panel-width': directorLeftBoundary
-                        ? `${directorLeftBoundary - 2 * NODE_PANEL_GAP}px`
-                        : undefined,
-                      '--canvas-node-panel-height': stackedNodeControls
-                        ? `${Math.max(0, (directorBounds?.top ?? window.innerHeight * 0.54) - stackedPanelTop - 12)}px`
-                        : undefined,
-                    } as CSSProperties)
-                  : undefined
-              }
-            >
-              <CanvasDragStablePanel dragging={draggingNode} nodeId={selectedNode.id}>
-                {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
-                  <CanvasVideoUpscaleResultPanel
-                    data={nodes.find((node) => node.id === selectedNode.id)?.data || {}}
-                    onRetry={async () => {
-                      const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                      const request = (node?.data.generationRequest || node?.data.videoUpscaleRequest) as
-                        | CanvasGenerationRequest
-                        | undefined
-                      if (!request || request.kind !== 'video' || request.operationCode !== 'video.upscale') {
-                        showToast('缺少原始超分请求，请从原视频重新打开超分', 'error')
-                        return
-                      }
-                      await submitNodeGeneration(node.id, request)
-                    }}
-                  />
-                ) : (
-                  <CanvasNodePanel
-                    node={selectedNodeForPanel}
-                    mediaConnectionCounts={
-                      selectedNode
-                        ? {
-                            images: countIncomingMediaConnections(selectedNode.id, 'image'),
-                            videos: countIncomingMediaConnections(selectedNode.id, 'video'),
-                          }
-                        : undefined
-                    }
-                    currentUserId={currentUserId}
-                    workspaceId={workspaceId}
-                    onPickRealPerson={(slotIndex) => {
-                      if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
-                      setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
-                      setLibraryInitialTab('real_person')
-                      openDrawerPanel('assets')
-                    }}
-                    promptEditorSuspended={Boolean(isPickingRef || drawerPanel || imagePreviewNodeId)}
-                    onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
-                    onPickRefFromLibrary={(slotIndex) => {
-                      if (!selectedNode) return
-                      if (remainingRefCapacity(selectedNode.id) <= 0) {
-                        showToast('当前模型的参考已达上限', 'info')
-                        return
-                      }
-                      setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
-                      setLibraryInitialTab('all')
-                      openDrawerPanel('assets')
-                    }}
-                    onRemoveRef={handleRemoveRef}
-                    onModeration={
-                      selectedNodeForPanel?.kind === 'image' || selectedNodeForPanel?.kind === 'video'
-                        ? (mediaType) => {
-                            const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                            const assetId = Number(node?.data.assetId)
-                            const moderationWorkspaceId = Number(node?.data.assetWorkspaceId || workspaceId || 0)
-                            if (!Number.isSafeInteger(assetId) || assetId <= 0) {
-                              showToast(`请先上传或生成${mediaType === 'video' ? '视频' : '图片'}`, 'error')
-                              return
-                            }
-                            if (!Number.isSafeInteger(moderationWorkspaceId) || moderationWorkspaceId <= 0) {
-                              showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
-                              return
-                            }
-                            void handleSeedanceModeration(assetId, moderationWorkspaceId, mediaType)
-                          }
-                        : undefined
-                    }
-                    onPreviewMentionRef={(ref) => {
-                      if (
-                        !latestRef.current.edges.some(
-                          (edge) =>
-                            edge.id === ref.edgeId && edge.source === ref.sourceId && edge.target === selectedNode.id,
-                        )
-                      )
-                        return
-                      if (ref.kind === 'video') {
-                        nodePreviewRef.current.get(ref.sourceId)?.()
-                        return
-                      }
-                      if (latestRef.current.nodes.some((item) => item.id === ref.sourceId)) {
-                        openImagePreview(ref.sourceId)
-                        setImagePreviewTargetId(selectedNode.id)
-                      }
-                    }}
-                    resultHistory={selectedNodeHistory}
-                    onRevertToHistory={handleRevertToHistory}
-                    onRatioChange={handleRatioChange}
-                    onVideoModeChange={handleVideoModeChange}
-                    onModelChange={handleModelChange}
-                    onResolvedModel={handleResolvedModel}
-                    onGenerate={handleNodeGenerate}
-                    onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
-                      if (requiresSeedanceModeration) {
-                        const imageIds = [
-                          ...new Set(
-                            sourceRefs
-                              .filter(
-                                (ref) =>
-                                  ref.kind === 'image' &&
-                                  inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
-                              )
-                              .map((ref) => Number(ref.assetId))
-                              .filter((id) => Number.isSafeInteger(id) && id > 0),
-                          ),
-                        ]
-                        const videoIds = [
-                          ...new Set(
-                            inputAssets
-                              .filter((asset) => asset.role === 'video')
-                              .map((asset) => Number(asset.asset_id))
-                              .filter((id) => Number.isSafeInteger(id) && id > 0),
-                          ),
-                        ]
-                        const moderationAssets = [
-                          ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
-                          ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
-                        ]
-                        for (const { assetId, mediaType } of moderationAssets) {
-                          const moderationError = await ensureCanvasSeedanceModeration(
-                            assetId,
-                            Number(workspaceId || 0),
-                            mediaType,
-                          )
-                          if (moderationError) return moderationError
+          {selectedNode &&
+            canEditSelection &&
+            selectedNode.kind !== 'timeline' &&
+            selectedNode.kind !== 'audio' &&
+            selectedNodeIds.length < 2 &&
+            !addMenu &&
+            !imageTool &&
+            !reversePromptTarget &&
+            !hdRequest &&
+            !hdModalOpen && (
+              <div
+                ref={panelRef}
+                aria-hidden={!selectedNodeVisible}
+                className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
+                style={
+                  panelAnchor
+                    ? ({
+                        ...panelAnchor,
+                        '--canvas-node-panel-width': directorLeftBoundary
+                          ? `${directorLeftBoundary - 2 * NODE_PANEL_GAP}px`
+                          : undefined,
+                        '--canvas-node-panel-height': stackedNodeControls
+                          ? `${Math.max(0, (directorBounds?.top ?? window.innerHeight * 0.54) - stackedPanelTop - 12)}px`
+                          : undefined,
+                      } as CSSProperties)
+                    : undefined
+                }
+              >
+                <CanvasDragStablePanel dragging={draggingNode} nodeId={selectedNode.id}>
+                  {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
+                    <CanvasVideoUpscaleResultPanel
+                      data={nodes.find((node) => node.id === selectedNode.id)?.data || {}}
+                      onRetry={async () => {
+                        const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                        const request = (node?.data.generationRequest || node?.data.videoUpscaleRequest) as
+                          | CanvasGenerationRequest
+                          | undefined
+                        if (!request || request.kind !== 'video' || request.operationCode !== 'video.upscale') {
+                          showToast('缺少原始超分请求，请从原视频重新打开超分', 'error')
+                          return
                         }
+                        await submitNodeGeneration(node.id, request)
+                      }}
+                    />
+                  ) : (
+                    <CanvasNodePanel
+                      node={selectedNodeForPanel}
+                      mediaConnectionCounts={
+                        selectedNode
+                          ? {
+                              images: countIncomingMediaConnections(selectedNode.id, 'image'),
+                              videos: countIncomingMediaConnections(selectedNode.id, 'video'),
+                            }
+                          : undefined
                       }
-                      const unsavedAudio = sourceRefs.find((ref) => {
-                        if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
-                          return false
-                        const source = nodes.find((node) => node.id === ref.sourceId)
-                        if (source?.data?.audioRole !== 'editor') return false
-                        const audio = normalizeAudioSettings(source.data.audio)
-                        return (
-                          audio.inSec > 0.01 ||
-                          audio.outSec < audio.durationSec - 0.01 ||
-                          audio.volume < 0.99 ||
-                          audio.fadeInSec > 0 ||
-                          audio.fadeOutSec > 0
+                      currentUserId={currentUserId}
+                      workspaceId={workspaceId}
+                      onPickRealPerson={(slotIndex) => {
+                        if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
+                        setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                        setLibraryInitialTab('real_person')
+                        openDrawerPanel('assets')
+                      }}
+                      promptEditorSuspended={Boolean(isPickingRef || drawerPanel || imagePreviewNodeId)}
+                      onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
+                      onPickRefFromLibrary={(slotIndex) => {
+                        if (!selectedNode) return
+                        if (remainingRefCapacity(selectedNode.id) <= 0) {
+                          showToast('当前模型的参考已达上限', 'info')
+                          return
+                        }
+                        setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                        setLibraryInitialTab('all')
+                        openDrawerPanel('assets')
+                      }}
+                      onRemoveRef={handleRemoveRef}
+                      onModeration={
+                        selectedNodeForPanel?.kind === 'image' || selectedNodeForPanel?.kind === 'video'
+                          ? (mediaType) => {
+                              const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                              const assetId = Number(node?.data.assetId)
+                              const moderationWorkspaceId = Number(node?.data.assetWorkspaceId || workspaceId || 0)
+                              if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+                                showToast(`请先上传或生成${mediaType === 'video' ? '视频' : '图片'}`, 'error')
+                                return
+                              }
+                              if (!Number.isSafeInteger(moderationWorkspaceId) || moderationWorkspaceId <= 0) {
+                                showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
+                                return
+                              }
+                              void handleSeedanceModeration(assetId, moderationWorkspaceId, mediaType)
+                            }
+                          : undefined
+                      }
+                      onPreviewMentionRef={(ref) => {
+                        if (
+                          !latestRef.current.edges.some(
+                            (edge) =>
+                              edge.id === ref.edgeId && edge.source === ref.sourceId && edge.target === selectedNode.id,
+                          )
                         )
-                      })
-                      if (unsavedAudio)
-                        return Promise.resolve(
-                          '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
+                          return
+                        if (ref.kind === 'video') {
+                          nodePreviewRef.current.get(ref.sourceId)?.()
+                          return
+                        }
+                        if (latestRef.current.nodes.some((item) => item.id === ref.sourceId)) {
+                          openImagePreview(ref.sourceId)
+                          setImagePreviewTargetId(selectedNode.id)
+                        }
+                      }}
+                      resultHistory={selectedNodeHistory}
+                      onRevertToHistory={handleRevertToHistory}
+                      onRatioChange={handleRatioChange}
+                      onVideoModeChange={handleVideoModeChange}
+                      onModelChange={handleModelChange}
+                      onResolvedModel={handleResolvedModel}
+                      onGenerate={handleNodeGenerate}
+                      onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
+                        if (requiresSeedanceModeration) {
+                          const imageIds = [
+                            ...new Set(
+                              sourceRefs
+                                .filter(
+                                  (ref) =>
+                                    ref.kind === 'image' &&
+                                    inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
+                                )
+                                .map((ref) => Number(ref.assetId))
+                                .filter((id) => Number.isSafeInteger(id) && id > 0),
+                            ),
+                          ]
+                          const videoIds = [
+                            ...new Set(
+                              inputAssets
+                                .filter((asset) => asset.role === 'video')
+                                .map((asset) => Number(asset.asset_id))
+                                .filter((id) => Number.isSafeInteger(id) && id > 0),
+                            ),
+                          ]
+                          const moderationAssets = [
+                            ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
+                            ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
+                          ]
+                          for (const { assetId, mediaType } of moderationAssets) {
+                            const moderationError = await ensureCanvasSeedanceModeration(
+                              assetId,
+                              Number(workspaceId || 0),
+                              mediaType,
+                            )
+                            if (moderationError) return moderationError
+                          }
+                        }
+                        const unsavedAudio = sourceRefs.find((ref) => {
+                          if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
+                            return false
+                          const source = nodes.find((node) => node.id === ref.sourceId)
+                          if (source?.data?.audioRole !== 'editor') return false
+                          const audio = normalizeAudioSettings(source.data.audio)
+                          return (
+                            audio.inSec > 0.01 ||
+                            audio.outSec < audio.durationSec - 0.01 ||
+                            audio.volume < 0.99 ||
+                            audio.fadeInSec > 0 ||
+                            audio.fadeOutSec > 0
+                          )
+                        })
+                        if (unsavedAudio)
+                          return Promise.resolve(
+                            '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
+                          )
+                        return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
+                      }}
+                      onInsufficientCredits={handleInsufficientCredits}
+                      onSaveText={handleSaveNodeText}
+                      onCreateVideoFromText={(currentPrompt) => {
+                        const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                        if (!source) {
+                          showToast('原文本节点已不存在，请重新选择节点', 'info')
+                          return
+                        }
+                        const text = (window as any).__canvasTextContents?.get(source.id) ?? source.data.text ?? ''
+                        const prompt = toCanvasPromptContext(text).trim() || currentPrompt.trim()
+                        if (!prompt) {
+                          showToast('请先输入文字或生成分镜，再创建视频节点', 'info')
+                          return
+                        }
+                        const id = appendNewNode(
+                          'video',
+                          {
+                            x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
+                            y: source.position.y,
+                          },
+                          { extraData: { prompt }, ratio: '16:9' },
                         )
-                      return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
-                    }}
-                    onInsufficientCredits={handleInsufficientCredits}
-                    onSaveText={handleSaveNodeText}
-                    onCreateVideoFromText={(currentPrompt) => {
-                      const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                      if (!source) {
-                        showToast('原文本节点已不存在，请重新选择节点', 'info')
-                        return
-                      }
-                      const text = (window as any).__canvasTextContents?.get(source.id) ?? source.data.text ?? ''
-                      const prompt = toCanvasPromptContext(text).trim() || currentPrompt.trim()
-                      if (!prompt) {
-                        showToast('请先输入文字或生成分镜，再创建视频节点', 'info')
-                        return
-                      }
-                      const id = appendNewNode(
-                        'video',
-                        {
-                          x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
-                          y: source.position.y,
-                        },
-                        { extraData: { prompt }, ratio: '16:9' },
-                      )
-                      if (!id) return
-                      setEdges((items) => [
-                        ...items,
-                        {
-                          id: buildEdgeId(source.id, id, 0),
-                          source: source.id,
-                          target: id,
-                          data: { slotIndex: 0 },
-                        },
-                      ])
-                      setSaveStatus('dirty')
-                    }}
-                    onPromptChange={handleNodePromptChange}
-                    onParamsChange={handleNodeParamsChange}
-                    inheritedTexts={inheritedPromptTexts}
-                    onAdoptInheritedText={handleAdoptInheritedText}
-                    onPolishText={handlePolishNodeText}
-                    modelDefaults={modelDefaults}
-                    models={canvasModels}
-                    modelOperationStates={modelOperationStates}
-                    onReloadModels={reloadModels}
-                    modelsLoading={modelsLoading}
-                  />
-                )}
-              </CanvasDragStablePanel>
-            </div>
-          )}
-
-        {/* 空连线弹出菜单 — 菜单项按「拖线源节点能否作为新节点来源」过滤，不可选禁用灰显 */}
-        {addMenu && (
-          <div
-            className={`canvas-add-menu nodrag nopan${addMenu.sourceIds ? ' is-selection' : ''}`}
-            style={{ left: addMenu.x, top: addMenu.y }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-          >
-            {addMenu.sourceIds && (
-              <div className="canvas-add-menu__heading">
-                <strong>引用选中的 {addMenu.sourceIds.length} 个节点</strong>
-                <span>选择要连接的后续节点</span>
+                        if (!id) return
+                        setEdges((items) => [
+                          ...items,
+                          {
+                            id: buildEdgeId(source.id, id, 0),
+                            source: source.id,
+                            target: id,
+                            data: { slotIndex: 0 },
+                          },
+                        ])
+                        setSaveStatus('dirty')
+                      }}
+                      onPromptChange={handleNodePromptChange}
+                      onParamsChange={handleNodeParamsChange}
+                      inheritedTexts={inheritedPromptTexts}
+                      onAdoptInheritedText={handleAdoptInheritedText}
+                      onPolishText={handlePolishNodeText}
+                      modelDefaults={modelDefaults}
+                      models={canvasModels}
+                      modelOperationStates={modelOperationStates}
+                      onReloadModels={reloadModels}
+                      modelsLoading={modelsLoading}
+                    />
+                  )}
+                </CanvasDragStablePanel>
               </div>
             )}
-            {(addMenu.sourceIds ? SELECTION_ADD_MENU_ITEMS : ADD_MENU_ITEMS).map((item) => {
-              const sourceNode = nodes.find((n) => n.id === addMenu.sourceId)
-              const sourceKind = (sourceNode?.data?.kind as string) || 'text'
-              const batch = addMenu.sourceIds ? resolveAddMenuInputs(item.type) : null
-              const allowed = batch ? !batch.reason : (allowedSourceKinds[item.type] || []).includes(sourceKind)
-              return (
-                <button
-                  key={item.type}
-                  className={`canvas-add-menu__item${allowed ? '' : ' is-disabled'}`}
-                  disabled={!allowed}
-                  title={
-                    allowed
-                      ? undefined
-                      : batch?.reason || `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为「${item.label}」的来源`
-                  }
-                  onClick={() => handleMenuSelect(item.type)}
-                >
-                  <span className="canvas-add-menu__icon">{getTypeIcon(item.type)}</span>
-                  <div className="canvas-add-menu__text">
-                    <span className="canvas-add-menu__label">{item.label}</span>
-                    <span className="canvas-add-menu__desc">
-                      {batch
-                        ? batch.reason || `连接 ${batch.sources.length}/${addMenu.sourceIds.length} 个所选节点`
-                        : allowed
-                          ? item.desc
-                          : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为此节点来源`}
-                    </span>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </CanvasNodeActionsContext.Provider>
+
+          {/* 空连线弹出菜单 — 菜单项按「拖线源节点能否作为新节点来源」过滤，不可选禁用灰显 */}
+          {addMenu && (
+            <div
+              className={`canvas-add-menu nodrag nopan${addMenu.sourceIds ? ' is-selection' : ''}`}
+              style={{ left: addMenu.x, top: addMenu.y }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              {addMenu.sourceIds && (
+                <div className="canvas-add-menu__heading">
+                  <strong>引用选中的 {addMenu.sourceIds.length} 个节点</strong>
+                  <span>选择要连接的后续节点</span>
+                </div>
+              )}
+              {(addMenu.sourceIds ? SELECTION_ADD_MENU_ITEMS : ADD_MENU_ITEMS).map((item) => {
+                const sourceNode = nodes.find((n) => n.id === addMenu.sourceId)
+                const sourceKind = (sourceNode?.data?.kind as string) || 'text'
+                const batch = addMenu.sourceIds ? resolveAddMenuInputs(item.type) : null
+                const allowed = batch ? !batch.reason : (allowedSourceKinds[item.type] || []).includes(sourceKind)
+                return (
+                  <button
+                    key={item.type}
+                    className={`canvas-add-menu__item${allowed ? '' : ' is-disabled'}`}
+                    disabled={!allowed}
+                    title={
+                      allowed
+                        ? undefined
+                        : batch?.reason || `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为「${item.label}」的来源`
+                    }
+                    onClick={() => handleMenuSelect(item.type)}
+                  >
+                    <span className="canvas-add-menu__icon">{getTypeIcon(item.type)}</span>
+                    <div className="canvas-add-menu__text">
+                      <span className="canvas-add-menu__label">{item.label}</span>
+                      <span className="canvas-add-menu__desc">
+                        {batch
+                          ? batch.reason || `连接 ${batch.sources.length}/${addMenu.sourceIds.length} 个所选节点`
+                          : allowed
+                            ? item.desc
+                            : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为此节点来源`}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </CanvasNodeActionsContext.Provider>
+    </CanvasReservationContext.Provider>
   )
 }
