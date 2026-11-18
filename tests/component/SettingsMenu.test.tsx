@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -45,7 +46,7 @@ describe('SettingsMenu', () => {
   it('redirect guard prevents guests from opening the settings menu', async () => {
     const user = userEvent.setup()
     mocks.allowProtectedAction = false
-    render(<SettingsMenu />)
+    render(<SettingsMenu />, { wrapper: MemoryRouter })
 
     await user.click(screen.getByRole('button', { name: '设置' }))
 
@@ -58,7 +59,7 @@ describe('SettingsMenu', () => {
 
   it('opens an accessible menu, focuses its first item, and closes with Escape', async () => {
     const user = userEvent.setup()
-    render(<SettingsMenu />)
+    render(<SettingsMenu />, { wrapper: MemoryRouter })
     const trigger = screen.getByRole('button', { name: '设置' })
 
     await user.click(trigger)
@@ -74,7 +75,7 @@ describe('SettingsMenu', () => {
   it('opens personal center and requests the mobile drawer to close', async () => {
     const user = userEvent.setup()
     const onAfterAction = vi.fn()
-    render(<SettingsMenu onAfterAction={onAfterAction} />)
+    render(<SettingsMenu onAfterAction={onAfterAction} />, { wrapper: MemoryRouter })
 
     await user.click(screen.getByRole('button', { name: '设置' }))
     await user.click(screen.getByRole('menuitem', { name: '个人中心' }))
@@ -85,7 +86,7 @@ describe('SettingsMenu', () => {
   it('opens the user manual in a new browser tab and closes the mobile drawer', async () => {
     const user = userEvent.setup()
     const onAfterAction = vi.fn()
-    render(<SettingsMenu onAfterAction={onAfterAction} />)
+    render(<SettingsMenu onAfterAction={onAfterAction} />, { wrapper: MemoryRouter })
 
     await user.click(screen.getByRole('button', { name: '设置' }))
     const manualLink = screen.getByRole('menuitem', { name: '使用手册' })
@@ -102,7 +103,7 @@ describe('SettingsMenu', () => {
   it('requires logout confirmation, supports cancellation, and deduplicates confirmation', async () => {
     const user = userEvent.setup()
     const onAfterAction = vi.fn()
-    render(<SettingsMenu onAfterAction={onAfterAction} />)
+    render(<SettingsMenu onAfterAction={onAfterAction} />, { wrapper: MemoryRouter })
 
     await user.click(screen.getByRole('button', { name: '设置' }))
     await user.dblClick(screen.getByRole('menuitem', { name: '退出登录' }))
@@ -114,6 +115,22 @@ describe('SettingsMenu', () => {
     await user.click(screen.getByRole('button', { name: '设置' }))
     await user.click(screen.getByRole('menuitem', { name: '退出登录' }))
     expect(mocks.logout).toHaveBeenCalledTimes(1)
+    expect(onAfterAction).toHaveBeenCalledTimes(1)
+  })
+  it('opens MCP settings without navigating to the protocol endpoint', async () => {
+    const user = userEvent.setup()
+    const onAfterAction = vi.fn()
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<SettingsMenu onAfterAction={onAfterAction} />} />
+          <Route path="/settings/mcp" element={<h1>MCP settings page</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: '设置' }))
+    await user.click(screen.getByRole('menuitem', { name: 'MCP 接入' }))
+    expect(await screen.findByRole('heading', { name: 'MCP settings page' })).toBeInTheDocument()
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
 })
