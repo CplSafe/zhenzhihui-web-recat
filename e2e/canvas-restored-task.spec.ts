@@ -4,11 +4,17 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } fr
 for (const source of ['cloud', 'draft']) {
   for (const status of ['processing', 'failed', 'missing']) {
     test(`reopening a canvas verifies ${source} failure before displaying ${status}`, async ({ page }) => {
-      const api = await installStrictAuthenticatedApp(page)
+      const api = await installStrictAuthenticatedApp(page, { preserveStorage: source === 'draft' })
       await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { code: 0, data: [] } }))
       const cachedError = 'read google image response: context canceled'
       const latestError = 'Latest confirmed provider error'
       let taskQueries = 0
+      let terminalWalletReads = 0
+      let taskFinished = false
+      await page.route('**/api/v1/billing/wallet?**', (route) => {
+        if (taskFinished) terminalWalletReads++
+        return route.fulfill({ json: { available: terminalWalletReads > 1 ? 329 : 335 } })
+      })
       let paidSubmissions = 0
       let release: (() => void) | undefined
       const pending = new Promise<void>((resolve) => {
@@ -42,6 +48,8 @@ for (const source of ['cloud', 'draft']) {
               edges: [],
               textContents: {},
               boundCanvasId: 110,
+              pendingSync: true,
+              syncBaseline: { nodes: [], edges: [] },
               updatedAt: Date.now(),
             }),
           )
@@ -76,11 +84,13 @@ for (const source of ['cloud', 'draft']) {
       })
       await page.goto('/canvas/110')
       await expect(page.getByRole('button', { name: '图片 · Restored image' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '剩余积分：335' })).toBeVisible()
       try {
         await expect(page.getByText(cachedError, { exact: false })).toHaveCount(0)
         await expect(page.getByRole('status', { name: '正在恢复任务' })).toBeVisible()
         await expect.poll(() => taskQueries).toBe(1)
       } finally {
+        taskFinished = status === 'failed'
         release?.()
       }
       if (status === 'missing') {
@@ -88,6 +98,8 @@ for (const source of ['cloud', 'draft']) {
         await expect(page.getByRole('status', { name: '正在恢复任务' })).toHaveCount(0)
       } else if (status === 'failed') {
         await expect(page.getByRole('alert', { name: `生成失败：${latestError}` })).toBeVisible()
+        await expect(page.getByRole('button', { name: '剩余积分：329' })).toBeVisible()
+        expect(terminalWalletReads).toBeGreaterThanOrEqual(2)
       } else {
         await expect(page.getByRole('status', { name: '生成中' })).toBeVisible()
         await expect(page.getByText(latestError, { exact: false })).toHaveCount(0)

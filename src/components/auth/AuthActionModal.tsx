@@ -78,13 +78,14 @@ export default function AuthActionModal({
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [captcha, setCaptcha] = useState({ id: '', image: '', answer: '' })
-  const [countdown, setCountdown] = useState(0)
+  const [resendAfter, setResendAfter] = useState<Record<string, number>>({})
+  const [clock, setClock] = useState(Date.now)
+  const [sentMobile, setSentMobile] = useState('')
   const [sending, setSending] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showPwd, setShowPwd] = useState(false)
   const [err, setErr] = useState('')
   const [alreadyReg, setAlreadyReg] = useState(false) // 注册时发现手机号已注册 → 红字提示+去登录
-  const timerRef = useRef<number | null>(null)
   const aliveRef = useRef(true)
   const sendingRef = useRef(false)
   const submittingRef = useRef(false)
@@ -95,11 +96,20 @@ export default function AuthActionModal({
 
   const needsMobileInput = mode !== 'sms-register'
   const mobileLocked = mode === 'sms-register' || !!lockMobile // 只读手机号
-  const effectiveCountdown = Math.max(countdown, smsCooldown)
   const pwdRequired = mode !== 'sms-register' // sms-register 密码可不填
   const smsPurpose = mode === 'forgot' ? 'reset_password' : 'register'
   const pwdLabel = mode === 'forgot' ? '新密码' : mode === 'sms-register' ? '设置密码(可不填)' : '密码'
   const submitLabel = mode === 'forgot' ? '重置密码' : mode === 'sms-register' ? '完成并登录' : '注册'
+  const isRegistration = mode === 'register'
+  const normalizedMobile = mobile.replace(/\s/g, '')
+  const mobileValid = /^1\d{10}$/.test(normalizedMobile)
+  const cooldownKey = isRegistration ? normalizedMobile : ''
+  const resendDeadline = resendAfter[cooldownKey] || 0
+  const countdown = Math.max(0, Math.ceil((resendDeadline - clock) / 1000))
+  const effectiveCountdown = Math.max(countdown, smsCooldown)
+  const canRegister =
+    mobileValid && sentMobile === normalizedMobile && !!password.trim() && !!code.trim() && !alreadyReg
+  const registrationBlocked = isRegistration && (sending || !canRegister)
 
   useEffect(() => {
     aliveRef.current = true
@@ -110,23 +120,16 @@ export default function AuthActionModal({
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       aliveRef.current = false
-      if (timerRef.current) window.clearInterval(timerRef.current)
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [mobileLocked])
 
-  const startCountdown = () => {
-    setCountdown(60)
-    timerRef.current = window.setInterval(() => {
-      setCountdown((p) => {
-        if (p <= 1) {
-          if (timerRef.current) window.clearInterval(timerRef.current)
-          return 0
-        }
-        return p - 1
-      })
-    }, 1000)
-  }
+  const coolingDown = countdown > 0
+  useEffect(() => {
+    if (!coolingDown) return
+    const timer = window.setInterval(() => setClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [coolingDown, resendDeadline])
 
   const refreshCaptcha = async () => {
     try {
@@ -146,10 +149,16 @@ export default function AuthActionModal({
   }
 
   const sendCode = async () => {
-    if (effectiveCountdown > 0 || sendingRef.current) return
-    const m = mobile.replace(/\s/g, '')
+    if (
+      resendDeadline > Date.now() ||
+      smsCooldown > 0 ||
+      sendingRef.current ||
+      (isRegistration && submittingRef.current)
+    )
+      return
+    const m = normalizedMobile
     if (!m) return setErr('请输入手机号')
-    if (!/^1\d{10}$/.test(m)) return setErr('请输入正确的手机号')
+    if (!mobileValid) return setErr('请输入正确的手机号')
     if (captcha.image && !captcha.answer.trim()) return setErr('请输入图形验证码')
     sendingRef.current = true
     setSending(true)
@@ -166,11 +175,18 @@ export default function AuthActionModal({
         captchaAnswer: captcha.answer.trim(),
       })
       if (!aliveRef.current) return
-      startCountdown()
+      const now = Date.now()
+      setClock(now)
+      setResendAfter((previous) => ({ ...previous, [cooldownKey]: now + 60_000 }))
+      if (isRegistration) setSentMobile(m)
       showToast('验证码已发送', 'success')
     } catch (e: any) {
       if (!aliveRef.current) return
       if (await handleCaptchaErr(e)) return
+      if (isRegistration && Number(e?.code) === 10401) {
+        setAlreadyReg(true)
+        return
+      }
       setErr(getAuthErrorMessage(e, '验证码发送失败,请稍后重试'))
     } finally {
       sendingRef.current = false
@@ -179,7 +195,7 @@ export default function AuthActionModal({
   }
 
   const submit = async () => {
-    if (submittingRef.current) return
+    if (submittingRef.current || (isRegistration && (sendingRef.current || !canRegister))) return
     setErr('')
     const m = (needsMobileInput ? mobile : prefill?.mobile || '').replace(/\s/g, '')
     if (needsMobileInput && !m) return setErr('请输入手机号')
@@ -261,8 +277,15 @@ export default function AuthActionModal({
                 inputMode="numeric"
                 placeholder="手机号"
                 value={mobile}
+                readOnly={isRegistration && (sending || submitting)}
                 onChange={(e) => {
-                  setMobile(e.target.value)
+                  const next = e.target.value
+                  if (isRegistration && next.replace(/\s/g, '') !== normalizedMobile) {
+                    setCode('')
+                    setClock(Date.now())
+                    setCaptcha({ id: '', image: '', answer: '' })
+                  }
+                  setMobile(next)
                   setErr('')
                   setAlreadyReg(false) // 改手机号 → 清掉「已注册」提示
                 }}
@@ -342,7 +365,7 @@ export default function AuthActionModal({
             <button
               type="button"
               className="zauth-code-btn"
-              disabled={effectiveCountdown > 0 || sending}
+              disabled={effectiveCountdown > 0 || sending || (isRegistration && submitting)}
               onClick={sendCode}
             >
               {sending ? '发送中…' : effectiveCountdown > 0 ? `${effectiveCountdown}s后重发` : '获取验证码'}
@@ -388,7 +411,7 @@ export default function AuthActionModal({
           err && <span className="zauth-err">{err}</span>
         )}
 
-        <button type="button" className="zauth-submit" disabled={submitting} onClick={submit}>
+        <button type="button" className="zauth-submit" disabled={submitting || registrationBlocked} onClick={submit}>
           {submitting ? '处理中…' : submitLabel}
         </button>
       </div>

@@ -146,6 +146,7 @@ import {
   materializeCanvasClipboard,
   type CanvasClipboardPayload,
 } from '@/utils/canvasClipboard'
+import { copyImageToSystemClipboard, fingerprintClipboardImage } from '@/utils/canvasSystemClipboard'
 import { isPageInBackground, playNotificationSound, showGenerationNotification } from '@/utils/generationNotifier'
 import {
   createGroupId,
@@ -825,6 +826,8 @@ const KIND_LABELS: Record<string, string> = {
  * 组件级状态会随画布切换一起丢掉。只活在内存里，刷新即清。
  */
 let canvasClipboard: CanvasClipboardPayload | null = null
+let canvasClipboardCopyVersion = 0
+let canvasClipboardImageFingerprint: Promise<string | null> | null = null
 /**
  * 同一次复制的「包含之前所有节点」版本（被复制节点 + 上游整条链）。
  * 每次 Ctrl+C 都会备好；有值时粘贴到画布先让用户二选一。
@@ -3170,6 +3173,30 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   // 编辑面板尺寸与锚点位置
   const canvasViewportWidth = useStore((state) => state.width)
   const canvasViewportHeight = useStore((state) => state.height)
+  const [directorBounds, setDirectorBounds] = useState<{ left: number; top: number }>()
+  useEffect(() => {
+    if (!directorOpen) return
+    const dock = canvasRootRef.current?.querySelector<HTMLElement>('.canvas-director-area')
+    if (!dock) return
+    const measure = () => {
+      const { left, top, height } = dock.getBoundingClientRect()
+      setDirectorBounds((previous) =>
+        !height ? undefined : previous?.left === left && previous.top === top ? previous : { left, top },
+      )
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(dock)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [directorOpen, canvasBindingKey])
+  const stackedNodeControls = directorOpen && canvasViewportWidth > 0 && canvasViewportWidth <= 1100
+  const directorLeftBoundary =
+    directorOpen && !stackedNodeControls && directorBounds ? directorBounds.left - 12 : undefined
+  const stackedPanelTop = 144
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
@@ -3270,6 +3297,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
 
   const panelAnchor = useMemo(() => {
     if (!selectedNodeScreenRect || !selectedNodeVisible) return null
+    if (stackedNodeControls) return { left: (canvasViewportWidth || window.innerWidth) / 2, top: stackedPanelTop }
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
     const bottomY = selectedNodeScreenRect.bottom
     const isVideoUpscale = selectedNode?.operationCode === 'video.upscale'
@@ -3279,7 +3307,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     const halfWidth = panelWidth / 2
     const below = bottomY + (isVideoUpscale ? 16 : NODE_PANEL_GAP)
     // 始终放在节点下方；空间不足时由画布平移逻辑腾出空间。
-    const viewportWidth = canvasViewportWidth || window.innerWidth
+    const viewportWidth = directorLeftBoundary ?? (canvasViewportWidth || window.innerWidth)
     // 只在面板超出视口时夹取到边界；空间足够时始终严格居中在选中节点下方。
     const minCenterX = Math.min(halfWidth + NODE_PANEL_GAP, viewportWidth / 2)
     const maxCenterX = Math.max(viewportWidth - halfWidth - NODE_PANEL_GAP, viewportWidth / 2)
@@ -3288,7 +3316,15 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       left,
       top: below,
     }
-  }, [selectedNodeScreenRect, selectedNodeVisible, selectedNode?.operationCode, panelSize.width, canvasViewportWidth])
+  }, [
+    selectedNodeScreenRect,
+    selectedNodeVisible,
+    selectedNode?.operationCode,
+    panelSize.width,
+    canvasViewportWidth,
+    stackedNodeControls,
+    directorLeftBoundary,
+  ])
 
   /**
    * 单选工具条的位置：贴在节点上方。
@@ -3305,11 +3341,19 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     const gap = 42
     const viewportWidth = canvasViewportWidth || window.innerWidth
     const viewportHeight = canvasViewportHeight || window.innerHeight
+    if (stackedNodeControls) return { centerX: viewportWidth / 2, bottom: viewportHeight - stackedPanelTop + 8 }
     return {
       centerX: Math.min(Math.max(centerX, 150), Math.max(150, viewportWidth - 150)),
       bottom: Math.min(Math.max(viewportHeight - topY + gap, 16), Math.max(16, viewportHeight - 72)),
     }
-  }, [selectedNodeScreenRect, selectedNodeVisible, selectedNodeIds.length, canvasViewportWidth, canvasViewportHeight])
+  }, [
+    selectedNodeScreenRect,
+    selectedNodeVisible,
+    selectedNodeIds.length,
+    canvasViewportWidth,
+    canvasViewportHeight,
+    stackedNodeControls,
+  ])
 
   // 详情面板与工具条按选中节点当前屏幕位置定位，画布平移或节点移动后持续跟随。
 
@@ -3328,8 +3372,10 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   const panelPanRef = useRef('')
   useEffect(() => {
     const height = panelSize.height
-    if (imageTool || !selectedNode || !(height > 0)) return
-    const key = `${selectedNode.id}:${Math.round(height)}:${Math.round(panelSize.width)}:${canvasViewportWidth}:${canvasViewportHeight}`
+    if (imageTool || !selectedNode || !(height > 0) || (stackedNodeControls && selectedNode.kind !== 'audio')) return
+    const audioDockRight = selectedNode.kind === 'audio' ? directorLeftBoundary : undefined
+    const audioDockTop = selectedNode.kind === 'audio' && stackedNodeControls ? directorBounds?.top : undefined
+    const key = `${selectedNode.id}:${Math.round(height)}:${Math.round(panelSize.width)}:${canvasViewportWidth}:${canvasViewportHeight}:${audioDockRight}:${audioDockTop}`
     if (panelPanRef.current === key) return
     panelPanRef.current = key
     const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
@@ -3345,7 +3391,8 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
       const center = (node.position.x + nodeWidth / 2) * tz + tx
       const halfWidth = panelSize.width / 2
-      const safeCenter = Math.max(halfWidth + 24, Math.min(window.innerWidth - halfWidth - 24, center))
+      const right = audioDockRight ?? window.innerWidth
+      const safeCenter = Math.max(Math.min(halfWidth + 24, right / 2), Math.min(right - halfWidth - 24, center))
       nextX += safeCenter - center
     }
     // 靠近屏幕顶部的节点下移，保留操作条和标题的完整空间，避免夹取后贴住图片。
@@ -3365,7 +3412,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       setViewport({ x: nextX, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
       return
     }
-    const deficit = bottomY + NODE_PANEL_GAP * 2 + height - window.innerHeight
+    const deficit = bottomY + NODE_PANEL_GAP * 2 + height - (audioDockTop ?? window.innerHeight)
     if (deficit <= 0) {
       if (Math.abs(nextX - tx) > 1) setViewport({ x: nextX, y: ty, zoom: tz }, { duration: 200 })
       return
@@ -3382,6 +3429,9 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     imageTool,
     canvasViewportHeight,
     canvasViewportWidth,
+    stackedNodeControls,
+    directorBounds?.top,
+    directorLeftBoundary,
   ])
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
@@ -5439,6 +5489,15 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             }
           }
           const merged = applyCanvasElementMutations({ nodes: cloudNodes, edges: cloudEdges }, localChanges)
+          const restoredNodeIds = new Set(
+            localChanges
+              .filter((mutation) => mutation.kind === 'node' && mutation.op === 'upsert')
+              .map((mutation) => mutation.element_id),
+          )
+          // 本机节点经过同步序列化后，需恢复用于判定历史任务不存在的运行态标记。
+          merged.nodes = merged.nodes.map((node) =>
+            restoredNodeIds.has(node.id) ? { ...node, data: restoreCanvasTaskState(node.data) } : node,
+          )
           pendingCanvasStateRef.current = { ...(draftForPaint.pendingState || {}) }
           syncRef.current = {
             nodes: cloudNodes.map((node) => comparableNode(node, cloudText)),
@@ -6574,10 +6633,28 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       if (drawerPanel || isPickingRef) return
       const { images, videos, audios, unsupported } = extractMediaFiles(event.clipboardData)
       const files = [...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : []), ...unsupported]
-      // 画布内 Ctrl+C 的节点剪贴板优先于系统剪贴板，避免系统里残留的图片抢走 Ctrl+V。
-      // Ctrl+Shift+V 明确表示导入系统媒体；没有画布节点剪贴板时，普通 Ctrl+V 仍可导入媒体。
       const preferSystemMedia = preferSystemClipboardPasteRef.current
       preferSystemClipboardPasteRef.current = false
+      // 系统图片与本次复制的画布图片内容一致时粘贴节点；否则尊重外部新复制的素材。
+      if (canvasClipboard && canvasClipboardImageFingerprint && files.length && !preferSystemMedia) {
+        const fingerprint = canvasClipboardImageFingerprint
+        const version = canvasClipboardCopyVersion
+        const anchor = pointerRef.current || undefined
+        event.preventDefault()
+        void (async () => {
+          const expected = await fingerprint
+          const actual =
+            files.length === 1 && images.length === 1
+              ? await fingerprintClipboardImage(images[0]).catch(() => null)
+              : null
+          if (expected && actual === expected && version === canvasClipboardCopyVersion) {
+            pasteClipboardNodesRef.current(anchor)
+          } else {
+            void importLocalMedia(files, anchor)
+          }
+        })()
+        return
+      }
       if (canvasClipboard && !preferSystemMedia) {
         if (pasteClipboardNodesRef.current()) event.preventDefault()
         return
@@ -7333,6 +7410,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           const taskId = getAiTaskId(task)
           if (!taskId)
             throw new Error(generate.kind === 'text' ? '分镜生成请求未返回文本或任务 ID' : '任务创建后未返回任务 ID')
+          void useWorkspaceSessionStore.getState().refreshWallet(workspaceId)
           // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
           rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
           // 3) 回写 task_id/task_status 到节点
@@ -7942,6 +8020,9 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     const compositionAbort = new AbortController()
     let timer = 0
     const polling = new Set<number>()
+    const walletRefreshedTasks = new Set<number>()
+    let walletSettlementTimers: number[] = []
+    const refreshWallet = () => void useWorkspaceSessionStore.getState().refreshWallet(workspaceId)
     const successStatuses = new Set(['succeeded', 'completed', 'success'])
     const failedStatuses = new Set(['failed', 'error', 'payment_failed', 'cancelled', 'expired'])
 
@@ -8029,6 +8110,13 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             taskFetched = true
             if (disposed) return
             const status = normalizeAiTaskStatus(task?.status) || 'pending'
+            if ((successStatuses.has(status) || failedStatuses.has(status)) && !walletRefreshedTasks.has(taskId)) {
+              walletRefreshedTasks.add(taskId)
+              refreshWallet()
+              // 任务终态可能先于钱包结算入账。合并同一批任务的补查。
+              walletSettlementTimers.forEach((id) => window.clearTimeout(id))
+              walletSettlementTimers = [2000, 6000].map((delay) => window.setTimeout(refreshWallet, delay))
+            }
             const progress = taskProgressOf(task)
             // Members observing the same completed task must persist the same history entry.
             const updatedAt = task?.updated_at || new Date().toISOString()
@@ -8360,6 +8448,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     return () => {
       disposed = true
       compositionAbort.abort()
+      walletSettlementTimers.forEach((id) => window.clearTimeout(id))
       window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
@@ -9978,12 +10067,47 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       const payload = snapshotNodes(ids)
       if (!payload) return false
       canvasClipboard = payload
+      const copyVersion = ++canvasClipboardCopyVersion
+      canvasClipboardImageFingerprint = null
       setCopiedCanvasAudioReference(payload, workspaceId)
       // 同时备一份「含之前所有节点」的，粘贴到画布时始终让用户二选一（需求：两项都要给；没有上游时两者相同）
       const upstreamIds = collectUpstreamNodeIds(ids, latestRef.current.edges as any)
       canvasClipboardWithUpstream = snapshotNodes(upstreamIds)
       setContextMenu(null)
-      showToast(`已复制 ${payload.nodes.length} 个节点`, 'success')
+      const node = payload.nodes.length === 1 ? payload.nodes[0] : null
+      const data = node?.data
+      const assetId = Number(data?.assetId || 0)
+      const assetWorkspaceId = Number(data?.assetWorkspaceId || workspaceId)
+      const imageUrl =
+        node?.kind === 'image'
+          ? assetId > 0
+            ? assetStreamUrl(assetId, assetWorkspaceId)
+            : resolveNodeMediaUrl(data, workspaceId) || String(data?.previewUrl || '')
+          : ''
+      if (node?.kind === 'image' && imageUrl) {
+        try {
+          const result = copyImageToSystemClipboard(imageUrl, () => copyVersion === canvasClipboardCopyVersion)
+          canvasClipboardImageFingerprint = Promise.all([result.write, result.fingerprint])
+            .then(([, fingerprint]) => fingerprint)
+            .catch(() => null)
+          void result.write.then(
+            () => {
+              if (copyVersion === canvasClipboardCopyVersion) showToast('图片和节点已复制', 'success')
+            },
+            () => {
+              if (copyVersion === canvasClipboardCopyVersion) showToast('节点已复制，图片复制失败', 'error')
+            },
+          )
+        } catch {
+          canvasClipboardImageFingerprint = Promise.resolve(null)
+          showToast('节点已复制，图片复制失败', 'error')
+        }
+      } else {
+        showToast(
+          node?.kind === 'image' ? '节点已复制，暂无图片可复制' : `已复制 ${payload.nodes.length} 个节点`,
+          'success',
+        )
+      }
       return true
     },
     [snapshotNodes, workspaceId],
@@ -10985,7 +11109,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   // 参考选择模式仍由 click 确认触发（避免 mousedown+click 双触发创建重复连线）。
   const handleSelectNodeOnDown = useCallback(
     (node: Node) => {
-      if (isPickingRef || directorOpen || busyReason(node.id)) return
+      if (isPickingRef || busyReason(node.id)) return
       const groupId = getNodeGroupId(node as GroupableNode)
       if (groupId && groupId !== editingGroupRef.current && !deepSelectRef.current) return
       /*
@@ -11010,7 +11134,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         params: (node.data as any)?.params,
       })
     },
-    [isPickingRef, directorOpen, getSourceRefs],
+    [isPickingRef, busyReason, getSourceRefs],
   )
 
   /**
@@ -11449,6 +11573,18 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           再往 data 里塞一个字段又会污染持久化。
         */
         ref={canvasRootRef}
+        style={
+          directorOpen
+            ? ({
+                '--canvas-audio-editor-width': directorLeftBoundary
+                  ? `${(directorLeftBoundary - 48) / Math.max(1, viewportZoom)}px`
+                  : undefined,
+                '--canvas-audio-editor-height': stackedNodeControls
+                  ? `${Math.max(64, (canvasViewportHeight * 0.54 - 180) / 2) / Math.max(1, viewportZoom)}px`
+                  : undefined,
+              } as CSSProperties)
+            : undefined
+        }
         tabIndex={-1}
         onClickCapture={(event) => {
           const target = event.target as HTMLElement
@@ -11526,7 +11662,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         onBlurCapture={(event) =>
           setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.relatedTarget))
         }
-        className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${selectionIsGroup ? ' has-group-selection' : ''}${canvasModalOpen ? ' has-modal' : ''}${spacePanning || panModeEnabled ? ' is-space-panning' : ''}`}
+        className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${selectionIsGroup ? ' has-group-selection' : ''}${canvasModalOpen ? ' has-modal' : ''}${spacePanning || panModeEnabled ? ' is-space-panning' : ''}${stackedNodeControls ? ' has-stacked-agent' : ''}`}
         onDragEnterCapture={trackFileDrag}
         onDragOverCapture={trackFileDrag}
         onDragOver={handleFileDragOver}
@@ -12023,9 +12159,6 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                 const reference = canvasReferenceFromNode(node)
                 if (reference) {
                   setDirectorReference({ binding: canvasBindingKey, reference })
-                  setSelectedNode(null)
-                  setAddMenu(null)
-                  return
                 }
               }
               if (busyReason(node.id)) {
@@ -12320,6 +12453,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           !canvasModalOpen && (
             <CanvasNodeToolbar
               anchor={nodeToolbarAnchor}
+              rightBoundary={directorLeftBoundary}
               kind={selectedNodeToolbarState.kind}
               hasContent={selectedNodeToolbarState.hasContent}
               uploading={selectedNodeToolbarState.uploading}
@@ -13050,7 +13184,19 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
               ref={panelRef}
               aria-hidden={!selectedNodeVisible}
               className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
-              style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
+              style={
+                panelAnchor
+                  ? ({
+                      ...panelAnchor,
+                      '--canvas-node-panel-width': directorLeftBoundary
+                        ? `${directorLeftBoundary - 2 * NODE_PANEL_GAP}px`
+                        : undefined,
+                      '--canvas-node-panel-height': stackedNodeControls
+                        ? `${Math.max(0, (directorBounds?.top ?? window.innerHeight * 0.54) - stackedPanelTop - 12)}px`
+                        : undefined,
+                    } as CSSProperties)
+                  : undefined
+              }
             >
               <CanvasDragStablePanel dragging={draggingNode} nodeId={selectedNode.id}>
                 {selectedNodeForPanel?.operationCode === 'video.upscale' ? (

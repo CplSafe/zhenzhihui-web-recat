@@ -14,6 +14,87 @@ async function resetBrowserStorage(page: import('@playwright/test').Page, option
   }, options)
 }
 
+test('注册短信支持失败重试、更换手机号以及填完后提交', async ({ page }, testInfo) => {
+  await resetBrowserStorage(page)
+  await page.route('**/api/v1/auth/oauth-start?**', (route) =>
+    route.fulfill({ json: { code: 0, data: { client_id: 'browser-test', return_to: '/auth/callback' } } }),
+  )
+  const smsMobiles: string[] = []
+  const registrations: unknown[] = []
+  let failFirstSms!: () => void
+  const firstSms = new Promise<void>((resolve) => {
+    failFirstSms = resolve
+  })
+  await page.route('**/deepauth/api/v1/public/auth/sms/send', async (route) => {
+    const body = route.request().postDataJSON()
+    expect(body.purpose).toBe('register')
+    smsMobiles.push(body.mobile)
+    if (smsMobiles.length === 1) {
+      await firstSms
+      return route.fulfill({ status: 503, json: { code: 503, message: '短信服务繁忙，请重试' } })
+    }
+    return route.fulfill({ json: { code: 0, data: null } })
+  })
+  await page.route('**/deepauth/api/v1/public/auth/register', (route) => {
+    registrations.push(route.request().postDataJSON())
+    return route.fulfill({ status: 400, json: { code: 10003, message: '验证码错误' } })
+  })
+
+  await page.goto('/login')
+  await page.getByRole('button', { name: '免费注册' }).click()
+  const dialog = page.getByRole('dialog', { name: '注册新用户' })
+  const mobile = dialog.getByRole('textbox', { name: '手机号' })
+  const password = dialog.getByLabel('密码', { exact: true })
+  const code = dialog.getByRole('textbox', { name: '验证码', exact: true })
+  const send = dialog.getByRole('button', { name: '获取验证码', exact: true })
+  const submit = dialog.getByRole('button', { name: '注册', exact: true })
+  await expect(submit).toBeDisabled()
+  await mobile.fill('13800000000')
+  await password.fill('Test-password-1!')
+  await code.fill('123456')
+  await expect(submit).toBeDisabled()
+  await send.click()
+  try {
+    await expect(dialog.getByRole('button', { name: '发送中…' })).toBeDisabled()
+    await expect(submit).toBeDisabled()
+    await expect(mobile).not.toBeEditable()
+    await expect(dialog.getByRole('button', { name: '关闭' })).toBeEnabled()
+    await page.screenshot({ path: testInfo.outputPath('registration-sending.png') })
+  } finally {
+    failFirstSms()
+  }
+  await expect(send).toBeEnabled()
+  await expect(dialog.getByText('短信服务繁忙，请重试')).toBeVisible()
+  await expect(submit).toBeDisabled()
+  await code.clear()
+  await send.click()
+  const countdown = dialog.getByRole('button', { name: /s后重发/ })
+  await expect(countdown).toBeDisabled()
+  await expect(mobile).toBeEditable()
+  await expect(submit).toBeDisabled()
+  await code.fill('123456')
+  await expect(submit).toBeEnabled()
+  await mobile.fill('13900000000')
+  await expect(code).toHaveValue('')
+  await expect(submit).toBeDisabled()
+  await mobile.fill('13800000000')
+  await expect(countdown).toBeDisabled()
+  await mobile.fill('13900000000')
+  await send.click()
+  await expect(countdown).toBeDisabled()
+  await code.fill('654321')
+  await expect(submit).toBeEnabled()
+  expect(registrations).toEqual([])
+  await submit.click()
+  await expect(dialog.getByText('验证码错误')).toBeVisible()
+  expect(smsMobiles).toEqual(['13800000000', '13800000000', '13900000000'])
+  expect(registrations).toEqual([
+    expect.objectContaining({ mobile: '13900000000', sms_code: '654321', terms_accepted: true }),
+  ])
+  await dialog.getByRole('button', { name: '关闭' }).click()
+  await expect(dialog).toBeHidden()
+})
+
 test.describe('游客访问边界', () => {
   test('受保护的项目页在过期会话下回到登录页', async ({ page }) => {
     await resetBrowserStorage(page, { staleSession: true })

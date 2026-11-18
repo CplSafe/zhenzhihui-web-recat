@@ -56,9 +56,15 @@ for (const width of [1440, 390]) {
               : { id: 125, title: '费用确认验收', revision: 1 },
       }),
     )
-    await page.route('**/api/v1/ai/tasks/estimate-cost', (route) =>
-      route.fulfill({ json: { estimated_cost: 10, balance: 9000, can_afford: true } }),
+    await page.route('**/api/v1/canvases/125/node-locks?**', (route) =>
+      route.fulfill({ json: { granted: true, nodes: {} } }),
     )
+    await page.route('**/api/v1/canvases/125/events?**', (route) => route.fulfill({ status: 204 }))
+    const estimates: unknown[] = []
+    await page.route('**/api/v1/ai/tasks/estimate-cost', (route) => {
+      estimates.push(route.request().postDataJSON())
+      return route.fulfill({ json: { estimated_cost: 10, balance: 9000, can_afford: true } })
+    })
     const submissions: unknown[] = []
     await page.route('**/api/v1/ai/tasks', (route) => {
       submissions.push(route.request().postDataJSON())
@@ -87,7 +93,9 @@ for (const width of [1440, 390]) {
     await expect(dialog).toBeVisible()
     await dialog.getByRole('button', { name: '继续制作' }).click()
     await expect.poll(() => submissions.length).toBe(1)
-    expect(submissions[0]).toMatchObject({ workspace_id: WORKSPACE_ID, operation_code: 'video.generate' })
+    const expectedTaskScope = { canvas_id: 125, workspace_id: WORKSPACE_ID, operation_code: 'video.generate' }
+    expect(estimates.at(-1)).toMatchObject(expectedTaskScope)
+    expect(submissions[0]).toMatchObject(expectedTaskScope)
     expect(errors).toEqual([])
     expectNoUnexpectedApi(api)
   })

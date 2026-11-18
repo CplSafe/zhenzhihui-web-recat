@@ -45,21 +45,26 @@ const tooltipProps: TooltipProps = {
   classNames: { root: styles.tooltip },
 }
 
+// 提示在底栏（1100）之上，编辑面板（1200）之下。
+const editorTooltipProps: TooltipProps = { ...tooltipProps, zIndex: 1150 }
+
 function ViewControl({
   label,
   hint = label,
+  tooltipOptions = tooltipProps,
   onClick,
   pressed,
   children,
 }: {
   label: string
   hint?: string
+  tooltipOptions?: TooltipProps
   onClick: () => void
   pressed?: boolean
   children: ReactNode
 }) {
   return (
-    <Tooltip {...tooltipProps} title={hint}>
+    <Tooltip {...tooltipOptions} title={hint}>
       <button
         type="button"
         className={`${styles.btn} ${pressed ? styles.active : ''}`}
@@ -92,7 +97,7 @@ export default function CanvasViewControls(props: CanvasViewControlsProps | Canv
         </>
       ) : (
         <>
-          <ViewControl label="整理画布" onClick={props.onArrange}>
+          <ViewControl label="整理画布" onClick={props.onArrange} tooltipOptions={editorTooltipProps}>
             <ArrangeIcon />
           </ViewControl>
           <ViewControl
@@ -100,6 +105,7 @@ export default function CanvasViewControls(props: CanvasViewControlsProps | Canv
             hint={props.minimapVisible ? '隐藏小地图' : '显示小地图'}
             onClick={props.onMinimapToggle}
             pressed={props.minimapVisible}
+            tooltipOptions={editorTooltipProps}
           >
             <MiniMapIcon />
           </ViewControl>
@@ -108,6 +114,7 @@ export default function CanvasViewControls(props: CanvasViewControlsProps | Canv
             hint={props.edgesHidden ? '显示节点连线' : '隐藏节点连线'}
             onClick={props.onEdgesToggle}
             pressed={props.edgesHidden}
+            tooltipOptions={editorTooltipProps}
           >
             <EdgeIcon />
           </ViewControl>
@@ -116,12 +123,17 @@ export default function CanvasViewControls(props: CanvasViewControlsProps | Canv
             hint={props.snapEnabled ? '关闭网格吸附' : '开启网格吸附'}
             onClick={props.onSnapToggle}
             pressed={props.snapEnabled}
+            tooltipOptions={editorTooltipProps}
           >
             <MagnetIcon />
           </ViewControl>
         </>
       )}
-      <Tooltip {...tooltipProps} title="回到 100%">
+      <Tooltip
+        {...(props.readOnly === true ? tooltipProps : editorTooltipProps)}
+        placement={props.readOnly !== true && props.minimapVisible ? 'right' : 'top'}
+        title="回到 100%"
+      >
         <button
           type="button"
           className={styles.zoomValue}

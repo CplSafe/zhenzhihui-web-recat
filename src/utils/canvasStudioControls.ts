@@ -75,7 +75,7 @@ export function composeStudioPrompt(code: string, prompt: string, values: Record
       '右前侧观察，呈现侧面与遮挡关系',
       '右侧观察，以侧面轮廓和侧向纵深为主',
       '右后侧观察，展示背侧表面',
-      '正后方背面机位',
+      '相机移到场景对侧，朝原机位回拍；纵深场景的原近端进入远景',
       '左后侧观察，展示背侧表面',
       '左侧观察，以侧面轮廓和侧向纵深为主',
       '左前侧观察，呈现侧面与遮挡关系',
@@ -86,11 +86,9 @@ export function composeStudioPrompt(code: string, prompt: string, values: Record
     return [
       `以参考图机位为0°，水平环绕${yaw}°，${pitch > 0 ? '俯拍' : pitch < 0 ? '仰拍' : '平视'}${Math.abs(pitch)}°，${framing}构图。`,
       `${view}；${elevation}。`,
-      viewIndex === 4
-        ? '主体及配套物品各绕竖直轴原地旋转180°，各自背面朝镜头；正面主标不可见，包装背标或条码朝镜头。全部保留并列，不删减或重排。'
-        : '',
       zoom >= 9 ? '极度特写镜头，广角镜头，边缘带有鱼眼畸变效果。' : '',
-      '保持参考图全部物件的设计、标识、比例和场景；无人物参考不得新增人物。背景不平移或镜像。',
+      '默认只换机位。保持主体、场景结构和光照，人物与物件的数量和位置不变。按新机位重建透视与遮挡，只补全新可见区域。',
+      text ? '若补充描述明确要求物件转动，按描述处理。' : '',
       text,
     ]
       .filter(Boolean)

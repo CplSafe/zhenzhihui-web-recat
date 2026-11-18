@@ -235,6 +235,41 @@ describe('AuthActionModal behavior', () => {
     })
   })
 
+  it('keeps registration blocked until SMS succeeds for the current mobile and required fields are filled', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<void>()
+    mocks.sendAuthSms.mockReturnValueOnce(pending.promise)
+    render(forgotModal({ mode: 'register', onAuthed: mocks.onAuthed }))
+    const mobile = screen.getByRole('textbox', { name: '手机号' })
+    const code = screen.getByRole('textbox', { name: '验证码' })
+    const password = screen.getByLabelText('密码', { exact: true })
+    const submit = screen.getByRole('button', { name: '注册' })
+    await user.type(mobile, '13800000000')
+    await user.type(code, '123456')
+    await user.type(password, 'Test-password-1!')
+    expect(submit).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    expect(screen.getByRole('button', { name: '发送中…' })).toBeDisabled()
+    expect(submit).toBeDisabled()
+    expect(mocks.registerAccount).not.toHaveBeenCalled()
+
+    await act(async () => pending.resolve())
+    expect(screen.getByRole('button', { name: /s后重发/ })).toBeDisabled()
+    expect(submit).toBeEnabled()
+    await user.clear(mobile)
+    await user.type(mobile, '13900000000')
+    expect(code).toHaveValue('')
+    expect(submit).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    await user.type(code, '654321')
+    await user.click(submit)
+    expect(mocks.registerAccount).toHaveBeenCalledOnce()
+    expect(mocks.registerAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ mobile: '13900000000', smsCode: '654321' }),
+    )
+  })
+
   it('recovers after reset failure, preserves the mobile, and never leaks credentials to URL or logs', async () => {
     const user = userEvent.setup()
     const secret = 'Do-Not-Log-This-1!'

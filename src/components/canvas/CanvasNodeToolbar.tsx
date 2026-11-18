@@ -20,6 +20,7 @@ export type CanvasCapturePosition = 'current' | 'first' | 'last' | 'custom'
 export interface CanvasNodeToolbarProps {
   /** 视口坐标：工具条的水平中心与底边位置 */
   anchor: { centerX: number; bottom: number }
+  rightBoundary?: number
   /** 节点类型，决定显示哪些动作 */
   kind: string
   /** 是否已有素材（决定「上传」还是「替换」、能否下载） */
@@ -54,6 +55,7 @@ const CAPTURE_ITEMS: Array<{ position: CanvasCapturePosition; label: string; hin
 
 export default function CanvasNodeToolbar({
   anchor,
+  rightBoundary,
   kind,
   hasContent,
   uploading,
@@ -85,7 +87,8 @@ export default function CanvasNodeToolbar({
     observer.observe(bar)
     return () => observer.disconnect()
   }, [])
-  const centerX = Math.max(12 + barWidth / 2, Math.min(anchor.centerX, window.innerWidth - 12 - barWidth / 2))
+  const right = rightBoundary ?? window.innerWidth
+  const centerX = Math.max(12 + barWidth / 2, Math.min(anchor.centerX, right - 12 - barWidth / 2))
 
   // 点到别处收起菜单，避免它一直盖在画面上
   useEffect(() => {
@@ -125,7 +128,7 @@ export default function CanvasNodeToolbar({
     <div
       ref={barRef}
       className={`${styles.bar} ${kind === 'image' ? styles.imageBar : ''} nodrag nopan`}
-      style={{ left: centerX, bottom: anchor.bottom }}
+      style={{ left: centerX, bottom: anchor.bottom, maxWidth: rightBoundary ? rightBoundary - 24 : undefined }}
       role="toolbar"
       aria-label="节点操作"
       // 画布在捕获阶段处理指针事件，不拦住会连带触发框选与取消选中

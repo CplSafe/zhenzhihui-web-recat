@@ -161,6 +161,10 @@ for (const renamed of [false, true]) {
       })
     })
     await page.route('**/api/v1/canvases/120**', async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith('/events')) {
+        await route.fulfill({ status: 204 })
+        return
+      }
       if (route.request().method() === 'PATCH') {
         saved.push(route.request().postDataJSON())
         await route.fulfill({ json: { revision: 2 } })
@@ -178,7 +182,12 @@ for (const renamed of [false, true]) {
                     type: 'image',
                     position: { x: 300, y: 200 },
                     style: { width: 320, height: 240 },
-                    data: { kind: 'image', assetId: 701, assetWorkspaceId: WORKSPACE_ID, title: '原图' },
+                    data: {
+                      kind: 'image',
+                      assetId: 701,
+                      assetWorkspaceId: WORKSPACE_ID,
+                      title: renamed ? '会议室原图' : '走廊原图',
+                    },
                   },
                 },
                 {
@@ -251,6 +260,16 @@ for (const renamed of [false, true]) {
       method: 'GET',
       path: '/api/v1/canvases/120/elements',
       workspaceId: WORKSPACE_ID,
+    })
+    await page.route('**/api/v1/canvases/120/node-locks?**', (route) => {
+      expect(route.request().method()).toBe('POST')
+      const { nodes } = route.request().postDataJSON() as { nodes: string[] }
+      return route.fulfill({
+        json: {
+          granted: true,
+          nodes: Object.fromEntries(nodes.map((id) => [id, [{ user_id: 7, name: 'E2E 用户', editing: true }]])),
+        },
+      })
     })
     await page.goto('/canvas/120')
     await ready
@@ -327,16 +346,16 @@ for (const renamed of [false, true]) {
     await page.screenshot({ path: testInfo.outputPath('multi-angle-fisheye.png') })
     await modal.getByRole('button', { name: '背面视角', exact: true }).click()
     await modal.getByText('场景约束与提示词', { exact: true }).click()
-    await expect(
-      modal.getByText('背面视角下瓶身与包装盒分别转到背面，背标和条码朝向镜头；保留所有配件。'),
-    ).toBeVisible()
+    await expect(modal.getByText(/默认只改变拍摄机位，保留原场景/)).toBeVisible()
     const sceneInput = modal.getByRole('textbox', { name: '多角度补充场景信息' })
-    await sceneInput.fill('红衣女子站在窗边，桌上有白杯')
     const promptPreview = modal.getByLabel('多角度生成提示词')
-    await expect(promptPreview).toContainText('保持参考图全部物件的设计、标识、比例和场景')
-    await expect(promptPreview).toContainText('红衣女子站在窗边，桌上有白杯')
+    await expect(promptPreview).toContainText('相机移到场景对侧，朝原机位回拍')
+    await expect(promptPreview).not.toContainText(/包装|条码|主标/)
+    const sceneDescription = renamed ? '保留会议室的投影幕、会议桌和原有座位' : '保留走廊的木门、壁灯和地板'
+    await sceneInput.fill(sceneDescription)
+    await expect(promptPreview).toContainText(sceneDescription)
     await modal.getByRole('button', { name: '正面仰拍', exact: true }).click()
-    await expect(sceneInput).toHaveValue('红衣女子站在窗边，桌上有白杯')
+    await expect(sceneInput).toHaveValue(sceneDescription)
     await expect(promptPreview).toContainText('仰拍20°')
     await modal.getByRole('button', { name: '背面视角', exact: true }).click()
     await page.setViewportSize({ width: 760, height: 1000 })
@@ -344,6 +363,7 @@ for (const renamed of [false, true]) {
     await expect(sceneInput).toBeInViewport()
     await page.screenshot({ path: testInfo.outputPath('multi-angle-scene-760.png') })
     await page.setViewportSize({ width: 1440, height: 1000 })
+    if (!renamed) await sceneInput.clear()
     await expect(modal.getByRole('button', { name: '制作新图片' })).toBeEnabled()
     await modal.getByRole('button', { name: '制作新图片' }).click()
     await expect(modal).not.toBeVisible()
@@ -356,13 +376,14 @@ for (const renamed of [false, true]) {
     ).toBe(true)
     expect(submissions[0].params.tool_params).toMatchObject({ horizontal_angle: 180, vertical_angle: 0, zoom: 5 })
     expect(submissions[0].prompt).toContain('水平环绕180°')
-    expect(submissions[0].prompt).toContain('正后方背面机位')
-    expect(submissions[0].prompt).toContain('各绕竖直轴原地旋转180°，各自背面朝镜头')
-    expect(submissions[0].prompt).toContain('正面主标不可见，包装背标或条码朝镜头')
-    expect(submissions[0].params.negative_prompt).toContain('正面主标可见')
-    expect(submissions[0].params.negative_prompt).toContain('商品包装缺失')
-    expect(submissions[0].prompt).toContain('无人物参考不得新增人物')
-    expect(submissions[0].prompt).toContain('红衣女子站在窗边，桌上有白杯')
+    expect(submissions[0].input_assets).toEqual([{ asset_id: 701, role: 'reference_image' }])
+    expect(submissions[0].prompt).toContain('相机移到场景对侧，朝原机位回拍；纵深场景的原近端进入远景')
+    expect(submissions[0].prompt).toContain('按新机位重建透视与遮挡')
+    expect(submissions[0].prompt).not.toMatch(/包装|条码|主标|原地旋转/)
+    expect(submissions[0].params).not.toHaveProperty('negative_prompt')
+    expect(submissions[0].prompt).toContain('人物与物件的数量和位置不变')
+    if (renamed) expect(submissions[0].prompt).toContain(sceneDescription)
+    else expect(submissions[0].prompt).not.toContain(sceneDescription)
     expect(quotes.some((quote) => quote.prompt === submissions[0].prompt)).toBe(true)
     expect(submissions[0].prompt).toContain('平视0°，中景')
     expect(Array.from(submissions[0].prompt).length).toBeLessThanOrEqual(200)
@@ -551,6 +572,10 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     }),
   )
   await page.route('**/api/v1/canvases/120**', async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/events')) {
+      await route.fulfill({ status: 204 })
+      return
+    }
     if (route.request().method() === 'PATCH') {
       saved.push(route.request().postDataJSON())
       await route.fulfill({ json: { revision: 2 } })
@@ -600,9 +625,9 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
   })
   await page.route('https://canvas-test.oss-cn-beijing.aliyuncs.com/upload', async (route) => {
     // WebKit 的网络协议可能省略 multipart 文件字节；从实际传给 fetch 的 File 读取，仍校验真实上传内容。
-    const bytes = await page.evaluate(() => (window as any).__panoramaUploadBytes as number[])
-    expect(bytes).toBeDefined()
-    const body = Buffer.from(bytes)
+    const dataUrl = await page.evaluate(() => (window as any).__panoramaUploadDataUrl as string)
+    expect(dataUrl).toMatch(/^data:image\/png;base64,/)
+    const body = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
     const start = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     expect(start).toBeGreaterThanOrEqual(0)
     const end = body.indexOf(Buffer.from('49454e44ae426082', 'hex'), start) + 8
@@ -623,10 +648,27 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
         init.body.forEach((value) => {
           if (!file && value instanceof Blob) file = value
         })
-        if (file) (window as any).__panoramaUploadBytes = [...new Uint8Array(await file.arrayBuffer())]
+        if (file) {
+          ;(window as any).__panoramaUploadDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result))
+            reader.onerror = () => reject(reader.error)
+            reader.readAsDataURL(file)
+          })
+        }
       }
       return fetch(input, init)
     }
+  })
+  await page.route('**/api/v1/canvases/120/node-locks?**', (route) => {
+    expect(route.request().method()).toBe('POST')
+    const { nodes } = route.request().postDataJSON() as { nodes: string[] }
+    return route.fulfill({
+      json: {
+        granted: true,
+        nodes: Object.fromEntries(nodes.map((id) => [id, [{ user_id: 7, name: 'E2E 用户', editing: true }]])),
+      },
+    })
   })
   await page.goto('/canvas/120')
   const source = page.locator('.react-flow__node[data-id="panorama-source"]')
@@ -740,7 +782,9 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
     })
     .toBe(true)
   await modal.getByRole('button', { name: '返回图片预览', exact: true }).click()
-  await page.getByRole('button', { name: '复位视图', exact: true }).click()
+  await expect(modal).toBeHidden()
+  await page.locator('.react-flow__pane').click({ position: { x: 250, y: 90 } })
+  await page.keyboard.press('ControlOrMeta+0')
   await expect
     .poll(async () =>
       page.locator('.canvas-group-frame').evaluate((element) => {

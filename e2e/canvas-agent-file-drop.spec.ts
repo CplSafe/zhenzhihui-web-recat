@@ -9,7 +9,7 @@ const PNG_BYTES = Buffer.from(
   'base64',
 )
 
-async function openCanvasAgent(page: Page, uploadAttachment: (route: Route) => Promise<void>) {
+async function openCanvasAgent(page: Page, uploadAttachment: (route: Route) => Promise<void>, fileName = FILE_NAME) {
   await page.setViewportSize({ width: 1440, height: 960 })
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
@@ -39,7 +39,7 @@ async function openCanvasAgent(page: Page, uploadAttachment: (route: Route) => P
       case 'GET /agent-studio/api/catalog':
         return route.fulfill({ json: { models: [], skills: [] } })
       case 'POST /agent-studio/api/attachments':
-        expect(new URL(request.url()).searchParams.get('name')).toBe(FILE_NAME)
+        expect(new URL(request.url()).searchParams.get('name')).toBe(fileName)
         expect(request.headers()['x-agent-workspace-id']).toBe(String(WORKSPACE_ID))
         expect(request.headers()['x-agent-canvas-id']).toBe(String(CANVAS_ID))
         return uploadAttachment(route)
@@ -142,6 +142,48 @@ test('本地文件在画布与 Agent 之间移动时始终只由当前落点处�
   await expect(prompt).toHaveValue('文件拖放后可以继续输入')
   await page.screenshot({ path: testInfo.outputPath('agent-file-drop.png'), animations: 'disabled' })
   expect(pageErrors).toEqual([])
+  expect(unexpectedAgentRequests).toEqual([])
+  expectNoUnexpectedApi(api)
+})
+
+test('拖动剧本文档进入 Agent 输入框时清除画布提示并上传附件', async ({ page, browserName }, testInfo) => {
+  test.skip(browserName !== 'chromium', '原生文件拖放事件由 Chromium CDP 提供')
+  const fileName = '剧本.txt'
+  const script = '第一场：会议室\n人物讨论合作方案。'
+  let attachmentPosts = 0
+  const { api, unexpectedAgentRequests, agent, prompt } = await openCanvasAgent(
+    page,
+    async (route) => {
+      attachmentPosts++
+      expect(route.request().postDataBuffer()?.toString('utf8')).toBe(script)
+      await route.fulfill({ json: { id: 'script-attachment', type: 'prompt', characters: script.length } })
+    },
+    fileName,
+  )
+  const filePath = testInfo.outputPath(fileName)
+  await writeFile(filePath, script, 'utf8')
+  const session = await page.context().newCDPSession(page)
+  const drag = (type: 'dragEnter' | 'dragOver' | 'drop', point: { x: number; y: number }) =>
+    session.send('Input.dispatchDragEvent', {
+      type,
+      ...point,
+      data: { items: [], files: [filePath], dragOperationsMask: 1 },
+    })
+  const canvasPoint = await pointIn(page.locator('.react-flow__pane'), 0.25)
+  const agentPoint = await pointIn(prompt)
+  const canvasHint = page.getByText('松开即可添加到画布', { exact: true })
+
+  await drag('dragEnter', canvasPoint)
+  await drag('dragOver', canvasPoint)
+  await expect(canvasHint).toBeVisible()
+  await drag('dragOver', agentPoint)
+  await expect(canvasHint).toBeHidden()
+  await page.screenshot({ path: testInfo.outputPath('script-over-agent.png'), animations: 'disabled' })
+  await drag('drop', agentPoint)
+  await expect(agent.getByRole('button', { name: `移除 ${fileName}` })).toBeVisible()
+  await expect(canvasHint).toBeHidden()
+  await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  expect(attachmentPosts).toBe(1)
   expect(unexpectedAgentRequests).toEqual([])
   expectNoUnexpectedApi(api)
 })

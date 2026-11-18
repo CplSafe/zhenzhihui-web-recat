@@ -1912,38 +1912,36 @@ export default function CanvasNodePanel({
 
   const canvasId = useCanvasBillingScope()?.canvasId
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
-  const [costEstimate, setCostEstimate] = useState<{
+  const quoteRequest =
+    selectedModel?.modelVersionId && operationCode && workspaceId
+      ? JSON.stringify({
+          canvasId,
+          workspaceId,
+          modelVersionId: selectedModel.modelVersionId,
+          operationCode,
+          prompt: buildFullPrompt(prompt),
+          params: schemaParams,
+          inputAssets,
+        })
+      : ''
+  const [storedQuote, setCostEstimate] = useState<{
+    request?: string
     estimated_cost?: number
     reservation?: boolean
     note?: string
-    balance?: number
     can_afford?: boolean
     loading: boolean
     error?: string
   }>({ loading: false })
-  const costTimerRef = useRef<number | null>(null)
+  const costEstimate = storedQuote.request === quoteRequest ? storedQuote : { loading: Boolean(quoteRequest) }
   const [costRetry, setCostRetry] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
-    const modelVersionId = selectedModel?.modelVersionId
-    if (!modelVersionId || !operationCode || !workspaceId) {
-      setCostEstimate({ loading: false })
-      return
-    }
-    setCostEstimate({ loading: true })
-    costTimerRef.current = window.setTimeout(() => {
-      estimateAiTaskCost({
-        canvasId,
-        workspaceId,
-        modelVersionId,
-        operationCode,
-        // 预估口径与实扣一致：同样使用拼接文本来源后的完整 prompt
-        prompt: buildFullPrompt(prompt),
-        params: schemaParams,
-        inputAssets,
-      })
+    if (!quoteRequest) return
+    setCostEstimate({ request: quoteRequest, loading: true })
+    const timer = window.setTimeout(() => {
+      estimateAiTaskCost(JSON.parse(quoteRequest))
         .then((result: any) => {
           if (cancelled) return
           if (
@@ -1954,47 +1952,37 @@ export default function CanvasNodePanel({
             throw new Error('报价数据不完整，请重新预估。')
           }
           setCostEstimate({
+            request: quoteRequest,
             estimated_cost: result.estimated_cost,
             reservation: result.estimate_kind === 'reservation',
             note: result.estimate_note,
-            balance: Number(result?.balance) || 0,
-            can_afford: Boolean(result?.can_afford),
+            can_afford: result.can_afford,
             loading: false,
           })
         })
         .catch((err: any) => {
           if (cancelled) return
-          setCostEstimate({ loading: false, error: String(err?.message || '预估失败') })
+          setCostEstimate({ request: quoteRequest, loading: false, error: String(err?.message || '预估失败') })
         })
     }, 600)
     return () => {
       cancelled = true
-      if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
+      window.clearTimeout(timer)
     }
-  }, [
-    costRetry,
-    canvasId,
-    selectedModel?.modelVersionId,
-    operationCode,
-    prompt,
-    kind,
-    schemaParams,
-    inputAssets,
-    workspaceId,
-    buildFullPrompt,
-  ])
+  }, [costRetry, quoteRequest])
 
   // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交；图片/视频来源以 sourceRefs(含 assetId) 交给调用方组装 input_assets
   // 视频生成前要等用户确认积分消耗，因此是异步的
   const handleGenerate = async () => {
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode || inputValidationError || referenceLimitError) return
+    if (costEstimate.loading) return
     if (costEstimate.can_afford === false) {
       onInsufficientCredits?.()
       return
     }
     if (taskRunning || checkingAssets || maskUploading) return
-    if (kind === 'video' && (costEstimate.loading || costEstimate.estimated_cost === undefined)) {
+    if (kind === 'video' && costEstimate.estimated_cost === undefined) {
       if (costEstimate.error) setCostRetry((value) => value + 1)
       return
     }
@@ -2930,7 +2918,7 @@ export default function CanvasNodePanel({
               className={`${styles.costText} ${
                 costEstimate.loading
                   ? styles.costTextLoading
-                  : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  : costEstimate.can_afford === false
                     ? styles.costTextInsufficient
                     : ''
               }`}
@@ -2939,7 +2927,7 @@ export default function CanvasNodePanel({
                 ? '…'
                 : costEstimate.error
                   ? '预估失败'
-                  : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  : costEstimate.can_afford === false
                     ? '积分不足'
                     : costEstimate.estimated_cost !== undefined
                       ? `${costEstimate.reservation ? '预冻结' : '预计消耗'}：${creditsLabel(costEstimate.estimated_cost)}`
@@ -2965,7 +2953,7 @@ export default function CanvasNodePanel({
             disabled={
               taskRunning ||
               checkingAssets ||
-              (kind === 'video' && costEstimate.loading) ||
+              costEstimate.loading ||
               !selectedModel ||
               !operationCode ||
               Boolean(inputValidationError || referenceLimitError)
@@ -2976,7 +2964,7 @@ export default function CanvasNodePanel({
                 ? '正在检查参考素材…'
                 : inputValidationError || referenceLimitError
                   ? inputValidationError || referenceLimitError || undefined
-                  : kind === 'video' && costEstimate.loading
+                  : costEstimate.loading
                     ? '正在预估积分…'
                     : kind === 'video' && costEstimate.error
                       ? '积分预估失败，点击重试'

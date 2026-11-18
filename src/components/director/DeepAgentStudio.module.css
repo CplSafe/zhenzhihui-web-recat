@@ -457,6 +457,16 @@
   position: relative;
   padding: 4px 8px 8px;
 }
+:global(.has-stacked-agent) .scrollArea {
+  flex-basis: 0;
+  padding-block: 0;
+}
+:global(.has-stacked-agent) .composerArea {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .quickPrompts {
   display: flex;
   gap: 8px;

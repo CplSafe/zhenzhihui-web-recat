@@ -19,6 +19,7 @@ import { extractWorkspaceMemberItems, useWorkspaceSessionStore } from '@/stores/
 import { useUiStore } from '@/stores/ui'
 import { useConfirmDialog } from '@/composables/useToast'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
+import { consumeInitialTeamInvitation, DEFAULT_TEAM_INVITATION_DAYS } from '@/utils/teamInitialInvitation'
 import './TeamManagementModal.css'
 
 /** 团队管理向全局提示层发送的消息类型。 */
@@ -62,10 +63,11 @@ interface NormalizedInvitation {
 
 /** 创建邀请码时可选的有效期。 */
 const expiryOptions = [
-  { label: '7天', value: 7 },
+  { label: '7天', value: DEFAULT_TEAM_INVITATION_DAYS },
   { label: '30天', value: 30 },
   { label: '90天', value: 90 },
 ]
+const initialInvitationRequests = new Map<number, ReturnType<typeof createWorkspaceInvitation>>()
 
 /** 从兼容字段中取首个非空文本。 */
 function pickFirstText(...candidates: any[]): string {
@@ -265,7 +267,8 @@ export default function TeamManagementModal({
   const [inviteCode, setInviteCode] = useState('')
   const [expiryDate, setExpiryDate] = useState('')
   const [activeInvitationId, setActiveInvitationId] = useState(0)
-  const [expiryDays, setExpiryDays] = useState(7)
+  const [expiryDays, setExpiryDays] = useState(DEFAULT_TEAM_INVITATION_DAYS)
+  const [initialInvitationLoading, setInitialInvitationLoading] = useState(false)
   // 席位上限:来自当前空间的订阅套餐(max_members)。0 = 未知/不限制,不拦邀请。
   const [maxMembers, setMaxMembers] = useState(0)
 
@@ -430,22 +433,46 @@ export default function TeamManagementModal({
   const loadInvitations = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
     const requestSeq = ++invitationsRequestSeqRef.current
-    if (!wsId || isPersonalWorkspace) {
+    if (!wsId || !canManageInvite) {
       setActiveInvitationId(0)
       setInviteCode('')
       setExpiryDate('')
       return
     }
     try {
+      const pendingInitialRequest = initialInvitationRequests.get(wsId)
       const result = await listWorkspaceInvitations(wsId)
       if (requestSeq !== invitationsRequestSeqRef.current || workspaceIdRef.current !== wsId) return
       const list = normalizeInvitations(result)
       const active = pickActiveInvitation(list)
-      if (active) {
+      let initialRequest = pendingInitialRequest || initialInvitationRequests.get(wsId)
+      const shouldGenerate = consumeInitialTeamInvitation(currentUserId, wsId)
+      if (!initialRequest && shouldGenerate && !active && !invitationsLoadingRef.current) {
+        initialRequest = createWorkspaceInvitation({
+          workspaceId: wsId,
+          expiryDays: DEFAULT_TEAM_INVITATION_DAYS,
+        }).finally(() => initialInvitationRequests.delete(wsId))
+        initialInvitationRequests.set(wsId, initialRequest)
+      }
+      if (initialRequest) {
+        setInitialInvitationLoading(true)
+        try {
+          const created = await initialRequest
+          if (requestSeq === invitationsRequestSeqRef.current && workspaceIdRef.current === wsId) {
+            applyActiveInvitation(created)
+          }
+        } catch (error: any) {
+          if (requestSeq === invitationsRequestSeqRef.current && workspaceIdRef.current === wsId) {
+            onToast?.(error?.message || '邀请码生成失败', 'error')
+          }
+        } finally {
+          if (requestSeq === invitationsRequestSeqRef.current && workspaceIdRef.current === wsId) {
+            setInitialInvitationLoading(false)
+          }
+        }
+      } else if (active) {
         applyActiveInvitation(active.raw)
       } else {
-        // 无有效邀请码 → 显示「暂无邀请码」,由主账号手动生成。
-        // 【不再自动补码】:否则主账号「撤销邀请」后重开弹窗会又自动生成,撤销形同无效。
         setActiveInvitationId(0)
         setInviteCode('')
         setExpiryDate('')
@@ -458,7 +485,7 @@ export default function TeamManagementModal({
         onToast?.(error?.message || '邀请码信息加载失败', 'error')
       }
     }
-  }, [workspaceId, isPersonalWorkspace, onToast])
+  }, [workspaceId, canManageInvite, currentUserId, onToast])
 
   function closeMemberActions() {
     setMemberActionOpen(false)
@@ -653,7 +680,9 @@ export default function TeamManagementModal({
       onToast?.('个人空间不支持邀请码，请切换到团队空间后再操作', 'error')
       return
     }
-    if (!wsId || invitationsLoadingRef.current) return
+    if (!wsId || !canInvite || invitationsLoadingRef.current || initialInvitationRequests.has(wsId)) return
+    consumeInitialTeamInvitation(currentUserId, wsId)
+    invitationsRequestSeqRef.current += 1
     invitationsLoadingRef.current = true
     const previousInvitationId = Number(activeInvitationId || 0)
     const hadInviteCode = Boolean(String(inviteCode || '').trim())
@@ -686,7 +715,7 @@ export default function TeamManagementModal({
   async function handleRevoke() {
     const wsId = Number(workspaceId || 0)
     const invId = Number(activeInvitationId || 0)
-    if (!wsId || !invId || invitationsLoadingRef.current) return
+    if (!wsId || !invId || invitationsLoadingRef.current || initialInvitationRequests.has(wsId)) return
     const ok = await requestConfirm('撤销后当前邀请码立即失效,已发出的链接将无法再加入。确定撤销?', { danger: true })
     if (!ok) return
     invitationsLoadingRef.current = true
@@ -724,6 +753,7 @@ export default function TeamManagementModal({
 
   // 监听弹窗开关：每次打开重新拉取成员、订阅与邀请码，关闭则清理临时编辑态。
   useEffect(() => {
+    setInitialInvitationLoading(false)
     if (!open) {
       membersRequestSeqRef.current += 1
       invitationsRequestSeqRef.current += 1
@@ -758,7 +788,7 @@ export default function TeamManagementModal({
     }
     // 含 workspaceId：弹窗打开期间切换空间时需重新拉取成员/邀请，避免显示上一个团队的数据
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, workspaceId])
+  }, [open, workspaceId, canManageInvite, currentUserId])
 
   // 挂载/卸载期间注册并清理 Esc 关闭监听。
   useEffect(() => {
@@ -897,7 +927,12 @@ export default function TeamManagementModal({
                   </button>
                 )}
                 {canInvite && (
-                  <button type="button" className="tm-regenerate" onClick={generateCode}>
+                  <button
+                    type="button"
+                    className="tm-regenerate"
+                    disabled={initialInvitationLoading}
+                    onClick={generateCode}
+                  >
                     <svg viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M13.7 7.2a5.7 5.7 0 1 1-1.4-3.6l.1-1.2h1.2v4H9.5V5.2h1.6A4.5 4.5 0 1 0 12.6 8h1.1Z" />
                     </svg>
