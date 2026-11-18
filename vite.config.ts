@@ -138,6 +138,9 @@ export default defineConfig(({ mode }) => {
           proxyTimeout: 660_000,
         },
         '/api': createBusinessProxy(businessTarget),
+        // MCP 与 OAuth 发现接口也走同一业务后端，保证本地 8080 UI 与 9000 服务端同源访问。
+        '/mcp': createBusinessProxy(businessTarget),
+        '/.well-known': createBusinessProxy(businessTarget),
         '/auth': {
           ...createBusinessProxy(businessTarget),
           configure: (proxy) => {
