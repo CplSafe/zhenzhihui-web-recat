@@ -1,4 +1,5 @@
-import { Select } from 'antd'
+import { Segmented } from 'antd'
+import { CanvasMultiSelect } from './CanvasMultiSelect'
 import { useState } from 'react'
 import type { CanvasCreateOptions } from '@/api/canvasApi'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
@@ -87,19 +88,14 @@ export default function CanvasCreateDialog({
               <div key={operation}>
                 <div className="cl-brief-name">
                   <span>{label}</span>
-                  <Select
-                    mode="multiple"
+                  <CanvasMultiSelect
                     aria-label={label}
                     placeholder="不限模型"
                     value={value}
                     onChange={change}
                     loading={loading}
                     disabled={creating}
-                    allowClear
-                    optionFilterProp="label"
                     size="large"
-                    style={{ width: '100%' }}
-                    styles={{ popup: { root: { zIndex: 1500 } } }}
                     options={models
                       .filter((model) => model.operationCodes.includes(operation))
                       .map((model) => ({
@@ -123,24 +119,37 @@ export default function CanvasCreateDialog({
           })}
           {team && (
             <>
-              <label className="cl-brief-name">
-                谁可以打开并创作
-                <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}>
-                  <option value="selected">我和指定成员</option>
-                  <option value="all">团队全体成员</option>
-                </select>
-              </label>
-              {scope === 'selected' && (
+              <div className="cl-brief-name">
+                <span id="canvas-member-scope">可创作成员</span>
+                <Segmented<'all' | 'selected'>
+                  aria-labelledby="canvas-member-scope"
+                  block
+                  size="large"
+                  disabled={creating}
+                  value={scope}
+                  onChange={setScope}
+                  options={[
+                    { label: '指定成员', value: 'selected' },
+                    { label: '团队全体成员', value: 'all' },
+                  ]}
+                />
+              </div>
+              <div hidden={scope !== 'selected'}>
                 <div className="cl-member-field">
                   <CreateMemberPicker
                     workspaceId={workspaceId}
+                    disabled={creating || scope !== 'selected'}
                     currentUserId={currentUserId}
                     value={members}
                     onChange={setMembers}
                   />
-                  <small>留空时仅你可创作。创建后可继续添加成员。</small>
+                  <small>
+                    {members.length
+                      ? `你和所选的 ${members.length} 位成员可打开并创作。`
+                      : '未选择成员时，仅你可打开并创作。'}
+                  </small>
                 </div>
-              )}
+              </div>
             </>
           )}
         </div>

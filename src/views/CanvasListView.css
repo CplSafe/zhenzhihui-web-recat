@@ -241,6 +241,7 @@
 .cl-setup-fields,
 .cl-member-field {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .cl-member-field {
@@ -249,17 +250,8 @@
 .cl-setup-fields small {
   color: var(--cl-muted);
 }
-.cl-brief-name select {
-  width: 100%;
-  min-height: 40px;
-  border: 1px solid #b4c1ba;
-  border-radius: 8px;
-  padding: 0 10px;
-  color: var(--cl-ink);
-  background: var(--cl-surface);
-  font: inherit;
-}
 .cl-brief-name {
+  grid-template-columns: minmax(0, 1fr);
   position: relative;
   display: grid;
   gap: 10px;

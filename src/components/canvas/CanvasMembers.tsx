@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Avatar, Button, ConfigProvider, Modal, Select, theme } from 'antd'
+import { Avatar, Button, ConfigProvider, Modal, theme } from 'antd'
 import { listWorkspaceMembers } from '@/api/auth'
+import { CanvasMultiSelect } from './CanvasMultiSelect'
 import styles from './CanvasMembers.module.css'
 import { changeCanvasMembers, getCanvasMembers, type CanvasMembers } from '@/api/canvasApi'
 import { getBusinessErrorMessage } from '@/api/business'
@@ -54,18 +55,14 @@ function MemberPicker({
   const options = directory.options.filter((option) => !excluded.includes(option.value))
   return (
     <>
-      <Select
-        mode="multiple"
+      <CanvasMultiSelect
         aria-label="选择创作成员"
         placeholder="按姓名选择团队成员"
-        styles={{ popup: { root: { zIndex: 1500 } } }}
-        style={{ width: '100%' }}
         value={value}
         onChange={onChange}
         disabled={disabled}
         loading={directory.loading}
         options={options}
-        optionFilterProp="label"
         notFoundContent={directory.loading ? '正在加载…' : '没有可添加的成员'}
       />
       {directory.error && (
@@ -81,18 +78,28 @@ function MemberPicker({
 }
 
 export function CreateMemberPicker({
+  disabled,
   workspaceId,
   currentUserId,
   value,
   onChange,
 }: {
+  disabled?: boolean
   workspaceId: number
   currentUserId: number
   value: number[]
   onChange: (ids: number[]) => void
 }) {
   const directory = useMemberOptions(workspaceId)
-  return <MemberPicker directory={directory} excluded={[currentUserId]} value={value} onChange={onChange} />
+  return (
+    <MemberPicker
+      disabled={disabled}
+      directory={directory}
+      excluded={[currentUserId]}
+      value={value}
+      onChange={onChange}
+    />
+  )
 }
 
 export function CanvasMembersDialog({
