@@ -126,6 +126,7 @@ export default defineConfig({
         'src/api/smartScript.ts',
         'src/api/templates.ts',
         'src/components/auth/AgreementModal.tsx',
+        'src/components/auth/AuthActionModal.tsx',
         'src/components/smart/MarketingBreakdown/MarketingBreakdown.tsx',
         'src/components/task/TaskCenterCoordinator.tsx',
         'src/components/task/TaskCenterDrawer.tsx',

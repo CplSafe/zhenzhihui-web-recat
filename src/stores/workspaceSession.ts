@@ -27,6 +27,7 @@ import { setSmartEntryDraftScope } from '../utils/smartEntryDraft'
 import { setSmartDraftUserScope, setSmartDraftWorkspaceScope } from '../utils/smartDraft'
 import { setVideoGenOwnerScope } from '../utils/videoGenRegistry'
 import { applyUserProfileOverrides } from '../utils/profileOverrides'
+import { markInitialTeamInvitation } from '../utils/teamInitialInvitation'
 import {
   buildModelPlanCandidatesFromBillingPlans,
   buildModelPlanCandidatesFromSession,
@@ -181,6 +182,7 @@ let subscriptionLabelLoadedWorkspaceId = 0
 let subscriptionLabelLoadedAt = 0
 /** 空间级状态版本，用于让旧异步响应失效。 */
 let workspaceScopeVersion = 0
+let walletRequestVersion = 0
 /** 空间列表请求序号，用于仅接纳最后一次响应。 */
 let workspaceListRequestSeq = 0
 /** 认证会话世代号，账号变化后使旧请求失效。 */
@@ -217,6 +219,7 @@ export interface WorkspaceSessionState {
 
   setAuthSession: (session: any) => void
   loadSubscriptionLabel: (options?: { force?: boolean }) => Promise<void>
+  refreshWallet: (workspaceId: number) => Promise<void>
   ensureModelPlanCandidatesLoaded: () => Promise<void>
   loadWorkspaces: () => Promise<boolean>
   loadCurrentWorkspaceMember: (workspaceId?: any) => Promise<any>
@@ -427,6 +430,15 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     },
 
     // 订阅 + 钱包并行：个人中心弹窗的套餐标签、到期、积分剩余都依赖这两项。
+    refreshWallet: async (id) => {
+      if (!id || deriveWorkspaceId(get()) !== id) return
+      const scope = workspaceScopeVersion
+      const request = ++walletRequestVersion
+      const wallet = await getWallet(id).catch(() => null)
+      if (wallet && scope === workspaceScopeVersion && request === walletRequestVersion) {
+        set({ currentWallet: wallet })
+      }
+    },
     loadSubscriptionLabel: (options) => {
       const id = deriveWorkspaceId(get())
       if (!id) {
@@ -446,6 +458,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       }
 
       const requestScopeVersion = workspaceScopeVersion
+      const walletRequest = ++walletRequestVersion
       const request = (async () => {
         const [sub, wal] = await Promise.all([
           getSubscription(id).catch(() => null),
@@ -456,7 +469,10 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         ])
         if (workspaceScopeVersion !== requestScopeVersion || deriveWorkspaceId(get()) !== id) return
         // 保留上一份值直到新请求完成，避免普通路由切换时套餐/积分先闪空再回填。
-        set({ currentSubscription: sub, currentWallet: wal })
+        set({
+          currentSubscription: sub,
+          ...(wal && walletRequest === walletRequestVersion ? { currentWallet: wal } : {}),
+        })
         await get().ensureModelPlanCandidatesLoaded()
         if (workspaceScopeVersion !== requestScopeVersion || deriveWorkspaceId(get()) !== id) return
         subscriptionLabelLoadedWorkspaceId = id
@@ -584,9 +600,11 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
     // 创建团队：返回新建结果（toast/错误处理交给调用方）。
     createTeam: async (name) => {
+      const user = deriveCurrentUser(get())
       const created = await createWorkspace({ name })
-      await get().loadWorkspaces()
       const createdWorkspaceId = toId(created?.id)
+      markInitialTeamInvitation(user?.id ?? user?.user_id ?? user?.userId, createdWorkspaceId)
+      await get().loadWorkspaces()
       if (createdWorkspaceId) {
         if (!findById(deriveAllWorkspaces(get()), createdWorkspaceId)) {
           set({ userWorkspaces: sanitizeWorkspaceList([...deriveAllWorkspaces(get()), created]) })

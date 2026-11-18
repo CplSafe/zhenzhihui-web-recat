@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
 import { useUiStore } from '@/stores/ui'
+import { markInitialTeamInvitation } from '@/utils/teamInitialInvitation'
 import {
   useWorkspaceId,
   useWorkspaceSessionStore,
@@ -990,6 +991,7 @@ export default function MemberCenterModal({
         if (purchasedTeam?.id) {
           if (!isScopeCurrent()) return null
           const targetId = Number(purchasedTeam.id)
+          markInitialTeamInvitation(paymentUserScope, targetId)
           if (deriveWorkspaceId(store.getState()) === targetId) return purchasedTeam
           const switched = switchWorkspaceSafely(targetId, { suppressLockedToast: true })
           if (switched) return purchasedTeam

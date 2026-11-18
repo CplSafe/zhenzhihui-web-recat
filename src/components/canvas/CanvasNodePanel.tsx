@@ -1874,70 +1874,67 @@ export default function CanvasNodePanel({
   }, [sourceRefs])
 
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
-  const [costEstimate, setCostEstimate] = useState<{
+  const quoteRequest =
+    selectedModel?.modelVersionId && operationCode && workspaceId
+      ? JSON.stringify({
+          workspaceId,
+          modelVersionId: selectedModel.modelVersionId,
+          operationCode,
+          prompt: buildFullPrompt(prompt),
+          params: schemaParams,
+          inputAssets,
+        })
+      : ''
+  const [storedQuote, setCostEstimate] = useState<{
+    request?: string
     estimated_cost?: number
+    estimate_kind?: string
     balance?: number
     can_afford?: boolean
     loading: boolean
     error?: string
   }>({ loading: false })
-  const costTimerRef = useRef<number | null>(null)
+  const costEstimate = storedQuote.request === quoteRequest ? storedQuote : { loading: Boolean(quoteRequest) }
   const [costRetry, setCostRetry] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
-    const modelVersionId = selectedModel?.modelVersionId
-    if (!modelVersionId || !operationCode || !workspaceId) {
-      setCostEstimate({ loading: false })
-      return
-    }
-    setCostEstimate((prev) => ({ ...prev, loading: true }))
-    costTimerRef.current = window.setTimeout(() => {
-      estimateAiTaskCost({
-        workspaceId,
-        modelVersionId,
-        operationCode,
-        // 预估口径与实扣一致：同样使用拼接文本来源后的完整 prompt
-        prompt: buildFullPrompt(prompt),
-        params: schemaParams,
-        inputAssets,
-      })
+    if (!quoteRequest) return
+    setCostEstimate({ request: quoteRequest, loading: true })
+    const timer = window.setTimeout(() => {
+      estimateAiTaskCost(JSON.parse(quoteRequest))
         .then((result: any) => {
           if (cancelled) return
+          const cost = Number(result?.estimated_cost)
+          if (result?.estimated_cost == null || !Number.isFinite(cost) || cost < 0) {
+            throw new Error('服务未返回有效的预估积分')
+          }
           setCostEstimate({
-            estimated_cost: Number(result?.estimated_cost) || 0,
+            request: quoteRequest,
+            estimated_cost: cost,
+            estimate_kind: result?.estimate_kind,
             balance: Number(result?.balance) || 0,
-            can_afford: Boolean(result?.can_afford),
+            can_afford: typeof result?.can_afford === 'boolean' ? result.can_afford : undefined,
             loading: false,
           })
         })
         .catch((err: any) => {
           if (cancelled) return
-          setCostEstimate({ loading: false, error: String(err?.message || '预估失败') })
+          setCostEstimate({ request: quoteRequest, loading: false, error: String(err?.message || '预估失败') })
         })
     }, 600)
     return () => {
       cancelled = true
-      if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
+      window.clearTimeout(timer)
     }
-  }, [
-    costRetry,
-    selectedModel?.modelVersionId,
-    operationCode,
-    prompt,
-    kind,
-    schemaParams,
-    inputAssets,
-    workspaceId,
-    buildFullPrompt,
-  ])
+  }, [costRetry, quoteRequest])
 
   // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交；图片/视频来源以 sourceRefs(含 assetId) 交给调用方组装 input_assets
   // 视频生成前要等用户确认积分消耗，因此是异步的
   const handleGenerate = async () => {
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode || inputValidationError || referenceLimitError) return
+    if (costEstimate.loading) return
     if (costEstimate.can_afford === false) {
       onInsufficientCredits?.()
       return
@@ -1952,7 +1949,7 @@ export default function CanvasNodePanel({
       const operationLabel = selfVideoAssetId > 0 ? '修改当前视频' : '使用新模型生成视频'
       const ratioNote = videoRatioValue && !followSourceVideo ? `，画面比例 ${videoRatioValue}` : ''
       const confirmed = await requestConfirm(
-        `${operationLabel}${ratioNote}，预计消耗 ${creditsLabel(cost)}，是否继续？`,
+        `${operationLabel}${ratioNote}，${costEstimate.estimate_kind === 'reservation' ? '预冻结' : '预计消耗'} ${creditsLabel(cost)}，是否继续？`,
         { title: '确认制作费用', confirmLabel: '继续制作', cancelLabel: '再想想' },
       )
       if (confirmed !== true) return
@@ -2879,7 +2876,7 @@ export default function CanvasNodePanel({
               className={`${styles.costText} ${
                 costEstimate.loading
                   ? styles.costTextLoading
-                  : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  : costEstimate.can_afford === false
                     ? styles.costTextInsufficient
                     : ''
               }`}
@@ -2888,10 +2885,10 @@ export default function CanvasNodePanel({
                 ? '…'
                 : costEstimate.error
                   ? '预估失败'
-                  : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  : costEstimate.can_afford === false
                     ? '积分不足'
                     : costEstimate.estimated_cost !== undefined
-                      ? `预计消耗：${creditsLabel(costEstimate.estimated_cost)}`
+                      ? `${costEstimate.estimate_kind === 'reservation' ? '预冻结' : '预计消耗'}：${creditsLabel(costEstimate.estimated_cost)}`
                       : '—'}
             </span>
           }
@@ -2914,7 +2911,7 @@ export default function CanvasNodePanel({
             disabled={
               taskRunning ||
               checkingAssets ||
-              (Boolean(isSeedanceModel) && inputAssets.length > 0 && costEstimate.loading) ||
+              costEstimate.loading ||
               !selectedModel ||
               !operationCode ||
               Boolean(inputValidationError || referenceLimitError)
@@ -2923,7 +2920,7 @@ export default function CanvasNodePanel({
             title={
               checkingAssets
                 ? '正在检查参考素材…'
-                : isSeedanceModel && inputAssets.length > 0 && costEstimate.loading
+                : costEstimate.loading
                   ? '正在预估积分…'
                   : isSeedanceModel && inputAssets.length > 0 && costEstimate.error
                     ? '积分预估失败，点击重试'

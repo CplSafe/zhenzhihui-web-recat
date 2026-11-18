@@ -80,8 +80,56 @@ for (const target of ['current', 'new'] as const) {
       expect(orders[0].new_workspace_name).toBeTruthy()
     }
     await expect(dialog).toContainText('当前积分余额:1,234')
-    await payment.close()
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    if (target === 'new') {
+      const newTeam = { id: 99, type: 'team', status: 'active', owner_user_id: 7, name: orders[0].new_workspace_name }
+      await page.route('**/api/v1/workspaces', (route) => route.fulfill({ json: [newTeam] }))
+      await page.route('**/api/v1/billing/payment-orders?**', (route) =>
+        route.fulfill({ json: { items: [{ id: 801, workspace_id: 99, status: 'paid' }] } }),
+      )
+      let invitation: { id: number; code: string; expires_at: string } | null = null
+      const invitationRequests: unknown[] = []
+      await page.route('**/api/v1/workspaces/99/invitations**', async (route) => {
+        switch (route.request().method()) {
+          case 'POST':
+            invitationRequests.push(route.request().postDataJSON())
+            invitation = { id: 1, code: 'TEAM0001', expires_at: '2099-01-01T00:00:00Z' }
+            return route.fulfill({ json: invitation })
+          case 'GET':
+            return route.fulfill({ json: invitation ? [invitation] : [] })
+          case 'DELETE':
+            invitation = null
+            return route.fulfill({ json: {} })
+          default:
+            throw new Error(`Unexpected invitation request: ${route.request().method()}`)
+        }
+      })
+      await expect(page.getByText('支付成功,会员已开通', { exact: true })).toBeVisible()
+      expect(invitationRequests).toHaveLength(0)
+      await payment.close()
+      await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+      const openTeamManagement = async () => {
+        await page.locator('.apptop__user-btn').click()
+        await page.getByRole('button', { name: '邀请成员（当前团队）' }).click()
+      }
+      await openTeamManagement()
+      const team = page.getByRole('dialog', { name: '团队管理' })
+      await expect(team.getByText('TEAM 0001')).toBeVisible()
+      await expect(team.getByRole('combobox', { name: '有效期' })).toHaveValue('7')
+      expect(invitationRequests).toEqual([{ expires_in_days: 7, role: 'member' }])
+      await page.screenshot({ path: testInfo.outputPath('initial-invitation-narrow.png') })
+      await team.getByRole('button', { name: '撤销邀请' }).click()
+      await page.getByRole('button', { name: '确认', exact: true }).click()
+      await expect(team.getByText('暂无邀请码')).toBeVisible()
+      await team.getByRole('button', { name: '返回' }).click()
+      const reloadInvitations = page.waitForResponse('**/api/v1/workspaces/99/invitations')
+      await openTeamManagement()
+      await reloadInvitations
+      await expect(team.getByText('暂无邀请码')).toBeVisible()
+      expect(invitationRequests).toHaveLength(1)
+    } else {
+      await payment.close()
+      await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    }
     await expect(page.getByRole('button', { name: 'E2E 用户', exact: false })).toBeVisible()
     expect(errors).toEqual([])
     expectNoUnexpectedApi(api)

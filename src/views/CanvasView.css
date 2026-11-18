@@ -170,7 +170,7 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
 .canvas-view .canvas-panel-area > * {
   zoom: var(--canvas-ui-scale, 1);
   /* 锚点至少让出左侧 128px；同时预留面板内边距与右侧操作空间。 */
-  max-width: calc((100vw - 200px) / var(--canvas-ui-scale, 1));
+  max-width: calc(var(--canvas-node-panel-width, calc(100vw - 200px)) / var(--canvas-ui-scale, 1));
   max-height: min(60dvh, calc((100dvh - 160px) / var(--canvas-ui-scale, 1)));
   overflow-x: hidden;
   overflow-y: auto;
@@ -180,6 +180,16 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
 
 .canvas-view .canvas-panel-area > *::-webkit-scrollbar {
   display: none;
+}
+
+.canvas-view.has-stacked-agent .canvas-panel-area > * {
+  box-sizing: border-box;
+  min-height: 0;
+  max-height: min(60dvh, calc(var(--canvas-node-panel-height, 30dvh) / var(--canvas-ui-scale, 1)));
+}
+
+.canvas-view.has-stacked-agent .canvas-director-area [aria-label='DoDo Agent'] {
+  max-height: 42dvh;
 }
 
 .canvas-view .canvas-audio-panel {
@@ -1864,7 +1874,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 /* Audio composer matches the light cards used by the other canvas nodes. */
 .canvas-default-node.is-audio .canvas-audio-panel {
   width: 680px;
-  max-width: min(90vw, 680px);
+  max-width: min(90vw, 680px, calc(var(--canvas-audio-editor-width, 1360px) / var(--canvas-ui-scale, 1)));
   padding: 0;
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 14px;
@@ -1872,6 +1882,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   color: var(--canvas-text, #e5e7eb);
   box-shadow: 0 0 30px rgb(0 0 0 / 10%);
   overflow: visible;
+}
+.canvas-view.has-stacked-agent .canvas-default-node.is-audio .canvas-audio-panel {
+  max-height: calc(var(--canvas-audio-editor-height, 24dvh) / var(--canvas-ui-scale, 1));
+  overflow-y: auto;
 }
 .canvas-default-node.is-audio .canvas-audio-panel > div:first-child {
   display: none;
