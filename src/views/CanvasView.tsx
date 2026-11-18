@@ -187,6 +187,7 @@ import {
 } from '@/utils/canvasSelection'
 import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
+import { useCanvasNodeLocks } from '@/composables/useCanvasNodeLocks'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import { buildCanvasModelBuckets, resolveCanvasModelForOperation } from '@/utils/canvasModelBuckets'
 import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
@@ -2909,6 +2910,27 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
    * 两者互斥展示，避免面板和批量条同时压在画布上。
    */
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([])
+  const lockSelection = selectedNodeIds.length ? selectedNodeIds : selectedNode ? [selectedNode.id] : []
+  const {
+    blocked: busyNodes,
+    labels: leaseLabels,
+    reason: busyReason,
+    granted: canEditSelection,
+    denied: selectionDenied,
+  } = useCanvasNodeLocks(
+    workspaceId,
+    canvasId,
+    currentUserId,
+    !!(teamCanvas && workspaceId && canvasId && currentUserId),
+    lockSelection,
+  )
+  useEffect(() => {
+    if (!selectionDenied) return
+    showToast(lockSelection.map((id) => busyReason(id)).find(Boolean) || '节点已被其他成员占用', 'error')
+    setSelectedNode(null)
+    setSelectedNodeIds([])
+    setNodes((items) => items.map((n) => (n.selected ? { ...n, selected: false } : n)))
+  }, [selectionDenied, busyReason, setNodes])
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('saved')
   /**
    * 供轮询循环读取的保存状态。
@@ -3601,6 +3623,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
 
   const validateConnection = useCallback(
     (sourceId: string, targetId: string, additionalEdges: Edge[] = []): string | null => {
+      if (busyReason(targetId)) return busyReason(targetId)!
       if (
         hasEdgeBetween(sourceId, targetId) ||
         additionalEdges.some((edge) => edge.source === sourceId && edge.target === targetId)
@@ -3916,6 +3939,11 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
 
   const confirmAndCancelGeneratingVideos = useCallback(
     async (nodesToDelete: Node[]): Promise<boolean> => {
+      const lock = nodesToDelete.map((node) => busyReason(node.id)).find(Boolean)
+      if (lock) {
+        showToast(lock, 'error')
+        return false
+      }
       const generatingVideos = nodesToDelete.filter(isGeneratingVideoNode)
       if (!generatingVideos.length) return true
 
@@ -3966,9 +3994,17 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
   )
 
   const handleBeforeDelete = useCallback(
-    async ({ nodes: nodesToDelete }: { nodes: Node[]; edges: Edge[] }) =>
-      confirmAndCancelGeneratingVideos(nodesToDelete),
-    [confirmAndCancelGeneratingVideos],
+    async ({ nodes: nodesToDelete, edges: edgesToDelete }: { nodes: Node[]; edges: Edge[] }) => {
+      const lock = [...nodesToDelete.map((node) => node.id), ...edgesToDelete.map((edge) => edge.target)]
+        .map(busyReason)
+        .find(Boolean)
+      if (lock) {
+        showToast(lock, 'error')
+        return false
+      }
+      return confirmAndCancelGeneratingVideos(nodesToDelete)
+    },
+    [confirmAndCancelGeneratingVideos, busyReason],
   )
 
   // 重做：当前状态入撤销栈，恢复重做栈顶
@@ -4222,6 +4258,11 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
 
   const handleRemoveRef = useCallback(
     (edgeId: string) => {
+      const lock = busyReason(latestRef.current.edges.find((edge) => edge.id === edgeId)?.target)
+      if (lock) {
+        showToast(lock, 'error')
+        return
+      }
       // 删除连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => eds.filter((e) => e.id !== edgeId))
@@ -4572,6 +4613,11 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
   /** 剪刀点击删除连线，同步清理缩略图 */
   const handleEdgeDelete = useCallback(
     (edgeId: string) => {
+      const lock = busyReason(latestRef.current.edges.find((edge) => edge.id === edgeId)?.target)
+      if (lock) {
+        showToast(lock, 'error')
+        return
+      }
       // 删除连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => eds.filter((ed) => ed.id !== edgeId))
@@ -5125,6 +5171,13 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
         } catch (error: any) {
           const errorStatus = Number(error?.status || error?.response?.status || 0)
           const errorCode = String(error?.response?.code_string ?? error?.code ?? '')
+          const lockedElements = new Set<string>(
+            errorStatus === 423 &&
+              errorCode === 'CANVAS_NODE_LOCKED' &&
+              Array.isArray(error?.response?.data?.element_ids)
+              ? error.response.data.element_ids
+              : [],
+          )
           const isConflict =
             errorStatus === 409 && (!error?.response?.code_string || errorCode === 'CANVAS_REVISION_CONFLICT')
           // 4xx（409/401/429 除外）与 CANVAS_INVALID_INPUT 是确定性拒绝：同一批数据重发多少次
@@ -5135,7 +5188,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
             (errorStatus >= 400 && errorStatus < 500 && !isConflict && errorStatus !== 401 && errorStatus !== 429)
           // 只有乐观锁冲突才拉远端合并。网络/服务异常直接进入退避重试，避免制造额外请求。
           try {
-            if (!isConflict) throw error
+            if (!isConflict && !lockedElements.size) throw error
             const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
             if (!canvasMountedRef.current) return // local draft already contains the pending edits
             const remote = elementsToGraph(page.elements)
@@ -5146,7 +5199,10 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
             }
             const remoteChanges = diffCanvasMutations(syncRef.current, remote)
             const localChanges = () =>
-              diffCanvasMutations(syncRef.current, latestRef.current, (window as any).__canvasTextContents)
+              diffCanvasMutations(syncRef.current, latestRef.current, (window as any).__canvasTextContents).filter(
+                (change) => !lockedElements.has(change.element_id),
+              )
+            if (lockedElements.size) showToast(error.message || '节点已被占用，已保留其他修改', 'error')
             let pending = localChanges()
             const conflicts = conflictingCanvasElementIds(pending, remoteChanges)
             if (conflicts.size) {
@@ -5166,7 +5222,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
                 ),
               ),
             )
-            if (remoteChanges.length) clearRemoteUndoHistory()
+            if (remoteChanges.length || lockedElements.size) clearRemoteUndoHistory()
             setNodes(displayed.nodes)
             setEdges(displayed.edges)
             latestRef.current = displayed
@@ -9750,6 +9806,11 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
   const deleteSelectedNodes = useCallback(async () => {
     const ids = selectedNodeIds
     if (ids.length < 2) return
+    const lock = ids.map(busyReason).find(Boolean)
+    if (lock) {
+      showToast(lock, 'error')
+      return
+    }
     const targets = latestRef.current.nodes.filter((node) => ids.includes(node.id))
     const proceed = await confirmAndCancelGeneratingVideos(targets)
     if (!proceed) return
@@ -10909,7 +10970,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
   // 参考选择模式仍由 click 确认触发（避免 mousedown+click 双触发创建重复连线）。
   const handleSelectNodeOnDown = useCallback(
     (node: Node) => {
-      if (isPickingRef || directorOpen) return
+      if (isPickingRef || directorOpen || busyReason(node.id)) return
       const groupId = getNodeGroupId(node as GroupableNode)
       if (groupId && groupId !== editingGroupRef.current && !deepSelectRef.current) return
       /*
@@ -11011,6 +11072,26 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
     editingGroupId,
   ])
 
+  const collaborativeNodes = useMemo(
+    () =>
+      leaseLabels.size
+        ? displayNodes.map((node) => {
+            const label = leaseLabels.get(node.id)
+            return label
+              ? {
+                  ...node,
+                  ...(busyNodes.has(node.id) ? { draggable: false, deletable: false, selectable: false } : {}),
+                  ariaLabel: `${node.ariaLabel || node.data?.title || node.id}，${label}`,
+                  className: [node.className, 'canvas-node-leased', busyNodes.has(node.id) && 'canvas-node-occupied']
+                    .filter(Boolean)
+                    .join(' '),
+                  domAttributes: { ...node.domAttributes, title: label, 'data-editor-label': label },
+                }
+              : node
+          })
+        : displayNodes,
+    [displayNodes, busyNodes, leaseLabels],
+  )
   /**
    * 节点变更的入口：在 React Flow 把拖拽位置写进状态前拦一道，做对齐吸附。
    *
@@ -11021,6 +11102,10 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
    */
   const handleNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
+      changes = changes.filter(
+        (change) =>
+          !('id' in change && busyReason(change.id) && (change.type === 'position' || change.type === 'remove')),
+      )
       const guidesOn = preferencesRef.current.alignmentGuides
       const positionChanges = changes.filter((change) => change.type === 'position')
       if (guidesOn && positionChanges.length === 1) {
@@ -11348,7 +11433,25 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
         */
         ref={canvasRootRef}
         tabIndex={-1}
+        onClickCapture={(event) => {
+          const target = event.target as HTMLElement
+          const lock = busyReason(target.closest?.('.react-flow__node')?.getAttribute('data-id'))
+          if (
+            !lock ||
+            isPickingRef ||
+            target.closest('.react-flow__handle.source') ||
+            (directorOpen && isCanvasReferenceTarget(target))
+          )
+            return
+          event.stopPropagation()
+          event.preventDefault()
+          showToast(lock, 'error')
+        }}
         onDoubleClickCapture={(event) => {
+          if (busyReason((event.target as HTMLElement).closest('.react-flow__node')?.getAttribute('data-id'))) {
+            event.stopPropagation()
+            return
+          }
           if (isPickingRef) return
           const target = event.target as HTMLElement
           if (target.closest('button, input, textarea, video, audio, [contenteditable="true"]')) return
@@ -11368,6 +11471,10 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
           // Production frames organize outputs; clicking a member inspects that shot.
           // Group headers still select/move the whole frame.
+          if (busyReason(nodeId) && !isPickingRef && !directorOpen && !target.closest('.react-flow__handle.source')) {
+            event.stopPropagation()
+            return
+          }
           const clickedNode = latestRef.current.nodes.find((node) => node.id === nodeId)
           if (!isPickingRef && clickedNode?.data?.production_run_id && !event.ctrlKey && !event.metaKey) {
             setEditingGroup(getNodeGroupId(clickedNode as GroupableNode))
@@ -11380,6 +11487,22 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
             : null
           if (!shortcutsBlockedRef.current && isCanvasShortcutTarget(canvasRootRef.current, event.target)) {
             canvasRootRef.current?.focus({ preventScroll: true })
+          }
+        }}
+        onKeyDownCapture={(event) => {
+          const target = event.target as HTMLElement
+          if (
+            event.key === 'Tab' ||
+            event.key === 'Escape' ||
+            isPickingRef ||
+            target.closest('.react-flow__handle.source')
+          )
+            return
+          const lock = busyReason(target.closest('.react-flow__node')?.getAttribute('data-id'))
+          if (lock) {
+            event.preventDefault()
+            event.stopPropagation()
+            showToast(lock, 'error')
           }
         }}
         onFocusCapture={(event) => setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.target))}
@@ -11690,7 +11813,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           回调不能塞进节点 data——data 会被持久化，放不了函数 */}
         <CanvasNodeActionsContext.Provider value={nodeActions}>
           <ReactFlow
-            nodes={displayNodes}
+            nodes={collaborativeNodes}
             edges={displayEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
@@ -11831,6 +11954,10 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
               setContextMenu({ x: e.clientX, y: e.clientY })
             }}
             onNodeContextMenu={(e, node) => {
+              if (busyReason(node.id)) {
+                e.preventDefault()
+                return
+              }
               // 文本编辑框内保留默认菜单（复制/粘贴）
               const target = e.target as HTMLElement
               if (target.closest('textarea, input, [contenteditable="true"]')) return
@@ -11863,6 +11990,10 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
                   setAddMenu(null)
                   return
                 }
+              }
+              if (busyReason(node.id)) {
+                showToast(busyReason(node.id)!, 'error')
+                return
               }
               const groupId = getNodeGroupId(node as GroupableNode)
               if (event.altKey && groupId) setEditingGroup(groupId)
@@ -11915,6 +12046,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
               }
               setAddMenu(null)
               setSelectedNode(null)
+              setSelectedNodeIds([])
             }}
             /* 工具栏「锁定」：nodesDraggable 关掉后节点不可拖，画布照常平移 */
             nodesDraggable={dragEnabled && !spacePanning && !panModeEnabled}
@@ -12868,6 +13000,7 @@ function CanvasInner({ modelDefaults }: { modelDefaults?: CanvasModelDefaults })
           与其比谁的层级高，不如让正在做的那件事独占画面——选完节点类型面板自然回来。
           面板里的输入内容边打边写回节点（onPromptChange），收起再回来不会丢。 */}
         {selectedNode &&
+          canEditSelection &&
           selectedNode.kind !== 'timeline' &&
           selectedNode.kind !== 'audio' &&
           selectedNodeIds.length < 2 &&
