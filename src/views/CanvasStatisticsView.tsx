@@ -187,7 +187,8 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
               <span>共 {data.total} 项 · 含已删除节点</span>
             </div>
             <p className={styles.detailHint}>
-              无法可靠对应节点的历史费用及 Agent 推理归入“未关联节点”。仅统计计费任务，删除节点不影响历史记录。
+              仅统计已关联本画布的实际扣费；复制或引用素材不重复计费。旧任务未记录画布归属时不计入，显示 0
+              不代表素材从未产生费用。已关联画布但无法对应节点的费用归入“未关联节点”。
             </p>
             <div className={styles.tableWrap}>
               <table>
