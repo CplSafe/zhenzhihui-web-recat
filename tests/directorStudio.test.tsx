@@ -2199,3 +2199,54 @@ it('keeps the canvas locked after a run, asks inline, and only unlocks after a c
   fireEvent.click(screen.getByRole('button', { name: '解锁画布' }))
   await waitFor(() => expect(unlock).toHaveBeenCalledExactlyOnceWith('lock-1'))
 })
+
+it('does not ask for a canvas lock again when steering a running turn', async () => {
+  const status = 'running'
+  const received: Record<string, unknown>[] = []
+  const starts = vi.fn()
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status }))),
+    http.post('*/agent-studio/api/runs', () => {
+      starts()
+      return HttpResponse.json({ id: 'wrong' })
+    }),
+    http.post('*/agent-studio/api/runs/run1/steer', async ({ request }) => {
+      received.push((await request.json()) as Record<string, unknown>)
+      return HttpResponse.json({ ok: true })
+    }),
+  )
+  render(<CanvasDirectorDock onUnlock={async () => {}} workspaceId={54} canvasId={40} opened onCollapse={() => {}} />)
+  await openHistory()
+  fireEvent.change(screen.getByRole('textbox', { name: '创作要求' }), { target: { value: '先分析，不生成素材' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送补充要求' }))
+  expect(screen.queryByRole('region', { name: '是否锁定画布' })).not.toBeInTheDocument()
+  await waitFor(() => expect(received).toHaveLength(1))
+  expect(received[0]).toMatchObject({ message: '先分析，不生成素材' })
+  expect(starts).not.toHaveBeenCalled()
+})
+
+it('continues an inline answer in the same canvas run without asking about locking again', async () => {
+  const replies: unknown[] = []
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () =>
+      HttpResponse.json(
+        snapshot({
+          status: 'waiting',
+          decision_id: 'question-1',
+          pending: { tool: 'ask_user', message: '需要什么风格？', arguments: {} },
+        }),
+      ),
+    ),
+    http.post('*/agent-studio/api/runs/run1/resume', async ({ request }) => {
+      replies.push(await request.json())
+      return HttpResponse.json({ ok: true })
+    }),
+  )
+  render(<CanvasDirectorDock onUnlock={async () => {}} workspaceId={54} canvasId={40} opened onCollapse={() => {}} />)
+  await openHistory()
+  fireEvent.change(screen.getByRole('textbox', { name: '补充意见' }), { target: { value: '写实，先不生成' } })
+  fireEvent.click(screen.getByRole('button', { name: '提交并继续' }))
+  expect(screen.queryByRole('region', { name: '是否锁定画布' })).not.toBeInTheDocument()
+  await waitFor(() => expect(replies).toHaveLength(1))
+  expect(replies[0]).toMatchObject({ decision_id: 'question-1', decision: 'reply', message: '写实，先不生成' })
+})

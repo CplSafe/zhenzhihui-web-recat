@@ -1,3 +1,4 @@
+import { guardCanvasReadOnlyInteraction } from '@/utils/canvasReadOnly'
 import CanvasNodeVideoBar from '@/components/canvas/CanvasNodeVideoBar'
 import {
   CanvasNodeFrame,
@@ -626,6 +627,7 @@ async function mapWithConcurrency<T, R>(
  * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
  */
 interface CanvasNodeActions {
+  readOnly?: boolean
   onRetryAudioComposition?: (nodeId: string) => void
   onNodeWheel?: (event: React.WheelEvent<HTMLDivElement>) => void
   onAudioGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
@@ -1587,6 +1589,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const structuredText = useMemo(() => parseCanvasStructuredText(textContent), [textContent])
   // 截帧动作由画布提供：节点只负责取出画面，上传与建节点在上层做
   const {
+    readOnly,
     onImageNaturalSize,
     onVideoNaturalSize,
     onToggleImageResults,
@@ -1609,6 +1612,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     timeline: timelineActions,
     onNodeWheel,
   } = useContext(CanvasNodeActionsContext)
+  useEffect(() => {
+    if (!readOnly) return
+    setVideoPreviewOpen(false)
+    setVideoDetailsOpen(false)
+  }, [readOnly])
 
   /**
    * 当前帧直接从画面读取；首尾帧需要可靠跳转，优先使用已经准备好的本地源，
@@ -2943,6 +2951,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     !!(workspaceId && canvasId && currentUserId),
     lockSelection,
   )
+  const currentBusyReason = useLatestCallback(busyReason)
   useEffect(() => {
     if (!selectionDenied) return
     showToast(lockSelection.map((id) => busyReason(id)).find(Boolean) || '节点已被其他成员占用', 'error')
@@ -4019,7 +4028,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         cancelLabel: '暂不删除',
         danger: true,
       })
-      if (!confirmed) return false
+      if (!confirmed || nodesToDelete.some((node) => currentBusyReason(node.id))) return false
 
       // 任务还没拿到 task_id：此刻删掉节点会留下一个无人认领的付费任务，只能等提交完成。
       if (generatingVideos.some((node) => Number((node.data as any)?.taskId || 0) <= 0)) {
@@ -4043,20 +4052,19 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       // 取消失败不代表用户不能删这个节点：任务可能已经交给模型、或刚好已经跑完，
       // 后端拒绝取消是正常的。这时把选择权交回用户，并如实说明后果，而不是把节点扣在画布上。
       const reason = String((failed[0] as PromiseRejectedResult).reason?.message || '').trim()
-      return Boolean(
-        await requestConfirm(
-          `有 ${failed.length} 个视频任务未能停止${reason ? `（${reason}）` : ''}。仍要从画布删除吗？` +
-            '删除后这些任务可能继续在服务端执行并照常计费。',
-          {
-            title: '任务未能停止',
-            confirmLabel: '仍然删除',
-            cancelLabel: '保留节点',
-            danger: true,
-          },
-        ),
+      const removeAnyway = await requestConfirm(
+        `有 ${failed.length} 个视频任务未能停止${reason ? `（${reason}）` : ''}。仍要从画布删除吗？` +
+          '删除后这些任务可能继续在服务端执行并照常计费。',
+        {
+          title: '任务未能停止',
+          confirmLabel: '仍然删除',
+          cancelLabel: '保留节点',
+          danger: true,
+        },
       )
+      return Boolean(removeAnyway && !nodesToDelete.some((node) => currentBusyReason(node.id)))
     },
-    [workspaceId],
+    [workspaceId, busyReason, currentBusyReason],
   )
 
   const handleBeforeDelete = useCallback(
@@ -6525,7 +6533,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       e.target.value = ''
-      if (!file || !selectedNode) return
+      if (!file || !selectedNode || currentBusyReason(selectedNode.id)) return
       const isImage = file.type.startsWith('image/')
       const isVideo = file.type.startsWith('video/')
       const nodeKind = selectedNode.kind
@@ -6542,6 +6550,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         // 图片先做生成输入合规（<256px 拒绝、>5760px 自动缩），否则要到生成阶段才收供应商的英文报错
         const uploadFile = isImage ? await normalizeImageFileForAiInput(file) : file
         // 上传到素材中心，取得持久 asset_id（刷新后可经 /download 回显，不再依赖会话级 objectURL）
+        if (currentBusyReason(selectedNode.id)) return
         const out: any = await uploadAssetFile({ workspaceId, file: uploadFile })
         const assetId = Number(out?.asset?.id || 0)
         if (!assetId) throw new Error('上传素材失败，请稍后重试')
@@ -6549,6 +6558,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         const resultUrl = assetStreamUrl(assetId, workspaceId)
         // 视频节点生成首帧 poster（dataURL 随节点持久化，回显时直接显示封面帧）
         const poster = isVideo ? await captureVideoPoster(file) : ''
+        if (currentBusyReason(selectedNode.id)) return
         // 替换内容前记录历史，供撤销使用
         commitHistory()
         const nextData: Record<string, unknown> = {
@@ -6569,13 +6579,14 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         showToast(String(error?.message || '上传素材失败，请稍后重试'), 'error')
       }
     },
-    [selectedNode, workspaceId, commitHistory, setSaveStatus, setNodes, resolveUploadedRealPerson],
+    [selectedNode, workspaceId, commitHistory, setSaveStatus, setNodes, resolveUploadedRealPerson, currentBusyReason],
   )
 
   // ===== 本地素材导入：工具栏「本地素材」/ 粘贴（Ctrl+V）/ 拖拽文件到画布，三个入口共用 =====
 
   const importLocalMedia = useCanvasLocalMediaImport({
     workspaceId,
+    isReadOnly: useCallback(() => Boolean(currentBusyReason()), [currentBusyReason]),
     screenToFlowPosition,
     commitHistory,
     appendNewNode,
@@ -6602,10 +6613,10 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       event.target.value = ''
       const anchor = localImageAnchorRef.current
       localImageAnchorRef.current = null
-      if (files.length === 0) return
+      if (files.length === 0 || currentBusyReason()) return
       void importLocalMedia(files, anchor || undefined)
     },
-    [importLocalMedia],
+    [importLocalMedia, currentBusyReason],
   )
 
   // 记录鼠标位置：粘贴的图片落在鼠标处，更贴近「粘到我看的地方」的预期
@@ -6620,6 +6631,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   // 粘贴导入：Ctrl+V 把剪贴板里的图片（截图或复制的图片文件）落到画布
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
+      if (agentOwner) return
       // 文本编辑中保留浏览器默认粘贴；素材库弹窗、参考选择模式下不接管。
       // 节点副本已在画布剪贴板时，允许从工具栏/页面主体直接粘贴，不要求先重新点画布。
       const target = event.target
@@ -6648,6 +6660,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             files.length === 1 && images.length === 1
               ? await fingerprintClipboardImage(images[0]).catch(() => null)
               : null
+          if (currentBusyReason()) return
           if (expected && actual === expected && version === canvasClipboardCopyVersion) {
             pasteClipboardNodesRef.current(anchor)
           } else {
@@ -6670,7 +6683,16 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     }
     window.addEventListener('paste', onPaste, true)
     return () => window.removeEventListener('paste', onPaste, true)
-  }, [drawerPanel, isPickingRef, importLocalMedia, acceptsCanvasShortcut, selectedNode, selectedNodeIds.length])
+  }, [
+    agentOwner,
+    drawerPanel,
+    isPickingRef,
+    importLocalMedia,
+    acceptsCanvasShortcut,
+    currentBusyReason,
+    selectedNode,
+    selectedNodeIds.length,
+  ])
 
   const clearFileDrag = useCallback(() => {
     if (!fileDragTargetRef.current) return
@@ -6715,15 +6737,15 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     (event: React.DragEvent) => {
       if (!hasFileDrag(event.dataTransfer)) return
       event.preventDefault()
-      // 参考选择模式下画布正在等待点选来源节点，此时不接受导入
-      if (isPickingRef) return
+      // 只读画布和参考选择模式不接受导入。
+      if (agentOwner || isPickingRef) return
       const { images, videos, audios, unsupported } = extractMediaFiles(event.dataTransfer)
       void importLocalMedia([...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : []), ...unsupported], {
         x: event.clientX,
         y: event.clientY,
       })
     },
-    [importLocalMedia, isPickingRef],
+    [agentOwner, importLocalMedia, isPickingRef],
   )
 
   // 模型变更：保存 modelVersionId 到节点数据并回显
@@ -9835,6 +9857,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         if (!confirmed) return
       }
 
+      if (sources.some((node) => currentBusyReason(node.id))) return
       // 时间线落在选区右侧并纵向排开，不压住来源节点，也不让多个新节点互相覆盖。
       let right = -Infinity
       let top = Infinity
@@ -9898,6 +9921,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     }
   }, [
     timelineReadySelection,
+    currentBusyReason,
     workspaceId,
     appendNewNode,
     commitHistory,
@@ -10469,7 +10493,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             cancelLabel: '取消',
           },
         )
-        if (!confirmed) return
+        if (!confirmed || currentBusyReason(targetId) || currentBusyReason(sourceNodeId)) return
         commitHistory()
         historyCommitted = true
         const style = (target.style || {}) as CSSProperties
@@ -10481,6 +10505,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         )
       }
 
+      if (currentBusyReason(targetId) || currentBusyReason(sourceNodeId)) return
       if (!historyCommitted) commitHistory()
       setNodes((items) =>
         items.map((node) => {
@@ -10515,7 +10540,16 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         showToast('已创建新的剪辑节点，并完整加入该视频', 'success')
       }
     },
-    [workspaceId, appendNewNode, setNodes, setEdges, setSaveStatus, commitHistory, focusCreatedTimelineNode],
+    [
+      workspaceId,
+      appendNewNode,
+      setNodes,
+      setEdges,
+      setSaveStatus,
+      commitHistory,
+      focusCreatedTimelineNode,
+      currentBusyReason,
+    ],
   )
 
   /**
@@ -10882,6 +10916,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
    */
   const nodeActions = useMemo<CanvasNodeActions>(
     () => ({
+      readOnly: Boolean(agentOwner),
       onNodeWheel: (event) => {
         if (preferencesRef.current.wheelMode !== 'pan') return
         if (
@@ -10934,6 +10969,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       },
     }),
     [
+      agentOwner,
       imagePreviews,
       getCanvasStoreState,
       setViewport,
@@ -11433,6 +11469,25 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   useEffect(() => {
     if (hdRequest && (!selectedNode || !hdRequest.ids.includes(selectedNode.id))) setHdRequest(null)
   }, [hdRequest, selectedNode])
+  useEffect(() => {
+    if (!agentOwner) return
+    setSelectedNode(null)
+    setSelectedNodeIds([])
+    setOpenDirectorBinding(null)
+    setDrawerPanel(null)
+    setScriptImportOpen(false)
+    setModelSettingsOpen(false)
+    setTimelineEditorNodeId('')
+    setStandaloneCropRequest(null)
+    setImageCropRequest(null)
+    setHdRequest(null)
+    setHdModalOpen(false)
+    setImageTool(null)
+    setImagePreviewNodeId('')
+    setAddMenu(null)
+    setContextMenu(null)
+  }, [agentOwner, setTimelineEditorNodeId])
+
   const closeHdRequest = useCallback(() => setHdRequest(null), [])
   const handleHdModalChange = useCallback(
     (open: boolean) => {
@@ -11469,34 +11524,36 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
 
   return (
     <CanvasNodeActionsContext.Provider value={nodeActions}>
-      <Suspense fallback={null}>
-        <CanvasHdWorkspace
-          key={`${workspaceId}:${canvasId}`}
-          workspaceId={workspaceId}
-          canvasId={canvasId}
-          nodes={nodes}
-          request={hdRequest}
-          anchor={
-            hdRequest && selectedNodeScreenRect
-              ? {
-                  centerX: selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2,
-                  bottom: selectedNodeScreenRect.bottom,
-                }
-              : null
-          }
-          onCloseRequest={closeHdRequest}
-          onTasks={receiveHdTasks}
-          onSubmitted={() => {
-            hdSelectionRef.current = null
-            setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
-            setSelectedNode(null)
-            setSelectedNodeIds([])
-          }}
-          onVideoGenerate={handleVideoUpscaleGenerate}
-          onModalChange={handleHdModalChange}
-        />
-      </Suspense>
-      {standaloneCrop && (
+      {!agentOwner && (
+        <Suspense fallback={null}>
+          <CanvasHdWorkspace
+            key={`${workspaceId}:${canvasId}`}
+            workspaceId={workspaceId}
+            canvasId={canvasId}
+            nodes={nodes}
+            request={hdRequest}
+            anchor={
+              hdRequest && selectedNodeScreenRect
+                ? {
+                    centerX: selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2,
+                    bottom: selectedNodeScreenRect.bottom,
+                  }
+                : null
+            }
+            onCloseRequest={closeHdRequest}
+            onTasks={receiveHdTasks}
+            onSubmitted={() => {
+              hdSelectionRef.current = null
+              setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
+              setSelectedNode(null)
+              setSelectedNodeIds([])
+            }}
+            onVideoGenerate={handleVideoUpscaleGenerate}
+            onModalChange={handleHdModalChange}
+          />
+        </Suspense>
+      )}
+      {!agentOwner && standaloneCrop && (
         <Suspense fallback={null}>
           <CanvasStandaloneImageCropModal
             sourceUrl={standaloneCrop.sourceUrl}
@@ -11509,7 +11566,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           />
         </Suspense>
       )}
-      {imageCropRequest ? (
+      {!agentOwner && imageCropRequest ? (
         <Suspense fallback={null}>
           <CanvasImageCropModal
             images={imageCropRequest.images}
@@ -11589,6 +11646,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         }
         tabIndex={-1}
         onClickCapture={(event) => {
+          if (agentOwner) return guardCanvasReadOnlyInteraction(event)
           const target = event.target as HTMLElement
           const lock = busyReason(target.closest?.('.react-flow__node')?.getAttribute('data-id'))
           if (
@@ -11621,6 +11679,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           handleSelectNodeOnDown(node)
         }}
         onPointerDownCapture={(event) => {
+          if (agentOwner) return guardCanvasReadOnlyInteraction(event)
           const target = event.target as HTMLElement
           pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
           const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
@@ -11645,6 +11704,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           }
         }}
         onKeyDownCapture={(event) => {
+          if (agentOwner) return guardCanvasReadOnlyInteraction(event)
           const target = event.target as HTMLElement
           if (
             event.key === 'Tab' ||
@@ -11688,7 +11748,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             {interactionHint.text}
           </div>
         )}
-        {directorAvailable && (
+        {directorAvailable && !agentOwner && (
           <CanvasDirectorDock
             key={canvasBindingKey}
             workspaceId={workspaceId}
@@ -11702,49 +11762,53 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             onCollapse={() => setOpenDirectorBinding(null)}
           />
         )}
-        <CanvasNavigationStatus
-          saveStatus={saveStatus}
-          cloudStatus={cloudStatus}
-          cloudMessage={cloudMessage}
-          onBack={() => {
-            if (
-              cloudLoadedRef.current &&
-              saveStatusRef.current === 'saved' &&
-              !syncInFlightRef.current &&
-              !syncPendingRef.current
-            ) {
-              navigate('/canvas')
-              return
-            }
-            void requestConfirm(
-              localDraftStoredRef.current
-                ? '画布还有修改未确认保存到云端。离开后将尝试从本机草稿恢复，是否离开？'
-                : '画布未能保存到云端或本机，离开可能丢失修改。是否离开？',
-              {
-                title: '画布尚未保存',
-                confirmLabel: '仍然离开',
-                cancelLabel: '继续等待',
-              },
-            ).then((confirmed) => {
-              if (confirmed) navigate('/canvas')
-            })
-          }}
-        />
-        <CanvasGlobalActions
-          open={actionsMenuOpen}
-          credits={walletCredits}
-          showExtras={CANVAS_PHASE_ONE_EXTRAS_ENABLED}
-          canImportScript={cloudLoadedRef.current}
-          canvasId={canvasId}
-          workspaceId={Number(workspaceId || 0)}
-          onToggle={() => setActionsMenuOpen((open) => !open)}
-          onClose={() => setActionsMenuOpen(false)}
-          onGuide={() => setGuideRequested((visible) => !visible)}
-          onImportScript={() => setScriptImportOpen(true)}
-          onModels={() => setModelSettingsOpen(true)}
-          onMembers={workspaceType === 'personal' ? undefined : () => setMembersOpen(true)}
-          onShare={() => setShareOpen(true)}
-        />
+        <div data-canvas-readonly-control>
+          <CanvasNavigationStatus
+            saveStatus={saveStatus}
+            cloudStatus={cloudStatus}
+            cloudMessage={cloudMessage}
+            onBack={() => {
+              if (
+                cloudLoadedRef.current &&
+                saveStatusRef.current === 'saved' &&
+                !syncInFlightRef.current &&
+                !syncPendingRef.current
+              ) {
+                navigate('/canvas')
+                return
+              }
+              void requestConfirm(
+                localDraftStoredRef.current
+                  ? '画布还有修改未确认保存到云端。离开后将尝试从本机草稿恢复，是否离开？'
+                  : '画布未能保存到云端或本机，离开可能丢失修改。是否离开？',
+                {
+                  title: '画布尚未保存',
+                  confirmLabel: '仍然离开',
+                  cancelLabel: '继续等待',
+                },
+              ).then((confirmed) => {
+                if (confirmed) navigate('/canvas')
+              })
+            }}
+          />
+        </div>
+        {!agentOwner && (
+          <CanvasGlobalActions
+            open={actionsMenuOpen}
+            credits={walletCredits}
+            showExtras={CANVAS_PHASE_ONE_EXTRAS_ENABLED}
+            canImportScript={cloudLoadedRef.current}
+            canvasId={canvasId}
+            workspaceId={Number(workspaceId || 0)}
+            onToggle={() => setActionsMenuOpen((open) => !open)}
+            onClose={() => setActionsMenuOpen(false)}
+            onGuide={() => setGuideRequested((visible) => !visible)}
+            onImportScript={() => setScriptImportOpen(true)}
+            onModels={() => setModelSettingsOpen(true)}
+            onMembers={workspaceType === 'personal' ? undefined : () => setMembersOpen(true)}
+            onShare={() => setShareOpen(true)}
+          />
+        )}
 
         {cloudStatus !== 'loading' &&
           nodes.length === 0 &&
@@ -11752,6 +11816,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           !drawerPanel &&
           !scriptImportOpen &&
           !guideRequested &&
+          !agentOwner &&
           !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
 
         {modelSettingsOpen && (
@@ -11851,26 +11916,41 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           }
           controls={
             nodes.length > 0 && (
-              <CanvasViewControls
-                zoom={transform[2]}
-                onArrange={() => void arrangeNodes()}
-                onZoomReset={() => zoomTo(1, { duration: 160 })}
-                snapEnabled={snapEnabled}
-                onSnapToggle={() => setSnapEnabled((value) => !value)}
-                minimapVisible={minimapVisible}
-                onMinimapToggle={() =>
-                  setMinimapVisible((value) => {
-                    saveMinimapVisible(!value)
-                    return !value
-                  })
-                }
-                edgesHidden={edgesHidden}
-                onEdgesToggle={() => setEdgesHidden((value) => !value)}
-              />
+              <div data-canvas-readonly-control>
+                {agentOwner ? (
+                  <CanvasViewControls
+                    readOnly
+                    zoom={transform[2]}
+                    onZoomReset={() => zoomTo(1, { duration: 160 })}
+                    onZoomIn={() => void zoomIn()}
+                    onZoomOut={() => void zoomOut()}
+                    onFitView={() => void fitView({ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: 1 })}
+                    canResetLayout={false}
+                    onResetLayout={() => {}}
+                  />
+                ) : (
+                  <CanvasViewControls
+                    zoom={transform[2]}
+                    onArrange={() => void arrangeNodes()}
+                    onZoomReset={() => zoomTo(1, { duration: 160 })}
+                    snapEnabled={snapEnabled}
+                    onSnapToggle={() => setSnapEnabled((value) => !value)}
+                    minimapVisible={minimapVisible}
+                    onMinimapToggle={() =>
+                      setMinimapVisible((value) => {
+                        saveMinimapVisible(!value)
+                        return !value
+                      })
+                    }
+                    edgesHidden={edgesHidden}
+                    onEdgesToggle={() => setEdgesHidden((value) => !value)}
+                  />
+                )}
+              </div>
             )
           }
         >
-          {!drawerPanel && (
+          {!drawerPanel && !agentOwner && (
             <CanvasFloatingToolbar
               shortcuts={preferences.shortcuts}
               leaving={toolbarLeaving}
@@ -11993,9 +12073,9 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onNodesChange={handleNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onConnectEnd={onConnectEnd}
+            onEdgesChange={agentOwner ? undefined : onEdgesChange}
+            onConnect={agentOwner ? undefined : onConnect}
+            onConnectEnd={agentOwner ? undefined : onConnectEnd}
             /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
             isValidConnection={(connection) => {
               if (!dragEnabled || !connection.source || !connection.target) return false
@@ -12027,7 +12107,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             selectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? 'Shift' : null}
             multiSelectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? ['Control', 'Meta'] : null}
             /* 抓手模式下左键让给平移，框选退回 Shift+拖 */
-            selectionOnDrag={!panModeEnabled && !spacePanning}
+            selectionOnDrag={!agentOwner && !panModeEnabled && !spacePanning}
             selectionMode={SelectionMode.Partial}
             onSelectionChange={handleSelectionChange}
             /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
@@ -12125,6 +12205,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
             onPaneContextMenu={(e) => {
               e.preventDefault()
+              if (agentOwner) return
               setAddMenu(null)
               setContextMenu({ x: e.clientX, y: e.clientY })
             }}
@@ -12142,10 +12223,12 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             }}
             onEdgeContextMenu={(e) => {
               e.preventDefault()
+              if (agentOwner) return
               setAddMenu(null)
               setContextMenu({ x: e.clientX, y: e.clientY })
             }}
             onNodeClick={(event, node) => {
+              if (agentOwner) return
               if (isPickingRef) {
                 handlePickRefNode(node as unknown as Node)
                 return
@@ -12224,7 +12307,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             nodesDraggable={!agentOwner && dragEnabled && !spacePanning && !panModeEnabled}
             /* 默认左键让给框选，平移走中键 [1] / 右键 [2]，空格+左键由 spacePanning 临时接管；
              * 工具栏「拖动」（抓手）点亮后左键 [0] 也平移 */
-            panOnDrag={panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
+            panOnDrag={agentOwner || panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
             /* 无限画布不限制平移范围，远离原点的节点和低倍率视口都必须可达。 */
             /*
              * 滚轮行为按偏好：
@@ -12243,7 +12326,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             preventScrolling
             snapToGrid={snapEnabled}
             snapGrid={CANVAS_SNAP_GRID}
-            elementsSelectable
+            elementsSelectable={!agentOwner}
             /*
              * 缩放范围。
              *

@@ -1,7 +1,7 @@
-import { Button, Modal } from 'antd'
+import { Button } from 'antd'
 import { useState } from 'react'
 import type { CanvasAgentLock } from '@/composables/useCanvasNodeLocks'
-import { useNavigate } from 'react-router-dom'
+import './CanvasAgentReadOnly.css'
 
 export default function CanvasAgentReadOnly({
   owner,
@@ -12,11 +12,10 @@ export default function CanvasAgentReadOnly({
   lock?: CanvasAgentLock
   onUnlock: (id: string) => Promise<void>
 }) {
-  const navigate = useNavigate()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   async function unlock() {
-    if (!lock || busy) return
+    if (!lock || lock.running || busy) return
     setBusy(true)
     setError('')
     try {
@@ -28,28 +27,14 @@ export default function CanvasAgentReadOnly({
     }
   }
   return (
-    <Modal
-      open
-      centered
-      closable={false}
-      keyboard={false}
-      maskClosable={false}
-      zIndex={3000}
-      title={`${owner} 已锁定画布`}
-      footer={
-        <>
-          <Button onClick={() => navigate('/canvas?manage=1')}>返回画布列表</Button>
-          {lock?.can_unlock && (
-            <Button disabled={lock.running} loading={busy} onClick={() => void unlock()}>
-              管理员解锁
-            </Button>
-          )}
-        </>
-      }
-    >
-      <p>画布和会话已锁定，需由锁定人或管理员明确解锁后才能继续创作。</p>
-      {lock?.running && <p>Agent 仍在运行，请先暂停或等待本轮结束后解锁。</p>}
-      {error && <p role="alert">{error}</p>}
-    </Modal>
+    <aside className="canvas-agent-readonly" aria-label="画布只读状态">
+      <span role="status">{owner} 已锁定画布 · 当前只读，可平移、缩放查看</span>
+      {lock?.can_unlock && (
+        <Button size="small" disabled={lock.running} loading={busy} onClick={() => void unlock()}>
+          管理员解锁
+        </Button>
+      )}
+      {error && <span role="alert">{error}</span>}
+    </aside>
   )
 }

@@ -39,6 +39,7 @@ async function mapWithConcurrency<T, R>(
 
 export interface CanvasLocalMediaImportOptions {
   workspaceId: number
+  isReadOnly?: () => boolean
   screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number }
   commitHistory: () => void
   appendNewNode: (
@@ -62,6 +63,7 @@ export interface CanvasLocalMediaImportOptions {
 /** 画布本地媒体导入：统一负责文件规范化、预览地址生命周期、上传与失败清理。 */
 export function useCanvasLocalMediaImport({
   workspaceId,
+  isReadOnly,
   screenToFlowPosition,
   commitHistory,
   appendNewNode,
@@ -92,6 +94,7 @@ export function useCanvasLocalMediaImport({
 
   const importLocalMedia = useCallback(
     async (files: File[], anchor?: { x: number; y: number }) => {
+      if (isReadOnly?.()) return
       const allImages = pickImageFiles(files)
       const allVideos = pickVideoFiles(files)
       const allAudios = CANVAS_AUDIO_NODES_ENABLED ? files.filter(isAudioFile) : []
@@ -130,6 +133,7 @@ export function useCanvasLocalMediaImport({
           }
         }
       })
+      if (isReadOnly?.()) return
       const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
       const imageNames = new Map(imageChecks.filter((item) => !item.error).map((item) => [item.file, item.title]))
       const failures: string[] = imageChecks.filter((item) => item.error).map((item) => item.error)
@@ -152,9 +156,7 @@ export function useCanvasLocalMediaImport({
       const accepted = media.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
       const skipped = media.length - accepted.length
       const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-      commitHistory()
-
-      const created = await mapWithConcurrency(accepted, 8, async ({ file, title, kind }, index) => {
+      const prepared = await mapWithConcurrency(accepted, 8, async ({ file, title, kind }) => {
         const ratio =
           kind === 'video' || kind === 'audio'
             ? AUTO_RATIO
@@ -162,6 +164,13 @@ export function useCanvasLocalMediaImport({
                 await readImageNaturalSize(file),
               )
         const size = kind === 'audio' ? { width: 320, height: 116 } : calcNodeSize(ratio, 250)
+        return { file, title, kind, ratio, size }
+      })
+      // Decoding can outlive a lock change. Create the batch only after checking
+      // the current permission, with no await between the check and node creation.
+      if (isReadOnly?.()) return
+      commitHistory()
+      const created = prepared.map(({ file, title, kind, ratio, size }, index) => {
         const previewUrl = URL.createObjectURL(file)
         previewUrlsRef.current.add(previewUrl)
         const offset = index * 36
@@ -239,6 +248,7 @@ export function useCanvasLocalMediaImport({
       }
     },
     [
+      isReadOnly,
       appendNewNode,
       commitHistory,
       releasePreviewUrl,
