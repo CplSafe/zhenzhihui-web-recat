@@ -280,7 +280,19 @@ export default function TeamManagementModal({
 
   const [memberActionOpen, setMemberActionOpen] = useState(false)
   const [memberActionTarget, setMemberActionTarget] = useState<NormalizedMember | null>(null)
-  const [memberActionStyle, setMemberActionStyle] = useState<React.CSSProperties>({})
+  const memberActionAnchorRef = useRef<DOMRect | null>(null)
+  const positionMemberActionMenu = useCallback((menu: HTMLDivElement | null) => {
+    const anchor = memberActionAnchorRef.current
+    if (!menu || !anchor) return
+    const margin = 12
+    const gap = 8
+    const { width, height } = menu.getBoundingClientRect()
+    const maxTop = window.innerHeight - height - margin
+    const below = anchor.bottom + gap
+    const top = below <= maxTop ? below : anchor.top - height - gap
+    menu.style.top = `${Math.round(Math.max(margin, Math.min(top, maxTop)))}px`
+    menu.style.left = `${Math.round(Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin)))}px`
+  }, [])
   // 头部右上「…」菜单:退出 / 解散该空间
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
   const headerMenuRef = useRef<HTMLDivElement | null>(null)
@@ -496,10 +508,7 @@ export default function TeamManagementModal({
     if (!canManageWorkspace) return
     const el = event?.currentTarget as HTMLElement | undefined
     if (!el?.getBoundingClientRect) return
-    const rect = el.getBoundingClientRect()
-    const left = Math.max(12, rect.right - 112)
-    const top = rect.bottom + 8
-    setMemberActionStyle({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` })
+    memberActionAnchorRef.current = el.getBoundingClientRect()
     setMemberActionTarget(member || null)
     setMemberActionOpen(true)
   }
@@ -981,7 +990,13 @@ export default function TeamManagementModal({
               </div>
             </div>
 
-            <div className="tm-members">
+            <div
+              className="tm-members"
+              role="region"
+              aria-label="成员列表"
+              tabIndex={0}
+              onScroll={memberActionOpen ? closeMemberActions : undefined}
+            >
               {membersLoading ? (
                 <div className="tm-members-empty">正在加载成员信息...</div>
               ) : !filteredMembers.length ? (
@@ -1035,7 +1050,7 @@ export default function TeamManagementModal({
               aria-label="关闭成员操作"
               onClick={closeMemberActions}
             ></button>
-            <div className="tm-action-menu" style={memberActionStyle} onClick={(e) => e.stopPropagation()}>
+            <div className="tm-action-menu" ref={positionMemberActionMenu} onClick={(e) => e.stopPropagation()}>
               {/* 改角色后端仅 owner 可执行(admin 调用必 403),故只对 owner 展示;所有者自身行不显示角色切换。
                   按目标当前角色只显示对应一个按钮:管理员→「取消管理员」(降为成员),成员→「设为管理员」。 */}
               {isCurrentUserOwner &&

@@ -769,6 +769,18 @@ export function diffCanvasMutations(
   return mutations
 }
 
+/** JSON 对象的字段顺序不代表内容变化；数组顺序仍有业务意义。 */
+function canonicalCanvasJson(value: unknown): string | undefined {
+  return JSON.stringify(value, (_key, item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item
+    return Object.fromEntries(
+      Object.keys(item)
+        .sort()
+        .map((key) => [key, item[key]]),
+    )
+  })
+}
+
 /** Compare changes since the same baseline, so disjoint changes and identical retries merge without a prompt. */
 export function conflictingCanvasElementIds(
   local: CanvasElementMutation[],
@@ -779,7 +791,10 @@ export function conflictingCanvasElementIds(
     local
       .filter((change) => {
         const other = remoteById.get(change.element_id)
-        return other && (change.op !== other.op || JSON.stringify(change.payload) !== JSON.stringify(other.payload))
+        return (
+          other &&
+          (change.op !== other.op || canonicalCanvasJson(change.payload) !== canonicalCanvasJson(other.payload))
+        )
       })
       .map((change) => change.element_id),
   )

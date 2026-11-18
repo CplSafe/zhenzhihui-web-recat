@@ -47,6 +47,7 @@ export default defineConfig({
         'src/utils/canvasTools.ts',
         'src/utils/canvasUpscale.ts',
         'src/utils/canvasStudioControls.ts',
+        'src/utils/canvasSubjectEdit.ts',
         'src/api/canvasTools.ts',
         'src/build/authCallbackProxy.ts',
         'src/utils/canvasHd.ts',

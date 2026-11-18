@@ -648,12 +648,13 @@ test('全景浏览不创建 AI 任务，取景上传为独立图片并保存视�
         init.body.forEach((value) => {
           if (!file && value instanceof Blob) file = value
         })
-        if (file) {
+        const uploadedFile = file
+        if (uploadedFile) {
           ;(window as any).__panoramaUploadDataUrl = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader()
             reader.onload = () => resolve(String(reader.result))
             reader.onerror = () => reject(reader.error)
-            reader.readAsDataURL(file)
+            reader.readAsDataURL(uploadedFile)
           })
         }
       }

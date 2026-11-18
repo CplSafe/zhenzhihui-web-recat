@@ -22,6 +22,9 @@
 
 .tm-modal {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   width: min(600px, calc(100% - 48px));
   height: min(700px, calc(100% - 60px));
   border-radius: 20px;
@@ -29,6 +32,10 @@
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.18);
   padding: 26px 34px 28px;
   box-sizing: border-box;
+}
+
+.tm-modal > :not(.tm-members) {
+  flex-shrink: 0;
 }
 
 .tm-close {
@@ -255,6 +262,7 @@
   font-weight: 600;
   color: #333333;
   line-height: 20px;
+  flex-shrink: 0;
 }
 
 .tm-search {
@@ -263,7 +271,7 @@
   align-items: center;
   gap: 8px;
   height: 32px;
-  width: 260px;
+  width: min(260px, 65%);
   border-radius: 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: rgba(245, 245, 245, 0.9);
@@ -290,8 +298,24 @@
 }
 
 .tm-members {
+  flex: 1;
+  min-height: 0;
   margin-top: 12px;
   border-top: 1px solid rgba(0, 0, 0, 0.08);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+@media (max-height: 440px) {
+  .tm-modal {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  .tm-members {
+    flex: none;
+    overflow: visible;
+  }
 }
 
 .tm-members-empty {
@@ -414,6 +438,10 @@
 .tm-action-menu {
   position: fixed;
   width: 112px;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  box-sizing: border-box;
   border-radius: 10px;
   background: rgba(17, 24, 39, 0.92);
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
