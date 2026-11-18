@@ -626,11 +626,12 @@ export function subscribeCanvasEvents({
 }
 
 export interface CanvasNodeUsage {
+  historical_allocated_credits?: number
   node_id: string
   title: string
   deleted: boolean
   used_credits: number
-  members: { user_id: number; display_name: string; used_credits: number }[]
+  members: { user_id: number; display_name: string; used_credits: number; historical_allocated_credits?: number }[]
 }
 export interface CanvasStatisticsFilters {
   query?: string
@@ -640,6 +641,7 @@ export interface CanvasStatisticsFilters {
   date_to?: string
 }
 export interface CanvasStatistics {
+  historical_allocated_credits?: number
   trend: { date: string; used_credits: number }[]
   member_totals: CanvasNodeUsage['members']
   member_choices: CanvasNodeUsage['members']

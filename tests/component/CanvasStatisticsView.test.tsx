@@ -71,7 +71,7 @@ it('queries charts and rows together only after applying filters', async () => {
   render(<CanvasStatisticsView />)
   expect(await screen.findByRole('img', { name: '按结算日期统计的积分消耗趋势' })).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('节点名称 / ID'), { target: { value: '镜头' } })
-  fireEvent.change(screen.getByLabelText('任务发起人'), { target: { value: '3' } })
+  fireEvent.change(screen.getByLabelText('使用成员'), { target: { value: '3' } })
   fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-11-18' } })
   expect(mocks.get).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByText('查询'))
@@ -81,4 +81,25 @@ it('queries charts and rows together only after applying filters', async () => {
   expect(await screen.findByText('筛选结果消耗')).toBeInTheDocument()
   fireEvent.click(screen.getByText('重置'))
   await waitFor(() => expect(mocks.get).toHaveBeenLastCalledWith(1, 76, 1, {}))
+})
+
+it('labels historical shares separately from actual detailed charges', async () => {
+  mocks.get.mockResolvedValue({
+    total: 1,
+    total_used_credits: 10.002,
+    historical_allocated_credits: 10.002,
+    items: [
+      {
+        node_id: '',
+        title: '未关联节点',
+        deleted: false,
+        used_credits: 10.002,
+        members: [{ user_id: 3, display_name: '历史成员', used_credits: 3.334, historical_allocated_credits: 3.334 }],
+      },
+    ],
+  })
+  render(<CanvasStatisticsView />)
+  expect(await screen.findByText(/不代表个人实际操作金额/)).toBeInTheDocument()
+  expect(screen.getByText('（含历史分摊 3.334）')).toBeInTheDocument()
+  expect(screen.getByLabelText('画布累计消耗')).toHaveTextContent('10.002 积分')
 })

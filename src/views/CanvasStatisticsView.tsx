@@ -8,6 +8,8 @@ import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { formatCredits } from '@/utils/creditsFormat'
 import styles from './CanvasStatisticsView.module.css'
 
+const formatUsageCredits = (value: number) => formatCredits(value, 3)
+
 export default function CanvasStatisticsView() {
   const { id } = useParams()
   const workspaceId = useWorkspaceId()
@@ -58,7 +60,7 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
             刷新
           </button>
         </header>
-        <p className={styles.intro}>查看这张画布的积分去向，追踪每位成员与每个节点的实际消耗。</p>
+        <p className={styles.intro}>查看这张画布的积分去向，查看成员与节点明细，以及缺少明细的历史分摊。</p>
         <section className={styles.filterPanel} aria-label="统计筛选">
           <h2>
             <SlidersHorizontal size={16} aria-hidden="true" />
@@ -82,7 +84,7 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
               />
             </label>
             <label>
-              任务发起人
+              使用成员
               <select value={draft.user_id || ''} onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}>
                 <option value="">全部成员</option>
                 {choices.map((member) => (
@@ -155,9 +157,15 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
               <span>
                 {Object.values(filters).some((value) => value && value !== 'all') ? '筛选结果消耗' : '累计消耗'}
               </span>
-              <strong>{formatCredits(data.total_used_credits)} 积分</strong>
+              <strong>{formatUsageCredits(data.total_used_credits)} 积分</strong>
               <span className={styles.totalNote}>实际扣费 · 包含重试 · 不含冻结积分</span>
             </section>
+            {!!data.historical_allocated_credits && (
+              <p className={styles.detailHint}>
+                其中 {formatUsageCredits(data.historical_allocated_credits)} 积分为历史分摊：总额来自实际扣费，
+                缺少节点明细的部分按可核实的历史使用成员均分（含已离开成员），不代表个人实际操作金额，不会再次扣费。
+              </p>
+            )}
 
             <div className={styles.charts}>
               <section className={styles.trend}>
@@ -187,15 +195,15 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
               <span>共 {data.total} 项 · 含已删除节点</span>
             </div>
             <p className={styles.detailHint}>
-              仅统计已关联本画布的实际扣费；复制或引用素材不重复计费。旧任务未记录画布归属时不计入，显示 0
-              不代表素材从未产生费用。已关联画布但无法对应节点的费用归入“未关联节点”。
+              总额包含从历史制作记录恢复的实际扣费；复制或引用素材不重复计费。历史分摊归入“未关联节点”，
+              与有真实明细的消费分别标注。仍无法核实画布归属的团队消费不会重复计入各画布。
             </p>
             <div className={styles.tableWrap}>
               <table>
                 <thead>
                   <tr>
                     <th>节点</th>
-                    <th>任务发起人 / 实际消耗</th>
+                    <th>成员 / 消耗（含历史分摊）</th>
                     <th className={styles.numeric}>节点合计</th>
                   </tr>
                 </thead>
@@ -219,14 +227,21 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
                               <span>
                                 {member.display_name} <small>#{member.user_id}</small>
                               </span>
-                              <span>{formatCredits(member.used_credits)} 积分</span>
+                              <span>
+                                {formatUsageCredits(member.used_credits)} 积分
+                                {!!member.historical_allocated_credits && (
+                                  <small>
+                                    （含历史分摊 {formatUsageCredits(member.historical_allocated_credits)}）
+                                  </small>
+                                )}
+                              </span>
                             </div>
                           ))
                         ) : (
                           <span className={styles.muted}>暂无计费任务</span>
                         )}
                       </td>
-                      <td>{formatCredits(node.used_credits)} 积分</td>
+                      <td>{formatUsageCredits(node.used_credits)} 积分</td>
                     </tr>
                   ))}
                 </tbody>
@@ -265,7 +280,7 @@ function UsageBars({ title, items }: { title: string; items: { id: string; label
             <li key={item.id}>
               <div>
                 <span title={item.label}>{item.label}</span>
-                <strong>{formatCredits(item.value)}</strong>
+                <strong>{formatUsageCredits(item.value)}</strong>
               </div>
               <div className={styles.barTrack}>
                 <div className={styles.bar} style={{ width: `${(item.value / maximum) * 100}%` }} />
@@ -301,12 +316,12 @@ function UsageTrend({ points }: { points: CanvasStatistics['trend'] }) {
             fill="#a296ed"
           >
             <title>
-              {point.date}：{formatCredits(point.used_credits)} 积分
+              {point.date}：{formatUsageCredits(point.used_credits)} 积分
             </title>
           </rect>
         ))}
         <text x="10" y="14" fill="#aeb6c6" fontSize="12">
-          {formatCredits(maximum)}
+          {formatUsageCredits(maximum)}
         </text>
         <text x="10" y="180" fill="#aeb6c6" fontSize="12">
           {points[0].date}
