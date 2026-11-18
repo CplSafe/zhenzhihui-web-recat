@@ -640,7 +640,13 @@ export interface CanvasStatisticsFilters {
   date_from?: string
   date_to?: string
 }
+export interface WorkspaceCanvasUsageSummary {
+  workspace_total_used_credits?: number
+  total_used_credits: number
+  unassigned_used_credits?: number
+}
 export interface CanvasStatistics {
+  workspace_usage?: WorkspaceCanvasUsageSummary
   historical_allocated_credits?: number
   trend: { date: string; used_credits: number }[]
   member_totals: CanvasNodeUsage['members']

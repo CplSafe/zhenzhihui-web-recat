@@ -1,23 +1,29 @@
 import { useEffect, useState } from 'react'
 import { getBusinessErrorMessage, requestBusinessJson } from '@/api/business'
 import './CanvasUsagePanel.css'
+import WorkspaceUsageSummary from './WorkspaceUsageSummary'
+import type { WorkspaceCanvasUsageSummary } from '@/api/canvasApi'
 
 const PAGE_SIZE = 20
 const points = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 })
 
-type CanvasUsagePage = {
+type CanvasUsagePage = WorkspaceCanvasUsageSummary & {
   items: {
     canvas_id: number
     title: string
     deleted: boolean
     used_credits: number
-    members: { user_id: number; display_name: string; used_credits: number }[]
+    members: { user_id: number; display_name: string; used_credits: number; historical_allocated_credits?: number }[]
   }[]
   total: number
   total_used_credits: number
 }
 
 export default function CanvasUsagePanel({ workspaceId, month }: { workspaceId: number; month?: string }) {
+  return <CanvasUsageContent key={`${workspaceId}:${month || ''}`} workspaceId={workspaceId} month={month} />
+}
+
+function CanvasUsageContent({ workspaceId, month }: { workspaceId: number; month?: string }) {
   const [page, setPage] = useState(1)
   const [attempt, setAttempt] = useState(0)
   const [data, setData] = useState<CanvasUsagePage | null>(null)
@@ -53,11 +59,12 @@ export default function CanvasUsagePanel({ workspaceId, month }: { workspaceId: 
         <h2>无限画布用量</h2>
         {data && (
           <span>
-            共 {data.total} 张画布 · {month ? '当月' : '累计'}已结算{' '}
+            共 {data.total} 张画布 · {month ? '当月' : '累计'}已归属画布{' '}
             <strong>{points.format(data.total_used_credits)}</strong> 积分
           </span>
         )}
       </header>
+      {data && !error && <WorkspaceUsageSummary summary={data} period={month || '累计'} />}
       {error ? (
         <div className="canvas-usage__status" role="alert">
           {error}
@@ -96,7 +103,12 @@ export default function CanvasUsagePanel({ workspaceId, month }: { workspaceId: 
                         {member.display_name || '成员'}{' '}
                         {member.display_name !== `成员 #${member.user_id}` && <small>#{member.user_id}</small>}
                       </dt>
-                      <dd>{points.format(member.used_credits)} 积分</dd>
+                      <dd>
+                        {points.format(member.used_credits)} 积分
+                        {!!member.historical_allocated_credits && (
+                          <small>（含历史分摊 {points.format(member.historical_allocated_credits)}）</small>
+                        )}
+                      </dd>
                     </div>
                   ))}
                 </dl>

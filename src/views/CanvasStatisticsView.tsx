@@ -7,6 +7,7 @@ import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { formatCredits } from '@/utils/creditsFormat'
 import styles from './CanvasStatisticsView.module.css'
+import WorkspaceUsageSummary from '@/components/billing/WorkspaceUsageSummary'
 
 const formatUsageCredits = (value: number) => formatCredits(value, 3)
 
@@ -153,6 +154,9 @@ function Statistics({ workspaceId, canvasId }: { workspaceId: number; canvasId: 
           </div>
         ) : (
           <>
+            {data.workspace_usage && (
+              <WorkspaceUsageSummary summary={data.workspace_usage} period="累计（不随本画布筛选变化）" />
+            )}
             <section className={styles.total} aria-label="画布累计消耗">
               <span>
                 {Object.values(filters).some((value) => value && value !== 'all') ? '筛选结果消耗' : '累计消耗'}
