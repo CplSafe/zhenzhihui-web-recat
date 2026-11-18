@@ -2,7 +2,7 @@
  * AuthActionModal — 登录页的三个认证弹窗(复用一套表单):
  *  - register     注册新用户:手机号 + 密码 + 验证码(purpose=register)。已注册(code 10401)→ 引导直接登录。
  *  - forgot       重置密码:手机号 + 新密码 + 验证码(purpose=reset_password)→ 成功后重新登录。
- *  - sms-register 验证码登录时手机号未注册:仅要求设置密码(可不填),复用登录时输入的验证码完成注册并登录。
+ *  - sms-register 验证码登录时手机号未注册:获取注册验证码并设置密码(可不填),完成注册并登录。
  *
  * 成功后由父级接管:register/sms-register → onAuthed(走 OAuth 桥接登录);forgot → onResetDone(切回登录)。
  */
@@ -29,9 +29,11 @@ interface AuthActionModalProps {
   title?: string
   /** 父级共享的 authStart 获取(注册/重置用其 client_id/return_to,并供后续 OAuth 桥接) */
   ensureAuthStart: () => Promise<any>
-  /** sms-register:复用登录时已生成的 authStart(其 state 与登录一致),以及预填手机号/验证码 */
+  /** sms-register:复用登录时已生成的 authStart(其 state 与登录一致),以及预填手机号 */
   authStart?: any
-  prefill?: { mobile?: string; smsCode?: string }
+  prefill?: { mobile?: string }
+  /** 登录页仍在进行的短信发送冷却，避免切换到注册后立即重发。 */
+  smsCooldown?: number
   /** 锁定手机号为只读(登录态下「修改密码」已知手机号,不允许改) */
   lockMobile?: boolean
   onClose: () => void
@@ -64,6 +66,7 @@ export default function AuthActionModal({
   ensureAuthStart,
   authStart,
   prefill,
+  smsCooldown = 0,
   lockMobile,
   onClose,
   onAuthed,
@@ -92,7 +95,7 @@ export default function AuthActionModal({
 
   const needsMobileInput = mode !== 'sms-register'
   const mobileLocked = mode === 'sms-register' || !!lockMobile // 只读手机号
-  const needsCodeInput = mode !== 'sms-register' // sms-register 复用登录时的验证码
+  const effectiveCountdown = Math.max(countdown, smsCooldown)
   const pwdRequired = mode !== 'sms-register' // sms-register 密码可不填
   const smsPurpose = mode === 'forgot' ? 'reset_password' : 'register'
   const pwdLabel = mode === 'forgot' ? '新密码' : mode === 'sms-register' ? '设置密码(可不填)' : '密码'
@@ -142,27 +145,8 @@ export default function AuthActionModal({
     return true
   }
 
-  // 注册前置判重:register 接口先校验手机号是否已存在(10401)再校验验证码(10003),
-  // 故用占位验证码探测——既不会真正注册,也不会发送短信。返回 true 表示已注册(已处理跳转)。
-  const checkAlreadyRegistered = async (m: string): Promise<boolean> => {
-    try {
-      const as = await ensureAuthStart()
-      if (!aliveRef.current) return false
-      await registerAccount({ authStart: as, mobile: m, password: 'Zzh000000', smsCode: '000000', termsAccepted: true })
-      return false // 理论不可达(占位码必然失败)
-    } catch (e: any) {
-      if (!aliveRef.current) return false
-      if (Number(e?.code) === 10401) {
-        // 已注册:不关闭弹窗,改为在弹窗内红字提示并提供「去登录」入口
-        setAlreadyReg(true)
-        return true
-      }
-      return false // 10003(验证码错=未注册)或其他错误 → 放行继续发码
-    }
-  }
-
   const sendCode = async () => {
-    if (countdown > 0 || sendingRef.current) return
+    if (effectiveCountdown > 0 || sendingRef.current) return
     const m = mobile.replace(/\s/g, '')
     if (!m) return setErr('请输入手机号')
     if (!/^1\d{10}$/.test(m)) return setErr('请输入正确的手机号')
@@ -171,8 +155,6 @@ export default function AuthActionModal({
     setSending(true)
     setErr('')
     try {
-      // 注册:先判断是否已注册,已注册则提示直接登录,不再发送验证码
-      if (mode === 'register' && (await checkAlreadyRegistered(m))) return
       if (!aliveRef.current) return
       const as = await ensureAuthStart()
       if (!aliveRef.current) return
@@ -203,7 +185,7 @@ export default function AuthActionModal({
     if (needsMobileInput && !m) return setErr('请输入手机号')
     if (needsMobileInput && !/^1\d{10}$/.test(m)) return setErr('请输入正确的手机号')
     if (pwdRequired && !password.trim()) return setErr(mode === 'forgot' ? '请输入新密码' : '请输入密码')
-    if (needsCodeInput && !code.trim()) return setErr('请输入验证码')
+    if (!code.trim()) return setErr('请输入验证码')
     submittingRef.current = true
     setSubmitting(true)
     try {
@@ -219,14 +201,13 @@ export default function AuthActionModal({
       }
       // 注册与短信补注册成功后都交回登录页完成统一 OAuth 桥接。
       const pwd = password.trim() || (mode === 'sms-register' ? randomPassword() : '')
-      const smsCode = needsCodeInput ? code.trim() : prefill?.smsCode || ''
       const inviteCode = getInviteCode()
       const inviteType = inviteCode ? getInviteType() : ''
       const result = await registerAccount({
         authStart: as,
         mobile: m,
         password: pwd,
-        smsCode,
+        smsCode: code.trim(),
         termsAccepted: true,
         inviteCode, // 分享链接带来的推广码(空则接口层去掉)
         inviteType,
@@ -242,16 +223,11 @@ export default function AuthActionModal({
         return
       }
       // 注册:该手机号已注册 → 弹窗内红字提示并提供「去登录」入口(不关闭弹窗)
-      if (mode === 'register' && Number(e?.code) === 10401) {
+      if (mode !== 'forgot' && Number(e?.code) === 10401) {
         setAlreadyReg(true)
         return
       }
-      // sms-register:复用的登录验证码若不被注册接口接受 → 引导改用注册
-      if (mode === 'sms-register' && Number(e?.code) === 10003) {
-        setErr('验证码已失效,请关闭后用「免费注册」重新获取验证码注册')
-      } else {
-        setErr(getAuthErrorMessage(e, mode === 'forgot' ? '重置失败,请重试' : '注册失败,请重试'))
-      }
+      setErr(getAuthErrorMessage(e, mode === 'forgot' ? '重置失败,请重试' : '注册失败,请重试'))
     } finally {
       submittingRef.current = false
       if (aliveRef.current) setSubmitting(false)
@@ -272,7 +248,7 @@ export default function AuthActionModal({
         </button>
         <h2 className="zauth-title">{title ?? TITLES[mode]}</h2>
         {mode === 'sms-register' && (
-          <p className="zauth-sub">该手机号未注册,设置密码即完成注册并登录(密码可不填,后续可用「忘记密码」设置)</p>
+          <p className="zauth-sub">请获取并填写注册验证码后完成注册。登录验证码不能用于注册；密码可不填。</p>
         )}
 
         <div className="zauth-fields">
@@ -351,24 +327,27 @@ export default function AuthActionModal({
             </button>
           </div>
 
-          {needsCodeInput && (
-            <div className="zauth-field">
-              <input
-                aria-label="验证码"
-                type="text"
-                inputMode="numeric"
-                placeholder="验证码"
-                value={code}
-                onChange={(e) => {
-                  setCode(e.target.value)
-                  setErr('')
-                }}
-              />
-              <button type="button" className="zauth-code-btn" disabled={countdown > 0 || sending} onClick={sendCode}>
-                {sending ? '发送中…' : countdown > 0 ? `${countdown}s后重发` : '获取验证码'}
-              </button>
-            </div>
-          )}
+          <div className="zauth-field">
+            <input
+              aria-label="验证码"
+              type="text"
+              inputMode="numeric"
+              placeholder="验证码"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value)
+                setErr('')
+              }}
+            />
+            <button
+              type="button"
+              className="zauth-code-btn"
+              disabled={effectiveCountdown > 0 || sending}
+              onClick={sendCode}
+            >
+              {sending ? '发送中…' : effectiveCountdown > 0 ? `${effectiveCountdown}s后重发` : '获取验证码'}
+            </button>
+          </div>
 
           {captcha.image && (
             <div className="zauth-field">

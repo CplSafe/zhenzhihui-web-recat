@@ -80,6 +80,120 @@ describe('AuthActionModal behavior', () => {
     mocks.sendAuthSms.mockResolvedValue(undefined)
   })
 
+  it('requires a fresh registration code instead of reusing the login code', async () => {
+    const user = userEvent.setup()
+    render(
+      <AuthActionModal
+        mode="sms-register"
+        ensureAuthStart={mocks.ensureAuthStart}
+        prefill={{ mobile: '17633125265' }}
+        onClose={mocks.onClose}
+        onAuthed={mocks.onAuthed}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '完成并登录' }))
+    expect(mocks.registerAccount).not.toHaveBeenCalled()
+    expect(screen.getByText('请输入验证码')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    expect(mocks.sendAuthSms).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mobile: '17633125265',
+        purpose: 'register',
+      }),
+    )
+    await user.type(screen.getByRole('textbox', { name: '验证码' }), '592442')
+    await user.click(screen.getByRole('button', { name: '完成并登录' }))
+    expect(mocks.registerAccount).toHaveBeenCalledTimes(1)
+    expect(mocks.registerAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mobile: '17633125265',
+        smsCode: '592442',
+        termsAccepted: true,
+      }),
+    )
+    expect(mocks.onAuthed).toHaveBeenCalledWith({ state: 'auth-state' }, { ok: true })
+  })
+
+  it('sends registration SMS without submitting a fabricated registration', async () => {
+    const user = userEvent.setup()
+    render(<AuthActionModal mode="register" ensureAuthStart={mocks.ensureAuthStart} onClose={mocks.onClose} />)
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '17633125265')
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    expect(mocks.registerAccount).not.toHaveBeenCalled()
+    expect(mocks.sendAuthSms).toHaveBeenCalledTimes(1)
+  })
+
+  it('honors the remaining login SMS cooldown and prevents duplicate sends', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<void>()
+    mocks.sendAuthSms.mockReturnValue(pending.promise)
+    const modal = (cooldown: number) => (
+      <AuthActionModal
+        mode="sms-register"
+        ensureAuthStart={mocks.ensureAuthStart}
+        prefill={{ mobile: '17633125265' }}
+        smsCooldown={cooldown}
+        onClose={mocks.onClose}
+      />
+    )
+    const { rerender } = render(modal(30))
+    await user.click(screen.getByRole('button', { name: '30s后重发' }))
+    expect(mocks.sendAuthSms).not.toHaveBeenCalled()
+    rerender(modal(0))
+    await user.dblClick(screen.getByRole('button', { name: '获取验证码' }))
+    expect(mocks.sendAuthSms).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      pending.resolve()
+      await pending.promise
+    })
+    expect(screen.getByRole('button', { name: '60s后重发' })).toBeDisabled()
+  })
+
+  it('keeps the registration code editable after rejection and supports a corrected retry', async () => {
+    const user = userEvent.setup()
+    mocks.registerAccount
+      .mockRejectedValueOnce({ code: 10003, message: '验证码错误或已过期' })
+      .mockResolvedValueOnce({ ok: true })
+    render(
+      <AuthActionModal
+        mode="sms-register"
+        ensureAuthStart={mocks.ensureAuthStart}
+        prefill={{ mobile: '17633125265' }}
+        onClose={mocks.onClose}
+        onAuthed={mocks.onAuthed}
+      />,
+    )
+    const code = screen.getByRole('textbox', { name: '验证码' })
+    await user.type(code, '111111')
+    await user.click(screen.getByRole('button', { name: '完成并登录' }))
+    expect(await screen.findByText('验证码错误或已过期')).toBeInTheDocument()
+    expect(mocks.onClose).not.toHaveBeenCalled()
+    await user.clear(code)
+    await user.type(code, '592442')
+    await user.click(screen.getByRole('button', { name: '完成并登录' }))
+    expect(mocks.registerAccount).toHaveBeenLastCalledWith(expect.objectContaining({ smsCode: '592442' }))
+    expect(mocks.onAuthed).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an already registered account return to login from the completion modal', async () => {
+    const user = userEvent.setup()
+    const onAlreadyRegistered = vi.fn()
+    mocks.registerAccount.mockRejectedValueOnce({ code: 10401 })
+    render(
+      <AuthActionModal
+        mode="sms-register"
+        ensureAuthStart={mocks.ensureAuthStart}
+        prefill={{ mobile: '17633125265' }}
+        onClose={mocks.onClose}
+        onAlreadyRegistered={onAlreadyRegistered}
+      />,
+    )
+    await user.type(screen.getByRole('textbox', { name: '验证码' }), '592442')
+    await user.click(screen.getByRole('button', { name: '完成并登录' }))
+    await user.click(await screen.findByRole('button', { name: '直接登录' }))
+    expect(onAlreadyRegistered).toHaveBeenCalledWith('17633125265')
+  })
+
   it('is a modal dialog, focuses the first field, and closes with Escape', async () => {
     const user = userEvent.setup()
     render(forgotModal())
