@@ -7,9 +7,11 @@ vi.mock('@/api/business', () => ({
   BusinessApiError: class BusinessApiError extends Error {
     status: number
     response: unknown
+    code: string | null
 
-    constructor(message: string, options: { status?: number; response?: unknown } = {}) {
+    constructor(message: string, options: { status?: number; response?: unknown; code?: string } = {}) {
       super(message)
+      this.code = options.code || null
       this.status = options.status || 0
       this.response = options.response || null
     }
@@ -22,6 +24,7 @@ import {
   duplicateCanvas,
   fetchAllCanvasElements,
   listCanvases,
+  saveCanvasElementsBatched,
 } from '@/api/canvasApi'
 
 describe('fetchAllCanvasElements', () => {
@@ -200,5 +203,44 @@ describe('listCanvases', () => {
       { id: 3, title: 'A', userId: 8, usedCredits: 1.362 },
       { id: 4, title: 'B', usedCredits: 0 },
     ])
+  })
+})
+
+describe('画布保存请求大小', () => {
+  beforeEach(() => mocks.requestBusinessJson.mockReset())
+
+  it('按 UTF-8 字节拆批并使用上批的 revision，保留所有内容', async () => {
+    mocks.requestBusinessJson
+      .mockResolvedValueOnce({ data: { sync_revision: 5 } })
+      .mockResolvedValueOnce({ data: { sync_revision: 6 } })
+    const mutations = ['a', 'b'].map((id) => ({
+      element_id: id,
+      kind: 'node' as const,
+      op: 'upsert' as const,
+      payload: { id, data: { text: '画'.repeat(180000) } },
+    }))
+    await expect(
+      saveCanvasElementsBatched({ workspaceId: 7, canvasId: 9, baseRevision: 4, mutations, state: { zoom: 1 } }),
+    ).resolves.toEqual({ sync_revision: 6 })
+    const bodies = mocks.requestBusinessJson.mock.calls.map((call) => JSON.parse(call[1].body))
+    expect(bodies.map((body) => body.base_revision)).toEqual([4, 5])
+    expect(bodies.flatMap((body) => body.mutations)).toEqual(mutations)
+    expect(bodies[0].state).toEqual({ zoom: 1 })
+    expect(bodies[1].state).toBeUndefined()
+    for (const call of mocks.requestBusinessJson.mock.calls)
+      expect(new TextEncoder().encode(call[1].body).length).toBeLessThanOrEqual(1000 * 1024)
+  })
+
+  it('超大单个元素在任何写入前被拒绝，避免截断数据或部分保存', async () => {
+    const mutations = ['small', 'large'].map((id) => ({
+      element_id: id,
+      kind: 'node' as const,
+      op: 'upsert' as const,
+      payload: { text: id === 'large' ? '画'.repeat(350000) : 'ok' },
+    }))
+    await expect(
+      saveCanvasElementsBatched({ workspaceId: 7, canvasId: 9, baseRevision: 0, mutations }),
+    ).rejects.toMatchObject({ code: 'CANVAS_LOCAL_PAYLOAD_TOO_LARGE', message: expect.stringContaining('large') })
+    expect(mocks.requestBusinessJson).not.toHaveBeenCalled()
   })
 })

@@ -538,6 +538,36 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   color: #d14343;
 }
 
+.canvas-manual-save {
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--canvas-border-active, #cbd5d9);
+  border-radius: 7px;
+  color: var(--canvas-text);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.canvas-manual-save:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.canvas-manual-save:focus-visible {
+  outline: 2px solid var(--canvas-border-active, #cbd5d9);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .canvas-navigation {
+    max-width: calc((100vw - 130px) / var(--canvas-ui-scale, 1));
+  }
+
+  .canvas-save-status {
+    flex-wrap: wrap;
+  }
+}
+
 /* ── 连线的焦点 / 悬停 / 淡化态（class 由 CanvasView 的 displayEdges 按状态打上）── */
 .react-flow__edge {
   transition: opacity 160ms ease;

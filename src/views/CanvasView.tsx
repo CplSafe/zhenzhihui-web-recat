@@ -40,6 +40,7 @@ import CanvasDragStablePanel from '@/components/canvas/CanvasDragStablePanel'
 import CanvasStoryboard from '@/components/canvas/CanvasStoryboard'
 import { useCanvasModalOpen } from '@/composables/useCanvasModalOpen'
 import type { ToolImage, CanvasToolSubmission } from '@/components/canvas/CanvasImageTools'
+import type { CanvasSubjectEditRequest, CanvasSubjectEditSource } from '@/components/canvas/CanvasSubjectEdit'
 import type { VideoUpscaleSubmission } from '@/components/canvas/CanvasUpscale'
 import { normalizeCanvasAssetSource } from '@/utils/canvasGeneration'
 import type { InvalidCanvasImage } from '@/components/canvas/CanvasImageCropModal'
@@ -73,7 +74,7 @@ import {
   useMemo,
   type CSSProperties,
 } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom'
 import CanvasNavigationStatus from '@/components/canvas/CanvasNavigationStatus'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
 import {
@@ -361,6 +362,7 @@ import './CanvasView.css'
 
 const CanvasVideoDetailsDrawer = lazy(() => import('@/components/canvas/CanvasVideoDetailsDrawer'))
 const CanvasImageTools = lazy(() => import('@/components/canvas/CanvasImageTools'))
+const CanvasSubjectEdit = lazy(() => import('@/components/canvas/CanvasSubjectEdit'))
 const CanvasImageCropModal = lazy(() => import('@/components/canvas/CanvasImageCropModal'))
 const CanvasStandaloneImageCropModal = lazy(() => import('@/components/canvas/CanvasStandaloneImageCropModal'))
 const CanvasHdWorkspace = lazy(() => import('@/components/canvas/CanvasUpscale'))
@@ -919,6 +921,7 @@ interface CanvasGenerationRequest {
   videoMode?: CanvasVideoMode
   /** 视频生视频的源视频（节点自己已有的那条）；为 0/缺省表示从头生成。 */
   selfVideoAssetId?: number
+  subjectEdit?: true
 }
 
 const ACTIVE_TASK_STATUSES = new Set([
@@ -2682,11 +2685,17 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     [currentUserId, workspaceId],
   )
   const canvasBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const [subjectEditTarget, setSubjectEditTarget] = useState<{
+    canvasBinding: string
+    source: CanvasSubjectEditSource
+  } | null>(null)
+  const subjectEdit = subjectEditTarget?.canvasBinding === canvasBindingKey ? subjectEditTarget.source : null
   const [standaloneCropRequest, setStandaloneCropRequest] = useState<StandaloneCropRequest | null>(null)
   const standaloneCrop = standaloneCropRequest?.canvasBinding === canvasBindingKey ? standaloneCropRequest : null
   const activeStandaloneCropRef = useRef(standaloneCrop)
   activeStandaloneCropRef.current = standaloneCrop
   useEffect(() => {
+    setSubjectEditTarget(null)
     setStandaloneCropRequest(null)
   }, [canvasBindingKey])
   const directorAvailable =
@@ -5175,6 +5184,8 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           // 被标成待保存、内容却与云端一致（选中、无变化的标脏等）：没有要存的，就是已同步。
           // 以前这里直接跳过，状态永远停在「等待保存…」，用户以为改动没存上。
           setSaveStatus((current) => (current === 'dirty' ? 'saved' : current))
+          setCloudStatus('online')
+          setCloudMessage('已保存')
           localDraftStoredRef.current = saveCanvasDraft(
             latest.nodes,
             latest.edges,
@@ -5318,7 +5329,9 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
               setCloudStatus('error')
               setCloudMessage(
                 localDraftStoredRef.current
-                  ? '保存失败，修改暂存在本机；请检查内容后重试'
+                  ? errorCode === 'CANVAS_LOCAL_PAYLOAD_TOO_LARGE'
+                    ? `${error.message}；修改暂存在本机`
+                    : '保存失败，修改暂存在本机；请检查内容后重试'
                   : '保存失败，本机草稿也未能保存，请勿离开页面',
               )
             } else {
@@ -5713,6 +5726,88 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     scheduleSyncRef.current(true)
     await syncQueueRef.current
   }
+
+  // 手动重试同样走串行保存与冲突合并；先等在途请求，避免重复提交。
+  const [manualSaving, setManualSaving] = useState(false)
+  const manualSavingRef = useRef(false)
+  const manualSave = async (): Promise<boolean> => {
+    if (manualSavingRef.current) return false
+    if (!cloudLoadedRef.current) {
+      showToast('请返回后重新打开画布，先处理本机草稿或连接问题', 'error')
+      return false
+    }
+    manualSavingRef.current = true
+    setManualSaving(true)
+    try {
+      await syncQueueRef.current
+      if (syncRetryTimerRef.current) {
+        window.clearTimeout(syncRetryTimerRef.current)
+        syncRetryTimerRef.current = null
+      }
+      syncRetryBlockedRef.current = false
+      syncRejectedSignatureRef.current = ''
+      scheduleSyncRef.current(true)
+      await syncQueueRef.current
+      const text = (window as any).__canvasTextContents as Map<string, string> | undefined
+      return (
+        cloudLoadedRef.current &&
+        !syncInFlightRef.current &&
+        !syncPendingRef.current &&
+        diffCanvasMutations(syncRef.current, latestRef.current, text).length === 0 &&
+        Object.keys(pendingCanvasStateRef.current).length === 0
+      )
+    } finally {
+      manualSavingRef.current = false
+      if (canvasMountedRef.current) setManualSaving(false)
+    }
+  }
+  const hasUnsavedCanvas = () => {
+    const draftPending = Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync)
+    if (!cloudLoadedRef.current) return draftPending
+    const text = (window as any).__canvasTextContents as Map<string, string> | undefined
+    return (
+      manualSavingRef.current ||
+      syncInFlightRef.current ||
+      syncPendingRef.current ||
+      draftPending ||
+      diffCanvasMutations(syncRef.current, latestRef.current, text).length > 0 ||
+      Object.keys(pendingCanvasStateRef.current).length > 0
+    )
+  }
+  // 覆盖画布内返回、侧栏、浏览器后退等站内导航，关闭标签页仍由 beforeunload 处理。
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) => currentLocation.pathname !== nextLocation.pathname && hasUnsavedCanvas(),
+  )
+  const handlingBlockedNavigationRef = useRef(false)
+  useEffect(() => {
+    if (blocker.state !== 'blocked' || handlingBlockedNavigationRef.current) return
+    handlingBlockedNavigationRef.current = true
+    void (async () => {
+      const save = await requestConfirm('画布还有修改未确认保存到云端，是否先保存再离开？', {
+        title: '画布尚未保存',
+        confirmLabel: '保存并离开',
+        cancelLabel: '留在画布',
+      })
+      if (!save) {
+        blocker.reset()
+        return
+      }
+      if (await manualSave()) {
+        blocker.proceed()
+        return
+      }
+      const leave = await requestConfirm(
+        localDraftStoredRef.current && loadCanvasDraft(routeProjectId, draftScope)
+          ? '云端保存尚未完成，本机草稿已保留。离开后只能在此浏览器尝试恢复，是否仍然离开？'
+          : '云端和本机草稿均未确认保存，离开可能丢失修改。是否仍然离开？',
+        { title: '保存未完成', confirmLabel: '仍然离开', cancelLabel: '留在画布' },
+      )
+      if (leave) blocker.proceed()
+      else blocker.reset()
+    })().finally(() => {
+      handlingBlockedNavigationRef.current = false
+    })
+  }, [blocker, draftScope, routeProjectId])
 
   // nodes/edges 变化 → 防抖调度保存
   useEffect(() => {
@@ -7198,7 +7293,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
         // 视频模型画不了字，提示词里的文字只会渲染成乱码；整片生成 / video.edit / 爆款复刻都挂了这条守卫，
         // 画布视频节点此前漏掉，灯牌、包装、贴字一律照抄出乱码。图片模型不在此列。
         const submitPrompt =
-          generate.kind === 'video' && generate.operationCode !== 'video.upscale'
+          generate.kind === 'video' && generate.operationCode !== 'video.upscale' && !generate.subjectEdit
             ? withNoOnscreenTextGuard(identity.prompt)
             : identity.prompt
         const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -7651,20 +7746,26 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     [selectedNode, submitNodeGeneration],
   )
 
-  const handleImageToolGenerate = async ({ request, images, title }: CanvasToolSubmission) => {
+  const handleMediaToolGenerate = async ({
+    request,
+    images,
+    title,
+  }: CanvasToolSubmission | { request: CanvasSubjectEditRequest; images: ToolImage[]; title: string }) => {
+    const kind = request.kind
     const sources = images.map((image) => {
       const node = latestRef.current.nodes.find((item) => item.id === image.nodeId)
       if (
         !node ||
+        String(node.data.kind || node.type) !== kind ||
         Number(node.data.assetId) !== image.assetId ||
         (Number(node.data.assetWorkspaceId) > 0 && Number(node.data.assetWorkspaceId) !== Number(workspaceId))
       )
-        throw new Error('原图或参考图已更换，请重新打开工具')
+        throw new Error('原素材或参考素材已更换，请重新打开工具')
       return node
     })
     const source = sources[0]
-    const id = createNodeId('image')
-    const size = newNodeFootprint('image')
+    const id = createNodeId(kind)
+    const size = newNodeFootprint(kind)
     const position = findFreeNodePosition({
       anchor: { x: source.position.x + Number(source.style?.width || 300) + 80, y: source.position.y },
       size,
@@ -7676,7 +7777,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       })),
     })
     const sourceRefs: CanvasSourceRef[] = images.map((image, index) => ({
-      kind: 'image',
+      kind,
       sourceId: image.nodeId,
       edgeId: `tool-${id}-${index}`,
       slotIndex: index,
@@ -7690,16 +7791,17 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     const generate: CanvasGenerationRequest = { ...request, sourceRefs }
     const node: Node = {
       id,
-      type: 'image',
+      type: kind,
       position,
       style: size,
       data: {
-        kind: 'image',
+        kind,
         title: `${title}结果`,
         prompt: request.prompt,
         modelVersionId: request.modelVersionId,
         operationCode: request.operationCode,
         params: request.params,
+        ...('subjectEdit' in request ? { generationRequest: generate, ratio: source.data.ratio } : {}),
       },
     }
     const toolEdges: Edge[] = sourceRefs.map((ref) => ({
@@ -7707,7 +7809,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
       source: ref.sourceId,
       target: id,
       type: CANVAS_ARROW_EDGE_TYPE,
-      data: { slotIndex: ref.slotIndex, role: 'reference_image' },
+      data: { slotIndex: ref.slotIndex, role: kind === 'video' ? 'video' : 'reference_image' },
     }))
     commitHistory()
     const next = { nodes: [...latestRef.current.nodes, node], edges: [...latestRef.current.edges, ...toolEdges] }
@@ -7716,6 +7818,17 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     setEdges(next.edges)
     setSaveStatus('dirty')
     await submitNodeGeneration(id, generate)
+    const unsubmitted = latestRef.current.nodes.find((item) => item.id === id && !item.data.taskStatus)
+    if (generate.subjectEdit && unsubmitted) {
+      // 素材预检等步骤未通过时还没有创建任务，移除刚插入的占位节点并保留编辑面板。
+      latestRef.current = {
+        nodes: latestRef.current.nodes.filter((item) => item.id !== id),
+        edges: latestRef.current.edges.filter((edge) => edge.target !== id),
+      }
+      setNodes(latestRef.current.nodes)
+      setEdges(latestRef.current.edges)
+      throw new Error('未能提交主体编辑，请按提示检查素材后重试')
+    }
     scheduleSyncRef.current(true)
   }
 
@@ -11407,6 +11520,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   const canvasShortcutsBlocked = Boolean(
     canvasModalOpen ||
     imageTool ||
+    subjectEdit ||
     imageCropRequest ||
     standaloneCrop ||
     settingsOpen ||
@@ -11699,29 +11813,11 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           saveStatus={saveStatus}
           cloudStatus={cloudStatus}
           cloudMessage={cloudMessage}
-          onBack={() => {
-            if (
-              cloudLoadedRef.current &&
-              saveStatusRef.current === 'saved' &&
-              !syncInFlightRef.current &&
-              !syncPendingRef.current
-            ) {
-              navigate('/canvas')
-              return
-            }
-            void requestConfirm(
-              localDraftStoredRef.current
-                ? '画布还有修改未确认保存到云端。离开后将尝试从本机草稿恢复，是否离开？'
-                : '画布未能保存到云端或本机，离开可能丢失修改。是否离开？',
-              {
-                title: '画布尚未保存',
-                confirmLabel: '仍然离开',
-                cancelLabel: '继续等待',
-              },
-            ).then((confirmed) => {
-              if (confirmed) navigate('/canvas')
-            })
+          manualSaving={manualSaving}
+          onSave={() => {
+            void manualSave()
           }}
+          onBack={() => navigate('/canvas')}
         />
         <CanvasGlobalActions
           open={actionsMenuOpen}
@@ -12441,6 +12537,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           selectedNodeVisible &&
           selectedNode &&
           !imageTool &&
+          !subjectEdit &&
           !standaloneCrop &&
           !reversePromptTarget &&
           !hdRequest &&
@@ -12470,6 +12567,29 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
               onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
               onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
               onCrop={() => openStandaloneCrop(selectedNode.id)}
+              onSubjectEdit={() => {
+                const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                const kind = node?.data.kind || node?.type
+                const assetId = Number(node?.data.assetId)
+                if (!node || (kind !== 'image' && kind !== 'video') || !Number.isSafeInteger(assetId) || assetId <= 0) {
+                  showToast('请先上传或生成素材', 'error')
+                  return
+                }
+                if (Number(node.data.assetWorkspaceId || workspaceId) !== Number(workspaceId)) {
+                  showToast('请从当前团队选择素材', 'error')
+                  return
+                }
+                setSubjectEditTarget({
+                  canvasBinding: canvasBindingKey,
+                  source: {
+                    nodeId: node.id,
+                    assetId,
+                    kind,
+                    title: String(node.data.title || '原素材'),
+                    ratio: typeof node.data.ratio === 'string' ? node.data.ratio : undefined,
+                  },
+                })
+              }}
               onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
               imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
               onImageTool={(code) => {
@@ -12539,9 +12659,21 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                   title: String(node.data.title || `图片 ${node.id}`),
                 }))}
               onClose={() => setImageTool(null)}
-              onGenerate={handleImageToolGenerate}
+              onGenerate={handleMediaToolGenerate}
               onCapture={handlePanoramaCapture}
               onViewChange={handlePanoramaViewChange}
+            />
+          </Suspense>
+        )}
+
+        {subjectEdit && (
+          <Suspense fallback={null}>
+            <CanvasSubjectEdit
+              key={`${canvasBindingKey}:${subjectEdit.nodeId}:${subjectEdit.assetId}`}
+              workspaceId={Number(workspaceId)}
+              source={subjectEdit}
+              onClose={() => setSubjectEditTarget(null)}
+              onSubmit={(request, title) => handleMediaToolGenerate({ request, title, images: [subjectEdit] })}
             />
           </Suspense>
         )}
@@ -13172,6 +13304,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           selectedNodeIds.length < 2 &&
           !addMenu &&
           !imageTool &&
+          !subjectEdit &&
           !reversePromptTarget &&
           !hdRequest &&
           !hdModalOpen && (

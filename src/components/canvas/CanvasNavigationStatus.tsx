@@ -6,10 +6,19 @@ interface Props {
   cloudStatus: string
   cloudMessage: string
   onBack: () => void
+  onSave: () => void
+  manualSaving: boolean
 }
 
 /** 画布返回入口与草稿/云端保存状态。 */
-export default function CanvasNavigationStatus({ saveStatus, cloudStatus, cloudMessage, onBack }: Props) {
+export default function CanvasNavigationStatus({
+  saveStatus,
+  cloudStatus,
+  cloudMessage,
+  onBack,
+  onSave,
+  manualSaving,
+}: Props) {
   return (
     <div className="canvas-navigation nodrag nopan nowheel" aria-label="画布导航">
       <button type="button" className="canvas-back-btn" onClick={onBack} title="返回无限画布" aria-label="返回无限画布">
@@ -33,6 +42,11 @@ export default function CanvasNavigationStatus({ saveStatus, cloudStatus, cloudM
           <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
             {cloudMessage}
           </span>
+        )}
+        {(cloudStatus === 'error' || cloudStatus === 'offline' || manualSaving) && (
+          <button type="button" className="canvas-manual-save" onClick={onSave} disabled={manualSaving}>
+            {manualSaving ? '保存中…' : '保存画布'}
+          </button>
         )}
       </div>
     </div>

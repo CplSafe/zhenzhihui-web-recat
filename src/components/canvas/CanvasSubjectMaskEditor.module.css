@@ -1,0 +1,87 @@
+.editor {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.toolbar button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--canvas-border, #555);
+  border-radius: 6px;
+  background: var(--canvas-surface-input, #252525);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.toolbar button[aria-pressed='true'] {
+  border-color: var(--canvas-brand, #00e5be);
+  color: var(--canvas-brand, #00e5be);
+}
+
+.toolbar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.brushSize {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.brushSize input {
+  width: 90px;
+  accent-color: var(--canvas-brand, #00e5be);
+}
+
+.brushSize span {
+  min-width: 40px;
+  font-variant-numeric: tabular-nums;
+}
+
+.surface {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--canvas-surface-input, #252525);
+}
+
+.surface img,
+.selection {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.surface img {
+  pointer-events: none;
+}
+
+.selection {
+  cursor: crosshair;
+  touch-action: none;
+  opacity: 0.62;
+}
+
+.selection[aria-disabled='true'] {
+  pointer-events: none;
+}
+
+.hint {
+  margin: 0;
+  color: var(--canvas-text-muted, #a8a8a8);
+  font-size: 12px;
+}

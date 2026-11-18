@@ -9,6 +9,7 @@ import {
   comparableNode,
   collectCanvasSourceRefs,
   diffCanvasMutations,
+  conflictingCanvasElementIds,
   elementsToGraph,
   isCanvasProvenanceEdge,
   nodeToMutation,
@@ -490,5 +491,29 @@ describe('canvasElements', () => {
       position: { x: 20, y: 30 },
       data: { prompt: '远端更新' },
     })
+  })
+})
+
+describe('画布冲突比较', () => {
+  it('对象字段顺序不影响相同内容的重试，数组顺序仍参与比较', () => {
+    const local = [
+      {
+        element_id: 'node',
+        kind: 'node' as const,
+        op: 'upsert' as const,
+        payload: { id: 'node', data: { prompt: '内容', params: { a: 1, b: 2 }, items: [1, 2] } },
+      },
+    ]
+    const same = [
+      {
+        element_id: 'node',
+        kind: 'node' as const,
+        op: 'upsert' as const,
+        payload: { data: { items: [1, 2], params: { b: 2, a: 1 }, prompt: '内容' }, id: 'node' },
+      },
+    ]
+    expect(conflictingCanvasElementIds(local, same).size).toBe(0)
+    same[0].payload.data.items = [2, 1]
+    expect(conflictingCanvasElementIds(local, same).has('node')).toBe(true)
   })
 })

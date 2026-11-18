@@ -414,7 +414,7 @@ export async function fetchAllCanvasElements({
 
 /** 临时占用、限流和登录续期均允许原草稿稍后重试。 */
 export function isPermanentCanvasSaveError(status: number, code: string, revisionConflict = false): boolean {
-  if (code === 'CANVAS_INVALID_INPUT' || code === '10001') return true
+  if (code === 'CANVAS_INVALID_INPUT' || code === '10001' || code === 'CANVAS_LOCAL_PAYLOAD_TOO_LARGE') return true
   if (revisionConflict || (status === 423 && code === 'CANVAS_AGENT_LOCKED')) return false
   return status >= 400 && status < 500 && status !== 401 && status !== 429
 }
@@ -487,26 +487,49 @@ export async function saveCanvasElementsBatched({
 }): Promise<{ sync_revision: number }> {
   let currentRevision = Number(baseRevision) || 0
   const BATCH_LIMIT = 500
-  // 首批优先携带 state（只在第一批传一次）
-  for (let i = 0; i < mutations.length; i += BATCH_LIMIT) {
-    const batch = mutations.slice(i, i + BATCH_LIMIT)
-    const result = await saveCanvasElements({
-      workspaceId,
-      canvasId,
-      baseRevision: currentRevision,
-      mutations: batch,
-      state: i === 0 ? state : undefined,
-      schemaVersion,
-    })
-    currentRevision = result.sync_revision
+  // 留出余量以适应服务端默认 1 MiB 的 JSON 请求体限制。按 UTF-8 字节计算，不能用字符串长度。
+  const BODY_LIMIT = 1000 * 1024
+  const encoder = new TextEncoder()
+  const byteLength = (value: string) => encoder.encode(value).byteLength
+  // 用最大安全整数计算固定开销，确保后续服务端 revision 增长也不会使请求超限。
+  const overhead = (batchState?: Record<string, unknown>) =>
+    byteLength(
+      JSON.stringify({
+        base_revision: Number.MAX_SAFE_INTEGER,
+        mutations: [],
+        ...(batchState ? { state: batchState } : {}),
+        schema_version: schemaVersion,
+      }),
+    )
+  const oversized = (message: string) => new BusinessApiError(message, { code: 'CANVAS_LOCAL_PAYLOAD_TOO_LARGE' })
+  const batches: Array<{ mutations: CanvasElementMutation[]; state?: Record<string, unknown> }> = []
+  let batch: CanvasElementMutation[] = []
+  let batchState = state
+  let bytes = overhead(batchState)
+  if (bytes > BODY_LIMIT) throw oversized('画布设置数据过大，无法保存；修改仍保留在本机')
+  for (const mutation of mutations) {
+    const size = byteLength(JSON.stringify(mutation))
+    if (size + overhead() > BODY_LIMIT) {
+      throw oversized(`画布元素 ${mutation.element_id} 的内容过大，无法保存；请检查该节点的文本或参数`)
+    }
+    if (batch.length >= BATCH_LIMIT || bytes + size + (batch.length ? 1 : 0) > BODY_LIMIT) {
+      if (batch.length || batchState) batches.push({ mutations: batch, state: batchState })
+      batch = []
+      batchState = undefined
+      bytes = overhead()
+    }
+    bytes += size + (batch.length ? 1 : 0)
+    batch.push(mutation)
   }
-  // 仅 state 变更、无 mutations 时单独提交一次
-  if (mutations.length === 0 && state) {
+  if (batch.length || batchState) batches.push({ mutations: batch, state: batchState })
+  // 完成所有大小检查后再提交，避免单个超大元素导致前面的批次先被写入。
+  for (const item of batches) {
     const result = await saveCanvasElements({
       workspaceId,
       canvasId,
       baseRevision: currentRevision,
-      state,
+      mutations: item.mutations,
+      state: item.state,
       schemaVersion,
     })
     currentRevision = result.sync_revision

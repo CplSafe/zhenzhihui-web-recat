@@ -1,0 +1,65 @@
+.body {
+  display: grid;
+  gap: 14px;
+}
+
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modes button {
+  padding: 7px 13px;
+  border: 1px solid #484848;
+  border-radius: 8px;
+  background: #2b2b2b;
+  color: inherit;
+  cursor: pointer;
+}
+
+.modes button[aria-pressed='true'] {
+  border-color: #48bfa9;
+  background: #173830;
+}
+
+.modes button:disabled {
+  cursor: default;
+}
+
+.preview {
+  display: grid;
+  gap: 6px;
+  color: #c1c1c1;
+}
+
+.preview video {
+  display: block;
+  width: 100%;
+  max-height: 34vh;
+  border-radius: 8px;
+  background: #111;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field input,
+.field textarea {
+  background: #232323;
+  border: 1px solid #484848;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
