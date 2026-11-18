@@ -2925,6 +2925,8 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   const lockSelection = selectedNodeIds.length ? selectedNodeIds : selectedNode ? [selectedNode.id] : []
   const {
     agentOwner,
+    agentLock,
+    unlockAgent,
     blocked: busyNodes,
     labels: leaseLabels,
     reason: busyReason,
@@ -2934,7 +2936,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     workspaceId,
     canvasId,
     currentUserId,
-    !!(teamCanvas && workspaceId && canvasId && currentUserId),
+    !!(workspaceId && canvasId && currentUserId),
     lockSelection,
   )
   useEffect(() => {
@@ -11281,6 +11283,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   )
 
   const canvasShortcutsBlocked = Boolean(
+    agentOwner ||
     canvasModalOpen ||
     imageTool ||
     imageCropRequest ||
@@ -11438,7 +11441,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           />
         </Suspense>
       ) : null}
-      {agentOwner && <CanvasAgentReadOnly owner={agentOwner} />}
+      {agentOwner && <CanvasAgentReadOnly owner={agentOwner} lock={agentLock} onUnlock={unlockAgent} />}
       <div
         /*
           多选期间给根节点打个标记，供 CSS 收起节点上的单节点操作胶囊。
@@ -11555,6 +11558,8 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             modelDefaults={modelDefaults}
             onCanvasChange={onDirectorCanvasChange}
             opened={directorOpen}
+            agentLock={agentLock}
+            onUnlock={unlockAgent}
             canvasReference={directorReference?.binding === canvasBindingKey ? directorReference.reference : undefined}
             onCollapse={() => setOpenDirectorBinding(null)}
           />
@@ -11858,7 +11863,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
               if (!dragEnabled || !connection.source || !connection.target) return false
               return !validateConnection(connection.source, connection.target)
             }}
-            nodesConnectable={dragEnabled}
+            nodesConnectable={!agentOwner && dragEnabled}
             /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步）。
              * React Flow 默认 deleteKeyCode 只有 Backspace，用户按 Del 无反应；这里同时接受
              * Delete 与 Backspace（输入框聚焦时 React Flow 自身会忽略，不会误删）。 */
@@ -12081,7 +12086,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
               setSelectedNodeIds([])
             }}
             /* 工具栏「锁定」：nodesDraggable 关掉后节点不可拖，画布照常平移 */
-            nodesDraggable={dragEnabled && !spacePanning && !panModeEnabled}
+            nodesDraggable={!agentOwner && dragEnabled && !spacePanning && !panModeEnabled}
             /* 默认左键让给框选，平移走中键 [1] / 右键 [2]，空格+左键由 spacePanning 临时接管；
              * 工具栏「拖动」（抓手）点亮后左键 [0] 也平移 */
             panOnDrag={panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}

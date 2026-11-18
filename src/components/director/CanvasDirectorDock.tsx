@@ -1,4 +1,5 @@
-import { Button, Modal } from 'antd'
+import { Button } from 'antd'
+import type { CanvasAgentLock } from '@/composables/useCanvasNodeLocks'
 import { StudioHTTPError } from './studio'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DeepAgentStudioProps } from './DeepAgentStudio'
@@ -16,10 +17,35 @@ export default function CanvasDirectorDock({
   opened,
   onCollapse,
   canvasReference,
+  agentLock,
+  onUnlock,
 }: Required<Pick<DeepAgentStudioProps, 'workspaceId' | 'canvasId' | 'onCollapse'>> &
-  Pick<DeepAgentStudioProps, 'onCanvasChange' | 'canvasReference' | 'modelDefaults'> & { opened: boolean }) {
+  Pick<DeepAgentStudioProps, 'onCanvasChange' | 'canvasReference' | 'modelDefaults'> & {
+    opened: boolean
+    agentLock?: CanvasAgentLock
+    onUnlock: (id: string) => Promise<void>
+  }) {
   const [mounted, setMounted] = useState(opened)
   const [choosing, setChoosing] = useState(false)
+  const [kept, setKept] = useState<string>()
+  const [unlocking, setUnlocking] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (agentLock?.running) setKept(undefined)
+  }, [agentLock?.running])
+  async function unlock() {
+    if (!agentLock || unlocking) return
+    setUnlocking(true)
+    setError('')
+    try {
+      await onUnlock(agentLock.id)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '解锁失败，请稍后重试')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
   const pending = useRef<{ resolve: (value: boolean) => void; reject: (reason: Error) => void }>()
   const cancel = useCallback(() => {
     pending.current?.reject(new StudioHTTPError('已取消本次运行', 409))
@@ -32,6 +58,7 @@ export default function CanvasDirectorDock({
       new Promise<boolean>((resolve, reject) => {
         pending.current?.reject(new StudioHTTPError('已有新的运行请求', 409))
         pending.current = { resolve, reject }
+        setKept(undefined)
         setChoosing(true)
       }),
     [],
@@ -44,6 +71,42 @@ export default function CanvasDirectorDock({
   useEffect(() => {
     if (opened) setMounted(true)
   }, [opened])
+  const lockControls = choosing ? (
+    <section className={styles.lockPrompt} aria-label="是否锁定画布">
+      <p>本轮是否锁定画布？</p>
+      <p>锁定后其他成员只能查看。运行结束仍保持锁定，届时由你确认是否解锁。</p>
+      {agentLock && <p>画布已锁定，选择保持协作不会解除现有锁；需要时请先手动解锁。</p>}
+      <Button onClick={cancel}>取消</Button>
+      <Button onClick={() => choose(false)}>保持协作并运行</Button>
+      <Button type="primary" onClick={() => choose(true)}>
+        锁定并运行
+      </Button>
+    </section>
+  ) : agentLock?.can_unlock ? (
+    <section className={styles.lockPrompt} aria-label="画布锁定状态">
+      <p>
+        {agentLock.running
+          ? '画布已锁定，Agent 正在运行。'
+          : kept === agentLock.id
+            ? '已选择继续锁定，可随时手动解锁。'
+            : '当前没有正在运行的 Agent，画布仍保持锁定。是否解锁？'}
+      </p>
+      {!agentLock.running && (
+        <>
+          <Button loading={unlocking} onClick={() => void unlock()}>
+            解锁画布
+          </Button>
+          {kept !== agentLock.id && (
+            <Button disabled={unlocking} onClick={() => setKept(agentLock.id)}>
+              继续锁定
+            </Button>
+          )}
+        </>
+      )}
+      {agentLock.running && <p>如需提前解锁，请先暂停本轮。</p>}
+      {error && <p role="alert">{error}</p>}
+    </section>
+  ) : null
   return (
     <div
       className={`${styles.dock} canvas-director-area nodrag nopan nowheel`}
@@ -63,26 +126,6 @@ export default function CanvasDirectorDock({
         event.stopPropagation()
       }}
     >
-      {choosing && (
-        <Modal
-          open
-          centered
-          title="本轮 Agent 运行时锁定画布？"
-          onCancel={cancel}
-          zIndex={1600}
-          footer={
-            <>
-              <Button onClick={cancel}>取消</Button>
-              <Button onClick={() => choose(false)}>保持协作并运行</Button>
-              <Button type="primary" onClick={() => choose(true)}>
-                锁定并运行
-              </Button>
-            </>
-          }
-        >
-          <p>锁定期间，其他成员只能查看画布，无法编辑节点或向 Agent 发送消息。本轮结束或暂停后自动解锁。</p>
-        </Modal>
-      )}
       {mounted && (
         <div hidden={!opened}>
           <Suspense fallback={<div className={styles.loading}>正在连接 DoDo Agent…</div>}>
@@ -92,6 +135,7 @@ export default function CanvasDirectorDock({
               modelDefaults={modelDefaults}
               authMode="business"
               chooseRunLock={chooseRunLock}
+              canvasLockControls={lockControls}
               onCanvasChange={onCanvasChange}
               onCollapse={onCollapse}
               canvasReference={canvasReference}

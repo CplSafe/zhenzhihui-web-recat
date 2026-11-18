@@ -18,3 +18,18 @@
   color: #ddd;
   background: #202020;
 }
+
+.lockPrompt {
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid #62626a;
+  border-radius: 10px;
+  background: #292932;
+  color: #f0f0f4;
+}
+.lockPrompt p {
+  margin: 0 0 8px;
+}
+.lockPrompt button {
+  margin: 0 6px 4px 0;
+}

@@ -6,7 +6,15 @@ interface Holder {
   name: string
   editing: boolean
 }
+export interface CanvasAgentLock {
+  id: string
+  owner_id: number
+  owner: string
+  running: boolean
+  can_unlock: boolean
+}
 interface Snapshot {
+  agent_lock?: CanvasAgentLock
   agent_owner?: string
   nodes: Record<string, Holder[]>
   granted: boolean
@@ -105,11 +113,32 @@ export function useCanvasNodeLocks(
       ),
     [holders, blocked],
   )
+  const agentOwner = reply?.scope === scope ? reply.state.agent_owner : undefined
+  const agentLock = reply?.scope === scope ? reply.state.agent_lock : undefined
+  const agentOwnerRef = useRef(agentOwner)
+  agentOwnerRef.current = agentOwner
+  const unlockAgent = useCallback(
+    async (lockId: string) => {
+      await requestBusinessJson(`/api/v1/canvases/${canvasId}/agent-lock/unlock?workspace_id=${workspaceId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lock_id: lockId }),
+      })
+      wake.current?.()
+    },
+    [workspaceId, canvasId],
+  )
   const blockedRef = useRef(blocked)
   blockedRef.current = blocked
-  const reason = useCallback((id?: string | null) => (id ? blockedRef.current.get(id) : undefined), [])
+  const reason = useCallback(
+    (id?: string | null) =>
+      agentOwnerRef.current ? `${agentOwnerRef.current} 已锁定画布` : id ? blockedRef.current.get(id) : undefined,
+    [],
+  )
   return {
-    agentOwner: reply?.scope === scope ? reply.state.agent_owner : undefined,
+    agentOwner,
+    agentLock,
+    unlockAgent,
     blocked,
     labels,
     reason,

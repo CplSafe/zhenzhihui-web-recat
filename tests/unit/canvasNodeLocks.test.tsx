@@ -28,3 +28,24 @@ it('uses the decoded lock response, distinguishes an editor from a shared refere
   view.unmount()
   expect(JSON.parse(String(call.mock.lastCall[1].body)).nodes).toEqual([])
 })
+
+it('blocks all node commands under an Agent lock and sends only an explicit conditional unlock', async () => {
+  const call = vi.mocked(requestBusinessJson)
+  call.mockClear()
+  call.mockResolvedValue({
+    nodes: {},
+    granted: false,
+    agent_owner: 'Owner',
+    agent_lock: { id: 'held-1', owner_id: 2, owner: 'Owner', running: false, can_unlock: false },
+  })
+  const view = renderHook(() => useCanvasNodeLocks(4, 8, 1, true, []))
+  await waitFor(() => expect(view.result.current.agentOwner).toBe('Owner'))
+  expect(view.result.current.reason('any-node')).toContain('已锁定画布')
+  expect(view.result.current.reason()).toContain('已锁定画布')
+  expect(call.mock.calls.some(([path]) => String(path).includes('/unlock'))).toBe(false)
+  await view.result.current.unlockAgent('held-1')
+  expect(call.mock.calls.find(([path]) => String(path).includes('/unlock'))?.[1].body).toBe(
+    JSON.stringify({ lock_id: 'held-1' }),
+  )
+  view.unmount()
+})

@@ -42,13 +42,13 @@ it.each([
       return HttpResponse.json({ id: 'run1' })
     }),
   )
-  render(<CanvasDirectorDock workspaceId={54} canvasId={40} opened onCollapse={() => {}} />)
+  render(<CanvasDirectorDock onUnlock={async () => {}} workspaceId={54} canvasId={40} opened onCollapse={() => {}} />)
   const input = await screen.findByRole('textbox')
   fireEvent.change(input, { target: { value: '制作产品图' } })
   const send = screen.getByRole('button', { name: '发送创作要求' })
   await waitFor(() => expect(send).toBeEnabled())
   fireEvent.click(send)
-  const dialog = await screen.findByRole('dialog', { name: '本轮 Agent 运行时锁定画布？' })
+  const dialog = await screen.findByRole('region', { name: '是否锁定画布' })
   expect(requests).toEqual([])
   fireEvent.click(within(dialog).getByRole('button', { name: label }))
   await waitFor(() => expect(requests).toEqual([choice]))
@@ -384,7 +384,13 @@ describe('Studio transport', () => {
             directorOpen={opened}
             onToggleDirector={() => setOpened(!opened)}
           />
-          <CanvasDirectorDock workspaceId={54} canvasId={40} opened={opened} onCollapse={() => setOpened(false)} />
+          <CanvasDirectorDock
+            onUnlock={async () => {}}
+            workspaceId={54}
+            canvasId={40}
+            opened={opened}
+            onCollapse={() => setOpened(false)}
+          />
         </div>
       )
     }
@@ -2158,4 +2164,38 @@ it('keeps an uncertain running message and reuses its ID on resend', async () =>
   await waitFor(() => expect(received).toHaveLength(2))
   expect(received[1]).toEqual(received[0])
   await waitFor(() => expect(input).toHaveValue(''))
+})
+
+it('keeps the canvas locked after a run, asks inline, and only unlocks after a click', async () => {
+  const unlock = vi.fn().mockResolvedValue(undefined)
+  const lock = { id: 'lock-1', owner_id: 1, owner: 'Owner', running: true, can_unlock: true }
+  const view = render(
+    <CanvasDirectorDock
+      workspaceId={54}
+      canvasId={40}
+      opened
+      onCollapse={() => {}}
+      agentLock={lock}
+      onUnlock={unlock}
+    />,
+  )
+  await screen.findByText('画布已锁定，Agent 正在运行。')
+  expect(screen.queryByRole('button', { name: '解锁画布' })).not.toBeInTheDocument()
+  view.rerender(
+    <CanvasDirectorDock
+      workspaceId={54}
+      canvasId={40}
+      opened
+      onCollapse={() => {}}
+      agentLock={{ ...lock, running: false }}
+      onUnlock={unlock}
+    />,
+  )
+  await screen.findByText('当前没有正在运行的 Agent，画布仍保持锁定。是否解锁？')
+  expect(unlock).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '继续锁定' }))
+  expect(unlock).not.toHaveBeenCalled()
+  expect(screen.getByText('已选择继续锁定，可随时手动解锁。')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '解锁画布' }))
+  await waitFor(() => expect(unlock).toHaveBeenCalledExactlyOnceWith('lock-1'))
 })

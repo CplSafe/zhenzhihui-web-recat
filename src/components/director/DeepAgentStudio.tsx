@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, List, Square, X } from 'lucide-react'
 import { canvasAllowsModel } from '@/utils/canvasModelBuckets'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
@@ -26,6 +26,7 @@ export interface DeepAgentStudioProps {
   modelDefaults?: CanvasModelDefaults
   canvasId?: number
   chooseRunLock?: () => Promise<boolean>
+  canvasLockControls?: ReactNode
   authMode?: 'business' | 'oauth'
   onCanvasChange?: (canvas: Data) => void
   onCollapse?: () => void
@@ -40,6 +41,7 @@ export default function DeepAgentStudio({
   modelDefaults,
   authMode,
   chooseRunLock,
+  canvasLockControls,
   onCanvasChange,
   onCollapse,
   className = '',
@@ -888,6 +890,7 @@ export default function DeepAgentStudio({
           )}
         </div>
         <div className={styles.composerArea} ref={composerAnchor}>
+          {canvasLockControls}
           {showBottom && run && !results && (
             <button
               type="button"
