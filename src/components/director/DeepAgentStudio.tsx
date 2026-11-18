@@ -122,6 +122,7 @@ export default function DeepAgentStudio({
   const consumedCanvasReference = useRef<CanvasReference>()
   const [stopping, setStopping] = useState(false)
   const stopLock = useRef(false)
+  const steeringDraft = useRef<{ key: string; id: string } | null>(null)
   const [actionBusy, setActionBusy] = useState(false),
     [uncertain, setUncertain] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState<string>('')
@@ -261,7 +262,31 @@ export default function DeepAgentStudio({
     studio.setError('')
     prompt.current?.focus()
   }
+  async function sendSteering() {
+    if (!ready || draftDisabled || !current || run?.stop || stopping || !message.trim()) return
+    const id = current
+    const text = message.trim()
+    const references = canvasReferences.map((item) => item.id)
+    const key = JSON.stringify([id, text, references])
+    // An uncertain transport response must reuse the same durable message ID.
+    if (steeringDraft.current?.key !== key) steeringDraft.current = { key, id: crypto.randomUUID() }
+    const messageId = steeringDraft.current.id
+    await action(async () => {
+      await api.request(`/api/runs/${id}/steer`, {
+        message_id: messageId,
+        message: text,
+        canvas_references: references,
+      })
+      if (activeAPI.current !== api || currentId.current !== id) return
+      steeringDraft.current = null
+      setMessage('')
+      setCanvasReferences([])
+      followUpdates.current = true
+      await studio.reload()
+    })
+  }
   async function send(episodeDecision?: EpisodeDecision, startProduction = false) {
+    if (running && !episodeDecision && !startProduction) return sendSteering()
     const savingConfiguration = !!episodeDecision && 'episode_plan' in episodeDecision
     if (
       !ready ||
@@ -1051,7 +1076,11 @@ export default function DeepAgentStudio({
               ref={prompt}
               aria-label="创作要求"
               placeholder={
-                unfinished ? '可先输入下一条要求，当前任务结束后发送…' : '开始你的创作，或者上传图片与剧本文档…'
+                running
+                  ? '补充要求或引用节点，发送后调整当前任务…'
+                  : unfinished
+                    ? '可先输入下一条要求，恢复或结束后发送…'
+                    : '开始你的创作，或者上传图片与剧本文档…'
               }
               maxLength={12000}
               value={message}
@@ -1149,6 +1178,16 @@ export default function DeepAgentStudio({
                   )}
                 </svg>
               </span>
+              {running && (
+                <button
+                  type="submit"
+                  className={styles.send}
+                  aria-label="发送补充要求"
+                  disabled={!ready || draftDisabled || stopping || run?.stop || !message.trim()}
+                >
+                  <StudioIcon name="send" size={12} />
+                </button>
+              )}
               {run && ['running', 'waiting'].includes(run.status) ? (
                 <button
                   type="button"

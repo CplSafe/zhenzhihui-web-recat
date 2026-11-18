@@ -2055,7 +2055,7 @@ it('saves configuration without consuming the unsent requirements or starting pr
   })
   fireEvent.change(screen.getByRole('textbox'), { target: { value: '只讨论风格，先别制作' } })
   await screen.findByText('已识别 2 集 · 已选 0 集')
-  fireEvent.click(screen.getByRole('button', { name: 'Skill', exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: 'Skill' }))
   fireEvent.click(screen.getByRole('button', { name: /故事导演/ }))
   expect(started).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '发送创作要求' }))
@@ -2083,4 +2083,56 @@ it('saves configuration without consuming the unsent requirements or starting pr
     attachments: [],
   })
   expect(started.mock.calls[1][0].episode_plan).toBeUndefined()
+})
+
+it('interrupts the running turn with selected node references without starting another run', async () => {
+  const received: Record<string, unknown>[] = []
+  const start = vi.fn()
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running' }))),
+    http.post('*/agent-studio/api/runs', () => {
+      start()
+      return HttpResponse.json({ id: 'wrong' })
+    }),
+    http.post('*/agent-studio/api/runs/run1/steer', async ({ request }) => {
+      received.push((await request.json()) as Record<string, unknown>)
+      return HttpResponse.json({ ok: true })
+    }),
+  )
+  const { rerender } = render(<DeepAgentStudio canvasId={57} />)
+  await openHistory()
+  rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'node-1', title: '原视频', kind: 'video' }} />)
+  const input = screen.getByRole('textbox', { name: '创作要求' })
+  fireEvent.change(input, { target: { value: '只处理这个视频，停止旧计划' } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  await waitFor(() => expect(received).toHaveLength(1))
+  expect(received[0]).toMatchObject({ message: '只处理这个视频，停止旧计划', canvas_references: ['node-1'] })
+  expect(received[0].message_id).toEqual(expect.any(String))
+  await waitFor(() => expect(input).toHaveValue(''))
+  expect(screen.queryByRole('button', { name: '移除引用 原视频' })).not.toBeInTheDocument()
+  expect(start).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
+})
+
+it('keeps an uncertain running message and reuses its ID on resend', async () => {
+  const received: Record<string, unknown>[] = []
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running' }))),
+    http.post('*/agent-studio/api/runs/run1/steer', async ({ request }) => {
+      received.push((await request.json()) as Record<string, unknown>)
+      return received.length === 1 ? HttpResponse.error() : HttpResponse.json({ ok: true })
+    }),
+  )
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const input = screen.getByRole('textbox', { name: '创作要求' })
+  fireEvent.change(input, { target: { value: '先别生成' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送补充要求' }))
+  await waitFor(() => expect(received).toHaveLength(1))
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送补充要求' })).toBeEnabled())
+  expect(input).toHaveValue('先别生成')
+  fireEvent.click(screen.getByRole('button', { name: '发送补充要求' }))
+  await waitFor(() => expect(received).toHaveLength(2))
+  expect(received[1]).toEqual(received[0])
+  await waitFor(() => expect(input).toHaveValue(''))
 })

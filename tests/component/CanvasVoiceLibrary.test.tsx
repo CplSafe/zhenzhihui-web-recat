@@ -44,7 +44,7 @@ describe('画布统一音色库', () => {
     await screen.findByRole('button', { name: '选用' }, { timeout: 5000 })
     for (const name of ['系统音色', '我的音色', '收藏'])
       await waitFor(() => expect(screen.getByRole('button', { name })).toBeVisible())
-    fireEvent.click(screen.getByRole('button', { name: '关闭', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(props.onSelectVoice).not.toHaveBeenCalled()
     expect(props.onApply).not.toHaveBeenCalled()
