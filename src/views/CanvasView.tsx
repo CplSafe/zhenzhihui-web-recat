@@ -5622,6 +5622,7 @@ function CanvasInner({
               console.info('[Canvas] 本地草稿与已保存内容不同，已恢复最近保存的版本')
             }
           }
+          latestRef.current = { nodes: cloudNodes, edges: cloudEdges }
           setNodes(cloudNodes)
           setEdges(cloudEdges)
           // 还原文本内容：云端节点 data 中的 text 字段写回全局 Map（渲染期由节点组件读取）
@@ -5656,8 +5657,10 @@ function CanvasInner({
               // 旧草稿可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址
               return normalizeNodeMedia({ ...cleaned, data: restoreCanvasTaskState(cleaned.data) }, workspaceId)
             })
+            const restoredEdges = draft.edges as Edge[]
+            latestRef.current = { nodes: restoredNodes, edges: restoredEdges }
             setNodes(restoredNodes)
-            setEdges(draft.edges as Edge[])
+            setEdges(restoredEdges)
             if (draft.textContents) {
               if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
               const map = (window as any).__canvasTextContents as Map<string, string>
@@ -5673,6 +5676,7 @@ function CanvasInner({
             // 草稿不匹配当前画布（或为空）：不恢复不上传，云端以空画布呈现，保证画布内容唯一。
             // 新画布保持完全空白，不自动创建或选中任何节点。
             // 用户可通过左侧工具栏自行添加文本、图片或视频；已有画布仍按上方逻辑恢复云端/本地内容。
+            latestRef.current = { nodes: [], edges: [] }
             setNodes([])
             setEdges([])
             setSelectedNode(null)
@@ -5751,10 +5755,21 @@ function CanvasInner({
     await syncQueueRef.current
   }
 
+  const getSubmissionBlockedReason = useLatestCallback(() => {
+    if (cloudLoadedRef.current && canvasMountedRef.current) return undefined
+    return cloudStatus === 'loading' ? '正在同步云端画布，同步完成后可生成' : '云端画布尚未就绪，请重新打开画布后再生成'
+  })
+  const submissionBlockedReason = getSubmissionBlockedReason()
+
   const persistReservation = useLatestCallback(async (nodeId: string, key: string) => {
-    if (!cloudLoadedRef.current || !latestRef.current.nodes.some((node) => node.id === nodeId)) {
-      throw new Error('节点尚未同步到画布，请稍后重试')
+    const requireTargetNode = () => {
+      const blockedReason = getSubmissionBlockedReason()
+      if (blockedReason) throw new Error(blockedReason)
+      const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+      if (!node) throw new Error('节点已移除或不在当前画布，本次未提交生成')
+      return node
     }
+    requireTargetNode()
     const withKey = (node: Node) =>
       node.id === nodeId ? { ...node, data: { ...node.data, taskIdempotencyKey: key } } : node
     latestRef.current = { ...latestRef.current, nodes: latestRef.current.nodes.map(withKey) }
@@ -5764,7 +5779,15 @@ function CanvasInner({
       () => syncRef.current.nodes.find((node) => node.id === nodeId)?.data?.taskIdempotencyKey,
       key,
     )
+    if (requireTargetNode().data.taskIdempotencyKey !== key) {
+      throw new Error('节点的生成配置已变化，本次未提交生成')
+    }
   })
+
+  const reservation = useMemo(
+    () => ({ blockedReason: submissionBlockedReason, persist: persistReservation }),
+    [submissionBlockedReason, persistReservation],
+  )
 
   // 手动重试同样走串行保存与冲突合并；先等在途请求，避免重复提交。
   const [manualSaving, setManualSaving] = useState(false)
@@ -7096,6 +7119,11 @@ function CanvasInner({
       resume?: { idempotencyKey: string },
     ) => {
       if (!generate || !latestRef.current.nodes.some((node) => node.id === targetNodeId)) return
+      const blockedReason = getSubmissionBlockedReason()
+      if (blockedReason) {
+        showToast(blockedReason, 'info')
+        return
+      }
       if (submissionClaimsRef.current.has(targetNodeId)) return
       submissionClaimsRef.current.add(targetNodeId)
       try {
@@ -7418,6 +7446,7 @@ function CanvasInner({
         }
         pendingNodeSubmissionsRef.current.add(targetNodeId)
         submissionClaimsRef.current.delete(targetNodeId)
+        let submitted = false
         try {
           const taskStartedAt = new Date().toISOString()
           // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
@@ -7479,6 +7508,7 @@ function CanvasInner({
           setSaveStatus('dirty')
           // 保存节点提示词和提交凭证后再发起请求，刷新页面时可恢复真实提交现场。
           await persistReservation(targetNodeId, taskIdempotencyKey)
+          submitted = true
           // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
           const task =
             generate.kind === 'text' && generate.operationCode === 'responses.multimodal'
@@ -7644,8 +7674,8 @@ function CanvasInner({
           const friendlyError = humanizeCanvasTaskError(error?.message, generate) || '任务创建失败，请稍后重试'
           const taskFailure = {
             ...buildGenerationFailure(error, {
-              submissionId: taskIdempotencyKey,
-              submitted: true,
+              submissionId: submitted ? taskIdempotencyKey : undefined,
+              submitted,
               operationCode: generate.operationCode,
               modelVersionId: generate.modelVersionId,
               workspaceId: Number(workspaceId),
@@ -7687,6 +7717,7 @@ function CanvasInner({
       }
     },
     [
+      getSubmissionBlockedReason,
       persistReservation,
       canvasModels,
       currentUserId,
@@ -7748,6 +7779,7 @@ function CanvasInner({
   useEffect(() => {
     if (!workspaceId) return
     const sweep = () => {
+      if (!cloudLoadedRef.current) return
       const now = Date.now()
       for (const node of latestRef.current.nodes) {
         const data = (node.data || {}) as Record<string, unknown>
@@ -7790,7 +7822,7 @@ function CanvasInner({
       window.clearTimeout(first)
       window.clearInterval(timer)
     }
-  }, [workspaceId, currentUserId, markSubmitInterrupted])
+  }, [workspaceId, currentUserId, markSubmitInterrupted, submissionBlockedReason])
 
   const handleNodeGenerate = useCallback(
     async (generate: CanvasGenerationRequest) => {
@@ -7805,6 +7837,8 @@ function CanvasInner({
     images,
     title,
   }: CanvasToolSubmission | { request: CanvasSubjectEditRequest; images: ToolImage[]; title: string }) => {
+    const blockedReason = getSubmissionBlockedReason()
+    if (blockedReason) throw new Error(blockedReason)
     const kind = request.kind
     const sources = images.map((image) => {
       const node = latestRef.current.nodes.find((item) => item.id === image.nodeId)
@@ -11667,7 +11701,7 @@ function CanvasInner({
   })
 
   return (
-    <CanvasReservationContext.Provider value={persistReservation}>
+    <CanvasReservationContext.Provider value={reservation}>
       <CanvasNodeActionsContext.Provider value={nodeActions}>
         {!agentOwner && (
           <Suspense fallback={null}>

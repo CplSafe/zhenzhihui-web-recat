@@ -89,7 +89,8 @@ export default function CanvasAudioGenerator({
   onGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
 }) {
   const canvasId = useCanvasBillingScope()?.canvasId
-  const persistReservation = useCanvasReservation()
+  const reservation = useCanvasReservation()
+  const submissionBlockedReason = reservation?.blockedReason
   const { updateNodeData, getEdges, getNode, getNodes } = useReactFlow()
   const linkedMediaFingerprint = useStore((state) =>
     JSON.stringify(
@@ -998,6 +999,7 @@ export default function CanvasAudioGenerator({
   ])
   const generate = async () => {
     if (
+      submissionBlockedReason ||
       !selected ||
       running ||
       defaultVoiceLoading ||
@@ -1044,8 +1046,8 @@ export default function CanvasAudioGenerator({
         taskIdempotencyKey: submissionId,
       })
       if (canvasId) {
-        if (!persistReservation) throw new Error('画布尚未就绪，请稍后重试')
-        await persistReservation(nodeId, submissionId)
+        if (!reservation) throw new Error('画布尚未就绪，请稍后重试')
+        await reservation.persist(nodeId, submissionId)
       }
       if (abort.signal.aborted || !alive.current) return
       submitted = true
@@ -1523,6 +1525,7 @@ export default function CanvasAudioGenerator({
         data-audio-action="generate"
         type="button"
         disabled={
+          Boolean(submissionBlockedReason) ||
           loadingModels ||
           !selected ||
           running ||
@@ -1531,7 +1534,10 @@ export default function CanvasAudioGenerator({
           (!prompt.trim() && !linkedText) ||
           (clone && !serverVoiceId && !authorized)
         }
-        title={loadingModels ? '正在加载音频模型' : !selected ? '请先选择配音 / 音乐模型' : undefined}
+        title={
+          submissionBlockedReason ||
+          (loadingModels ? '正在加载音频模型' : !selected ? '请先选择配音 / 音乐模型' : undefined)
+        }
         onClick={() => void generate()}
       >
         {running ? '制作中…' : Number(data.assetId) > 0 ? '重新制作' : '制作音频'}

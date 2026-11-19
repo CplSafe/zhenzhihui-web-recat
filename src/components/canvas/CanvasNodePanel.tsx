@@ -1,4 +1,5 @@
 import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
+import { useCanvasReservation } from '@/composables/useCanvasReservation'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
 /**
  * 节点编辑面板 — 始终显示在页面底部，内容根据选中节点类型切换
@@ -885,6 +886,7 @@ export default function CanvasNodePanel({
   onAdoptInheritedText,
   onPolishText,
 }: CanvasNodePanelProps) {
+  const submissionBlockedReason = useCanvasReservation()?.blockedReason
   const kind = node?.kind || 'text'
   const [realPersonHintDismissed, setRealPersonHintDismissed] = useState(false)
   const taskRunning = [
@@ -1975,7 +1977,8 @@ export default function CanvasNodePanel({
   // 视频生成前要等用户确认积分消耗，因此是异步的
   const handleGenerate = async () => {
     const modelVersionId = selectedModel?.modelVersionId
-    if (!modelVersionId || !operationCode || inputValidationError || referenceLimitError) return
+    if (submissionBlockedReason || !modelVersionId || !operationCode || inputValidationError || referenceLimitError)
+      return
     if (costEstimate.loading) return
     if (costEstimate.can_afford === false) {
       onInsufficientCredits?.()
@@ -2951,6 +2954,7 @@ export default function CanvasNodePanel({
             data-canvas-generate
             onClick={handleGenerate}
             disabled={
+              Boolean(submissionBlockedReason) ||
               taskRunning ||
               checkingAssets ||
               costEstimate.loading ||
@@ -2960,7 +2964,8 @@ export default function CanvasNodePanel({
             }
             // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事。
             title={
-              checkingAssets
+              submissionBlockedReason ||
+              (checkingAssets
                 ? '正在检查参考素材…'
                 : inputValidationError || referenceLimitError
                   ? inputValidationError || referenceLimitError || undefined
@@ -2976,7 +2981,7 @@ export default function CanvasNodePanel({
                             : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
                           : hasExistingResult
                             ? '重新制作'
-                            : '开始制作'
+                            : '开始制作')
             }
           >
             {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}

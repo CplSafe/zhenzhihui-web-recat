@@ -1,6 +1,9 @@
 import { createContext, useContext } from 'react'
 
-export type CanvasReservation = (nodeId: string, key: string) => Promise<void>
+interface CanvasReservation {
+  blockedReason: string | undefined
+  persist: (nodeId: string, key: string) => Promise<void>
+}
 export const CanvasReservationContext = createContext<CanvasReservation | undefined>(undefined)
 export function useCanvasReservation() {
   return useContext(CanvasReservationContext)
