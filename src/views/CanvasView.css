@@ -188,6 +188,17 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
   max-height: min(60dvh, calc(var(--canvas-node-panel-height, 30dvh) / var(--canvas-ui-scale, 1)));
 }
 
+.canvas-view.has-stacked-agent .canvas-panel-edit-content > * {
+  box-sizing: border-box;
+  min-height: 0;
+  max-width: 100%;
+  max-height: inherit;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
 .canvas-view.has-stacked-agent .canvas-director-area [aria-label='DoDo Agent'] {
   max-height: 42dvh;
 }
@@ -932,7 +943,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 /* 细轮廓贴合媒体卡片，轻阴影保留选中层级；覆盖 React Flow 默认外框。 */
-.react-flow__node.selected {
+.react-flow__node.selected:not(.canvas-node-leased) {
   outline: #cbd5d9 solid 1.5px !important;
   outline-offset: 0;
   border-radius: 14px;
@@ -2787,7 +2798,7 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   filter: drop-shadow(0 0 8px rgb(0 229 190 / 60%));
   animation-duration: 1.2s;
 }
-.canvas-view .react-flow__node.selected {
+.canvas-view .react-flow__node.selected:not(.canvas-node-leased) {
   outline-color: var(--canvas-border-active, #cbd5d9) !important;
 }
 .canvas-view .react-flow__node.selected .canvas-default-node {
@@ -2849,10 +2860,10 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
 }
 
 .canvas-view .react-flow__node.canvas-node-leased {
-  outline: 2px solid #66d8ca;
+  outline: 2px solid hsl(var(--canvas-editor-hue, 164) 78% 68%);
   outline-offset: 3px;
   border-radius: 12px;
-  box-shadow: 0 0 14px rgb(80 216 190 / 38%);
+  box-shadow: 0 0 14px hsl(var(--canvas-editor-hue, 164) 78% 60% / 38%);
 }
 .canvas-panel-lock-status {
   padding: 8px 12px;

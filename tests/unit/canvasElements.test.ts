@@ -9,7 +9,6 @@ import {
   comparableNode,
   collectCanvasSourceRefs,
   diffCanvasMutations,
-  conflictingCanvasElementIds,
   elementsToGraph,
   isCanvasProvenanceEdge,
   nodeToMutation,

@@ -15,6 +15,7 @@ interface Props {
   onImportScript: () => void
   onModels?: () => void
   onMembers?: () => void
+  onStatistics?: () => void
   onShare?: () => void
 }
 
@@ -33,6 +34,7 @@ export default function CanvasGlobalActions({
   onModels,
   onMembers,
   onShare,
+  onStatistics,
 }: Props) {
   return (
     <div
@@ -80,6 +82,11 @@ export default function CanvasGlobalActions({
         {onMembers && canvasId > 0 && workspaceId > 0 && (
           <button type="button" className="canvas-share-btn" onClick={onMembers}>
             创作成员
+          </button>
+        )}
+        {onStatistics && canvasId > 0 && (
+          <button type="button" className="canvas-share-btn" onClick={onStatistics}>
+            画布数据统计
           </button>
         )}
         {onShare && canvasId > 0 && workspaceId > 0 && (

@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render as renderComponent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import CanvasUpscale from '@/components/canvas/CanvasUpscale'
+import { CanvasReservationContext } from '@/composables/useCanvasReservation'
 import { useUiStore } from '@/stores/ui'
 import { hasOpenCanvasModal } from '@/utils/canvasModal'
 
@@ -22,6 +24,14 @@ vi.mock('@/api/business', async (original) => ({
   waitForAiTask: mocks.poll,
 }))
 
+function render(ui: ReactElement) {
+  return renderComponent(
+    <CanvasReservationContext.Provider value={{ blockedReason: undefined, persist: async () => undefined }}>
+      {ui}
+    </CanvasReservationContext.Provider>,
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   const NativeImage = globalThis.Image
@@ -36,6 +46,54 @@ beforeEach(() => {
   mocks.detail.mockReturnValue(new Promise(() => {}))
 })
 afterEach(() => vi.restoreAllMocks())
+
+it('云端未就绪时不可提交，恢复后保存结果节点凭证再创建任务', async () => {
+  mocks.models.mockResolvedValue([{ id: 8, name: '图片超分', operation_codes: ['image.upscale'] }])
+  const onTasks = vi.fn()
+  const close = vi.fn()
+  const syncNotice = '正在同步云端画布，同步完成后可生成'
+  let acknowledge!: () => void
+  const persist = vi.fn<(nodeId: string, key: string) => Promise<void>>(
+    () =>
+      new Promise<void>((resolve) => {
+        acknowledge = resolve
+      }),
+  )
+  const view = (blockedReason?: string) => (
+    <CanvasReservationContext.Provider value={{ blockedReason, persist }}>
+      <CanvasUpscale
+        workspaceId={21}
+        canvasId={7}
+        nodes={[{ id: 'source', position: { x: 0, y: 0 }, data: { kind: 'image', assetId: 99 } }]}
+        request={{ ids: ['source'], key: 1 }}
+        onCloseRequest={close}
+        onSubmitted={vi.fn()}
+        onTasks={onTasks}
+        onModalChange={vi.fn()}
+      />
+    </CanvasReservationContext.Provider>
+  )
+  const { rerender } = renderComponent(view(syncNotice))
+  await screen.findByText('预计 24 积分')
+  const confirm = screen.getByRole('button', { name: '确认超分' })
+  expect(confirm).toBeDisabled()
+  expect(screen.getByText(syncNotice)).toBeInTheDocument()
+  fireEvent.click(confirm)
+  expect(onTasks).not.toHaveBeenCalled()
+  expect(close).not.toHaveBeenCalled()
+  expect(persist).not.toHaveBeenCalled()
+  expect(mocks.create).not.toHaveBeenCalled()
+
+  rerender(view())
+  await userEvent.click(confirm)
+  expect(persist).toHaveBeenCalledOnce()
+  const [nodeId, key] = persist.mock.calls[0]
+  expect(nodeId).toBe(`hd-result-submission-${key}`)
+  expect(mocks.create).not.toHaveBeenCalled()
+  acknowledge()
+  await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce())
+  expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: key }))
+})
 
 it('中文策略保留英文提交值，倍率变化更新预计输出尺寸', async () => {
   mocks.models.mockResolvedValue([

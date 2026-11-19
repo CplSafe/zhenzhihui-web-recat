@@ -133,10 +133,10 @@
   max-width: 45%;
   overflow: hidden;
   padding: 2px 5px;
-  border: 1px solid #427b75;
+  border: 1px solid hsl(var(--canvas-editor-hue, 164) 65% 55%);
   border-radius: 6px;
-  background: #163733;
-  color: #cdfaf1;
+  background: hsl(var(--canvas-editor-hue, 164) 35% 15%);
+  color: hsl(var(--canvas-editor-hue, 164) 85% 88%);
   font-size: 0.85em;
   text-overflow: ellipsis;
   white-space: nowrap;

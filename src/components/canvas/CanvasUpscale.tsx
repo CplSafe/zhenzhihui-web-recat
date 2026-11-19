@@ -1,3 +1,4 @@
+import { useCanvasReservation } from '@/composables/useCanvasReservation'
 import { imageGenerationInfo } from '@/utils/canvasImageInfo'
 import { useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
@@ -70,6 +71,8 @@ export default function CanvasUpscale(props: {
   onModalChange: (open: boolean) => void
   onVideoGenerate?: (submission: VideoUpscaleSubmission) => Promise<void>
 }) {
+  const reservation = useCanvasReservation()
+  const submissionBlockedReason = reservation?.blockedReason
   const source = hdSources(props.nodes.filter((node) => props.request?.ids.includes(node.id)))[0]
   const operation = source ? `${source.kind}.upscale` : ''
   const [catalogRetry, setCatalogRetry] = useState(0)
@@ -310,7 +313,7 @@ export default function CanvasUpscale(props: {
   const currentQuote = quote?.key === fingerprint ? quote : null
   async function run() {
     const submissionKey = key.current
-    if (lock.current || submittingKeys.current.has(submissionKey) || !source || !body) return
+    if (submissionBlockedReason || lock.current || submittingKeys.current.has(submissionKey) || !source || !body) return
     if (!currentQuote || !currentQuote.can_afford || currentQuote.balance < currentQuote.estimated_cost) return
     const validation = validateToolFields(fields, values)
     if (validation) {
@@ -386,6 +389,9 @@ export default function CanvasUpscale(props: {
       props.onSubmitted()
       let task: any
       try {
+        if (!reservation) throw new Error('画布尚未就绪，请稍后重试')
+        await reservation.persist(`hd-result-${base.id}`, submissionKey)
+        if (controller.current.signal.aborted) return
         task = await createAiTask({
           ...body,
           modelVersion: model,
@@ -624,6 +630,7 @@ export default function CanvasUpscale(props: {
               description={quote.estimate_note}
             />
           )}
+          {submissionBlockedReason && <Alert type="info" message={submissionBlockedReason} />}
           <div className={styles.footer}>
             <span className={styles.cost} aria-live="polite">
               {currentQuote
@@ -635,7 +642,12 @@ export default function CanvasUpscale(props: {
             <Button
               type="primary"
               loading={busy}
-              disabled={!currentQuote || !currentQuote.can_afford || currentQuote.balance < currentQuote.estimated_cost}
+              disabled={
+                Boolean(submissionBlockedReason) ||
+                !currentQuote ||
+                !currentQuote.can_afford ||
+                currentQuote.balance < currentQuote.estimated_cost
+              }
               onClick={() => void run()}
             >
               确认超分

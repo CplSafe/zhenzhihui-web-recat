@@ -1,6 +1,96 @@
 import { expect, test } from '@playwright/test'
 import { installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
+test('本机预览可见时等待云端画布，再保存超分结果节点后提交', async ({ page }) => {
+  await installStrictAuthenticatedApp(page, { preserveStorage: true })
+  const sourceNode = {
+    id: 'source',
+    type: 'image',
+    position: { x: 300, y: 200 },
+    style: { width: 320, height: 240 },
+    data: { kind: 'image', assetId: 701, assetWorkspaceId: WORKSPACE_ID, title: '原图' },
+  }
+  await page.addInitScript((node) => {
+    localStorage.setItem(
+      'zzh_canvas_draft_u7_w21_p120',
+      JSON.stringify({ nodes: [node], edges: [], boundCanvasId: 120, pendingSync: false, updatedAt: Date.now() }),
+    )
+  }, sourceNode)
+  let releaseCloud!: () => void
+  const cloudGate = new Promise<void>((resolve) => {
+    releaseCloud = resolve
+  })
+  let releaseSave!: () => void
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve
+  })
+  let keySaved = ''
+  let keyAcknowledged = ''
+  const submittedKeys: string[] = []
+  await page.route('**/api/v1/canvases/120/node-locks?**', (route) =>
+    route.fulfill({ json: { granted: true, nodes: {} } }),
+  )
+  await page.route('**/api/v1/canvases/120/elements?**', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      const { mutations = [] } = route.request().postDataJSON()
+      const result = mutations.find((mutation: { element_id: string }) =>
+        mutation.element_id.startsWith('hd-result-submission-'),
+      )
+      if (result && !keySaved) {
+        keySaved = result.payload.data.taskIdempotencyKey
+        await saveGate
+        keyAcknowledged = keySaved
+      }
+      return route.fulfill({ json: { sync_revision: 2 } })
+    }
+    const query = new URL(route.request().url()).searchParams
+    if (query.get('limit') !== '1') await cloudGate
+    return route.fulfill({
+      json: {
+        elements:
+          Number(query.get('after_revision')) > 0
+            ? []
+            : [{ element_id: sourceNode.id, kind: 'node', op: 'upsert', payload: sourceNode }],
+        sync_revision: 1,
+        has_more: false,
+      },
+    })
+  })
+  await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
+  await page.route('**/api/v1/ai/models**', (route) =>
+    route.fulfill({
+      json: { data: [{ id: 42, name: '图片超分', capability: 'image', operation_codes: ['image.upscale'] }] },
+    }),
+  )
+  await page.route('**/api/v1/ai/tasks', async (route) => {
+    const { idempotency_key } = route.request().postDataJSON()
+    expect(idempotency_key).toBe(keyAcknowledged)
+    submittedKeys.push(idempotency_key)
+    await route.fulfill({ status: 503, json: { message: '模拟停止计费请求' } })
+  })
+
+  await page.goto('/canvas/120')
+  await page.locator('.react-flow__node[data-id="source"] .canvas-node-header').click()
+  await page.getByRole('button', { name: '超分', exact: true }).click()
+  const modal = page.getByRole('dialog', { name: '超分', exact: true })
+  const confirm = modal.getByRole('button', { name: '确认超分' })
+  await expect(modal.getByText('原始尺寸：1 × 1 像素')).toBeVisible()
+  await expect(modal.getByText('预计 100 积分')).toBeVisible()
+  await expect(confirm).toBeDisabled()
+  await expect(modal.getByText('正在同步云端画布，同步完成后可生成')).toBeVisible()
+  await expect(page.locator('.react-flow__node')).toHaveCount(1)
+  expect(submittedKeys).toHaveLength(0)
+
+  releaseCloud()
+  await expect(confirm).toBeEnabled()
+  await confirm.click()
+  await expect.poll(() => keySaved).not.toBe('')
+  expect(submittedKeys).toHaveLength(0)
+  releaseSave()
+  await expect.poll(() => submittedKeys).toEqual([keySaved])
+  await expect(page.getByText('节点尚未同步到画布，请稍后重试')).toHaveCount(0)
+})
+
 for (const dimensions of [
   { width: 1024, height: 768 },
   { width: 4096, height: 256 },
@@ -132,6 +222,8 @@ for (const dimensions of [
       }),
     )
     await page.route('**/api/v1/canvases/120**', async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith('/node-locks'))
+        return route.fulfill({ json: { granted: true, nodes: {} } })
       if (route.request().method() === 'PATCH') {
         await route.fulfill({ json: { revision: 2 } })
         return
@@ -168,9 +260,10 @@ for (const dimensions of [
     if (dimensions.height === 5000) await page.setViewportSize({ width: 760, height: 900 })
     await page.goto('/canvas/120')
     const source = page.locator('.react-flow__node[data-id="source"]')
+    const imagePrompt = page.locator('.canvas-panel-area').getByRole('textbox', { name: /描述你想要生成的内容/ })
     await source.locator('.canvas-node-header').click()
     await expect(page.locator('.canvas-panel-area')).toBeVisible()
-    await expect(page.locator('.canvas-panel-area textarea').first()).toHaveValue('保留这段图片描述')
+    await expect(imagePrompt).toHaveText('保留这段图片描述')
     await page.getByRole('button', { name: '超分', exact: true }).click()
     const modal = page.getByRole('dialog', { name: '超分', exact: true })
     await expect(modal).toBeVisible()
@@ -190,7 +283,7 @@ for (const dimensions of [
     await modal.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(modal).not.toBeVisible()
     await expect(page.locator('.canvas-panel-area')).toBeVisible()
-    await expect(page.locator('.canvas-panel-area textarea').first()).toHaveValue('保留这段图片描述')
+    await expect(imagePrompt).toHaveText('保留这段图片描述')
     await expect(source).toHaveClass(/selected/)
     await page.getByRole('button', { name: '超分', exact: true }).click()
     await expect(modal).toBeVisible()
@@ -259,7 +352,11 @@ for (const dimensions of [
       await modal.getByRole('button', { name: '确认超分' }).click()
       await expect.poll(() => submissions.length).toBe(2)
       expect(submissions[1].idempotency_key).not.toBe(submissions[0].idempotency_key)
-      await expect(page.locator('.react-flow__node').filter({ hasText: '当前模型有任务正在生成中' })).toHaveCount(1)
+      await expect(
+        page
+          .locator('.react-flow__node')
+          .getByRole('alert', { name: '生成失败：当前模型有任务正在生成中，请稍后再试。' }),
+      ).toBeVisible()
       await page.screenshot({ path: testInfo.outputPath('concurrent-upscale-rejection.png') })
     }
     releaseSubmission()

@@ -112,6 +112,7 @@ export function materializeHdResults(
     const id = `hd-result-${task.id}`
     const existing = nextNodes.findIndex((node) => node.id === id)
     const resultData = {
+      ...(task.id.startsWith('submission-') ? { taskIdempotencyKey: task.id.slice('submission-'.length) } : {}),
       taskStatus: task.status === 'completed' ? 'succeeded' : task.status,
       taskId: task.task_id || 0,
       taskError: task.status === 'failed' ? task.error || '超分失败，请重新选择原图重试' : '',

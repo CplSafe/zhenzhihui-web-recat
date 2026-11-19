@@ -1,0 +1,26 @@
+.canvas-agent-readonly {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 240px);
+  padding: 10px 16px;
+  border: 1px solid #55545e;
+  border-radius: 10px;
+  background: #26262e;
+  color: #efedf5;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .canvas-agent-readonly {
+    top: 64px;
+    max-width: calc(100vw - 32px);
+    width: max-content;
+    flex-wrap: wrap;
+  }
+}

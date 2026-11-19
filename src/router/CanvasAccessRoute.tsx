@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, LayoutGrid, RotateCw } from 'lucide-react'
-import { fetchCanvasElements, type CanvasModelDefaults } from '@/api/canvasApi'
+import { fetchCanvasElements, getCanvasMembers, type CanvasModelDefaults } from '@/api/canvasApi'
 import {
   useCurrentUser,
   useWorkspaceId,
@@ -60,6 +60,7 @@ function CanvasAccessNotice({
 }
 
 function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; workspaceId: number; userId: number }) {
+  const [canManage, setCanManage] = useState(false)
   const [defaults, setDefaults] = useState<CanvasModelDefaults>({})
   const [attempt, setAttempt] = useState(0)
   const [state, setState] = useState<'loading' | 'ready' | 'missing' | 'error' | 'ambiguous'>('loading')
@@ -72,6 +73,7 @@ function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; wor
     const probe = (id: number) => fetchCanvasElements({ workspaceId: id, canvasId, limit: 1 })
     const isMissing = (error: any) => [403, 404].includes(Number(error?.status))
     setState('loading')
+    setCanManage(false)
     void (async () => {
       try {
         const details = await probe(workspaceId)
@@ -83,6 +85,13 @@ function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; wor
             videoModelVersionId: details.video_model_version_id,
           })
           setState('ready')
+          void getCanvasMembers(workspaceId, canvasId)
+            .then((membership) => {
+              if (isCurrent()) setCanManage(membership.can_manage === true)
+            })
+            .catch(() => {
+              /* 权限未知时隐藏管理入口，保留画布访问。 */
+            })
         }
         return
       } catch (error) {
@@ -145,7 +154,7 @@ function CanvasAccess({ canvasId, workspaceId, userId }: { canvasId: number; wor
   if (state === 'ready')
     return (
       <Suspense fallback={<div className="route-loading" aria-label="正在加载画布" />}>
-        <CanvasView modelDefaults={defaults} />
+        <CanvasView modelDefaults={defaults} canManage={canManage} />
       </Suspense>
     )
   if (state === 'loading')

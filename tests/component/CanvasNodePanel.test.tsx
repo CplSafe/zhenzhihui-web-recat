@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
 import { readMentionInput, selectionOffsets, setSelection } from '@/components/canvas/CanvasMentionInput'
+import { CanvasReservationContext } from '@/composables/useCanvasReservation'
 import { estimateAiTaskCost } from '@/api/business'
 import * as uiStore from '@/stores/ui'
 import { createGenerationModelOperationStateMap } from '@/utils/generationModelCatalog'
@@ -110,6 +111,43 @@ describe('CanvasNodePanel unified real-person material entry', () => {
     expect(await screen.findByText('预冻结：180 积分', {}, { timeout: 2000 })).toHaveAttribute(
       'title',
       '完成后按实际用量结算。',
+    )
+  })
+
+  it('缓存中的生成配置可见，但必须等云端画布加载完才可制作', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    const persist = vi.fn().mockResolvedValue(undefined)
+    const prompt = '先从本机显示的画布提示词'
+    const blockedReason = '正在同步云端画布，同步完成后可生成'
+    const panel = (reason?: string) => (
+      <CanvasReservationContext.Provider value={{ blockedReason: reason, persist }}>
+        <CanvasNodePanel
+          node={{ id: 'cached-image', kind: 'image', prompt, sourceRefs: [] }}
+          workspaceId={7}
+          models={{
+            image: [
+              { modelVersionId: 21, displayName: '图片模型', operationCodes: ['image.text_to_image'], source: {} },
+            ],
+          }}
+          onGenerate={onGenerate}
+        />
+      </CanvasReservationContext.Provider>
+    )
+    const { rerender } = render(panel(blockedReason))
+    const generate = screen.getByRole('button', { name: '制作' })
+    expect(readMentionInput(screen.getByRole('textbox'))).toBe(prompt)
+    await screen.findByText('预计消耗：10 积分', {}, { timeout: 2000 })
+    expect(generate).toBeDisabled()
+    expect(generate).toHaveAttribute('title', blockedReason)
+    await user.click(generate)
+    expect(onGenerate).not.toHaveBeenCalled()
+
+    rerender(panel())
+    expect(generate).toBeEnabled()
+    await user.click(generate)
+    expect(onGenerate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ prompt, modelVersionId: 21, operationCode: 'image.text_to_image' }),
     )
   })
 

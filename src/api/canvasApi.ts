@@ -624,3 +624,56 @@ export function subscribeCanvasEvents({
   // EventSource reconnects on a transient disconnect or the server's stream-age limit.
   return close
 }
+
+export interface CanvasNodeUsage {
+  historical_allocated_credits?: number
+  node_id: string
+  title: string
+  deleted: boolean
+  used_credits: number
+  members: { user_id: number; display_name: string; used_credits: number; historical_allocated_credits?: number }[]
+}
+export interface CanvasStatisticsFilters {
+  query?: string
+  user_id?: string
+  state?: string
+  date_from?: string
+  date_to?: string
+}
+export interface WorkspaceCanvasUsageSummary {
+  workspace_total_used_credits?: number
+  total_used_credits: number
+  unassigned_used_credits?: number
+}
+export interface CanvasStatistics {
+  workspace_usage?: WorkspaceCanvasUsageSummary
+  historical_allocated_credits?: number
+  trend: { date: string; used_credits: number }[]
+  member_totals: CanvasNodeUsage['members']
+  member_choices: CanvasNodeUsage['members']
+  top_nodes: CanvasNodeUsage[]
+  items: CanvasNodeUsage[]
+  total: number
+  total_used_credits: number
+}
+export async function getCanvasStatistics(
+  workspaceId: number,
+  canvasId: number,
+  page = 1,
+  filters: CanvasStatisticsFilters = {},
+): Promise<CanvasStatistics> {
+  const ws = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
+  const id = requirePositiveInteger(canvasId, '画布 ID 无效')
+  const query = new URLSearchParams({
+    workspace_id: String(ws),
+    limit: '50',
+    offset: String((Math.max(1, page) - 1) * 50),
+  })
+  for (const [name, value] of Object.entries(filters)) {
+    if (value) query.set(name, value)
+  }
+  const payload = await requestBusinessJson<unknown>(`/api/v1/canvases/${id}/statistics?${query}`)
+  const data = unwrap<CanvasStatistics>(payload)
+  if (!data || !Array.isArray(data.items)) throw new BusinessApiError('统计数据暂不可用')
+  return data
+}

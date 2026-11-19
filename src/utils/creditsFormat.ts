@@ -1,6 +1,6 @@
 /**
  * 积分展示与计算。
- * 后端积分精度为 0.001；前端最多展示 2 位小数（去尾零），非零但不足 0.01 时显示「<0.01」。
+ * 后端积分精度为 0.001；前端默认展示 2 位小数，统计对账可展示 3 位（去尾零），非零但不足 0.01 时显示「<0.01」。
  * 客户端涉及积分的加减乘、比较一律走整数毫积分（toMilli/fromMilli），避免浮点误差。
  */
 
@@ -30,12 +30,12 @@ export function sumCredits(values: readonly unknown[]): number {
   return fromMilli(values.reduce<number>((sum, v) => sum + toMilli(v), 0))
 }
 
-/** 积分展示：千分位、最多 2 位小数去尾零；非零但 <0.005 显示「<0.01」。 */
-export function formatCredits(credits: unknown): string {
+/** 积分展示：默认 2 位，统计对账可用 3 位；不足最小显示精度时标记下限。 */
+export function formatCredits(credits: unknown, precision: 2 | 3 = 2): string {
   const n = Number(credits)
   if (!Number.isFinite(n) || n === 0) return '0'
-  if (Math.abs(n) < 0.005) return n > 0 ? '<0.01' : '-<0.01'
-  return n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  if (Math.abs(n) < 0.5 * 10 ** -precision) return `${n > 0 ? '' : '-'}<${10 ** -precision}`
+  return n.toLocaleString('en-US', { maximumFractionDigits: precision })
 }
 
 /** 生成消耗直接展示积分，不折算人民币；非法值和负数按 0 展示。 */

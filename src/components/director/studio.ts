@@ -124,7 +124,7 @@ export function startsCanvasAgentRun(path: string, data: unknown): boolean {
   if (!data || typeof data !== 'object') return false
   const body = data as Record<string, unknown>
   if (path === '/api/runs') return !body.episode_plan || !!body.start_production
-  if (/^\/api\/runs\/[^/]+\/(resume|repairs\/[^/]+\/(resume|remerge))$/.test(path)) return true
+  if (/^\/api\/runs\/[^/]+\/repairs\/[^/]+\/(resume|remerge)$/.test(path)) return true
   if (/^\/api\/runs\/[^/]+\/repairs\/[^/]+\/decision$/.test(path)) return body.decision === 'approve'
   return /^\/api\/runs\/[^/]+\/media-retries\/[^/]+\/decision$/.test(path) && body.start === true
 }
