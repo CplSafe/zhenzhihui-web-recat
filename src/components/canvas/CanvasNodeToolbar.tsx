@@ -11,8 +11,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Crop } from 'lucide-react'
 import styles from './CanvasNodeToolbar.module.css'
 
-const subjectEditEnabled = import.meta.env.VITE_CANVAS_SUBJECT_EDIT_ENABLED === 'true'
-
 /**
  * 截帧位置。current/first/last 与 utils/videoFrameCapture 的 VideoFramePosition 对应；
  * custom = 任意帧：打开放大预览，拖进度条到想要的位置再点「截取此帧」（反馈 #7）。
@@ -206,7 +204,7 @@ export default function CanvasNodeToolbar({
         </button>
       )}
 
-      {subjectEditEnabled && isMedia && hasContent && !uploading && onSubjectEdit && (
+      {isMedia && hasContent && !uploading && onSubjectEdit && (
         <button type="button" className={`${styles.action} ${styles.textAction}`} onClick={onSubjectEdit}>
           主体编辑
         </button>

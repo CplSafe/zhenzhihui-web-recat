@@ -12877,6 +12877,7 @@ function CanvasInner({
               <CanvasSubjectEdit
                 key={`${canvasBindingKey}:${subjectEdit.nodeId}:${subjectEdit.assetId}`}
                 workspaceId={Number(workspaceId)}
+                canvasId={Number(canvasId)}
                 source={subjectEdit}
                 onClose={() => setSubjectEditTarget(null)}
                 onSubmit={(request, title) => handleMediaToolGenerate({ request, title, images: [subjectEdit] })}
@@ -13547,6 +13548,7 @@ function CanvasInner({
                   panelAnchor
                     ? ({
                         ...panelAnchor,
+                        '--canvas-panel-space-below': `${Math.max(80, window.innerHeight - Number(panelAnchor.top) - 16)}px`,
                         '--canvas-node-panel-width': directorLeftBoundary
                           ? `${directorLeftBoundary - 2 * NODE_PANEL_GAP}px`
                           : undefined,
