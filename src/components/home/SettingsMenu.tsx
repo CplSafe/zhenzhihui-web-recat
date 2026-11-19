@@ -13,6 +13,8 @@ import { useConfirmDialog } from '@/composables/useToast'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useNavigate } from 'react-router-dom'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
+import { getCreditRequestContext } from '@/api/creditRequests'
+import { useCurrentUser } from '@/stores/workspaceSession'
 import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
 
@@ -44,6 +46,21 @@ interface SettingsMenuProps {
 /** 管理侧栏设置菜单及弹层焦点。 */
 export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const [open, setOpen] = useState(false)
+  const user = useCurrentUser()
+  const userKey = String(user?.id || user?.user_id || '')
+  const [requestEligibility, setRequestEligibility] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const controller = new AbortController()
+    void getCreditRequestContext(controller.signal)
+      .then((context) => {
+        if (!controller.signal.aborted) setRequestEligibility(context.superior ? userKey : null)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRequestEligibility(null)
+      })
+    return () => controller.abort()
+  }, [open, userKey])
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const [pwdOpen, setPwdOpen] = useState(false)
@@ -60,6 +77,7 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const toggle = () => {
     void requireAuth(
       () => {
+        setRequestEligibility(null)
         setOpen((v) => {
           const next = !v
           if (next && btnRef.current) {
@@ -179,10 +197,12 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               <span className="settings-menu__ico settings-menu__ico--manual">{IconManual}</span>
               <span className="settings-menu__label">使用手册</span>
             </a>
-            <button type="button" className="settings-menu__item" role="menuitem" onClick={openCreditRequests}>
-              <span className="settings-menu__ico settings-menu__ico--blue">{IconCreditRequest}</span>
-              <span className="settings-menu__label">积分申请</span>
-            </button>
+            {requestEligibility === userKey && (
+              <button type="button" className="settings-menu__item" role="menuitem" onClick={openCreditRequests}>
+                <span className="settings-menu__ico settings-menu__ico--blue">{IconCreditRequest}</span>
+                <span className="settings-menu__label">积分申请</span>
+              </button>
+            )}
             <button
               type="button"
               className="settings-menu__item"

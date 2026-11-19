@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  context: vi.fn(),
   logout: vi.fn(),
   requestConfirm: vi.fn(),
   requireAuth: vi.fn(),
@@ -27,12 +28,15 @@ vi.mock('@/composables/useRequireAuth', () => ({
   useRequireAuth: () => mocks.requireAuth,
 }))
 
+vi.mock('@/api/creditRequests', () => ({ getCreditRequestContext: mocks.context }))
+
 import SettingsMenu from '@/components/home/SettingsMenu'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
 
 describe('SettingsMenu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.context.mockResolvedValue({ superior: { id: 20, name: '上级' } })
     mocks.state.isLoggingOut = false
     mocks.allowProtectedAction = true
     mocks.requireAuth.mockImplementation(async (action: () => void) => {
@@ -117,6 +121,26 @@ describe('SettingsMenu', () => {
     expect(mocks.logout).toHaveBeenCalledTimes(1)
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
+  it.each(['unbound', 'unavailable'])('hides the credit request entry when context is %s', async (state) => {
+    if (state === 'unbound') mocks.context.mockResolvedValue({ superior: null })
+    else mocks.context.mockRejectedValue(new Error('unavailable'))
+    render(<SettingsMenu />, { wrapper: MemoryRouter })
+    await userEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(screen.queryByRole('menuitem', { name: '积分申请' })).not.toBeInTheDocument()
+  })
+
+  it('rechecks hierarchy on reopening and hides the old entry while loading', async () => {
+    const user = userEvent.setup()
+    render(<SettingsMenu />, { wrapper: MemoryRouter })
+    await user.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('menuitem', { name: '积分申请' })).toBeVisible()
+    await user.keyboard('{Escape}')
+    mocks.context.mockResolvedValue({ superior: null })
+    await user.click(screen.getByRole('button', { name: '设置' }))
+    expect(screen.queryByRole('menuitem', { name: '积分申请' })).not.toBeInTheDocument()
+    expect(mocks.context).toHaveBeenCalledTimes(2)
+  })
+
   it('replaces the MCP menu item with credit requests', async () => {
     const user = userEvent.setup()
     const onAfterAction = vi.fn()
@@ -130,7 +154,7 @@ describe('SettingsMenu', () => {
     )
     await user.click(screen.getByRole('button', { name: '设置' }))
     expect(screen.queryByRole('menuitem', { name: 'MCP 接入' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitem', { name: '积分申请' }))
+    await user.click(await screen.findByRole('menuitem', { name: '积分申请' }))
     expect(await screen.findByRole('heading', { name: '积分申请页' })).toBeInTheDocument()
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
