@@ -910,6 +910,145 @@ describe('Studio concurrency and content boundaries', () => {
     expect(view.container.querySelector('a')?.getAttribute('href') || '').not.toMatch(/^javascript:/)
     expect(view.container).toHaveTextContent('private')
   })
+  it.each(['paused', 'error'] as const)(
+    'sends instructions to the same %s run after receiving the server capability',
+    async (status) => {
+      const resumes: unknown[] = []
+      const start = vi.fn()
+      server.use(
+        http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status }))),
+        http.post('*/agent-studio/api/runs', () => {
+          start()
+          return HttpResponse.json({ id: 'wrong' })
+        }),
+        http.post('*/agent-studio/api/runs/run1/resume', async ({ request }) => {
+          resumes.push(await request.json())
+          return HttpResponse.json({ ok: true })
+        }),
+      )
+      render(
+        <CanvasDirectorDock onUnlock={async () => {}} workspaceId={54} canvasId={40} opened onCollapse={() => {}} />,
+      )
+      await openHistory()
+      const input = screen.getByRole('textbox', { name: '创作要求' })
+      fireEvent.change(input, { target: { value: '先跳过失败的镜头，把剩下的场景图做完' } })
+      expect(screen.getByRole('button', { name: '发送创作要求' })).toBeDisabled()
+      act(() =>
+        Socket.instances[0].emit({
+          event: 'update',
+          cursor: 8,
+          data: { run_id: 'run1', type: 'RUN_STATE', data: { status, can_resume_with_guidance: true } },
+        }),
+      )
+      expect(screen.getByRole('button', { name: '发送补充要求' })).toBeEnabled()
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await waitFor(() => expect(resumes).toEqual([{ message: '先跳过失败的镜头，把剩下的场景图做完' }]))
+      await waitFor(() => expect(input).toHaveValue(''))
+      expect(start).not.toHaveBeenCalled()
+      expect(screen.queryByRole('region', { name: '是否锁定画布' })).not.toBeInTheDocument()
+    },
+  )
+  it('preserves unsent guidance and requires checking the same conversation after an uncertain response', async () => {
+    const resume = vi.fn()
+    const read = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => {
+        read()
+        return HttpResponse.json(snapshot({ status: 'error', can_resume_with_guidance: true }))
+      }),
+      http.post('*/agent-studio/api/runs/run1/resume', () => {
+        resume()
+        return HttpResponse.error()
+      }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    const input = screen.getByRole('textbox', { name: '创作要求' })
+    fireEvent.change(input, { target: { value: '继续剩余任务' } })
+    const send = screen.getByRole('button', { name: '发送补充要求' })
+    fireEvent.click(send)
+    await screen.findByText(/补充要求的发送结果待确认/)
+    expect(send).toBeDisabled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(resume).toHaveBeenCalledTimes(1)
+    expect(input).toHaveValue('继续剩余任务')
+
+    read.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '第一集测试' }))
+    fireEvent.click(screen.getByRole('button', { name: /第一集测试.*已结束/ }))
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(send).toBeEnabled())
+    expect(input).toHaveValue('继续剩余任务')
+    expect(resume).toHaveBeenCalledTimes(1)
+  })
+  it('blocks steering when a guided resume starts running before its response is lost', async () => {
+    let loseResponse: () => void = () => {}
+    const response = new Promise<void>((resolve) => {
+      loseResponse = resolve
+    })
+    const resume = vi.fn()
+    const steer = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(snapshot({ status: 'paused', can_resume_with_guidance: true })),
+      ),
+      http.post('*/agent-studio/api/runs/run1/resume', async () => {
+        resume()
+        await response
+        return HttpResponse.error()
+      }),
+      http.post('*/agent-studio/api/runs/run1/steer', () => {
+        steer()
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    const input = screen.getByRole('textbox', { name: '创作要求' })
+    fireEvent.change(input, { target: { value: '继续剩余任务' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送补充要求' }))
+    await waitFor(() => expect(resume).toHaveBeenCalledTimes(1))
+    act(() =>
+      Socket.instances[0].emit({
+        event: 'update',
+        cursor: 8,
+        data: { run_id: 'run1', type: 'RUN_STATE', data: { status: 'running', can_resume_with_guidance: false } },
+      }),
+    )
+    loseResponse()
+    await screen.findByText(/补充要求的发送结果待确认/)
+
+    const send = screen.getByRole('button', { name: '发送补充要求' })
+    expect(send).toBeDisabled()
+    expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
+    fireEvent.click(send)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input).toBeEnabled()
+    expect(input).toHaveValue('继续剩余任务')
+    expect(resume).toHaveBeenCalledTimes(1)
+    expect(steer).not.toHaveBeenCalled()
+  })
+  it('keeps an existing canvas reference visible when paused guidance accepts only text', async () => {
+    const { rerender } = render(<DeepAgentStudio canvasId={57} />)
+    await openHistory()
+    rerender(<DeepAgentStudio canvasId={57} canvasReference={{ id: 'node-1', title: '原视频', kind: 'video' }} />)
+    const reference = screen.getByRole('button', { name: '移除引用 原视频' })
+    const input = screen.getByRole('textbox', { name: '创作要求' })
+    fireEvent.change(input, { target: { value: '继续剩余任务' } })
+    act(() =>
+      Socket.instances[0].emit({
+        event: 'update',
+        cursor: 8,
+        data: { run_id: 'run1', type: 'RUN_STATE', data: { status: 'paused', can_resume_with_guidance: true } },
+      }),
+    )
+    const send = screen.getByRole('button', { name: '发送补充要求' })
+    expect(reference).toBeVisible()
+    expect(send).toBeDisabled()
+    fireEvent.click(reference)
+    expect(send).toBeEnabled()
+    expect(input).toHaveValue('继续剩余任务')
+  })
   it('allows stopping while an earlier resume HTTP request is still outstanding', async () => {
     let release: () => void = () => {}
     const pending = new Promise<void>((resolve) => {
@@ -950,6 +1089,28 @@ describe('Studio concurrency and content boundaries', () => {
 })
 
 describe('Media and activity recovery', () => {
+  it('shows preserved external canvas changes without displaying normal sync events', () => {
+    const normal: StudioRun['events'][number] = {
+      id: 'canvas',
+      kind: 'canvas',
+      text: '制作画布已同步',
+      data: { sync_conflicts: [] },
+    }
+    const { rerender } = render(<EventCard event={normal} />)
+    expect(screen.queryByText(normal.text)).not.toBeInTheDocument()
+    rerender(
+      <EventCard
+        event={{
+          ...normal,
+          text: '画布同步已处理，保留 1 处外部变更。',
+          data: {
+            sync_conflicts: [{ element_id: 'node-1', message: '节点已被移动' }],
+          },
+        }}
+      />,
+    )
+    expect(screen.getByText('画布同步已处理，保留 1 处外部变更。')).toBeVisible()
+  })
   it('uses refreshed canvas URLs and never leaves a stateless progress note spinning', () => {
     expect(
       mediaURLs(

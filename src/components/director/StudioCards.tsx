@@ -343,7 +343,13 @@ export function EventCard({
         </button>
       </article>
     )
-  if (['canvas', 'node', 'batch', 'context', 'tool_start'].includes(event.kind)) return null
+  if (event.kind === 'canvas')
+    return Array.isArray(data.sync_conflicts) && data.sync_conflicts.length > 0 ? (
+      <article className={`${styles.event} ${styles.assistantMessage}`} role="status">
+        <p>{event.text}</p>
+      </article>
+    ) : null
+  if (['node', 'batch', 'context', 'tool_start'].includes(event.kind)) return null
   if (isInferenceEvent(event)) {
     const summary = publicReasoning(event)
     if (!summary) return null
