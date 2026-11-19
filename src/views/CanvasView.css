@@ -265,6 +265,12 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   user-select: none;
 }
 
+.canvas-view:not(.has-stacked-agent) .canvas-panel-edit-content {
+  max-height: min(60dvh, calc(var(--canvas-panel-space-below, 60dvh) / var(--canvas-ui-scale, 1)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .canvas-panel-area :is(input, textarea, [contenteditable='true']) {
   user-select: text;
 }
@@ -2848,24 +2854,12 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   border-radius: 12px;
   box-shadow: 0 0 14px rgb(80 216 190 / 38%);
 }
-.canvas-view .react-flow__node.canvas-node-leased::after {
-  content: attr(data-editor-label);
-  position: absolute;
-  bottom: calc(100% + 7px);
-  left: 0;
-  max-width: 100%;
-  padding: 3px 8px;
-  overflow: hidden;
+.canvas-panel-lock-status {
+  padding: 8px 12px;
   border: 1px solid #427b75;
-  border-radius: 6px;
+  border-radius: 8px 8px 0 0;
   background: #163733;
   color: #cdfaf1;
-  font:
-    600 12px/1.5 system-ui,
-    sans-serif;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
 }
 .canvas-view .canvas-node-occupied :is(button, input, textarea, select, [contenteditable='true']) {
   pointer-events: none;

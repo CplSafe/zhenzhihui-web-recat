@@ -29,9 +29,10 @@ export function CanvasNodeFrame({
 export function CanvasNodeHeader({
   kind,
   title,
+  collaborationLabel,
   children,
   ...props
-}: Omit<DivProps, 'className' | 'title'> & { kind: string; title: string }) {
+}: Omit<DivProps, 'className' | 'title'> & { kind: string; title: string; collaborationLabel?: string }) {
   return (
     <div className={`canvas-node-header nopan${kind === 'audio' ? '' : ' nodrag'}`} title={title} {...props}>
       <span className="canvas-node-header__icon" aria-hidden="true">
@@ -40,6 +41,15 @@ export function CanvasNodeHeader({
       <span className="canvas-node-header__label-wrap" onDoubleClick={(event) => event.stopPropagation()}>
         {children || <span className="canvas-node-header__label">{title}</span>}
       </span>
+      {collaborationLabel && (
+        <span className="canvas-node-header__collaboration" title={collaborationLabel}>
+          {collaborationLabel === '你正在编辑'
+            ? '编辑中'
+            : collaborationLabel === '你正在引用'
+              ? '引用中'
+              : collaborationLabel}
+        </span>
+      )}
     </div>
   )
 }

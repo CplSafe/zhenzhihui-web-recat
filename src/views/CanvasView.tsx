@@ -1891,6 +1891,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       <CanvasNodeHeader
         kind={kind}
         title={headerTitle}
+        collaborationLabel={String(data.collaborationLabel || '')}
         onPointerDown={(event) => {
           if (kind === 'audio' && event.target instanceof HTMLInputElement) event.stopPropagation()
         }}
@@ -2952,10 +2953,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
   useEffect(() => {
     if (!selectionDenied) return
     showToast(lockSelection.map((id) => busyReason(id)).find(Boolean) || '节点已被其他成员占用', 'error')
-    setSelectedNode(null)
-    setSelectedNodeIds([])
-    setNodes((items) => items.map((n) => (n.selected ? { ...n, selected: false } : n)))
-  }, [selectionDenied, busyReason, setNodes])
+  }, [selectionDenied, busyReason])
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('saved')
   /**
    * 供轮询循环读取的保存状态。
@@ -3404,17 +3402,6 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
     }
     // 靠近屏幕顶部的节点下移，保留操作条和标题的完整空间，避免夹取后贴住图片。
     const topSafe = window.innerWidth <= 600 ? 100 : 144
-    const availableNodeHeight = window.innerHeight - topSafe - NODE_PANEL_GAP * 2 - height
-    if (selectedNode.kind !== 'audio' && nodeHeight * tz > availableNodeHeight && availableNodeHeight > 0) {
-      const zoom = Math.min(tz, availableNodeHeight / nodeHeight)
-      const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
-      const centerX = (node.position.x + nodeWidth / 2) * tz + tx
-      setViewport(
-        { x: centerX - (node.position.x + nodeWidth / 2) * zoom, y: topSafe - node.position.y * zoom, zoom },
-        { duration: 200 },
-      )
-      return
-    }
     if (topY < topSafe) {
       setViewport({ x: nextX, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
       return
@@ -11330,6 +11317,11 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             return label
               ? {
                   ...node,
+                  data: {
+                    ...(node.data as Record<string, unknown>),
+                    kind: (node.data as Record<string, unknown>)?.kind || 'text',
+                    collaborationLabel: label,
+                  },
                   ...(busyNodes.has(node.id) ? { draggable: false, deletable: false, selectable: false } : {}),
                   ariaLabel: `${node.ariaLabel || node.data?.title || node.id}，${label}`,
                   className: [node.className, 'canvas-node-leased', busyNodes.has(node.id) && 'canvas-node-occupied']
@@ -13298,7 +13290,6 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           与其比谁的层级高，不如让正在做的那件事独占画面——选完节点类型面板自然回来。
           面板里的输入内容边打边写回节点（onPromptChange），收起再回来不会丢。 */}
         {selectedNode &&
-          canEditSelection &&
           selectedNode.kind !== 'timeline' &&
           selectedNode.kind !== 'audio' &&
           selectedNodeIds.length < 2 &&
@@ -13326,6 +13317,12 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                   : undefined
               }
             >
+              {!canEditSelection && (
+                <div className="canvas-panel-lock-status" role="status">
+                  {selectionDenied ? busyReason(selectedNode.id) || '节点已被其他成员占用' : '正在确认编辑权限，请稍候'}
+                </div>
+              )}
+              <div className="canvas-panel-edit-content" inert={!canEditSelection}>
               <CanvasDragStablePanel dragging={draggingNode} nodeId={selectedNode.id}>
                 {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
                   <CanvasVideoUpscaleResultPanel
@@ -13518,6 +13515,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                   />
                 )}
               </CanvasDragStablePanel>
+              </div>
             </div>
           )}
 
