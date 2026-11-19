@@ -481,7 +481,10 @@ export default function DeepAgentStudio({
       return
     }
     await action(async () => {
-      await api.request(`/api/runs/${id}/${name}`, {})
+      const result = await api.request<Data>(`/api/runs/${id}/${name}`, {})
+      if (currentId.current === id && result.retry_confirmation_required) {
+        setRetryTarget({ runId: id, id: result.task_ids[0], version: Date.now() })
+      }
       if (currentId.current === id) await studio.reload()
     })
   }

@@ -1049,6 +1049,48 @@ describe('Studio concurrency and content boundaries', () => {
     expect(send).toBeEnabled()
     expect(input).toHaveValue('继续剩余任务')
   })
+  it('opens the quoted failed item on resume and waits for explicit retry confirmation', async () => {
+    const decisions: unknown[] = []
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'error' }))),
+      http.post('*/agent-studio/api/runs/run1/resume', () =>
+        HttpResponse.json({ ok: true, retry_confirmation_required: true, task_ids: [18159] }),
+      ),
+      http.get('*/agent-studio/api/runs/run1/media-retries', () =>
+        HttpResponse.json({
+          candidates: [
+            {
+              task_id: 18159,
+              title: '失败反视角',
+              tool: 'model.generate_image',
+              before: { model_version_id: 29, prompt: 'scene', params: {} },
+            },
+          ],
+          items: [
+            {
+              id: 'quoted',
+              status: 'proposed',
+              source: { task_id: 18159 },
+              after: { model_version_id: 29, prompt: 'scene', params: {} },
+              estimated_credits: '7.5',
+              decision_id: 'confirm',
+            },
+          ],
+        }),
+      ),
+      http.post('*/agent-studio/api/runs/run1/media-retries/quoted/decision', async ({ request }) => {
+        decisions.push(await request.json())
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    fireEvent.click(screen.getByRole('button', { name: '恢复执行 / 查询已有任务' }))
+    expect(await screen.findByText(/预计 7.5 积分/)).toBeVisible()
+    expect(decisions).toEqual([])
+    fireEvent.click(screen.getByRole('button', { name: '确认重试一次' }))
+    await waitFor(() => expect(decisions).toEqual([{ decision: 'approve', decision_id: 'confirm', start: true }]))
+  })
   it('allows stopping while an earlier resume HTTP request is still outstanding', async () => {
     let release: () => void = () => {}
     const pending = new Promise<void>((resolve) => {
