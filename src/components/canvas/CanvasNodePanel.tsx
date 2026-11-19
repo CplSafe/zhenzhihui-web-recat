@@ -547,6 +547,8 @@ export interface CanvasNodeInfo {
   /** 节点持久化的 params（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
   generationRequest?: { params?: Record<string, unknown> }
+  audioUse?: 'reference' | 'mix' | 'replace'
+  audioOriginalVolume?: number
   generationIntent?: 'edit' | 'new-model'
   taskId?: number
   taskRunId?: string
@@ -590,6 +592,7 @@ interface CanvasNodePanelProps {
   onRatioChange?: (ratio: string) => void
   /** 视频生成方式变更回调 */
   onVideoModeChange?: (mode: CanvasVideoMode) => void
+  onAudioUseChange?: (mode: 'reference' | 'mix' | 'replace', originalVolume: number) => void
   /** 模型变更回调 */
   onModelChange?: (modelVersionId: number) => void
   onResolvedModel?: (nodeId: string, modelVersionId: number | undefined) => void
@@ -614,6 +617,8 @@ interface CanvasNodePanelProps {
     videoMode?: CanvasVideoMode
     /** 视频生视频的源视频（节点自己已有的那条）；为 0 表示从头生成。 */
     selfVideoAssetId?: number
+    audioUse?: 'reference' | 'mix' | 'replace'
+    audioOriginalVolume?: number
   }) => void
   /** 扣费确认前检查引用素材的团队归属和入库状态。 */
   onPreflightAssets?: (
@@ -868,6 +873,7 @@ export default function CanvasNodePanel({
   onRevertToHistory,
   onRatioChange,
   onVideoModeChange,
+  onAudioUseChange,
   onModelChange,
   onResolvedModel,
   models,
@@ -988,12 +994,14 @@ export default function CanvasNodePanel({
       }))
   }, [node?.sourceRefs, workspaceId])
 
+  const audioUse = node?.audioUse || 'reference'
+  const audioOriginalVolume = Math.max(0, Math.min(1, Number(node?.audioOriginalVolume ?? 1)))
   const requiredAudioVideoDurationSec = useMemo(
     () =>
-      kind === 'video'
+      kind === 'video' && audioUse !== 'reference'
         ? requiredVideoDurationForAudio(sourceRefs.filter((ref) => ref.kind === 'audio').map((ref) => ref.audio || {}))
         : 0,
-    [kind, sourceRefs],
+    [kind, sourceRefs, audioUse],
   )
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind === 'image').length, [sourceRefs])
@@ -1012,8 +1020,14 @@ export default function CanvasNodePanel({
   const positionalRefLabelByEdge = useMemo(() => buildPositionalMentionLabels(sourceRefs), [sourceRefs])
   /** 可被 @ 的参考（仅图片/视频），供选择器列出。 */
   const mentionableRefs = useMemo(
-    () => sourceRefs.filter((ref) => ref.kind === 'image' || ref.kind === 'video'),
-    [sourceRefs],
+    () =>
+      sourceRefs.filter(
+        (ref) =>
+          ref.kind === 'image' ||
+          ref.kind === 'video' ||
+          (ref.kind === 'audio' && kind === 'video' && audioUse === 'reference'),
+      ),
+    [sourceRefs, kind, audioUse],
   )
 
   // 用户在当前节点上动过输入框（含清空）：上游文本自动回填只在此前发生。换节点重置。
@@ -1141,19 +1155,21 @@ export default function CanvasNodePanel({
   const mentionRegex = useMemo(() => buildMentionRegex(refLabelByEdge.values()), [refLabelByEdge])
   const promptMentions = useMemo<PromptMention[]>(
     () =>
-      mentionableRefs.flatMap((ref) => {
-        const thumbnail =
-          ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : '')
-        return [...new Set([refLabelByEdge.get(ref.edgeId), positionalRefLabelByEdge.get(ref.edgeId)])]
-          .filter(Boolean)
-          .map((label) => ({
-            label: label!,
-            kind: ref.kind,
-            thumbnailUrl: ref.posterUrl || (ref.kind === 'video' && thumbnail ? `${thumbnail}#t=0.1` : thumbnail),
-            video: ref.kind === 'video' && !ref.posterUrl,
-          }))
-      }),
-    [mentionableRefs, refLabelByEdge, positionalRefLabelByEdge, workspaceId],
+      sourceRefs
+        .filter((ref) => ref.kind === 'image' || ref.kind === 'video' || ref.kind === 'audio')
+        .flatMap((ref) => {
+          const thumbnail =
+            ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : '')
+          return [...new Set([refLabelByEdge.get(ref.edgeId), positionalRefLabelByEdge.get(ref.edgeId)])]
+            .filter(Boolean)
+            .map((label) => ({
+              label: label!,
+              kind: ref.kind,
+              thumbnailUrl: ref.posterUrl || (ref.kind === 'video' && thumbnail ? `${thumbnail}#t=0.1` : thumbnail),
+              video: ref.kind === 'video' && !ref.posterUrl,
+            }))
+        }),
+    [sourceRefs, refLabelByEdge, positionalRefLabelByEdge, workspaceId],
   )
 
   // ===== 输入 @ 弹出参考选择器：敲 @ 即列出可 @ 的参考，继续输入按名字筛，↑↓ 选、Enter/Tab 确认、Esc 关 =====
@@ -1407,7 +1423,7 @@ export default function CanvasNodePanel({
   }, [selectedModel?.source])
   const imageRefCount = sourceRefs.filter((ref) => ref.kind === 'image').length
   const videoRefCount = sourceRefs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
-  const audioRefCount = sourceRefs.filter((ref) => ref.kind === 'audio').length
+  const audioRefCount = audioUse === 'reference' ? sourceRefs.filter((ref) => ref.kind === 'audio').length : 0
   const referenceLimitError =
     kind === 'video' && selectedModel
       ? imageRefCount > maxRefs
@@ -1790,7 +1806,7 @@ export default function CanvasNodePanel({
   )
   const inputAssets = useMemo(() => {
     const assets = buildCanvasInputAssets(
-      sourceRefs,
+      kind === 'video' && audioUse !== 'reference' ? sourceRefs.filter((ref) => ref.kind !== 'audio') : sourceRefs,
       operationCode,
       selfVideoAssetId,
       declaredImageRole,
@@ -1799,7 +1815,7 @@ export default function CanvasNodePanel({
     )
     if (maskAssetId > 0) assets.push({ asset_id: maskAssetId, role: 'mask' })
     return assets
-  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId, selectedModel])
+  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId, selectedModel, kind, audioUse])
   /**
    * 参考视频总时长：画布节点不存视频时长，这里按视频地址读一次元数据（preload=metadata，只拉文件头）。
    * 改片时节点自己那条视频也算进去——它同样会作为参考视频下发。
@@ -1860,11 +1876,28 @@ export default function CanvasNodePanel({
       })
     }
     if (kind === 'video') {
+      if (
+        sourceRefs.some(
+          (ref) => ref.kind === 'audio' && (!Number.isSafeInteger(Number(ref.assetId)) || Number(ref.assetId) <= 0),
+        )
+      )
+        return '音频素材尚未上传完成，请等待上传或重新选择。'
+      if (
+        audioUse !== 'reference' &&
+        sourceRefs.some((ref) => ref.kind === 'audio' && prompt.includes(`@${refLabelByEdge.get(ref.edgeId)}`))
+      )
+        return '配音合成不向模型发送音频，请删除提示词中的音频引用或改为声音参考。'
+      if (
+        audioUse === 'reference' &&
+        sourceRefs.some((ref) => ref.kind === 'audio') &&
+        !getModelInputConstraints(selectedModel?.source, operationCode).roles.some((role) => /audio/i.test(role.role))
+      )
+        return '当前模型未声明支持声音参考，请更换模型或选择配音合成。'
       if (audioVideoDurationError) return audioVideoDurationError
       return validateCanvasVideoInputs({
         operationCode,
         videoMode,
-        sourceRefs,
+        sourceRefs: audioUse === 'reference' ? sourceRefs : sourceRefs.filter((ref) => ref.kind !== 'audio'),
         workspaceId,
         maxImageRefs: maxRefs,
         maxVideoRefs: videoRoleLimits.video,
@@ -1892,6 +1925,8 @@ export default function CanvasNodePanel({
     selectedModel?.displayName,
     selectedModel?.source,
     audioVideoDurationError,
+    audioUse,
+    refLabelByEdge,
     maxVideoRefSec,
     videoRefTotalSec,
     buildFullPrompt,
@@ -1996,10 +2031,19 @@ export default function CanvasNodePanel({
       )
       if (confirmed !== true) return
     }
-    if (onPreflightAssets && inputAssets.length) {
+    const preflightAssets =
+      kind === 'video' && audioUse !== 'reference'
+        ? [
+            ...inputAssets,
+            ...sourceRefs
+              .filter((ref) => ref.kind === 'audio' && Number(ref.assetId) > 0)
+              .map((ref) => ({ asset_id: Number(ref.assetId), role: 'audio' })),
+          ]
+        : inputAssets
+    if (onPreflightAssets && preflightAssets.length) {
       setCheckingAssets(true)
       try {
-        const assetError = await onPreflightAssets(sourceRefs, inputAssets, Boolean(isSeedanceModel))
+        const assetError = await onPreflightAssets(sourceRefs, preflightAssets, Boolean(isSeedanceModel))
         if (assetError) {
           showToast(assetError, 'error')
           return
@@ -2025,6 +2069,8 @@ export default function CanvasNodePanel({
       videoMode: kind === 'video' ? videoMode : undefined,
       // 视频生视频：节点自己已有的那条视频作为源视频下发；新模型重生成则不带，等于从头生成
       selfVideoAssetId,
+      audioUse: kind === 'video' ? audioUse : undefined,
+      audioOriginalVolume: audioUse === 'mix' ? audioOriginalVolume : 0,
     })
   }
 
@@ -2624,9 +2670,46 @@ export default function CanvasNodePanel({
       )}
 
       {kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio') && (
-        <p className={styles.audioReferenceHint}>
-          视频生成后会合入本次连接的原音频并关闭模型原声，保留配音台词和音色。音频过长时需在视频剪辑中调整时长；此操作不保证口型同步。
-        </p>
+        <div className={styles.audioReferenceHint}>
+          <label>
+            音频用途{' '}
+            <select
+              aria-label="音频用途"
+              value={audioUse}
+              disabled={taskRunning}
+              onChange={(event) =>
+                onAudioUseChange?.(event.target.value as 'reference' | 'mix' | 'replace', audioOriginalVolume)
+              }
+            >
+              <option value="reference">声音参考</option>
+              <option value="mix">配音合成</option>
+              <option value="replace">替换原声</option>
+            </select>
+          </label>
+          {audioUse === 'reference' ? (
+            <p>音频作为模型参考，不自动加入成片；音色效果取决于模型。</p>
+          ) : audioUse === 'mix' ? (
+            <>
+              <label>
+                视频原声音量{' '}
+                <input
+                  aria-label="视频原声音量"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={audioOriginalVolume}
+                  disabled={taskRunning}
+                  onChange={(event) => onAudioUseChange?.(audioUse, Number(event.target.value))}
+                />{' '}
+                {Math.round(audioOriginalVolume * 100)}%
+              </label>
+              <p>配音与视频原声混合，可能出现双重对白，不保证口型同步。</p>
+            </>
+          ) : (
+            <p>原声轨将被替换，其中的环境音也会消失；不保证口型同步。</p>
+          )}
+        </div>
       )}
 
       {/* 节点级生成历史（反馈 #8）：只对已有历史的图片/视频节点显示；点缩略图切回该版本。

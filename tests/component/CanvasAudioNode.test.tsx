@@ -31,7 +31,17 @@ describe('画布音频节点波形加载', () => {
     mocks.getEdges.mockReset().mockReturnValue([])
     mocks.upload.mockReset()
     mocks.renderMix.mockReset()
-    mocks.waveform.mockResolvedValue([0.2, 0.8])
+    mocks.waveform.mockImplementation(async (_src, _signal, _count, onAudioData) => {
+      onAudioData?.(new ArrayBuffer(4), 'audio/wav')
+      return [0.2, 0.8]
+    })
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = vi.fn(() => 'blob:mock-audio')
+        static revokeObjectURL = vi.fn()
+      },
+    )
     reveal = () => undefined
     vi.stubGlobal(
       'IntersectionObserver',
@@ -123,7 +133,7 @@ describe('画布音频节点波形加载', () => {
     expect(screen.getByText('/ 00:08')).toBeInTheDocument()
     expect(screen.queryByText('音频生成中')).not.toBeInTheDocument()
     const audio = container.querySelector('audio')!
-    expect(audio).toHaveAttribute('src', '/sample.wav')
+    expect(audio).toHaveAttribute('src', 'blob:mock-audio')
     fireEvent.play(audio)
     expect(screen.getByRole('button', { name: '暂停音频' })).toBeInTheDocument()
     fireEvent.pause(audio)

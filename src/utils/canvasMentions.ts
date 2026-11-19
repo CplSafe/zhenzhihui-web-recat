@@ -18,16 +18,18 @@ export interface MentionRefLike {
   title?: string
 }
 
-const isMediaRef = (ref: MentionRefLike) => ref.kind === 'image' || ref.kind === 'video'
+const isMediaRef = (ref: MentionRefLike) => ref.kind === 'image' || ref.kind === 'video' || ref.kind === 'audio'
 
 /** 位置号标签（不含 @）：同类型按展示顺序编号，与下发的 input_assets 顺序一致。 */
 export function buildPositionalMentionLabels(refs: MentionRefLike[]): Map<string, string> {
   const out = new Map<string, string>()
   let image = 0
   let video = 0
+  let audio = 0
   for (const ref of refs) {
     if (ref.kind === 'image') out.set(ref.edgeId, `图片${++image}`)
     else if (ref.kind === 'video') out.set(ref.edgeId, `视频${++video}`)
+    else if (ref.kind === 'audio') out.set(ref.edgeId, `音频${++audio}`)
   }
   return out
 }
@@ -75,7 +77,7 @@ export function buildMentionRegex(labels: Iterable<string>): RegExp {
   const unique = Array.from(new Set(Array.from(labels).filter(Boolean))).sort((a, b) => b.length - a.length)
   const alternatives = unique.map(escapeRegExp)
   // 位置号兜底：即便某条参考已被删、标签表里没有了，残留的 @图片N 也仍按引用样式高亮
-  alternatives.push('(?:图片|视频)\\d+')
+  alternatives.push('(?:图片|视频|音频)\\d+')
   return new RegExp(`@(?:${alternatives.join('|')})`, 'g')
 }
 

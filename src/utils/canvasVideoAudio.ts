@@ -6,6 +6,7 @@ import { normalizeAudioSettings, readAudioDuration, type TimelineAudioClip } fro
 export interface VideoAudioComposition {
   submissionKey: string
   clips: TimelineAudioClip[]
+  originalVolume?: number
   failed?: boolean
   result?: { sourceAssetId: number; assetId: number }
 }
@@ -16,6 +17,7 @@ export function snapshotVideoAudio(
   nodes: Node[],
   workspaceId: number,
   submissionKey: string,
+  originalVolume = 0,
 ): VideoAudioComposition | undefined {
   const seen = new Set<number>()
   const clips = refs.flatMap((ref): TimelineAudioClip[] => {
@@ -34,7 +36,7 @@ export function snapshotVideoAudio(
       },
     ]
   })
-  return clips.length ? { submissionKey, clips } : undefined
+  return clips.length ? { submissionKey, clips, originalVolume } : undefined
 }
 
 export class VideoAudioCompositionError extends Error {}
@@ -93,7 +95,7 @@ export async function composeVideoAudio(
     })
     check()
     const { mixAudioIntoMp4 } = await import('./audioMix')
-    const output = await mixAudioIntoMp4(video, clips, duration, workspaceId, 0)
+    const output = await mixAudioIntoMp4(video, clips, duration, workspaceId, composition.originalVolume ?? 0)
     check()
     const uploaded = await uploadAssetFile({
       workspaceId,

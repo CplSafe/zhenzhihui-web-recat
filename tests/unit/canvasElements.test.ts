@@ -149,6 +149,15 @@ describe('canvasElements', () => {
     expect(graph.nodes[0].data.audioReferences).toEqual([{ assetId: 88, workspaceId: 21, title: '样音.wav' }])
     expect([...collectCanvasElementAssetIds([mutation])]).toEqual([88])
   })
+  it('视频节点保存并恢复音频用途与原声音量', () => {
+    const mutation = nodeToMutation({
+      id: 'video',
+      type: 'video',
+      position: { x: 0, y: 0 },
+      data: { kind: 'video', audioUse: 'mix', audioOriginalVolume: 0 },
+    })
+    expect(elementsToGraph([mutation]).nodes[0].data).toMatchObject({ audioUse: 'mix', audioOriginalVolume: 0 })
+  })
   it('视频节点引用保留连接音频的裁剪时长元数据', () => {
     const audio = {
       lane: 'voice',

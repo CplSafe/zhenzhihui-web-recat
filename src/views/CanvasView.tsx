@@ -922,6 +922,8 @@ interface CanvasGenerationRequest {
   /** 视频生视频的源视频（节点自己已有的那条）；为 0/缺省表示从头生成。 */
   selfVideoAssetId?: number
   subjectEdit?: true
+  audioUse?: 'reference' | 'mix' | 'replace'
+  audioOriginalVolume?: number
 }
 
 const ACTIVE_TASK_STATUSES = new Set([
@@ -6918,6 +6920,27 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
    * 用户只会当成丢数据。面板读取侧本来就从 node.params 回显（见 CanvasNodePanel 里
    * fieldValues 的初始化），缺的一直是写入侧。
    */
+  const handleAudioUseChange = useCallback(
+    (audioUse: 'reference' | 'mix' | 'replace', audioOriginalVolume: number) => {
+      const targetNodeId = selectedNode?.id
+      if (!targetNodeId) return
+      const patch = { audioUse, audioOriginalVolume }
+      latestRef.current = {
+        ...latestRef.current,
+        nodes: latestRef.current.nodes.map((item) =>
+          item.id === targetNodeId ? { ...item, data: { ...item.data, ...patch } } : item,
+        ),
+      }
+      setNodes((items) =>
+        items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, ...patch } } : item)),
+      )
+      setSelectedNode((item) => (item?.id === targetNodeId ? { ...item, ...patch } : item))
+      setSaveStatus('dirty')
+      scheduleSyncRef.current()
+    },
+    [selectedNode?.id, setNodes, setSaveStatus],
+  )
+
   const handleNodeParamsChange = useCallback(
     (params: Record<string, unknown>) => {
       const targetNodeId = selectedNode?.id
@@ -7305,6 +7328,8 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
           prompt: submitPrompt,
           params: generate.params,
           inputAssets,
+          audioUse: generate.audioUse,
+          audioOriginalVolume: generate.audioOriginalVolume,
         })
         // 指纹计算期间可能发生重复点击或节点删除，再核对一次提交锁。
         if (
@@ -7362,12 +7387,15 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
             params: generate.params || {},
             generationRequest: generate,
             videoAudioComposition:
-              generate.kind === 'video' && generate.operationCode !== 'video.upscale'
+              generate.kind === 'video' &&
+              generate.operationCode !== 'video.upscale' &&
+              generate.audioUse !== 'reference'
                 ? snapshotVideoAudio(
                     generate.sourceRefs || [],
                     latestRef.current.nodes,
                     Number(workspaceId),
                     taskIdempotencyKey,
+                    generate.audioUse === 'mix' ? (generate.audioOriginalVolume ?? 1) : 0,
                   )
                 : undefined,
             ...(generate.kind === 'image'
@@ -13415,6 +13443,7 @@ function CanvasInner({ modelDefaults: initialDefaults }: { modelDefaults?: Canva
                       onRevertToHistory={handleRevertToHistory}
                       onRatioChange={handleRatioChange}
                       onVideoModeChange={handleVideoModeChange}
+                      onAudioUseChange={handleAudioUseChange}
                       onModelChange={handleModelChange}
                       onResolvedModel={handleResolvedModel}
                       onGenerate={handleNodeGenerate}

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 test('连接配音时禁止短于配音的视频时长和最大时长不足的模型', async ({ page }, testInfo) => {
+  test.setTimeout(90000)
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
   const errors: string[] = []
@@ -100,6 +101,10 @@ test('连接配音时禁止短于配音的视频时长和最大时长不足的�
     })
   })
 
+  await page.route('**/api/v1/canvases/126/node-locks?**', (route) =>
+    route.fulfill({ json: { granted: true, nodes: {} } }),
+  )
+
   const wav = Buffer.alloc(44 + 264000 * 2)
   wav.write('RIFF', 0)
   wav.writeUInt32LE(wav.length - 8, 4)
@@ -121,11 +126,25 @@ test('连接配音时禁止短于配音的视频时长和最大时长不足的�
     return route.fulfill({ status: 400, json: { message: '该用例不应提交生成任务' } })
   })
   await page.goto('/canvas/126')
-  await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('100')
   const videoNode = page.locator('.react-flow__node[data-id="video"]')
-  await expect(videoNode).toBeVisible()
-  await videoNode.click()
+  await expect(videoNode).toBeVisible({ timeout: 30000 })
+  await videoNode.locator('.canvas-node-body').click({ position: { x: 30, y: 30 } })
+  expect(errors).toEqual([])
   const panel = page.locator('[data-canvas-node-panel]')
+  await expect(panel.getByRole('combobox', { name: '音频用途' })).toHaveValue('reference')
+  await expect(panel).toContainText('不自动加入成片')
+  const prompt = panel.getByRole('textbox').first()
+  await prompt.fill('')
+  await prompt.pressSequentially('@')
+  await expect(page.getByRole('option', { name: /@11秒旁白/ })).toBeVisible()
+  await page.getByRole('option', { name: /@11秒旁白/ }).click()
+  await expect(prompt).toContainText('@11秒旁白')
+  await page.screenshot({ path: testInfo.outputPath('audio-reference-mention.png') })
+  await panel.getByRole('combobox', { name: '音频用途' }).selectOption('mix')
+  await expect(panel.getByRole('slider', { name: '视频原声音量' })).toHaveValue('1')
+  await expect(panel).toContainText('可能出现双重对白')
+  await expect(panel).toContainText('请删除提示词中的音频引用')
+  await prompt.fill('根据连接的旁白生成视频')
   await expect(panel.locator('[data-canvas-generate]')).toBeDisabled()
 
   await panel.getByRole('button', { name: '最多15秒模型' }).click()

@@ -110,6 +110,8 @@ interface SerializableNodeData {
   requiresVoiceSelection?: boolean
   panoramaView?: Record<string, unknown>
   audioReferences?: Array<{ assetId: number; workspaceId: number; title: string }>
+  audioUse?: 'reference' | 'mix' | 'replace'
+  audioOriginalVolume?: number
   croppedInputAssets?: Record<string, { originalAssetId: number; assetId: number; workspaceId: number }>
   /** 最近一次生成任务 ID（在途/已完成均可，用于刷新后续轮询） */
   taskId?: number
@@ -207,6 +209,8 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'requiresVoiceSelection',
   'panoramaView',
   'audioReferences',
+  'audioUse',
+  'audioOriginalVolume',
   'croppedInputAssets',
   'taskId',
   'taskFailure',

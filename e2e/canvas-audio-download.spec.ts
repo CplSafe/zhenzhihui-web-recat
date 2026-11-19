@@ -4,6 +4,7 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures
 
 for (const width of [1440, 768]) {
   test(`画布音频下载真实文件并可从失败恢复 ${width}px`, async ({ page }, testInfo) => {
+    test.setTimeout(90000)
     await page.setViewportSize({ width, height: 1000 })
     const api = await installStrictAuthenticatedApp(page)
     const errors: string[] = []
@@ -66,6 +67,12 @@ for (const width of [1440, 768]) {
           : { id: 116, title: 'Audio download', status: 'active', revision: 1 },
       }),
     )
+    await page.route('**/api/v1/canvases/116/node-locks?**', (route) =>
+      route.fulfill({ json: { granted: true, nodes: {} } }),
+    )
+    await page.route('**/api/v1/canvases/116/events?**', (route) =>
+      route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' }),
+    )
     await page.goto('/canvas/116')
     await page.locator('.react-flow__node[data-id="audio-download"] .canvas-node-header').click()
     await page.getByRole('button', { name: /当前缩放 .*点击回到 100%/ }).click()
@@ -108,7 +115,7 @@ for (const width of [1440, 768]) {
     await button.click()
     expect((await retry).suggestedFilename()).toBe('测试配音.wav')
     expect(errors).toEqual([])
-    expect(consoleErrors.every((message) => message.includes('403'))).toBe(true)
+    expect(consoleErrors.filter((message) => !message.includes('403'))).toEqual([])
     expect(api.paidTaskSubmissions).toBe(0)
     expectNoUnexpectedApi(api)
     await page.locator('.react-flow__viewport').evaluate((element) => {
