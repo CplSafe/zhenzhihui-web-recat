@@ -745,6 +745,21 @@
   cursor: pointer;
 }
 
+.audioRefPreview {
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+
+.audioRefPreview:disabled {
+  cursor: default;
+}
+
+.audioRefPreview:focus-visible {
+  outline: 2px solid var(--canvas-brand, #00e5be);
+  outline-offset: 2px;
+}
+
 .realPersonBadge {
   position: absolute;
   top: 2px;
@@ -1954,6 +1969,9 @@
 .promptModalReferenceSection {
   flex: none;
   padding: 0 24px 16px;
+}
+.promptModalReferenceSection .audioReferenceHint {
+  margin: 0 0 8px;
 }
 .promptModalSectionLabel {
   display: flex;

@@ -320,7 +320,7 @@ export function isCanvasProvenanceEdge(edge: { data?: Record<string, unknown> | 
  *
  * 直接文本来源会被保留用于拼接提示词；文本节点上游的图片/视频素材也会继续
  * 传递给下游生成任务。这样「参考图 -> 文本 -> 图片」不会在文本节点处丢失参考图。
- * 遍历包含循环保护，并按素材 ID 去重，避免异常连线导致重复提交。
+ * 遍历包含循环保护，并按素材 ID 去重。直接连接视频的音频按来源节点区分，保留各自的配音设置。
  */
 export function collectCanvasSourceRefs(
   targetNodeId: string,
@@ -341,6 +341,7 @@ export function collectCanvasSourceRefs(
   const refs: CanvasGraphSourceRef[] = []
   const seenEdges = new Set<string>()
   const seenAssets = new Set<number>()
+  const seenDirectVideoAudioSources = new Set<string>()
   const visiting = new Set<string>()
 
   const visit = (nodeId: string, inherited: boolean) => {
@@ -415,6 +416,13 @@ export function collectCanvasSourceRefs(
         // 只有直接文本参与当前提示词拼接；其上游素材继续向下游透传。
         if (!inherited) refs.push(ref)
         visit(source.id, true)
+      } else if (!inherited && kind === 'audio' && (roleTargetData.kind || roleTarget?.type) === 'video') {
+        // 复制音频节点可能共享素材 ID，但节点有各自的名称和裁剪设置，直接连线要分别显示。
+        if (!seenDirectVideoAudioSources.has(source.id)) {
+          seenDirectVideoAudioSources.add(source.id)
+          refs.push(ref)
+          if (assetId > 0) seenAssets.add(assetId)
+        }
       } else if (assetId <= 0 || !seenAssets.has(assetId)) {
         refs.push(ref)
         if (assetId > 0) seenAssets.add(assetId)

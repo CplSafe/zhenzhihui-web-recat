@@ -14,6 +14,7 @@
 export interface MentionRefLike {
   edgeId: string
   kind: string
+  assetId?: number
   /** 来源节点被用户重命名后的名字；未改名不带。 */
   title?: string
 }
@@ -133,16 +134,28 @@ export function rewriteMentions(text: string, mapping: Map<string, string>): str
 }
 
 /**
- * 提交前把名字型引用翻成位置号：`@天安门` → `@图片1`。位置号本身原样保留；
+ * 提交前把名字型引用翻成位置号：`@天安门` → `@图片1`。音频位置号按实际提交的去重顺序转换；
  * 匹配不到的 `@xxx`（比如参考已被删）不硬猜、原样留给模型。
  */
 export function translateMentionsToPositional(text: string, refs: MentionRefLike[]): string {
   const labels = buildMentionLabels(refs)
   const positional = buildPositionalMentionLabels(refs.filter(isMediaRef))
   const mapping = new Map<string, string>()
-  for (const [edgeId, label] of labels) {
-    const pos = positional.get(edgeId)
-    if (pos && pos !== label) mapping.set(label, pos)
+  const submittedAudioPositions = new Map<number, string>()
+  let audioCount = 0
+  for (const ref of refs) {
+    const label = labels.get(ref.edgeId)
+    const pos = positional.get(ref.edgeId)
+    if (!label || !pos) continue
+    let submittedPosition = pos
+    if (ref.kind === 'audio') {
+      // 画布按音频节点显示，模型请求按素材 ID 去重。共享文件的节点都要指向实际提交的位置。
+      const assetId = Number(ref.assetId || 0)
+      submittedPosition = submittedAudioPositions.get(assetId) ?? `音频${++audioCount}`
+      if (assetId > 0) submittedAudioPositions.set(assetId, submittedPosition)
+      if (pos !== submittedPosition) mapping.set(pos, submittedPosition)
+    }
+    if (label !== submittedPosition) mapping.set(label, submittedPosition)
   }
   return rewriteMentions(text, mapping)
 }

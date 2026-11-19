@@ -165,3 +165,15 @@ it('音频引用按类型编号，并在提交时将名称转换为对应位置'
   expect([...buildMentionLabels(refs).values()]).toEqual(['图片1', '旁白', '音频2'])
   expect(translateMentionsToPositional('使用 @旁白 和 @音频2', refs)).toBe('使用 @音频1 和 @音频2')
 })
+
+it('共用素材的音频节点分别显示，但提示词引用实际发送给模型的音频顺序', () => {
+  const refs = [
+    { edgeId: 'a1', kind: 'audio', title: '旁白开头', assetId: 10 },
+    { edgeId: 'a2', kind: 'audio', title: '同一素材', assetId: 10 },
+    { edgeId: 'a3', kind: 'audio', assetId: 11 },
+  ]
+  expect([...buildMentionLabels(refs).values()]).toEqual(['旁白开头', '同一素材', '音频3'])
+  expect(translateMentionsToPositional('@旁白开头、@同一素材、@音频2 和 @音频3', refs)).toBe(
+    '@音频1、@音频1、@音频1 和 @音频2',
+  )
+})

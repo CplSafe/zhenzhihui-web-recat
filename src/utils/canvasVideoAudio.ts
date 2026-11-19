@@ -19,14 +19,14 @@ export function snapshotVideoAudio(
   submissionKey: string,
   originalVolume = 0,
 ): VideoAudioComposition | undefined {
-  const seen = new Set<number>()
+  const seen = new Set<string>()
   const clips = refs.flatMap((ref): TimelineAudioClip[] => {
-    if (ref.kind !== 'audio' || !Number.isSafeInteger(ref.assetId) || ref.assetId <= 0 || seen.has(ref.assetId))
-      return []
+    if (ref.kind !== 'audio' || !Number.isSafeInteger(ref.assetId) || ref.assetId <= 0) return []
     if (Number(ref.workspaceId || workspaceId) !== workspaceId) throw new Error('配音素材不属于当前工作空间')
     const node = nodes.find((item) => item.id === ref.sourceId)
     if (!node || Number(node.data.assetId) !== ref.assetId) throw new Error('配音素材已更换，请重新选择后生成')
-    seen.add(ref.assetId)
+    if (seen.has(node.id)) return []
+    seen.add(node.id)
     return [
       {
         ...normalizeAudioSettings(node.data.audio),

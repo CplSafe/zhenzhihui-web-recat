@@ -10,6 +10,8 @@ test('提示词中的 @图片和 @视频均显示引用缩略图并可预览原�
   await page.route('**/api/v1/real-people?**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/231**', async (route) => {
     const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
+    if (url.pathname.endsWith('/events')) return route.fulfill({ status: 204 })
     if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
     await route.fulfill({
       json: url.pathname.endsWith('/elements')

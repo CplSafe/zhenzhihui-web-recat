@@ -78,6 +78,21 @@ describe('生成视频保留原配音', () => {
     expect(file.type).toBe('video/mp4')
     expect(file.name).toContain('701')
   })
+  it('合成时保留同一素材的两个音频节点各自的设置', () => {
+    const first = source()
+    const second = { ...source(), id: 'voice-2' }
+    second.data.audio.inSec = 1
+    const refs = [first, second, first].map((node) => ({
+      kind: 'audio',
+      sourceId: node.id,
+      assetId: node.data.assetId,
+    }))
+    const value = snapshotVideoAudio(refs, [first, second], 21, 'submission')
+    expect(value?.clips).toMatchObject([
+      { assetId: 55, sourceNodeId: first.id, inSec: 0.5 },
+      { assetId: 55, sourceNodeId: second.id, inSec: 1 },
+    ])
+  })
   it('按快照混入原声，旧任务缺省仍替换原声', async () => {
     const value = { ...snapshot(), originalVolume: 0.6 }
     await composeVideoAudio(21, 701, value)
