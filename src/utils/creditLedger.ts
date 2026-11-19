@@ -12,9 +12,9 @@
 import { formatCredits } from './creditsFormat'
 
 /** 判定为「支出/占用」的 kind（余额减少）。 */
-const OUT_KINDS = new Set(['settle', 'freeze', 'consume', 'deduct', 'debit', 'expire'])
+const OUT_KINDS = new Set(['settle', 'freeze', 'consume', 'deduct', 'debit', 'expire', 'transfer_out'])
 /** 判定为「入账/退回」的 kind（余额增加）。 */
-const IN_KINDS = new Set(['release', 'recharge', 'refund', 'grant', 'topup', 'reward', 'gift', 'credit'])
+const IN_KINDS = new Set(['release', 'recharge', 'refund', 'grant', 'topup', 'reward', 'gift', 'credit', 'transfer_in'])
 
 /** kind → 中文展示标签；未知 kind 交由调用方按方向兜底。 */
 const KIND_LABELS: Readonly<Record<string, string>> = Object.freeze({
@@ -28,6 +28,8 @@ const KIND_LABELS: Readonly<Record<string, string>> = Object.freeze({
   reward: '奖励',
   gift: '赠送',
   expire: '过期',
+  transfer_in: '积分转入',
+  transfer_out: '积分转出',
 })
 
 export type CreditLedgerDirection = 'in' | 'out'
@@ -89,12 +91,13 @@ export function normalizeCreditLedgerRecord(raw: any, fallbackId = ''): CreditLe
   const kind = normalizeCreditLedgerKind(pick(raw, 'kind', 'type', 'ledger_kind'))
   const rawAmount = Number(pick(raw, 'amount', 'credits', 'delta') ?? 0) || 0
   const direction = creditLedgerDirection(kind, rawAmount)
+  const reason = String(pick(raw, 'reason', 'remark', 'description', 'memo') ?? '').trim()
   const balanceRaw = pick(raw, 'balance_after', 'balanceAfter', 'balance')
   const idText = String(pick(raw, 'id', 'ledger_id', 'ledgerId') ?? '').trim()
   return {
     id: idText || fallbackId,
     kind,
-    reason: String(pick(raw, 'reason', 'remark', 'description', 'memo') ?? '').trim(),
+    reason: reason === 'credit_request.approved' ? '积分申请审批通过' : reason,
     createdAt: String(pick(raw, 'created_at', 'createdAt', 'updated_at', 'updatedAt') ?? '').trim(),
     amount: Math.abs(rawAmount),
     direction,
@@ -103,10 +106,14 @@ export function normalizeCreditLedgerRecord(raw: any, fallbackId = ''): CreditLe
   }
 }
 
+export function formatLedgerCredits(amount: number, kind: string): string {
+  return formatCredits(amount, kind === 'transfer_in' || kind === 'transfer_out' ? 3 : 2)
+}
+
 /** 展示用的带符号积分变动文本，如「-800」「+10000」。 */
-export function formatCreditDelta(record: Pick<CreditLedgerRecord, 'amount' | 'direction'>): string {
+export function formatCreditDelta(record: Pick<CreditLedgerRecord, 'amount' | 'direction' | 'kind'>): string {
   const sign = record.direction === 'out' ? '-' : '+'
-  return `${sign}${formatCredits(record.amount)}`
+  return `${sign}${formatLedgerCredits(record.amount, record.kind)}`
 }
 
 /** 从数组或分页信封里取当前页记录（兼容 items/list/records/data）。 */
@@ -142,4 +149,6 @@ export const CREDIT_LEDGER_FILTERS: ReadonlyArray<{ key: string; label: string; 
   { key: 'settle', label: '消费', kind: 'settle' },
   { key: 'release', label: '退回', kind: 'release' },
   { key: 'freeze', label: '冻结', kind: 'freeze' },
+  { key: 'transfer_in', label: '积分转入', kind: 'transfer_in' },
+  { key: 'transfer_out', label: '积分转出', kind: 'transfer_out' },
 ])

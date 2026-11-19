@@ -117,20 +117,21 @@ describe('SettingsMenu', () => {
     expect(mocks.logout).toHaveBeenCalledTimes(1)
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
-  it('opens MCP settings without navigating to the protocol endpoint', async () => {
+  it('replaces the MCP menu item with credit requests', async () => {
     const user = userEvent.setup()
     const onAfterAction = vi.fn()
     render(
       <MemoryRouter>
         <Routes>
           <Route path="/" element={<SettingsMenu onAfterAction={onAfterAction} />} />
-          <Route path="/settings/mcp" element={<h1>MCP settings page</h1>} />
+          <Route path="/settings/credit-requests" element={<h1>积分申请页</h1>} />
         </Routes>
       </MemoryRouter>,
     )
     await user.click(screen.getByRole('button', { name: '设置' }))
-    await user.click(screen.getByRole('menuitem', { name: 'MCP 接入' }))
-    expect(await screen.findByRole('heading', { name: 'MCP settings page' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'MCP 接入' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: '积分申请' }))
+    expect(await screen.findByRole('heading', { name: '积分申请页' })).toBeInTheDocument()
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
 })

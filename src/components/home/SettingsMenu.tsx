@@ -1,11 +1,11 @@
 /**
- * SettingsMenu — 侧栏底部「设置」项。点击弹出菜单:个人中心 / 修改密码 / 使用手册 / 退出登录
+ * SettingsMenu — 侧栏底部「设置」项。点击弹出菜单:个人中心 / 修改密码 / 使用手册 / 积分申请 / 退出登录
  * (对齐 Figma「我的-详情」1378:8885)。个人中心打开资料弹窗;修改密码/退出登录
  * 复用顶栏右上角同一套逻辑(ChangePasswordModal + useLogout)。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiOutlined, BookOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import { BookOutlined, LockOutlined, LogoutOutlined, UserOutlined, WalletOutlined } from '@ant-design/icons'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
@@ -29,8 +29,8 @@ const IconLock = <LockOutlined className="settings-menu__ico-vector" aria-hidden
 /** 使用手册菜单图标。 */
 const IconManual = <BookOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
-/** MCP 接入菜单图标。 */
-const IconMCP = <ApiOutlined className="settings-menu__ico-vector" aria-hidden="true" />
+/** 积分申请菜单图标。 */
+const IconCreditRequest = <WalletOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
 /** 退出登录菜单图标。 */
 const IconLogout = <LogoutOutlined className="settings-menu__ico-vector" aria-hidden="true" />
@@ -41,7 +41,7 @@ interface SettingsMenuProps {
   onAfterAction?: () => void
 }
 
-/** 管理设置菜单锚点、弹层焦点及个人中心、改密、退出三个动作。 */
+/** 管理侧栏设置菜单及弹层焦点。 */
 export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
@@ -111,12 +111,10 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
     setOpen(false)
     onAfterAction?.()
   }
-  const openMCP = () => {
+  const openCreditRequests = () => {
     setOpen(false)
     onAfterAction?.()
-    // /mcp is reserved for the Streamable HTTP endpoint, so the management UI
-    // lives under a separate route and never gets swallowed by the dev proxy.
-    navigate('/settings/mcp')
+    navigate('/settings/credit-requests')
   }
   const doLogout = async () => {
     if (logoutConfirmRef.current || isLoggingOut) return
@@ -181,9 +179,9 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               <span className="settings-menu__ico settings-menu__ico--manual">{IconManual}</span>
               <span className="settings-menu__label">使用手册</span>
             </a>
-            <button type="button" className="settings-menu__item" role="menuitem" onClick={openMCP}>
-              <span className="settings-menu__ico settings-menu__ico--blue">{IconMCP}</span>
-              <span className="settings-menu__label">MCP 接入</span>
+            <button type="button" className="settings-menu__item" role="menuitem" onClick={openCreditRequests}>
+              <span className="settings-menu__ico settings-menu__ico--blue">{IconCreditRequest}</span>
+              <span className="settings-menu__label">积分申请</span>
             </button>
             <button
               type="button"

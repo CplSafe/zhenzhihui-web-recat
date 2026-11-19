@@ -1,0 +1,347 @@
+.credit-requests {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+  background: #f5f6fb;
+  color: #1c2030;
+}
+
+.credit-requests__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.credit-requests__content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 32px max(32px, calc((100% - 1120px) / 2)) 48px;
+}
+
+.credit-requests h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.credit-requests__intro {
+  margin: 0 0 24px;
+  color: #626b84;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.credit-requests__columns {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.credit-requests__columns.credit-requests__columns--detail {
+  grid-template-columns: minmax(0, 720px);
+  margin-top: 20px;
+}
+
+.credit-requests__panel {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid #e7e9f2;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(28, 32, 48, 0.04);
+}
+
+.credit-requests h2 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.credit-requests__muted {
+  margin: 0;
+  color: #626b84;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.credit-requests__muted strong {
+  color: #303751;
+  font-weight: 600;
+}
+
+.credit-requests__notice,
+.credit-requests__error {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.credit-requests__notice {
+  color: #785216;
+  background: #fff6e5;
+}
+
+.credit-requests__error {
+  color: #9b273b;
+  background: #fff0f2;
+}
+
+.credit-requests__form {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.credit-requests__form label {
+  color: #303751;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.credit-requests__form label span {
+  margin-left: 3px;
+  color: #626b84;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.credit-requests__form input,
+.credit-requests__form textarea {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 7px;
+  padding: 9px 11px;
+  box-sizing: border-box;
+  border: 1px solid #dce0ed;
+  border-radius: 8px;
+  background: #fff;
+  color: #1c2030;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.credit-requests__form textarea {
+  resize: vertical;
+}
+
+.credit-requests__form input:disabled,
+.credit-requests__form textarea:disabled {
+  background: #f7f8fc;
+}
+
+.credit-requests__button,
+.credit-requests__link {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.credit-requests__button {
+  min-height: 36px;
+  padding: 7px 13px;
+  border: 1px solid #dce0ed;
+  border-radius: 8px;
+  background: #fff;
+  color: #303751;
+}
+
+.credit-requests__button--primary {
+  border-color: #4e5bd1;
+  background: #4e5bd1;
+  color: #fff;
+}
+
+.credit-requests__button:hover:not(:disabled) {
+  border-color: #4e5bd1;
+}
+
+.credit-requests__button--primary:hover:not(:disabled) {
+  background: #404cb8;
+}
+
+.credit-requests__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.credit-requests__link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #4654bd;
+  text-decoration: none;
+}
+
+.credit-requests__link:hover {
+  text-decoration: underline;
+}
+
+.credit-requests :is(button, a, input, textarea):focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
+}
+
+.credit-requests__history-head,
+.credit-requests__record-head,
+.credit-requests__record-foot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.credit-requests__history-head {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.credit-requests__history-head h2 {
+  margin: 0;
+}
+
+.credit-requests__tabs {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #e7e9f2;
+}
+
+.credit-requests__tabs a {
+  padding: 7px 2px 9px;
+  border-bottom: 2px solid transparent;
+  color: #626b84;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.credit-requests__tabs a[aria-current='page'] {
+  border-color: #5767e5;
+  color: #4654bd;
+}
+
+.credit-requests__records {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.credit-requests__record {
+  padding: 14px;
+  border: 1px solid #e7e9f2;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.credit-requests__record h3 {
+  margin: 0 0 5px;
+  font-size: 17px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.credit-requests__status {
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #eef0f7;
+  color: #525a70;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.credit-requests__status--pending {
+  background: #fff1d6;
+  color: #7a5011;
+}
+
+.credit-requests__status--approved {
+  background: #e8f7ee;
+  color: #216644;
+}
+
+.credit-requests__status--rejected {
+  background: #fff0f2;
+  color: #9b273b;
+}
+
+.credit-requests__note {
+  margin: 10px 0 0;
+  color: #303751;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.credit-requests__record-foot {
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.credit-requests__dates {
+  display: grid;
+  gap: 3px;
+  color: #626b84;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.credit-requests__actions,
+.credit-requests__pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credit-requests__pagination {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.credit-requests__empty {
+  margin: 12px 0 0;
+  padding: 18px 10px;
+  color: #626b84;
+  text-align: center;
+  font-size: 14px;
+}
+
+.credit-requests__panel > .credit-requests__error {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 1100px) {
+  .credit-requests__columns {
+    grid-template-columns: minmax(230px, 290px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .credit-requests__content {
+    padding: 20px 16px 36px;
+  }
+
+  .credit-requests__columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .credit-requests__panel {
+    padding: 16px;
+  }
+}
