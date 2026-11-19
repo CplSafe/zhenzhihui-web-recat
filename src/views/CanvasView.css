@@ -188,6 +188,17 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
   max-height: min(60dvh, calc(var(--canvas-node-panel-height, 30dvh) / var(--canvas-ui-scale, 1)));
 }
 
+.canvas-view.has-stacked-agent .canvas-panel-edit-content > * {
+  box-sizing: border-box;
+  min-height: 0;
+  max-width: 100%;
+  max-height: inherit;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
 .canvas-view.has-stacked-agent .canvas-director-area [aria-label='DoDo Agent'] {
   max-height: 42dvh;
 }
@@ -263,6 +274,12 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
      停在 50 就会被自己所锚定的那个节点压住 */
   z-index: 1200;
   user-select: none;
+}
+
+.canvas-view:not(.has-stacked-agent) .canvas-panel-edit-content {
+  max-height: min(60dvh, calc(var(--canvas-panel-space-below, 60dvh) / var(--canvas-ui-scale, 1)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .canvas-panel-area :is(input, textarea, [contenteditable='true']) {
@@ -2848,27 +2865,12 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   border-radius: 12px;
   box-shadow: 0 0 14px hsl(var(--canvas-editor-hue, 164) 78% 60% / 38%);
 }
-.canvas-view .react-flow__node.canvas-node-leased::after {
-  content: attr(data-editor-label);
-  position: absolute;
-  /* A separate top-right row avoids covering either the title or node content. */
-  bottom: calc(100% + 30px);
-  right: 0;
-  z-index: 10;
-  box-sizing: border-box;
-  max-width: calc(100% - 16px);
-  padding: 3px 8px;
-  overflow: hidden;
-  border: 1px solid hsl(var(--canvas-editor-hue, 164) 65% 55%);
-  border-radius: 6px;
-  background: hsl(var(--canvas-editor-hue, 164) 35% 15%);
-  color: hsl(var(--canvas-editor-hue, 164) 85% 88%);
-  font:
-    600 12px/1.5 system-ui,
-    sans-serif;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
+.canvas-panel-lock-status {
+  padding: 8px 12px;
+  border: 1px solid #427b75;
+  border-radius: 8px 8px 0 0;
+  background: #163733;
+  color: #cdfaf1;
 }
 .canvas-view .canvas-node-occupied :is(button, input, textarea, select, [contenteditable='true']) {
   pointer-events: none;

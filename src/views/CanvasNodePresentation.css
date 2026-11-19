@@ -127,6 +127,22 @@
   align-items: center;
 }
 
+.canvas-node-header__collaboration {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  padding: 2px 5px;
+  border: 1px solid hsl(var(--canvas-editor-hue, 164) 65% 55%);
+  border-radius: 6px;
+  background: hsl(var(--canvas-editor-hue, 164) 35% 15%);
+  color: hsl(var(--canvas-editor-hue, 164) 85% 88%);
+  font-size: 0.85em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: none;
+}
+
 /* 常态固定单行，避免标题侵入相邻节点；完整内容由 title 提示与双击编辑承接。 */
 .canvas-node-header__label {
   flex: 1;

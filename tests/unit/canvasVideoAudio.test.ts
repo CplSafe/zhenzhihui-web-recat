@@ -78,6 +78,30 @@ describe('生成视频保留原配音', () => {
     expect(file.type).toBe('video/mp4')
     expect(file.name).toContain('701')
   })
+  it('合成时保留同一素材的两个音频节点各自的设置', () => {
+    const first = source()
+    const second = { ...source(), id: 'voice-2' }
+    second.data.audio.inSec = 1
+    const refs = [first, second, first].map((node) => ({
+      kind: 'audio',
+      sourceId: node.id,
+      assetId: node.data.assetId,
+    }))
+    const value = snapshotVideoAudio(refs, [first, second], 21, 'submission')
+    expect(value?.clips).toMatchObject([
+      { assetId: 55, sourceNodeId: first.id, inSec: 0.5 },
+      { assetId: 55, sourceNodeId: second.id, inSec: 1 },
+    ])
+  })
+  it('按快照混入原声，旧任务缺省仍替换原声', async () => {
+    const value = { ...snapshot(), originalVolume: 0.6 }
+    await composeVideoAudio(21, 701, value)
+    expect(mocks.mix).toHaveBeenLastCalledWith(expect.anything(), value.clips, 5, 21, 0.6)
+    const legacy = { ...snapshot() }
+    delete legacy.originalVolume
+    await composeVideoAudio(21, 701, legacy)
+    expect(mocks.mix).toHaveBeenLastCalledWith(expect.anything(), legacy.clips, 5, 21, 0)
+  })
   it('缓存已经入库的合成结果，刷新后不重复合成上传', async () => {
     expect(await composeVideoAudio(21, 701, { ...snapshot(), result: { sourceAssetId: 701, assetId: 702 } })).toBe(702)
     expect(fetch).not.toHaveBeenCalled()

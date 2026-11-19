@@ -548,6 +548,8 @@ export interface CanvasNodeInfo {
   /** 节点持久化的 params（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
   generationRequest?: { params?: Record<string, unknown> }
+  audioUse?: 'reference' | 'mix' | 'replace'
+  audioOriginalVolume?: number
   generationIntent?: 'edit' | 'new-model'
   taskId?: number
   taskRunId?: string
@@ -591,6 +593,7 @@ interface CanvasNodePanelProps {
   onRatioChange?: (ratio: string) => void
   /** 视频生成方式变更回调 */
   onVideoModeChange?: (mode: CanvasVideoMode) => void
+  onAudioUseChange?: (mode: 'reference' | 'mix' | 'replace', originalVolume: number) => void
   /** 模型变更回调 */
   onModelChange?: (modelVersionId: number) => void
   onResolvedModel?: (nodeId: string, modelVersionId: number | undefined) => void
@@ -615,6 +618,8 @@ interface CanvasNodePanelProps {
     videoMode?: CanvasVideoMode
     /** 视频生视频的源视频（节点自己已有的那条）；为 0 表示从头生成。 */
     selfVideoAssetId?: number
+    audioUse?: 'reference' | 'mix' | 'replace'
+    audioOriginalVolume?: number
   }) => void
   /** 扣费确认前检查引用素材的团队归属和入库状态。 */
   onPreflightAssets?: (
@@ -658,11 +663,6 @@ type VideoMode = CanvasVideoMode
 
 /** 稳定的默认值：内联 [] 会让依赖它的 memo/effect 每次渲染都失效，反复触发积分预估。 */
 const EMPTY_INHERITED_TEXTS: InheritedPromptText[] = []
-
-/** 从 sourceRefs 中找到指定 slotIndex 的引用 */
-function findRefBySlot(refs: CanvasSourceRef[] | undefined, slot: number): CanvasSourceRef | undefined {
-  return refs?.find((r) => r.slotIndex === slot)
-}
 
 /**
  * 参考素材的「+」：点开给两条来源，而不是直接进入画布点选模式。
@@ -869,6 +869,7 @@ export default function CanvasNodePanel({
   onRevertToHistory,
   onRatioChange,
   onVideoModeChange,
+  onAudioUseChange,
   onModelChange,
   onResolvedModel,
   models,
@@ -939,7 +940,11 @@ export default function CanvasNodePanel({
       }
     }
     document.addEventListener('keydown', onKeyDown)
-    const frame = requestAnimationFrame(() => taRef.current?.focus())
+    const frame = requestAnimationFrame(() => {
+      const editor = taRef.current
+      editor?.focus()
+      editor?.setSelectionRange(caretRef.current, caretRef.current)
+    })
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       cancelAnimationFrame(frame)
@@ -956,6 +961,11 @@ export default function CanvasNodePanel({
   const restoredNodeIdRef = useRef<string | undefined>(node?.id)
   useEffect(() => {
     const switchedNode = restoredNodeIdRef.current !== node?.id
+    if (switchedNode) {
+      const end = String(node?.prompt ?? (kind === 'text' ? node?.text : '') ?? '').length
+      caretRef.current = end
+      selectionEndRef.current = end
+    }
     if (kind === 'text') {
       if (switchedNode) setPromptHistory(readPromptHistory(node?.id))
       if (switchedNode) setPrompt(String(node?.prompt ?? node?.text ?? ''))
@@ -990,12 +1000,15 @@ export default function CanvasNodePanel({
       }))
   }, [node?.sourceRefs, workspaceId])
 
+  const audioUse = node?.audioUse || 'reference'
+  const audioOriginalVolume = Math.max(0, Math.min(1, Number(node?.audioOriginalVolume ?? 1)))
+  const audioRefs = useMemo(() => sourceRefs.filter((ref) => ref.kind === 'audio'), [sourceRefs])
   const requiredAudioVideoDurationSec = useMemo(
     () =>
-      kind === 'video'
-        ? requiredVideoDurationForAudio(sourceRefs.filter((ref) => ref.kind === 'audio').map((ref) => ref.audio || {}))
+      kind === 'video' && audioUse !== 'reference'
+        ? requiredVideoDurationForAudio(audioRefs.map((ref) => ref.audio || {}))
         : 0,
-    [kind, sourceRefs],
+    [kind, audioRefs, audioUse],
   )
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind === 'image').length, [sourceRefs])
@@ -1004,7 +1017,8 @@ export default function CanvasNodePanel({
   // 标签口径见 utils/canvasMentions：重命名过用名字、否则位置号（图片N/视频N）；重名自动加后缀；
   // 提交给模型时统一翻成位置号。显示文本与存储文本逐字一致（透明 textarea 叠高亮层的前提）。
   const taRef = useRef<CanvasMentionInputHandle | null>(null)
-  const caretRef = useRef(0)
+  const caretRef = useRef(prompt.length)
+  const selectionEndRef = useRef(prompt.length)
   const [promptFocused, setPromptFocused] = useState(false)
   const promptRef = useRef(prompt)
   promptRef.current = prompt
@@ -1012,10 +1026,16 @@ export default function CanvasNodePanel({
   /** 每条参考的 @ 标签（不含 @），与缩略图展示顺序一致。 */
   const refLabelByEdge = useMemo(() => buildMentionLabels(sourceRefs), [sourceRefs])
   const positionalRefLabelByEdge = useMemo(() => buildPositionalMentionLabels(sourceRefs), [sourceRefs])
-  /** 可被 @ 的参考（仅图片/视频），供选择器列出。 */
+  /** 配音和替换原声只在后期混音，切到声音参考后才可在提示词中引用。 */
   const mentionableRefs = useMemo(
-    () => sourceRefs.filter((ref) => ref.kind === 'image' || ref.kind === 'video'),
-    [sourceRefs],
+    () =>
+      sourceRefs.filter(
+        (ref) =>
+          ref.kind === 'image' ||
+          ref.kind === 'video' ||
+          (ref.kind === 'audio' && kind === 'video' && audioUse === 'reference'),
+      ),
+    [sourceRefs, kind, audioUse],
   )
 
   // 用户在当前节点上动过输入框（含清空）：上游文本自动回填只在此前发生。换节点重置。
@@ -1085,6 +1105,7 @@ export default function CanvasNodePanel({
       const next = prompt.slice(0, start) + snippet + prompt.slice(end)
       const newPos = start + snippet.length
       caretRef.current = newPos
+      selectionEndRef.current = newPos
       commitPrompt(next, { immediate: true })
       requestAnimationFrame(() => {
         const ta = taRef.current
@@ -1099,16 +1120,8 @@ export default function CanvasNodePanel({
 
   // 在记录的光标位置插入引用文本（沿用 ImageChat 的口径）。
   const insertAtCaret = useCallback(
-    (snippet: string) => replaceRange(caretRef.current, caretRef.current, snippet),
+    (snippet: string) => replaceRange(caretRef.current, selectionEndRef.current, snippet),
     [replaceRange],
-  )
-
-  const insertRefMention = useCallback(
-    (ref: CanvasSourceRef) => {
-      const label = refLabelByEdge.get(ref.edgeId)
-      if (label) insertAtCaret(`@${label} `)
-    },
-    [refLabelByEdge, insertAtCaret],
   )
 
   // 删除参考时同步改提示词里的引用：被删那条去掉，其后同类型位置号前移，名字型的不受影响。
@@ -1143,19 +1156,21 @@ export default function CanvasNodePanel({
   const mentionRegex = useMemo(() => buildMentionRegex(refLabelByEdge.values()), [refLabelByEdge])
   const promptMentions = useMemo<PromptMention[]>(
     () =>
-      mentionableRefs.flatMap((ref) => {
-        const thumbnail =
-          ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : '')
-        return [...new Set([refLabelByEdge.get(ref.edgeId), positionalRefLabelByEdge.get(ref.edgeId)])]
-          .filter(Boolean)
-          .map((label) => ({
-            label: label!,
-            kind: ref.kind,
-            thumbnailUrl: ref.posterUrl || (ref.kind === 'video' && thumbnail ? `${thumbnail}#t=0.1` : thumbnail),
-            video: ref.kind === 'video' && !ref.posterUrl,
-          }))
-      }),
-    [mentionableRefs, refLabelByEdge, positionalRefLabelByEdge, workspaceId],
+      sourceRefs
+        .filter((ref) => ref.kind === 'image' || ref.kind === 'video' || ref.kind === 'audio')
+        .flatMap((ref) => {
+          const thumbnail =
+            ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : '')
+          return [...new Set([refLabelByEdge.get(ref.edgeId), positionalRefLabelByEdge.get(ref.edgeId)])]
+            .filter(Boolean)
+            .map((label) => ({
+              label: label!,
+              kind: ref.kind,
+              thumbnailUrl: ref.posterUrl || (ref.kind === 'video' && thumbnail ? `${thumbnail}#t=0.1` : thumbnail),
+              video: ref.kind === 'video' && !ref.posterUrl,
+            }))
+        }),
+    [sourceRefs, refLabelByEdge, positionalRefLabelByEdge, workspaceId],
   )
 
   // ===== 输入 @ 弹出参考选择器：敲 @ 即列出可 @ 的参考，继续输入按名字筛，↑↓ 选、Enter/Tab 确认、Esc 关 =====
@@ -1182,9 +1197,10 @@ export default function CanvasNodePanel({
     const query = atQuery.trim().toLowerCase()
     return mentionableRefs.filter((ref) => {
       const label = (refLabelByEdge.get(ref.edgeId) || '').toLowerCase()
-      return !query || label.includes(query)
+      const positional = (positionalRefLabelByEdge.get(ref.edgeId) || '').toLowerCase()
+      return !query || label.includes(query) || positional.includes(query)
     })
-  }, [atAnchor, atQuery, mentionableRefs, refLabelByEdge])
+  }, [atAnchor, atQuery, mentionableRefs, refLabelByEdge, positionalRefLabelByEdge])
   useEffect(() => {
     if (atAnchor !== null)
       document
@@ -1203,6 +1219,13 @@ export default function CanvasNodePanel({
     },
     [refLabelByEdge, atAnchor, prompt.length, replaceRange, closeAtPicker],
   )
+  const insertRefMention = (ref: CanvasSourceRef) => {
+    if (ref.kind === 'audio' && (kind !== 'video' || audioUse !== 'reference')) return
+    const label = refLabelByEdge.get(ref.edgeId)
+    if (!label) return
+    if (atAnchor !== null) pickAtCandidate(ref)
+    else insertAtCaret(`@${label} `)
+  }
   // 「输入 @ 但还没有连入任何参考」以前是完全没反应——选择器只列已连线的参考,没有就不弹。
   // 用户的心智是「@ = 引用一张图」,所以选择器里始终给两条取图入口(素材库 / 画布点选);
   // 取到的素材连到本节点后,自动把刚才敲的「@筛选词」换成完整引用,不用再敲一次。
@@ -1409,7 +1432,7 @@ export default function CanvasNodePanel({
   }, [selectedModel?.source])
   const imageRefCount = sourceRefs.filter((ref) => ref.kind === 'image').length
   const videoRefCount = sourceRefs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
-  const audioRefCount = sourceRefs.filter((ref) => ref.kind === 'audio').length
+  const audioRefCount = audioUse === 'reference' ? audioRefs.length : 0
   const referenceLimitError =
     kind === 'video' && selectedModel
       ? imageRefCount > maxRefs
@@ -1442,8 +1465,10 @@ export default function CanvasNodePanel({
   }, [sourceRefs])
 
   const canAddReference =
-    kind === 'video' && videoMode !== 'first-last'
-      ? imageRefCount < maxRefs || videoRefCount < videoRoleLimits.video || audioRefCount < videoRoleLimits.audio
+    kind === 'video'
+      ? imageRefCount < maxRefs ||
+        (videoMode !== 'first-last' && videoRefCount < videoRoleLimits.video) ||
+        audioRefs.length < videoRoleLimits.audio
       : mediaRefCount < maxRefs
 
   /** 再加一条参考该落到哪个槽位:与各处「添加参考」按钮同口径;已满返回 undefined。 */
@@ -1792,7 +1817,7 @@ export default function CanvasNodePanel({
   )
   const inputAssets = useMemo(() => {
     const assets = buildCanvasInputAssets(
-      sourceRefs,
+      kind === 'video' && audioUse !== 'reference' ? sourceRefs.filter((ref) => ref.kind !== 'audio') : sourceRefs,
       operationCode,
       selfVideoAssetId,
       declaredImageRole,
@@ -1801,7 +1826,7 @@ export default function CanvasNodePanel({
     )
     if (maskAssetId > 0) assets.push({ asset_id: maskAssetId, role: 'mask' })
     return assets
-  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId, selectedModel])
+  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId, selectedModel, kind, audioUse])
   /**
    * 参考视频总时长：画布节点不存视频时长，这里按视频地址读一次元数据（preload=metadata，只拉文件头）。
    * 改片时节点自己那条视频也算进去——它同样会作为参考视频下发。
@@ -1862,11 +1887,28 @@ export default function CanvasNodePanel({
       })
     }
     if (kind === 'video') {
+      if (
+        sourceRefs.some(
+          (ref) => ref.kind === 'audio' && (!Number.isSafeInteger(Number(ref.assetId)) || Number(ref.assetId) <= 0),
+        )
+      )
+        return '音频素材尚未上传完成，请等待上传或重新选择。'
+      if (
+        audioUse !== 'reference' &&
+        sourceRefs.some((ref) => ref.kind === 'audio' && prompt.includes(`@${refLabelByEdge.get(ref.edgeId)}`))
+      )
+        return '配音合成不向模型发送音频，请删除提示词中的音频引用或改为声音参考。'
+      if (
+        audioUse === 'reference' &&
+        sourceRefs.some((ref) => ref.kind === 'audio') &&
+        !getModelInputConstraints(selectedModel?.source, operationCode).roles.some((role) => /audio/i.test(role.role))
+      )
+        return '当前模型未声明支持声音参考，请更换模型或选择配音合成。'
       if (audioVideoDurationError) return audioVideoDurationError
       return validateCanvasVideoInputs({
         operationCode,
         videoMode,
-        sourceRefs,
+        sourceRefs: audioUse === 'reference' ? sourceRefs : sourceRefs.filter((ref) => ref.kind !== 'audio'),
         workspaceId,
         maxImageRefs: maxRefs,
         maxVideoRefs: videoRoleLimits.video,
@@ -1894,6 +1936,8 @@ export default function CanvasNodePanel({
     selectedModel?.displayName,
     selectedModel?.source,
     audioVideoDurationError,
+    audioUse,
+    refLabelByEdge,
     maxVideoRefSec,
     videoRefTotalSec,
     buildFullPrompt,
@@ -1999,10 +2043,19 @@ export default function CanvasNodePanel({
       )
       if (confirmed !== true) return
     }
-    if (onPreflightAssets && inputAssets.length) {
+    const preflightAssets =
+      kind === 'video' && audioUse !== 'reference'
+        ? [
+            ...inputAssets,
+            ...sourceRefs
+              .filter((ref) => ref.kind === 'audio' && Number(ref.assetId) > 0)
+              .map((ref) => ({ asset_id: Number(ref.assetId), role: 'audio' })),
+          ]
+        : inputAssets
+    if (onPreflightAssets && preflightAssets.length) {
       setCheckingAssets(true)
       try {
-        const assetError = await onPreflightAssets(sourceRefs, inputAssets, Boolean(isSeedanceModel))
+        const assetError = await onPreflightAssets(sourceRefs, preflightAssets, Boolean(isSeedanceModel))
         if (assetError) {
           showToast(assetError, 'error')
           return
@@ -2028,6 +2081,8 @@ export default function CanvasNodePanel({
       videoMode: kind === 'video' ? videoMode : undefined,
       // 视频生视频：节点自己已有的那条视频作为源视频下发；新模型重生成则不带，等于从头生成
       selfVideoAssetId,
+      audioUse: kind === 'video' ? audioUse : undefined,
+      audioOriginalVolume: audioUse === 'mix' ? audioOriginalVolume : 0,
     })
   }
 
@@ -2087,6 +2142,79 @@ export default function CanvasNodePanel({
     onAdoptInheritedText?.(merged)
   }
 
+  const renderAudioReference = (ref: CanvasSourceRef) => {
+    const label = refLabelByEdge.get(ref.edgeId)
+    const canInsert = Boolean(label) && !taskRunning && audioUse === 'reference'
+    return (
+      <div key={ref.edgeId} className={`${styles.refThumb} ${canInsert ? styles.refThumbClickable : ''}`}>
+        <button
+          type="button"
+          className={`${styles.refPreview} ${styles.audioRefPreview}`}
+          aria-label={`插入音频引用 @${label}`}
+          title={audioUse === 'reference' ? '点击插入音频引用' : '切换到声音参考后可插入音频引用'}
+          disabled={!canInsert}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => insertRefMention(ref)}
+        >
+          <RefThumbMedia sourceRef={ref} label="音频" />
+          {label && <span className={styles.refThumbTag}>{audioUse === 'reference' ? `@${label}` : label}</span>}
+        </button>
+        <button
+          type="button"
+          className={styles.refDelete}
+          disabled={taskRunning}
+          aria-label="删除音频参考"
+          onClick={() => handleRemoveRefWithReindex(ref)}
+        >
+          &times;
+        </button>
+      </div>
+    )
+  }
+
+  const audioUseControls = kind === 'video' && audioRefs.length > 0 && (
+    <div className={styles.audioReferenceHint}>
+      <label>
+        音频用途{' '}
+        <select
+          aria-label="音频用途"
+          value={audioUse}
+          disabled={taskRunning}
+          onChange={(event) =>
+            onAudioUseChange?.(event.target.value as 'reference' | 'mix' | 'replace', audioOriginalVolume)
+          }
+        >
+          <option value="reference">声音参考</option>
+          <option value="mix">配音合成</option>
+          <option value="replace">替换原声</option>
+        </select>
+      </label>
+      {audioUse === 'reference' ? (
+        <p>音频作为模型参考，不自动加入成片；音色效果取决于模型。</p>
+      ) : audioUse === 'mix' ? (
+        <>
+          <label>
+            视频原声音量{' '}
+            <input
+              aria-label="视频原声音量"
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={audioOriginalVolume}
+              disabled={taskRunning}
+              onChange={(event) => onAudioUseChange?.(audioUse, Number(event.target.value))}
+            />{' '}
+            {Math.round(audioOriginalVolume * 100)}%
+          </label>
+          <p>配音与视频原声混合，可能出现双重对白，不保证口型同步。切换到声音参考可在提示词中 @ 音频。</p>
+        </>
+      ) : (
+        <p>原声轨将被替换，其中的环境音也会消失；不保证口型同步。切换到声音参考可在提示词中 @ 音频。</p>
+      )}
+    </div>
+  )
+
   const promptEditor = (
     <div className={styles.promptWrap} data-prompt-editing={promptFocused ? 'true' : 'false'}>
       <CanvasMentionInput
@@ -2112,16 +2240,21 @@ export default function CanvasNodePanel({
           if (taskRunning) return
           let value = e.target.value
           const pos = e.target.selectionStart ?? value.length
-          const typedOneChar = value.length === prompt.length + 1
-          // 中文输入法下敲出来的是全角 ＠：当作半角 @ 处理（存储统一为 @，引用高亮/翻译才认得），
-          // 受控值被改写后光标会跳到末尾，下一帧拉回原位。
-          if (typedOneChar && value[pos - 1] === '＠') {
+          // 输入 @ 可能覆盖已经选中的文字，不能只靠提示词长度增加一位判断。
+          const before = value.slice(0, pos - 1)
+          const after = value.slice(pos)
+          const typedAt =
+            /[@＠]/.test(value.charAt(pos - 1)) &&
+            value !== prompt &&
+            prompt.length >= before.length + after.length &&
+            prompt.startsWith(before) &&
+            prompt.endsWith(after)
+          if (typedAt && value[pos - 1] === '＠') {
             value = `${value.slice(0, pos - 1)}@${value.slice(pos)}`
             requestAnimationFrame(() => taRef.current?.setSelectionRange(pos, pos))
           }
-          // 只多了一个字符且它是 @ → 用户刚敲了 @
-          const typedAt = typedOneChar && value[pos - 1] === '@'
           caretRef.current = pos
+          selectionEndRef.current = pos
           userEditedPromptRef.current = true
           // 文本节点的内容由「保存」显式落到 text；图片/视频节点边输入边写回 prompt（防抖），
           // 这样切到别的节点再切回来、以及刷新重进，输入框里的文案都还在。
@@ -2139,6 +2272,7 @@ export default function CanvasNodePanel({
         onSelect={() => {
           const pos = taRef.current?.selectionStart ?? 0
           caretRef.current = pos
+          selectionEndRef.current = taRef.current?.selectionEnd ?? pos
           if (atAnchor !== null && pos <= atAnchor) closeAtPicker()
         }}
         onKeyDown={(e) => {
@@ -2210,11 +2344,15 @@ export default function CanvasNodePanel({
         }}
       />
       {/* @ 选择器：列出可 @ 的参考（缩略图 + 标签）+ 取图入口；mousedown 阻止默认避免 textarea 失焦丢光标 */}
-      {atAnchor !== null && (atCandidates.length > 0 || atPickerHasActions) && (
+      {atAnchor !== null && !(promptExpanded && promptEditorSuspended) && (
         <ViewportFloatingPanel className={styles.atPicker} role="listbox" aria-label="选择要 @ 的参考素材">
           {!atCandidates.length && (
             <div className={styles.atPickerEmpty}>
-              {mentionableRefs.length ? '没有匹配的参考素材' : '还没有连入的参考素材，先取一张图：'}
+              {mentionableRefs.length
+                ? '没有匹配的参考素材'
+                : audioRefs.length > 0 && audioUse !== 'reference'
+                  ? '切换到声音参考后，才可在提示词中引用已连接的音频。'
+                  : '还没有连入的参考素材'}
             </div>
           )}
           <div className={styles.atCandidates}>
@@ -2314,7 +2452,9 @@ export default function CanvasNodePanel({
                   视频 {videoRefCount}/{videoRoleLimits.video}
                 </span>
                 <span>
-                  音频 {audioRefCount}/{videoRoleLimits.audio}
+                  {audioUse === 'reference'
+                    ? `音频 ${audioRefCount}/${videoRoleLimits.audio}`
+                    : `配音 ${audioRefs.length} 条`}
                 </span>
                 {!getModelReferenceImageLimit(buildModelRestrictionSummary(selectedModel.source).constraints) && (
                   <span>图片上限暂按 {DEFAULT_MAX_REFS} 张，模型未声明</span>
@@ -2342,7 +2482,7 @@ export default function CanvasNodePanel({
           /* 首尾帧模式的两个槽位语义不同，必须同时保留，方便分别指定首帧和尾帧。 */
           <div className={styles.refImages}>
             {refSlots.map((slot) => {
-              const ref = findRefBySlot(sourceRefs, slot)
+              const ref = sourceRefs.find((item) => item.kind === 'image' && item.slotIndex === slot)
               const title = slot === 0 ? '首帧' : '尾帧'
               return (
                 <React.Fragment key={slot}>
@@ -2390,55 +2530,59 @@ export default function CanvasNodePanel({
                 </React.Fragment>
               )
             })}
+            {audioRefs.map(renderAudioReference)}
           </div>
         ) : kind === 'video' ? (
           /* 自由生成只展示已有素材，并在末尾保留一个添加入口；模型上限用于校验，不生成同等数量的空槽位。 */
           <div className={styles.refImages}>
             {sourceRefs
               .filter((ref) => ref.kind !== 'text')
-              .map((ref) => (
-                <div
-                  key={ref.edgeId}
-                  className={`${styles.refThumb} ${styles.refThumbClickable}`}
-                  title={ref.kind === 'audio' ? '点击插入音频引用' : '点击预览素材，点击名称插入引用'}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => (ref.kind === 'audio' ? insertRefMention(ref) : onPreviewMentionRef?.(ref))}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      if (ref.kind === 'audio') insertRefMention(ref)
-                      else onPreviewMentionRef?.(ref)
-                    }
-                  }}
-                >
-                  <RefThumbMedia sourceRef={ref} label={ref.kind} />
-                  {refLabelByEdge.get(ref.edgeId) && (
-                    <button
-                      type="button"
-                      className={styles.refThumbTag}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        insertRefMention(ref)
-                      }}
-                    >
-                      @{refLabelByEdge.get(ref.edgeId)}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={styles.refDelete}
-                    disabled={taskRunning}
-                    aria-label={`删除${ref.kind === 'image' ? '图片' : ref.kind === 'audio' ? '音频' : '视频'}参考`}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      handleRemoveRefWithReindex(ref)
+              .map((ref) =>
+                ref.kind === 'audio' ? (
+                  renderAudioReference(ref)
+                ) : (
+                  <div
+                    key={ref.edgeId}
+                    className={`${styles.refThumb} ${styles.refThumbClickable}`}
+                    title="点击预览素材，点击名称插入引用"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onPreviewMentionRef?.(ref)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onPreviewMentionRef?.(ref)
+                      }
                     }}
                   >
-                    &times;
-                  </button>
-                </div>
-              ))}
+                    <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                    {refLabelByEdge.get(ref.edgeId) && (
+                      <button
+                        type="button"
+                        className={styles.refThumbTag}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          insertRefMention(ref)
+                        }}
+                      >
+                        @{refLabelByEdge.get(ref.edgeId)}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={styles.refDelete}
+                      disabled={taskRunning}
+                      aria-label={`删除${ref.kind === 'image' ? '图片' : '视频'}参考`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleRemoveRefWithReindex(ref)
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ),
+              )}
             {canAddReference && (
               <RefAddButton
                 hintUserId={currentUserId}
@@ -2626,11 +2770,7 @@ export default function CanvasNodePanel({
         </button>
       )}
 
-      {kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio') && (
-        <p className={styles.audioReferenceHint}>
-          视频生成后会合入本次连接的原音频并关闭模型原声，保留配音台词和音色。音频过长时需在视频剪辑中调整时长；此操作不保证口型同步。
-        </p>
-      )}
+      {!promptExpanded && audioUseControls}
 
       {/* 节点级生成历史（反馈 #8）：只对已有历史的图片/视频节点显示；点缩略图切回该版本。
           缩略图按 assetId 现算地址，不落 dataURL，避免撑大画布 payload。 */}
@@ -2697,6 +2837,7 @@ export default function CanvasNodePanel({
                     <span>参考素材</span>
                     <span>点击素材插入引用</span>
                   </div>
+                  {audioUseControls}
                   <div className={styles.promptModalReferences} aria-label="参考素材">
                     {mentionableRefs.map((ref) => {
                       const label = refLabelByEdge.get(ref.edgeId)
@@ -2707,6 +2848,7 @@ export default function CanvasNodePanel({
                           key={ref.edgeId}
                           className={styles.promptModalRef}
                           disabled={taskRunning}
+                          onMouseDown={(event) => event.preventDefault()}
                           onClick={() => insertRefMention(ref)}
                           title={`插入 @${label}`}
                         >
@@ -2735,7 +2877,12 @@ export default function CanvasNodePanel({
                       type="button"
                       className={styles.polishBtn}
                       disabled={taskRunning || (!mentionableRefs.length && !atPickerHasActions)}
+                      onMouseDown={(event) => event.preventDefault()}
                       onClick={() => {
+                        if (atAnchor !== null) {
+                          taRef.current?.focus()
+                          return
+                        }
                         const anchor = Math.min(caretRef.current, prompt.length)
                         insertAtCaret('@')
                         setAtAnchor(anchor)

@@ -46,6 +46,7 @@ export default function CanvasAudioNode({
   const [mediaDuration, setMediaDuration] = useState(0)
   const [peaks, setPeaks] = useState<number[]>([])
   const [waveformStatus, setWaveformStatus] = useState('')
+  const [playbackSource, setPlaybackSource] = useState<{ source: string; url: string } | null>(null)
   const [waveformVisible, setWaveformVisible] = useState(false)
   const [savingEdited, setSavingEdited] = useState(false)
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)
@@ -83,10 +84,18 @@ export default function CanvasAudioNode({
   }, [src])
   useEffect(() => {
     const abort = new AbortController()
+    let objectUrl = ''
     setPeaks([])
-    setWaveformStatus(src && waveformVisible ? '波形加载中' : '')
+    setPlaybackSource(null)
+    setWaveformStatus(src && waveformVisible ? '音频加载中' : '')
     if (src && waveformVisible)
-      void loadAudioWaveform(src, abort.signal)
+      void loadAudioWaveform(src, abort.signal, 48, (bytes, contentType) => {
+        if (abort.signal.aborted) return
+        // Reuse the waveform download: a local blob avoids broken Range/redirect media playback.
+        const type = /^audio\//i.test(contentType) ? contentType.split(';')[0] : ''
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type }))
+        setPlaybackSource({ source: src, url: objectUrl })
+      })
         .then((values) => {
           if (!abort.signal.aborted) {
             setPeaks(values)
@@ -94,9 +103,16 @@ export default function CanvasAudioNode({
           }
         })
         .catch(() => {
-          if (!abort.signal.aborted) setWaveformStatus('波形暂不可用，可继续播放')
+          if (!abort.signal.aborted) {
+            // A waveform decoding failure need not prevent native playback.
+            setPlaybackSource((current) => (current?.source === src ? current : { source: src, url: src }))
+            setWaveformStatus('波形暂不可用，可继续播放')
+          }
         })
-    return () => abort.abort()
+    return () => {
+      abort.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [src, waveformVisible])
   useEffect(() => {
     active.current += 1
@@ -188,6 +204,7 @@ export default function CanvasAudioNode({
     try {
       await audio.play()
     } catch {
+      setPlaying(false)
       showToast(readOnly ? '音频暂时无法播放，请稍后重试' : '音频暂时无法播放，请重新上传或稍后重试', 'error')
     }
   }
@@ -266,7 +283,8 @@ export default function CanvasAudioNode({
             className={`${styles.playButton} nodrag`}
             type="button"
             onClick={() => void togglePlayback()}
-            disabled={!src}
+            disabled={!src || playbackSource?.source !== src}
+            title={src && playbackSource?.source !== src ? '音频加载中' : undefined}
             aria-label={playing ? '暂停音频' : '播放音频'}
           >
             {playing ? <PauseIcon /> : <PlayIcon />}
@@ -331,11 +349,11 @@ export default function CanvasAudioNode({
               )}
             </div>
           </div>
-          {src && (
+          {src && playbackSource?.source === src && (
             <audio
-              key={src}
+              key={playbackSource.url}
               ref={player}
-              src={src}
+              src={playbackSource.url}
               preload="metadata"
               aria-label={readOnly ? '音频试听' : undefined}
               onLoadedMetadata={(e) => {
@@ -350,6 +368,7 @@ export default function CanvasAudioNode({
                 if (e.currentTarget.currentTime < settings.inSec || e.currentTarget.currentTime >= playbackEnd)
                   e.currentTarget.currentTime = settings.inSec
               }}
+              onError={() => setPlaying(false)}
               onPause={() => setPlaying(false)}
               onEnded={() => setPlaying(false)}
               onTimeUpdate={(e) => {

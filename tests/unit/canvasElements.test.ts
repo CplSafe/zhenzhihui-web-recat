@@ -148,6 +148,15 @@ describe('canvasElements', () => {
     expect(graph.nodes[0].data.audioReferences).toEqual([{ assetId: 88, workspaceId: 21, title: '样音.wav' }])
     expect([...collectCanvasElementAssetIds([mutation])]).toEqual([88])
   })
+  it('视频节点保存并恢复音频用途与原声音量', () => {
+    const mutation = nodeToMutation({
+      id: 'video',
+      type: 'video',
+      position: { x: 0, y: 0 },
+      data: { kind: 'video', audioUse: 'mix', audioOriginalVolume: 0 },
+    })
+    expect(elementsToGraph([mutation]).nodes[0].data).toMatchObject({ audioUse: 'mix', audioOriginalVolume: 0 })
+  })
   it('视频节点引用保留连接音频的裁剪时长元数据', () => {
     const audio = {
       lane: 'voice',
@@ -174,6 +183,25 @@ describe('canvasElements', () => {
   })
   it('builds stable edge ids', () => {
     expect(buildEdgeId('source-node', 'target-node', 2)).toBe('e-source-node-target-node-2')
+  })
+
+  it('保留连接至同一视频的两个音频节点，即使它们共用素材 ID', () => {
+    const position = { x: 0, y: 0 }
+    const nodes: Node[] = [
+      { id: 'voice-a', type: 'audio', position, data: { kind: 'audio', assetId: 55, title: '第一段' } },
+      { id: 'voice-b', type: 'audio', position, data: { kind: 'audio', assetId: 55, title: '第二段' } },
+      { id: 'video', type: 'video', position, data: { kind: 'video' } },
+    ]
+    const edges: Edge[] = [
+      { id: 'a-video', source: 'voice-a', target: 'video', data: { slotIndex: 0 } },
+      { id: 'b-video', source: 'voice-b', target: 'video', data: { slotIndex: 1 } },
+      { id: 'duplicate-a-video', source: 'voice-a', target: 'video', data: { slotIndex: 2 } },
+    ]
+
+    expect(collectCanvasSourceRefs('video', nodes, edges)).toEqual([
+      expect.objectContaining({ sourceId: 'voice-a', assetId: 55, slotIndex: 0, title: '第一段' }),
+      expect.objectContaining({ sourceId: 'voice-b', assetId: 55, slotIndex: 1, title: '第二段' }),
+    ])
   })
 
   it('收集活节点引用的生成结果、封面帧和时间线片段素材 id，跳过 tombstone 与连线', () => {

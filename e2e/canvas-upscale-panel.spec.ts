@@ -27,6 +27,9 @@ test('本机预览可见时等待云端画布，再保存超分结果节点后�
   let keySaved = ''
   let keyAcknowledged = ''
   const submittedKeys: string[] = []
+  await page.route('**/api/v1/canvases/120/node-locks?**', (route) =>
+    route.fulfill({ json: { granted: true, nodes: {} } }),
+  )
   await page.route('**/api/v1/canvases/120/elements?**', async (route) => {
     if (route.request().method() === 'PATCH') {
       const { mutations = [] } = route.request().postDataJSON()
@@ -219,6 +222,8 @@ for (const dimensions of [
       }),
     )
     await page.route('**/api/v1/canvases/120**', async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith('/node-locks'))
+        return route.fulfill({ json: { granted: true, nodes: {} } })
       if (route.request().method() === 'PATCH') {
         await route.fulfill({ json: { revision: 2 } })
         return
@@ -255,9 +260,10 @@ for (const dimensions of [
     if (dimensions.height === 5000) await page.setViewportSize({ width: 760, height: 900 })
     await page.goto('/canvas/120')
     const source = page.locator('.react-flow__node[data-id="source"]')
+    const imagePrompt = page.locator('.canvas-panel-area').getByRole('textbox', { name: /描述你想要生成的内容/ })
     await source.locator('.canvas-node-header').click()
     await expect(page.locator('.canvas-panel-area')).toBeVisible()
-    await expect(page.locator('.canvas-panel-area textarea').first()).toHaveValue('保留这段图片描述')
+    await expect(imagePrompt).toHaveText('保留这段图片描述')
     await page.getByRole('button', { name: '超分', exact: true }).click()
     const modal = page.getByRole('dialog', { name: '超分', exact: true })
     await expect(modal).toBeVisible()
@@ -277,7 +283,7 @@ for (const dimensions of [
     await modal.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(modal).not.toBeVisible()
     await expect(page.locator('.canvas-panel-area')).toBeVisible()
-    await expect(page.locator('.canvas-panel-area textarea').first()).toHaveValue('保留这段图片描述')
+    await expect(imagePrompt).toHaveText('保留这段图片描述')
     await expect(source).toHaveClass(/selected/)
     await page.getByRole('button', { name: '超分', exact: true }).click()
     await expect(modal).toBeVisible()
@@ -346,7 +352,11 @@ for (const dimensions of [
       await modal.getByRole('button', { name: '确认超分' }).click()
       await expect.poll(() => submissions.length).toBe(2)
       expect(submissions[1].idempotency_key).not.toBe(submissions[0].idempotency_key)
-      await expect(page.locator('.react-flow__node').filter({ hasText: '当前模型有任务正在生成中' })).toHaveCount(1)
+      await expect(
+        page
+          .locator('.react-flow__node')
+          .getByRole('alert', { name: '生成失败：当前模型有任务正在生成中，请稍后再试。' }),
+      ).toBeVisible()
       await page.screenshot({ path: testInfo.outputPath('concurrent-upscale-rejection.png') })
     }
     releaseSubmission()

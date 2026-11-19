@@ -142,10 +142,19 @@ const CanvasMentionInput = forwardRef<
       chip.setAttribute('contenteditable', 'false')
       chip.dataset.mention = match[0]
       chip.className = `${styles.promptRefTag} ${styles.promptRefImageTag}`
-      chip.setAttribute('role', 'button')
-      chip.setAttribute('aria-label', `查看引用${mention?.kind === 'video' ? '视频' : '图片'}：${label}`)
-      chip.tabIndex = -1
-      if (mention?.thumbnailUrl) {
+      if (mention?.kind === 'audio') {
+        chip.dataset.audioMention = 'true'
+        chip.setAttribute('aria-label', `音频参考：${label}`)
+        const icon = document.createElement('span')
+        icon.textContent = '♫ '
+        icon.setAttribute('aria-hidden', 'true')
+        chip.append(icon)
+      } else {
+        chip.setAttribute('role', 'button')
+        chip.setAttribute('aria-label', `查看引用${mention?.kind === 'video' ? '视频' : '图片'}：${label}`)
+        chip.tabIndex = -1
+      }
+      if (mention?.thumbnailUrl && mention.kind !== 'audio') {
         const thumbnail = document.createElement(mention.video ? 'video' : 'img')
         thumbnail.className = styles.promptRefImageThumb
         thumbnail.src = mention.thumbnailUrl
@@ -244,7 +253,7 @@ const CanvasMentionInput = forwardRef<
       }}
       onClick={(event) => {
         const chip = (event.target as HTMLElement).closest<HTMLElement>('[data-mention]')
-        if (chip) props.onPreview((chip.dataset.mention || '').slice(1))
+        if (chip && !chip.dataset.audioMention) props.onPreview((chip.dataset.mention || '').slice(1))
       }}
       onPaste={(event) => {
         event.preventDefault()

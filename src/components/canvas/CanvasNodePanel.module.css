@@ -745,6 +745,21 @@
   cursor: pointer;
 }
 
+.audioRefPreview {
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+
+.audioRefPreview:disabled {
+  cursor: default;
+}
+
+.audioRefPreview:focus-visible {
+  outline: 2px solid var(--canvas-brand, #00e5be);
+  outline-offset: 2px;
+}
+
 .realPersonBadge {
   position: absolute;
   top: 2px;
@@ -914,9 +929,34 @@
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--canvas-surface-raised);
-  color: #347866;
+  color: var(--canvas-text-muted, #64748b);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.audioReferenceHint label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.audioReferenceHint select {
+  max-width: 100%;
+  padding: 4px 8px;
+  color: var(--canvas-text, #333);
+  background: var(--canvas-surface-raised);
+  border: 1px solid var(--canvas-border, #ccc);
+  border-radius: 5px;
+}
+
+.audioReferenceHint input[type='range'] {
+  width: 110px;
+  accent-color: #11a98a;
+}
+
+.audioReferenceHint p {
+  margin: 5px 0 0;
 }
 
 .textPromptTools {
@@ -1929,6 +1969,9 @@
 .promptModalReferenceSection {
   flex: none;
   padding: 0 24px 16px;
+}
+.promptModalReferenceSection .audioReferenceHint {
+  margin: 0 0 8px;
 }
 .promptModalSectionLabel {
   display: flex;

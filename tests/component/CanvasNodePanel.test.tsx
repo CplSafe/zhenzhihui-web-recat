@@ -2191,6 +2191,7 @@ it('连接11秒配音时禁用短时长档位和上限不足的视频模型', as
     {
       id: 'video',
       kind: 'video',
+      audioUse: 'mix',
       prompt: '根据配音生成视频',
       videoMode: 'auto',
       params: { duration: 5 },
@@ -2252,6 +2253,7 @@ it('配音超过15秒时禁用最多生成15秒的视频模型', async () => {
     {
       id: 'video',
       kind: 'video',
+      audioUse: 'mix',
       prompt: '根据配音生成视频',
       videoMode: 'auto',
       sourceRefs: [{ kind: 'audio', sourceId: 'voice', edgeId: 'voice-to-video', slotIndex: 0, audio: voice }],
@@ -2270,6 +2272,34 @@ it('配音超过15秒时禁用最多生成15秒的视频模型', async () => {
   expect(fifteenSecondModel).toHaveAttribute('aria-disabled', 'true')
   expect(fifteenSecondModel).toHaveTextContent('已连接的配音约 16 秒')
   expect(screen.getByRole('option', { name: /最多20秒模型/ })).not.toHaveAttribute('aria-disabled', 'true')
+})
+
+it.each(['reference', 'mix', 'replace'] as const)('音频用途 %s 使用正确的模型输入与合成配置', async (audioUse) => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  const video = {
+    modelVersionId: 111,
+    displayName: '音频参考模型',
+    operationCodes: ['video.generate'],
+    source: { input_constraints: { 'video.generate': { roles: [{ role: 'reference_audio', max_count: 1 }] } } },
+  }
+  renderPanel(
+    [],
+    {
+      id: 'video',
+      kind: 'video',
+      audioUse,
+      audioOriginalVolume: 0.6,
+      prompt: '生成场景',
+      sourceRefs: [{ kind: 'audio', sourceId: 'voice', edgeId: 'e', slotIndex: 0, assetId: 91 }],
+    },
+    { models: { video: [video] }, onGenerate },
+  )
+  await clickReadyGenerate(user)
+  const request = onGenerate.mock.calls[0][0]
+  expect(request.audioUse).toBe(audioUse)
+  expect(request.inputAssets).toEqual(audioUse === 'reference' ? [{ asset_id: 91, role: 'reference_audio' }] : [])
+  expect(request.audioOriginalVolume).toBe(audioUse === 'mix' ? 0.6 : 0)
 })
 
 it('模型素材上限分别显示，切换模型后保留引用并说明超限原因', () => {
