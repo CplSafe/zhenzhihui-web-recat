@@ -1,4 +1,5 @@
 import { BusinessApiError, requestBusinessJson } from './business'
+import type { CreditRequestWorkspace } from './creditRequests'
 import { runSharedSessionRefresh } from './sessionRefresh'
 
 const NOTIFICATIONS_PATH = '/api/v1/credit-notifications'
@@ -11,6 +12,7 @@ export interface CreditNotification {
   kind: 'credit_request_received' | 'credit_request_approved' | 'credit_request_rejected'
   amount: number
   actor_name: string
+  workspace: CreditRequestWorkspace | null
   created_at: string
   read_at: string | null
 }

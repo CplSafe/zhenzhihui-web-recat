@@ -2,9 +2,10 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import NotificationBell from '@/components/layout/NotificationBell'
 import type { CreditNotification } from '@/api/creditNotifications'
+import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { server } from '../mocks/server'
 
 function installFactNotifications() {
@@ -59,6 +60,7 @@ const incomingCreditNotification: CreditNotification = {
   kind: 'credit_request_received',
   actor_name: '小张',
   amount: 25.123,
+  workspace: { id: 71, name: '后期团队', type: 'team' },
   created_at: '2026-11-19T10:00:00.000Z',
   read_at: null,
 }
@@ -138,7 +140,7 @@ describe('NotificationBell 通知事实与已读行为', () => {
       stream.enqueue(encoder.encode(': keepalive\r\n\r\nevent: cha'))
       stream.enqueue(encoder.encode('nged\r\ndata: {}\r\n\r\n'))
     })
-    const notice = await screen.findByRole('button', { name: /收到积分申请.*小张.*25\.123 积分/ })
+    const notice = await screen.findByRole('button', { name: /收到积分申请.*小张.*25\.123 积分.*后期团队/ })
     expect(notice).toHaveClass('is-unread')
     expect(readIds).toEqual([])
     stream.close()
@@ -147,6 +149,35 @@ describe('NotificationBell 通知事实与已读行为', () => {
     expect(await screen.findByRole('heading', { name: '积分申请 received 11' })).toBeInTheDocument()
     expect(readIds).toEqual([32])
     expect(window.localStorage.getItem('zzh-market-notify-read:v2:fact-user')).toBeNull()
+  })
+
+  it.each([71, 72])('获批通知显示团队名称，只有对应活跃空间刷新钱包（%i）', async (activeWorkspaceId) => {
+    const previous = useWorkspaceSessionStore.getState()
+    const otherTeam = { id: 72, name: '其他团队', type: 'team' }
+    const refreshWallet = vi.fn().mockResolvedValue(undefined)
+    useWorkspaceSessionStore.setState({
+      userWorkspaces: [incomingCreditNotification.workspace, otherTeam],
+      activeWorkspaceOverrideId: activeWorkspaceId,
+      refreshWallet,
+    })
+    try {
+      server.use(
+        http.get('/api/v1/credit-notifications', () =>
+          HttpResponse.json({
+            code: 0,
+            data: { items: [{ ...incomingCreditNotification, kind: 'credit_request_approved' }], unread_count: 1 },
+          }),
+        ),
+      )
+      const user = userEvent.setup()
+      renderBell()
+      await user.click(screen.getByRole('button', { name: /通知(?:（\d+ 条未读）)?$/ }))
+      expect(await screen.findByRole('button', { name: /积分申请已通过.*发放至「后期团队」/ })).toBeInTheDocument()
+      if (activeWorkspaceId === 71) expect(refreshWallet).toHaveBeenCalledWith(71)
+      else expect(refreshWallet).not.toHaveBeenCalled()
+    } finally {
+      useWorkspaceSessionStore.setState(previous)
+    }
   })
 
   it('全部已读更新服务端积分通知，并保留原有通知的本地已读机制', async () => {

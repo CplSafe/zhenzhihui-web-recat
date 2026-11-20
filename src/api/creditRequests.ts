@@ -11,10 +11,17 @@ export interface CreditRequestPerson {
   name: string
 }
 
+export interface CreditRequestWorkspace {
+  id: number
+  name: string
+  type: 'personal' | 'team' | 'enterprise'
+}
+
 export interface CreditRequest {
   id: number
   applicant: CreditRequestPerson
   superior: CreditRequestPerson
+  workspace: CreditRequestWorkspace | null
   amount: number
   note: string
   status: CreditRequestStatus
@@ -28,7 +35,10 @@ export interface CreditRequestPage {
 }
 
 export function getCreditRequestContext(signal?: AbortSignal) {
-  return requestBusinessJson<{ superior: CreditRequestPerson | null }>(`${BASE}/context`, { signal })
+  return requestBusinessJson<{ superior: CreditRequestPerson | null; workspaces: CreditRequestWorkspace[] }>(
+    `${BASE}/context`,
+    { signal },
+  )
 }
 
 export function listCreditRequests(direction: CreditRequestDirection, beforeId: number, signal?: AbortSignal) {
@@ -42,7 +52,7 @@ export function getCreditRequest(id: number, signal?: AbortSignal) {
 }
 
 export function createCreditRequest(
-  body: { amount: number; note: string; request_key: string; expected_superior_id: number },
+  body: { amount: number; note: string; request_key: string; expected_superior_id: number; workspace_id: number },
   signal?: AbortSignal,
 ) {
   return requestBusinessJson<CreditRequest>(BASE, {

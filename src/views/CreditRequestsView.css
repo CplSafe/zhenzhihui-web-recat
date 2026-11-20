@@ -115,6 +115,7 @@
 }
 
 .credit-requests__form input,
+.credit-requests__form select,
 .credit-requests__form textarea {
   display: block;
   width: 100%;
@@ -136,6 +137,7 @@
 }
 
 .credit-requests__form input:disabled,
+.credit-requests__form select:disabled,
 .credit-requests__form textarea:disabled {
   background: #f7f8fc;
 }
@@ -188,7 +190,7 @@
   text-decoration: underline;
 }
 
-.credit-requests :is(button, a, input, textarea):focus-visible {
+.credit-requests :is(button, a, input, select, textarea):focus-visible {
   outline: 2px solid #5767e5;
   outline-offset: 2px;
 }

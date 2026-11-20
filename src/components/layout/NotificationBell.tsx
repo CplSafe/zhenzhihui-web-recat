@@ -44,16 +44,17 @@ function tsOf(value: string): number {
 function creditNotificationItem(credit: CreditNotification): NotificationItem {
   const amount = `${formatCredits(credit.amount, 3)} 积分`
   const actor = credit.actor_name
+  const workspace = credit.workspace?.name
   const received = credit.kind === 'credit_request_received'
   const approved = credit.kind === 'credit_request_approved'
   return {
     key: `credit-notification-${credit.id}`,
     title: received ? '收到积分申请' : approved ? '积分申请已通过' : '积分申请未通过',
     text: received
-      ? `${actor} 向你申请 ${amount}`
+      ? `${actor} 向你申请 ${amount}${workspace ? `，到账空间「${workspace}」` : ''}`
       : approved
-        ? `${actor} 已同意你的申请，${amount}已发放至你的个人空间`
-        : `${actor} 未同意你的 ${amount}申请`,
+        ? `${actor} 已同意你的申请，${amount}已发放至${workspace ? `「${workspace}」` : '你的个人空间'}`
+        : `${actor} 未同意你的 ${amount}申请${workspace ? `，到账空间「${workspace}」` : ''}`,
     tone: received ? 'info' : approved ? 'success' : 'warning',
     href: `/settings/credit-requests?tab=${received ? 'received' : 'sent'}&request_id=${credit.request_id}`,
     ts: tsOf(credit.created_at),

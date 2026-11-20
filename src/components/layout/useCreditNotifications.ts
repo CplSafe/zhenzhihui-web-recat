@@ -48,14 +48,22 @@ export function useCreditNotifications(userKey: string) {
         setLoadError(false)
 
         const approvals = next.items.filter((item) => item.kind === 'credit_request_approved')
-        const hasNewApproval = approvals.some((item) =>
+        const newApprovals = approvals.filter((item) =>
           lastApprovalIds ? !lastApprovalIds.has(item.id) : !item.read_at,
         )
         lastApprovalIds = new Set(approvals.map((item) => item.id))
-        if (hasNewApproval) {
+        if (newApprovals.length) {
           const store = useWorkspaceSessionStore.getState()
           const workspace = deriveCurrentWorkspace(store)
-          if (workspace?.type === 'personal') void store.refreshWallet(Number(workspace.id))
+          const workspaceId = Number(workspace?.id)
+          if (
+            workspaceId > 0 &&
+            newApprovals.some((item) =>
+              item.workspace ? item.workspace.id === workspaceId : workspace.type === 'personal',
+            )
+          ) {
+            void store.refreshWallet(workspaceId)
+          }
         }
       } catch {
         if (!signal.aborted) setLoadError(true)
