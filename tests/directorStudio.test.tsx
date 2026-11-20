@@ -948,6 +948,35 @@ describe('Studio concurrency and content boundaries', () => {
       expect(screen.queryByRole('region', { name: '是否锁定画布' })).not.toBeInTheDocument()
     },
   )
+  it('queries older task receipts after completion without submitting or clearing a new draft', async () => {
+    let pendingReceipts = true
+    const resumes: unknown[] = []
+    const start = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () =>
+        HttpResponse.json(snapshot({ status: 'complete', has_pending_receipts: pendingReceipts })),
+      ),
+      http.post('*/agent-studio/api/runs/run1/resume', async ({ request }) => {
+        resumes.push(await request.json())
+        pendingReceipts = false
+        return HttpResponse.json({ ok: true, receipts_pending: false })
+      }),
+      http.post('*/agent-studio/api/runs', () => {
+        start()
+        return HttpResponse.json({ id: 'unexpected' })
+      }),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    const input = screen.getByRole('textbox', { name: '创作要求' })
+    fireEvent.change(input, { target: { value: '只做镜03' } })
+    expect(screen.getByRole('button', { name: '发送创作要求' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '查询旧任务结果' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '查询旧任务结果' })).not.toBeInTheDocument())
+    expect(resumes).toEqual([{}])
+    expect(start).not.toHaveBeenCalled()
+    expect(input).toHaveValue('只做镜03')
+  })
   it('preserves unsent guidance and requires checking the same conversation after an uncertain response', async () => {
     const resume = vi.fn()
     const read = vi.fn()

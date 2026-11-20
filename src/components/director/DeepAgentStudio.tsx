@@ -796,7 +796,7 @@ export default function DeepAgentStudio({
                                 submitting: '正在提交',
                                 running: '生成中',
                                 succeeded: '已完成',
-                                failed: '失败',
+                                failed: node.output_issue ? '产物需核对' : '失败',
                                 cancelled: '已取消',
                               }[node.status] || node.status}
                             </span>
@@ -807,6 +807,7 @@ export default function DeepAgentStudio({
                               !run.pending &&
                               !batch.cancelled &&
                               !batchHasRunning &&
+                              !node.output_issue &&
                               node.status === 'failed' && (
                                 <button
                                   type="button"
@@ -833,6 +834,14 @@ export default function DeepAgentStudio({
                   busy={actionBusy}
                   onDecision={decide}
                 />
+              )}
+              {run.status === 'complete' && run.has_pending_receipts && (
+                <div className={styles.recovery}>
+                  <p>旧任务结果待确认。</p>
+                  <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
+                    查询旧任务结果
+                  </button>
+                </div>
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>

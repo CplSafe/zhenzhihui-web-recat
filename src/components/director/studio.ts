@@ -47,6 +47,7 @@ export interface StudioRun {
   status: RunStatus
   stop?: boolean
   can_resume_with_guidance?: boolean
+  has_pending_receipts?: boolean
   cursor: number
   selection?: {
     image: number
@@ -259,6 +260,7 @@ export function applyStudioFrame(run: StudioRun, frame: StudioFrame): StudioRun 
       'active_batch',
       'inference_failure',
       'can_resume_with_guidance',
+      'has_pending_receipts',
     ]) {
       if (data && Object.prototype.hasOwnProperty.call(data, key)) (next as Data)[key] = data[key]
     }
