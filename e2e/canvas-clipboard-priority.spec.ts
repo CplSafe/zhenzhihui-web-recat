@@ -54,7 +54,9 @@ test('图片节点可复制到系统剪贴板，画布内粘贴节点且外部�
   await expect(page.locator('.react-flow__node')).toHaveCount(2)
 
   await page.evaluate(() => navigator.clipboard.writeText('右键复制前的剪贴板'))
-  await node.click({ button: 'right' })
+  // 粘贴在鼠标处的副本可能盖住原节点，右键当前可见的副本验证同一复制入口。
+  const pasted = page.locator('.react-flow__node-image:not([data-id="copy-image"])')
+  await pasted.click({ button: 'right' })
   await page.getByRole('button', { name: '复制 Ctrl+C' }).click()
   await expect
     .poll(async () => page.evaluate(async () => (await navigator.clipboard.read())[0].types))

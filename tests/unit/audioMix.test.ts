@@ -34,8 +34,34 @@ describe('混音 WAV 导出', () => {
     await expect(renderAudioMix([], 0, 21)).rejects.toThrow('混音时长')
     await expect(renderAudioMix([], 301, 21)).rejects.toThrow('混音时长')
   })
+  it('只衰减超限的叠加结果，保留各声道的相对音量', async () => {
+    let channels = [new Float32Array([0.75, 0]), new Float32Array([-1.5, 0.9])]
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        startRendering = async () => ({
+          numberOfChannels: channels.length,
+          getChannelData: (channel: number) => channels[channel],
+        })
+      },
+    )
+    await renderAudioMix([], 1, 21)
+    expect(channels[0][0]).toBeCloseTo(0.49)
+    expect(channels[1][0]).toBeCloseTo(-0.98)
+    expect(channels[1][1]).toBeCloseTo(0.588)
+
+    channels = [new Float32Array([0.75]), new Float32Array([-1])]
+    await renderAudioMix([], 1, 21)
+    expect(channels[0][0]).toBe(0.75)
+    expect(channels[1][0]).toBe(-1)
+  })
   it('会话缓存复用解码结果，取消时不读取音频', async () => {
-    const decoded = { duration: 5, length: 240000, numberOfChannels: 2 } as AudioBuffer
+    const decoded = {
+      duration: 5,
+      length: 240000,
+      numberOfChannels: 2,
+      getChannelData: () => new Float32Array(),
+    } as AudioBuffer
     const decode = vi.fn(async () => decoded)
     vi.stubGlobal(
       'OfflineAudioContext',

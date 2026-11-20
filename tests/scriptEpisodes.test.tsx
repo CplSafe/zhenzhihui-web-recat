@@ -112,6 +112,58 @@ describe('script episode intake', () => {
       },
     })
   })
+  it('overwrites the full settings of selected episodes and keeps unchecked overrides', async () => {
+    const { rerender, props, onConfirm } = setup()
+    rerender(
+      <ScriptEpisodes
+        {...props}
+        models={models.map((model) => ({
+          ...model,
+          params_schema: {
+            fields: [{ name: 'resolution', options: ['720p', '1080p'], default: '720p' }],
+          },
+        }))}
+      />,
+    )
+    await screen.findByRole('checkbox', { name: '选择 第1集' })
+    expect(screen.getByRole('button', { name: '批量设置' })).toBeDisabled()
+    for (const n of [1, 2]) {
+      fireEvent.click(screen.getByRole('button', { name: `第${n}集，修改模型` }))
+      fireEvent.change(screen.getByRole('combobox', { name: '本集生图模型' }), { target: { value: '4' } })
+      fireEvent.change(screen.getByRole('combobox', { name: '本集视频清晰度' }), { target: { value: '1080p' } })
+      fireEvent.click(screen.getByRole('button', { name: '完成设置' }))
+    }
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 第1集' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 第3集' }))
+    fireEvent.click(screen.getByRole('button', { name: '批量设置' }))
+    expect(screen.getByText('将用这里的完整设置覆盖已选 2 集的生图和视频配置。')).toBeVisible()
+    fireEvent.change(screen.getByRole('combobox', { name: '批量视频模型' }), { target: { value: '5' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '批量生图清晰度' }), { target: { value: '1080p' } })
+    fireEvent.click(screen.getByRole('button', { name: '应用到所选集数' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
+    const setting = { video: 5, image_params: { resolution: '1080p' } }
+    expect(onConfirm).toHaveBeenLastCalledWith({
+      episode_plan: {
+        fingerprint: 'fixed-source',
+        episodes: [
+          { id: '42:1', ...setting },
+          { id: '42:3', ...setting },
+        ],
+      },
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 第2集' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到对话' }))
+    expect(onConfirm).toHaveBeenLastCalledWith({
+      episode_plan: {
+        fingerprint: 'fixed-source',
+        episodes: [
+          { id: '42:1', ...setting },
+          { id: '42:2', image: 4, video_params: { resolution: '1080p' } },
+          { id: '42:3', ...setting },
+        ],
+      },
+    })
+  })
   it('uses only the requested range and inherits session models when unchanged', async () => {
     const { onConfirm } = setup({ ...result, episodes: [episodes[2]], range_specified: true })
     await screen.findByRole('checkbox', { name: '选择 第3集' })

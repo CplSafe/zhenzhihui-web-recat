@@ -154,6 +154,11 @@ export function useStudio(
       setRun((old) => (old?.id === id && old.cursor > snapshot.cursor ? old : snapshot))
     }
   }, [api])
+  const reopen = useCallback(() => {
+    setError('')
+    setStreamState('正在读取会话')
+    setConnectionEpoch((value) => value + 1)
+  }, [])
   useEffect(() => {
     if (!current || mismatch) {
       setRun(null)
@@ -277,6 +282,7 @@ export function useStudio(
       })
       .catch((e) => {
         if (disposed) return
+        setStreamState('连接已断开')
         if (e instanceof StudioHTTPError && (e.status === 403 || e.status === 404)) {
           setCurrent(null)
           setError('原会话已不可访问，可以新建对话或从历史记录中选择。')
@@ -302,6 +308,7 @@ export function useStudio(
     streamState,
     mismatch,
     reload,
+    reopen,
     refreshHistory,
     initialize,
   }

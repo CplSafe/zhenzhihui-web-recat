@@ -4,32 +4,40 @@ import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures
 for (const width of [1440, 900]) {
   test(`Ctrl 组合键连线、副本和撤销，旧默认升级并保留输入焦点 ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
-    const api = await installStrictAuthenticatedApp(page)
+    const api = await installStrictAuthenticatedApp(page, { preserveStorage: true })
     await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))
-    await page.addInitScript(() =>
+    await page.addInitScript(() => {
+      if (location.pathname !== '/canvas/128') return
       localStorage.setItem(
         'zzh_canvas_preferences',
         JSON.stringify({
           wheelMode: 'pan',
           shortcuts: { connect: 'L', duplicate: 'Shift+D', add: 'N', fitView: '1' },
         }),
-      ),
-    )
-    let revision = 1
+      )
+    })
+    const revisions = new Map([
+      [128, 1],
+      [129, 1],
+    ])
     const mutations: Array<{ kind: string; payload?: { source?: string; target?: string } }> = []
-    await page.route('**/api/v1/canvases/128**', (route) => {
+    await page.route(/\/api\/v1\/canvases\/(128|129)(?:\/|\?|$)/, (route) => {
+      const url = new URL(route.request().url())
+      const id = Number(url.pathname.split('/')[4])
+      let revision = revisions.get(id) ?? 1
+      if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
       if (route.request().method() === 'PATCH') {
         mutations.push(...(route.request().postDataJSON().mutations || []))
-        return route.fulfill({ json: { revision: ++revision, sync_revision: revision } })
+        revisions.set(id, ++revision)
+        return route.fulfill({ json: { revision, sync_revision: revision } })
       }
-      const url = new URL(route.request().url())
       if (Number(url.searchParams.get('after_revision')) > 0) {
         return route.fulfill({
           json: { elements: [], sync_revision: revision, history_floor_revision: 0, has_more: false },
         })
       }
       return route.fulfill({
-        json: new URL(route.request().url()).pathname.endsWith('/elements')
+        json: url.pathname.endsWith('/elements')
           ? {
               elements: ['A', 'B'].map((id, index) => ({
                 element_id: id,
@@ -47,7 +55,7 @@ for (const width of [1440, 900]) {
               history_floor_revision: 0,
               has_more: false,
             }
-          : { id: 128, title: '组合键回归', revision },
+          : { id, title: '组合键回归', revision },
       })
     })
     const errors: string[] = []
@@ -99,47 +107,28 @@ for (const width of [1440, 900]) {
     await expect(page.locator('.canvas-view')).not.toBeFocused()
     await page.locator('.react-flow__pane').click({ position: { x: width - 50, y: 180 } })
     await expect(page.locator('[data-canvas-node-panel]')).toHaveCount(0)
-    await page.getByRole('button', { name: '画布设置', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: '画布设置', exact: true })
-    for (const label of [
-      '生成当前节点',
-      '撤销',
-      '重做',
-      '成组',
-      '解组',
-      '画布节点搜索',
-      '删除节点和连线',
-      '时间线：播放 / 暂停',
-      '时间线：分割',
-      '时间线：波纹删除',
-      '时间线：上一帧',
-      '时间线：下一帧',
-      '滚轮缩放画布',
-    ]) {
-      const button = settings.getByRole('button', { name: `修改${label}快捷键`, exact: true })
-      await button.scrollIntoViewIfNeeded()
-      await expect(button).toBeVisible()
-    }
-    for (const [label, keys] of [
-      ['画布节点搜索', 'Control+k'],
-      ['撤销', 'Control+u'],
-      ['重做', 'Control+Shift+u'],
-      ['成组', 'Control+j'],
-      ['解组', 'Control+Shift+j'],
-      ['删除节点和连线', 'Control+Backspace'],
-    ]) {
-      await settings.getByRole('button', { name: `修改${label}快捷键`, exact: true }).click()
-      await page.keyboard.press(keys)
-    }
-    const wheelShortcut = settings.getByRole('button', { name: '修改滚轮缩放画布快捷键', exact: true })
-    await wheelShortcut.click()
-    await wheelShortcut.hover()
-    await page.keyboard.down('Alt')
-    await page.mouse.wheel(0, -100)
-    await page.keyboard.up('Alt')
-    await expect(wheelShortcut).toContainText('Alt + 滚轮')
-    await page.screenshot({ path: testInfo.outputPath(`settings-shortcuts-${width}.png`) })
-    await settings.getByRole('button', { name: '关闭', exact: true }).click()
+    await expect(page.getByText('已保存到云端', { exact: true })).toBeVisible()
+    // 新版工具栏不再提供设置入口，独立组件测试覆盖修改设置；这里验证浏览器读出的已保存键位。
+    await page.evaluate(() => {
+      localStorage.setItem(
+        'zzh_canvas_preferences',
+        JSON.stringify({
+          wheelMode: 'pan',
+          shortcutsVersion: 3,
+          shortcuts: {
+            search: 'Mod+K',
+            undo: 'Mod+U',
+            redo: 'Mod+Shift+U',
+            group: 'Mod+J',
+            ungroup: 'Mod+Shift+J',
+            delete: 'Mod+Backspace',
+            zoomWheel: 'Alt+Wheel',
+          },
+        }),
+      )
+    })
+    await page.goto('/canvas/129')
+    await expect(nodes).toHaveCount(2)
     await root.focus()
     const viewport = page.locator('.react-flow__viewport')
     const scale = () => viewport.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a)

@@ -308,6 +308,37 @@ describe('SeekableVideo', () => {
     expect(video.getAttribute('src')).toBe(REMOTE)
   })
 
+  it('原地址和本地副本均报错时交回已经下载的文件', async () => {
+    const onPlaybackUnavailable = vi.fn()
+    const video = renderVideo({ onPlaybackUnavailable })
+    Object.defineProperty(video, 'error', { configurable: true, value: { code: 4 } })
+
+    fireEvent.error(video)
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+    expect(onPlaybackUnavailable).not.toHaveBeenCalled()
+
+    fireEvent.error(video)
+    expect(onPlaybackUnavailable).toHaveBeenCalledWith('blob:local-1')
+    expect(hits).toBe(1)
+  })
+
+  it('本地副本不可播放时回到已能播放的原地址，并停止反复尝试', async () => {
+    const onPlaybackUnavailable = vi.fn()
+    const video = renderVideo({ onPlaybackUnavailable })
+    fireEvent.canPlay(video)
+    simulateSeek(video, 8, 0)
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+
+    Object.defineProperty(video, 'error', { configurable: true, value: { code: 4 } })
+    fireEvent.error(video)
+    expect(video.getAttribute('src')).toBe(REMOTE)
+    expect(onPlaybackUnavailable).not.toHaveBeenCalled()
+
+    fireEvent.error(video)
+    expect(onPlaybackUnavailable).toHaveBeenCalledWith('blob:local-1')
+    expect(hits).toBe(1)
+  })
+
   it('原生事件回调照常透传给调用方', async () => {
     const onSeeked = vi.fn()
     const onLoadedMetadata = vi.fn()

@@ -31,7 +31,7 @@ describe('CanvasVideoPreviewModal', () => {
     expect(video.muted).toBe(false)
     expect(video.volume).toBe(1)
     expect(video.getAttribute('src')).toBe('blob:strict')
-    expect(video.autoplay).toBe(false)
+    expect(video.autoplay).toBe(true)
   })
 
   it('renders nothing without a source', () => {
@@ -49,10 +49,10 @@ describe('CanvasVideoPreviewModal', () => {
     // 弹窗信息区的排版会调整，测试不该因为换了标签就红。
     expect(screen.getByText('时长')).toBeTruthy()
     expect(screen.getByText('00:05')).toBeTruthy()
-    const video = dialog.querySelector('video')
-    expect(video?.hasAttribute('src')).toBe(false)
-    expect(video?.hasAttribute('controls')).toBe(true)
-    expect(video?.getAttribute('preload')).toBe('auto')
+    const video = dialog.querySelector('video')!
+    expect(video).toHaveAttribute('src', 'https://cdn.example.com/a.mp4')
+    expect(video).toHaveAttribute('controls')
+    expect(video).toHaveAttribute('preload', 'auto')
   })
 
   it('omits the duration label when the duration is unknown', () => {
@@ -140,6 +140,28 @@ describe('CanvasVideoPreviewModal', () => {
     expect(load).toHaveBeenCalled()
     pause.mockRestore()
     load.mockRestore()
+  })
+
+  it.each([false, true])('播放失败后允许重试，并遵守只读下载权限（readOnly=%s）', async (readOnly) => {
+    const user = userEvent.setup()
+    const src = `blob:${window.location.origin}/preview`
+    render(<CanvasVideoPreviewModal src={src} readOnly={readOnly} onClose={vi.fn()} />)
+    const dialog = screen.getByRole('dialog', { name: '视频预览' })
+    const video = dialog.querySelector('video')!
+    Object.defineProperty(video, 'error', { value: { code: 4 } })
+    fireEvent.error(video)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('暂时无法播放这段视频')
+    const download = screen.queryByRole('link', { name: '下载原视频' })
+    if (readOnly) expect(download).not.toBeInTheDocument()
+    else expect(download).toHaveAttribute('href', src)
+
+    const retry = screen.getByRole('button', { name: '重试播放' })
+    expect(retry).toHaveFocus()
+    await user.click(retry)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(dialog.querySelector('video')).not.toBe(video)
+    expect(dialog.querySelector('video')).toHaveAttribute('src', src)
   })
 
   it('locks and restores body scrolling around the preview', () => {

@@ -101,6 +101,7 @@ export function ScriptEpisodes({
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
   const [editing, setEditing] = useState<string>()
+  const [batch, setBatch] = useState<Choice>()
   const [verified, setVerified] = useState(false)
   const key = JSON.stringify([attachmentIds, message])
   const preview = loaded?.key === key ? loaded.preview : undefined
@@ -108,6 +109,8 @@ export function ScriptEpisodes({
     const abort = new AbortController()
     setError('')
     setVerified(false)
+    setEditing(undefined)
+    setBatch(undefined)
     let timer: number
     const load = () => {
       const [ids, text] = JSON.parse(key) as [string[], string]
@@ -168,8 +171,27 @@ export function ScriptEpisodes({
   const selected = preview?.episodes.filter((e) => choices[e.id]?.selected) || []
   const invalidSelected = selected.some((e) => !valid(choices[e.id]))
   const edit = preview?.episodes.find((e) => e.id === editing)
+  const editChoice = batch ?? (edit && choices[edit.id])
   function patch(id: string, value: Partial<Choice>) {
     setChoices((old) => ({ ...old, [id]: { ...old[id], ...value } }))
+  }
+  function patchSettings(value: Partial<Choice>) {
+    if (batch) setBatch((old) => old && { ...old, ...value })
+    else if (edit) patch(edit.id, value)
+  }
+  function closeSettings() {
+    setEditing(undefined)
+    setBatch(undefined)
+  }
+  function applySettings() {
+    if (disabled || !valid(editChoice)) return
+    if (batch) {
+      setChoices((old) => ({
+        ...old,
+        ...Object.fromEntries(selected.map(({ id }) => [id, { ...batch, selected: true }])),
+      }))
+    }
+    closeSettings()
   }
   function confirm() {
     if (
@@ -218,7 +240,7 @@ export function ScriptEpisodes({
         <Settings2 size={16} />
       </button>
       <span className={styles.hint}>保存后等待你的要求，不会立即开始制作</span>
-      {open && !edit && (
+      {open && !edit && !batch && (
         <Dialog title="剧本集数与模型" onClose={onClose} error={error}>
           <div className={styles.content}>
             {!preview && !error && <p role="status">正在识别剧本集数…</p>}
@@ -271,7 +293,16 @@ export function ScriptEpisodes({
                     />
                     选择全部展示集数
                   </label>
-                  <span>已选 {selected.length} 集</span>
+                  <div className={styles.toolbarActions}>
+                    <span>已选 {selected.length} 集</span>
+                    <button
+                      type="button"
+                      disabled={disabled || !selected.length || preview.analysis_pending}
+                      onClick={() => setBatch({ selected: true })}
+                    >
+                      批量设置
+                    </button>
+                  </div>
                 </div>
                 <div className={styles.list}>
                   {preview.episodes.map((episode) => (
@@ -342,20 +373,21 @@ export function ScriptEpisodes({
           </div>
         </Dialog>
       )}
-      {open && edit && (
-        <Dialog title={`${edit.title} · 模型与画面参数`} onClose={() => setEditing(undefined)}>
+      {open && (edit || batch) && (
+        <Dialog title={batch ? '批量设置 · 模型与画面参数' : `${edit?.title} · 模型与画面参数`} onClose={closeSettings}>
           <div className={styles.content}>
+            {batch && <p>将用这里的完整设置覆盖已选 {selected.length} 集的生图和视频配置。</p>}
             <p>默认沿用会话模型。已有成功素材会复用，不因选择不同模型重新生成。</p>
             {(['image', 'video'] as const).map((kind) => (
               <div className={styles.content} key={kind}>
                 <label className={styles.field}>
                   {kind === 'image' ? '生图模型' : '视频模型'}
                   <select
-                    aria-label={kind === 'image' ? '本集生图模型' : '本集视频模型'}
-                    value={choices[edit.id]?.[kind] || ''}
+                    aria-label={`${batch ? '批量' : '本集'}${kind === 'image' ? '生图模型' : '视频模型'}`}
+                    value={editChoice?.[kind] || ''}
                     disabled={disabled}
                     onChange={(e) =>
-                      patch(edit.id, {
+                      patchSettings({
                         [kind]: e.target.value ? Number(e.target.value) : undefined,
                         [`${kind}_params`]: undefined,
                       })
@@ -373,16 +405,16 @@ export function ScriptEpisodes({
                       ))}
                   </select>
                 </label>
-                {visualFields(modelFor(kind, choices[edit.id])).map((field) => (
+                {visualFields(modelFor(kind, editChoice)).map((field) => (
                   <label className={styles.field} key={field.name}>
                     {visualNames[field.name]}
                     <select
-                      aria-label={`本集${kind === 'image' ? '生图' : '视频'}${visualNames[field.name]}`}
-                      value={parameterValue(kind, choices[edit.id], field)}
+                      aria-label={`${batch ? '批量' : '本集'}${kind === 'image' ? '生图' : '视频'}${visualNames[field.name]}`}
+                      value={parameterValue(kind, editChoice, field)}
                       disabled={disabled}
                       onChange={(e) =>
-                        patch(edit.id, {
-                          [`${kind}_params`]: { ...choices[edit.id]?.[`${kind}_params`], [field.name]: e.target.value },
+                        patchSettings({
+                          [`${kind}_params`]: { ...editChoice?.[`${kind}_params`], [field.name]: e.target.value },
                         })
                       }
                     >
@@ -397,14 +429,14 @@ export function ScriptEpisodes({
                 ))}
               </div>
             ))}
-            <p>清晰度、比例和画质会按本集设置执行，选项来自模型支持范围；调整可能影响积分费用。</p>
+            <p>{batch ? '各集' : '本集'}按所选清晰度、比例和画质执行。调整可能影响积分费用。</p>
             <button
               type="button"
               className={styles.primary}
-              disabled={disabled || !valid(choices[edit.id])}
-              onClick={() => setEditing(undefined)}
+              disabled={disabled || !valid(editChoice) || (!!batch && !selected.length)}
+              onClick={applySettings}
             >
-              完成设置
+              {batch ? '应用到所选集数' : '完成设置'}
             </button>
           </div>
         </Dialog>

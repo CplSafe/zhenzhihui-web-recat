@@ -29,6 +29,15 @@ export function formatVideoTimeLabel(seconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
 }
 
+/** 显示媒体实际时长，整秒保持原样，有小数时保留两位。 */
+export function formatExactVideoDurationLabel(seconds: number): string {
+  const hundredths = Math.round(seconds * 100)
+  if (!Number.isFinite(hundredths) || hundredths <= 0) return ''
+  const whole = formatVideoTimeLabel(Math.floor(hundredths / 100))
+  const fraction = hundredths % 100
+  return fraction ? `${whole}.${String(fraction).padStart(2, '0')}` : whole
+}
+
 /**
  * 读取未取整的真实时长(秒)。
  *

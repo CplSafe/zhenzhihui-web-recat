@@ -12,6 +12,21 @@ import {
 } from './fixtures/strict-authenticated-app'
 
 test.describe('已认证关键路由与读取链路', () => {
+  test('可直接打开按需加载的 Agent 对话页', async ({ page }, testInfo) => {
+    const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/agent/models', (route) => route.fulfill({ json: { code: 0, data: { items: [] } } }))
+
+    await page.goto('/agent')
+    const composer = page.getByPlaceholder('随心输入')
+    await expect(composer).toBeVisible()
+    const send = page.getByRole('button', { name: '发送', exact: true })
+    await expect(send).toBeDisabled()
+    await composer.fill('整理这段剧本')
+    await expect(send).toBeEnabled()
+    expectNoUnexpectedApi(api)
+    await page.screenshot({ path: testInfo.outputPath('agent-route.png') })
+  })
+
   test('模板库读取在线模板', async ({ page }) => {
     const api = await installStrictAuthenticatedApp(page)
     await page.addInitScript(() => {
@@ -129,6 +144,10 @@ test.describe('已认证关键路由与读取链路', () => {
     // WebKit parallel cold-start can finish authentication before that chunk.
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/billing/canvas-usage?**', (route) => {
+      expect(new URL(route.request().url()).searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
+      return route.fulfill({ json: { items: [], total: 0, total_used_credits: 0 } })
+    })
     await page.addInitScript(() => {
       localStorage.setItem('zzh_guide_seen_home_u7', '1')
       localStorage.setItem('zzh_guide_seen_smart_u7', '1')
@@ -139,6 +158,7 @@ test.describe('已认证关键路由与读取链路', () => {
     await expect(page.getByRole('heading', { name: '数据统计' })).toBeVisible({ timeout: 30_000 })
     await expect(page.getByText('总生成视频数', { exact: true }).first()).toBeVisible()
     await expect(page.getByLabel('成员贡献排行榜').getByText('E2E 用户', { exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: '无限画布用量' }).getByText('暂无画布记录')).toBeVisible()
     expectScopedRequest(api, {
       method: 'GET',
       path: `/api/v1/workspaces/${WORKSPACE_ID}/overview`,

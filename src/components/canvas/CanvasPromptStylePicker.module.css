@@ -1,0 +1,59 @@
+.list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.list button,
+.form button,
+.form input,
+.form textarea {
+  border: 1px solid rgb(128 139 150 / 34%);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 9px 12px;
+}
+
+.list button {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.list button:hover,
+.list button[aria-pressed='true'],
+.form button[type='submit']:enabled {
+  border-color: #119c80;
+  background: rgb(17 156 128 / 12%);
+}
+
+.form,
+.form label {
+  display: grid;
+  gap: 8px;
+}
+
+.form {
+  gap: 14px;
+}
+
+.form p {
+  margin: 0;
+}
+
+.form p[role='alert'] {
+  color: #c64543;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.form button:disabled {
+  opacity: 0.5;
+}

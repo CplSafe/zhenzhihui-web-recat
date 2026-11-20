@@ -163,7 +163,7 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
 }
 
 .canvas-navigation,
-.canvas-global-actions {
+.canvas-actions-menu {
   zoom: var(--canvas-ui-scale, 1);
 }
 
@@ -446,12 +446,18 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
     transform: scale(1) translateY(0);
   }
 }
-/* 画布级操作组：教程始终贴右；画布落库后分享按钮自然追加，不依赖写死宽度。 */
-.canvas-global-actions {
+/* 收起时只显示展开按钮，展开时按钮位于常规操作组左侧。 */
+.canvas-actions-menu {
   position: absolute;
   top: 28px;
   right: 28px;
   z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.canvas-global-actions {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2319,38 +2325,38 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 }
 
 .canvas-actions-toggle {
-  display: none;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--canvas-border);
+  border-radius: 10px;
+  background: var(--canvas-surface);
+  color: var(--canvas-text);
+  cursor: pointer;
 }
-.canvas-actions-menu[data-open='false'] > .canvas-global-actions {
-  display: flex;
+.canvas-actions-toggle:hover {
+  color: var(--canvas-brand, #00e5be);
+}
+.canvas-actions-toggle:focus-visible {
+  outline: 2px solid #cbd5d9;
+  outline-offset: 3px;
+}
+.canvas-global-actions[hidden] {
+  display: none;
 }
 .canvas-global-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
-@media (max-width: 760px) {
+@media (max-width: 1050px) {
   .canvas-actions-menu {
-    position: absolute;
-    top: 28px;
     right: 12px;
-    z-index: 1100;
   }
-  .canvas-actions-toggle {
-    display: block;
-    padding: 9px 12px;
-    border: 1px solid var(--canvas-border);
-    border-radius: 10px;
-    background: var(--canvas-surface);
-    color: var(--canvas-text);
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .canvas-actions-toggle:focus-visible {
-    outline: 2px solid #cbd5d9;
-    outline-offset: 3px;
-  }
-  .canvas-actions-menu[data-open='false'] > .canvas-global-actions {
-    display: none;
+  .canvas-actions-menu[data-open='true'] {
+    z-index: 1400;
   }
   .canvas-actions-menu[data-open='true'] > .canvas-global-actions {
     display: flex;
@@ -2371,12 +2377,6 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
     justify-content: center;
     padding: 0 10px;
     font-size: 12px;
-  }
-}
-
-@media (max-width: 760px) {
-  .canvas-actions-menu[data-open='true'] {
-    z-index: 1400;
   }
 }
 

@@ -105,6 +105,11 @@ for (const customized of [false, true]) {
     await page.route('**/api/v1/canvases/143**', (route) => {
       if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
       const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/events')) return route.fallback()
+      if (url.pathname.endsWith('/node-locks')) {
+        expect(route.request().method()).toBe('POST')
+        return route.fulfill({ json: { granted: true, nodes: {} } })
+      }
       return route.fulfill({
         json: url.pathname.endsWith('/elements')
           ? {

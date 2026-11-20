@@ -18,7 +18,6 @@ import {
   type HotCopyRouteState,
 } from '../utils/hotCopyRouteSession'
 import WorkspaceSwitchBridge from './WorkspaceSwitchBridge'
-import AgentChatView from '@/views/AgentChatView'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
@@ -121,6 +120,7 @@ const DemandDetailView = lazy(() => import('../views/DemandDetailView'))
 const MyCollaborationsView = lazy(routeImporters.collaborations)
 /** 积分明细路由组件。 */
 const CreditsView = lazy(() => import('../views/CreditsView'))
+const AgentChatView = lazy(() => import('../views/AgentChatView'))
 const DirectorStudioView = lazy(() => import('../views/DirectorStudioView'))
 /** MCP 工作空间接入与授权配置页。 */
 const MCPSettingsView = lazy(() => import('../views/MCPSettingsView'))

@@ -72,6 +72,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: 'safari13',
+      manifest: true,
       // Terser costs a little more build time than esbuild, but gives the
       // route-heavy client a stable gzip margin without weakening the bundle
       // policy or changing any lazy-loading boundary.
@@ -88,6 +89,9 @@ export default defineConfig(({ mode }) => {
           experimentalMinChunkSize: 50_000,
           manualChunks(id) {
             const normalizedId = id.replaceAll('\\', '/')
+            // The app wrapper is shared by lazy routes. Keep it with its parser
+            // so small-chunk merging cannot pull the parser into the bootstrap.
+            if (normalizedId.endsWith('/src/components/common/Markdown.tsx')) return 'vendor-markdown'
             if (!normalizedId.includes('/node_modules/')) return undefined
             // 图片工具按需加载；渲染器与场景基础类分块，保持现有单 chunk 上限。
             if (normalizedId.includes('/node_modules/three/src/')) {

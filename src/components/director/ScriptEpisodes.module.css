@@ -51,6 +51,12 @@
 .toolbar span {
   font-variant-numeric: tabular-nums;
 }
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
 .list {
   max-height: 45dvh;
   overflow: auto;

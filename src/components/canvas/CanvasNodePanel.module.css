@@ -943,6 +943,7 @@
 
 .audioReferenceHint select {
   max-width: 100%;
+  color-scheme: dark;
   padding: 4px 8px;
   color: var(--canvas-text, #333);
   background: var(--canvas-surface-raised);

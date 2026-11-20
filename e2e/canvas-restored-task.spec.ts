@@ -84,6 +84,7 @@ for (const source of ['cloud', 'draft']) {
       })
       await page.goto('/canvas/110')
       await expect(page.getByRole('button', { name: '图片 · Restored image' })).toBeVisible()
+      await page.getByRole('button', { name: '画布操作', exact: true }).click()
       await expect(page.getByRole('button', { name: '剩余积分：335' })).toBeVisible()
       try {
         await expect(page.getByText(cachedError, { exact: false })).toHaveCount(0)

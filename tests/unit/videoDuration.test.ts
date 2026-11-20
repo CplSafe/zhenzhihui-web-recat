@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  formatExactVideoDurationLabel,
   formatVideoDurationLabel,
   formatVideoTimeLabel,
   readVideoDurationSec,
@@ -39,6 +40,20 @@ describe('formatVideoDurationLabel', () => {
 
   it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY, 0.4])('returns an empty label for %p', (seconds) => {
     expect(formatVideoDurationLabel(seconds)).toBe('')
+  })
+})
+
+describe('formatExactVideoDurationLabel', () => {
+  it.each([
+    [5, '00:05'],
+    [4.736, '00:04.74'],
+    [5.039, '00:05.04'],
+    [59.999, '01:00'],
+    [0.4, '00:00.40'],
+    [Number.NaN, ''],
+    [Number.POSITIVE_INFINITY, ''],
+  ])('formats actual playback duration %p as %p', (seconds, expected) => {
+    expect(formatExactVideoDurationLabel(seconds)).toBe(expected)
   })
 })
 

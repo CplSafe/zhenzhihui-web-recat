@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import SeekableVideo from '@/components/common/SeekableVideo'
+import { resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
 import styles from './CanvasVideoPreviewModal.module.css'
 
 /** 放大预览右侧的视频信息；字段全部取自节点已有数据，缺失项不渲染。 */
@@ -17,7 +18,7 @@ export interface CanvasVideoPreviewInfo {
   prompt?: string
   /** 画面比例，如 16:9 */
   ratio?: string
-  /** 时长文本（mm:ss） */
+  /** 从画布内节点已知的时长文本。 */
   durationLabel?: string
   /** 是否生成音频 */
   generateAudio?: boolean
@@ -32,7 +33,7 @@ interface CanvasVideoPreviewModalProps {
   /** 视频地址；为空则不渲染 */
   src: string
   poster?: string
-  /** 时长文本（mm:ss），为空时不展示 */
+  /** 播放器读取元数据前可用的时长文本。 */
   durationLabel?: string
   /** 起播位置（秒）：从节点当前播放进度接着看 */
   startTime?: number
@@ -101,7 +102,24 @@ export default function CanvasVideoPreviewModal({
 }: CanvasVideoPreviewModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const retryButtonRef = useRef<HTMLButtonElement>(null)
   const [muted, setMuted] = useState(false)
+  const [failure, setFailure] = useState<{ source: string; downloadUrl: string } | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const failed = failure?.source === src
+  const download = failed && !readOnly ? resolveSafeDownloadUrl(failure.downloadUrl, window.location.origin) : null
+  const handlePlaybackUnavailable = useCallback(
+    (downloadUrl: string) => {
+      setFailure({ source: src, downloadUrl })
+    },
+    [src],
+  )
+  useEffect(() => {
+    if (failed) retryButtonRef.current?.focus()
+  }, [failed])
+  useEffect(() => {
+    if (retryCount) videoRef.current?.focus()
+  }, [retryCount])
   const onCloseRef = useRef(onClose)
   const requestedRatioLabel = String(info?.ratio || '').trim()
   const initialMediaWidth = Number(info?.mediaWidth || 0)
@@ -144,6 +162,7 @@ export default function CanvasVideoPreviewModal({
 
   useEffect(() => {
     if (!src) return
+    setFailure(null)
     setMuted(false)
     // StrictMode 重放清理后恢复声音；媒体源和起播顺序由 SeekableVideo 管理。
     const video = videoRef.current
@@ -164,12 +183,12 @@ export default function CanvasVideoPreviewModal({
       }
       if (event.code !== 'Space' || event.repeat) return
       const target = event.target
-      const targetButton = target instanceof Element ? target.closest('button') : null
+      const targetControl = target instanceof Element ? target.closest('button, a[href]') : null
       if (
         target instanceof HTMLElement &&
         (target.isContentEditable ||
           /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) ||
-          (targetButton && targetButton !== closeButtonRef.current))
+          (targetControl && targetControl !== closeButtonRef.current))
       )
         return
       event.preventDefault()
@@ -221,7 +240,7 @@ export default function CanvasVideoPreviewModal({
         <button ref={closeButtonRef} type="button" className={styles.close} onClick={closePreview} aria-label="收起">
           收起
         </button>
-        {/* 先按节点比例占位：即使 /download 仍在整片加载，也不会退回浏览器默认的 300×150。 */}
+        {/* 元数据未返回时先按节点比例占位。 */}
         <div
           className={styles.media}
           style={mediaStyle}
@@ -229,11 +248,13 @@ export default function CanvasVideoPreviewModal({
           data-aspect-ratio={resolvedRatio.label || undefined}
         >
           <SeekableVideo
+            key={retryCount}
             ref={videoRef}
             className={styles.player}
             src={src}
             poster={poster || undefined}
-            controls
+            controls={!failed}
+            hidden={failed}
             controlsList={readOnly ? 'nodownload' : undefined}
             autoPlay
             tabIndex={0}
@@ -242,7 +263,7 @@ export default function CanvasVideoPreviewModal({
             onVolumeChange={(event) => setMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
             allowMutedAutoplayFallback={false}
             repairOnLoad={false}
-            prepareImmediately
+            onPlaybackUnavailable={handlePlaybackUnavailable}
             initialTime={startTime}
             playsInline
             preload="auto"
@@ -257,36 +278,66 @@ export default function CanvasVideoPreviewModal({
               }
             }}
           />
-          <div className={styles.mediaActions}>
-            <button
-              type="button"
-              className={styles.sound}
-              aria-label={muted ? '开启视频声音' : '静音视频'}
-              aria-pressed={muted}
-              onClick={() => {
-                const video = videoRef.current
-                if (!video) return
-                const next = !(video.muted || video.volume === 0)
-                video.muted = next
-                if (!next && video.volume === 0) video.volume = 1
-                setMuted(next)
-              }}
-            >
-              {muted ? '开启声音' : '静音'}
-            </button>
-            {onCaptureFrame && (
+          {failed ? (
+            <div className={styles.playbackError}>
+              <div>
+                <p role="alert">暂时无法播放这段视频</p>
+                <div className={styles.playbackRecovery}>
+                  <button
+                    ref={retryButtonRef}
+                    type="button"
+                    onClick={() => {
+                      setFailure(null)
+                      setRetryCount((count) => count + 1)
+                    }}
+                  >
+                    重试播放
+                  </button>
+                  {download && (
+                    <a
+                      href={download.href}
+                      download
+                      target={download.isCrossOrigin ? '_blank' : undefined}
+                      rel="noreferrer"
+                    >
+                      下载原视频
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className={styles.mediaActions}>
               <button
                 type="button"
-                className={styles.capture}
-                disabled={capturing}
-                onClick={() => onCaptureFrame(videoRef.current?.currentTime ?? 0)}
-                title="把进度条当前位置这一帧截取为图片节点（可先拖动进度条到任意位置）"
+                className={styles.sound}
+                aria-label={muted ? '开启视频声音' : '静音视频'}
+                aria-pressed={muted}
+                onClick={() => {
+                  const video = videoRef.current
+                  if (!video) return
+                  const next = !(video.muted || video.volume === 0)
+                  video.muted = next
+                  if (!next && video.volume === 0) video.volume = 1
+                  setMuted(next)
+                }}
               >
-                <CaptureIcon />
-                <span>{capturing ? '截取中…' : '截取此帧'}</span>
+                {muted ? '开启声音' : '静音'}
               </button>
-            )}
-          </div>
+              {onCaptureFrame && (
+                <button
+                  type="button"
+                  className={styles.capture}
+                  disabled={capturing}
+                  onClick={() => onCaptureFrame(videoRef.current?.currentTime ?? 0)}
+                  title="把进度条当前位置这一帧截取为图片节点（可先拖动进度条到任意位置）"
+                >
+                  <CaptureIcon />
+                  <span>{capturing ? '截取中…' : '截取此帧'}</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
         {/* 信息栏放在播放器之外：有字段才出现，没有时弹窗保持原来的纯播放形态 */}
         {showInfo && infoRows.length ? (

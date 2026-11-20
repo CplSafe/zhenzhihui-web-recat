@@ -29,6 +29,8 @@ interface SeekableVideoProps extends VideoHTMLAttributes<HTMLVideoElement> {
   allowMutedAutoplayFallback?: boolean
   /** 首次可播放时的起播位置；由播放器在播放前统一定位。 */
   initialTime?: number
+  /** 原地址及本地副本均无法播放时，交给预览提供重试或下载。 */
+  onPlaybackUnavailable?: (downloadUrl: string) => void
 }
 
 /** 跳转落点与目标差这么多秒以内算落住了。 */
@@ -45,12 +47,8 @@ const SEEK_VERIFY_DELAY_MS = 700
  * seekable 有时比 duration 晚一点才填上，立刻判会把支持 Range 的源也误判成要下载。
  */
 const SEEKABILITY_CHECK_DELAY_MS = 400
-/**
- * MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED。
- * 写字面量而不是引用那个全局常量：jsdom 没有 MediaError 这个全局，
- * 引用它会让所有渲染视频的用例在触发 error 事件时直接抛 ReferenceError。
- */
-const MEDIA_ERR_SRC_NOT_SUPPORTED = 4
+/** MediaError.MEDIA_ERR_ABORTED；切换源或关闭引起的主动中止不触发修复。 */
+const MEDIA_ERR_ABORTED = 1
 
 const overlayStyle: React.CSSProperties = {
   position: 'absolute',
@@ -100,6 +98,7 @@ function SeekableVideoImpl(
     allowMutedAutoplayFallback = true,
     initialTime = 0,
     autoPlay = false,
+    onPlaybackUnavailable,
     onSeeking,
     onSeeked,
     onLoadedMetadata,
@@ -125,7 +124,13 @@ function SeekableVideoImpl(
   // autoPlay 是“用户打开预览后希望它自动开始”的意图；换成本地 blob 时也必须继续保留。
   const autoPlayRef = useRef(Boolean(autoPlay))
   const autoPlayAttemptedRef = useRef(false)
+  const unavailableRef = useRef(onPlaybackUnavailable)
+  const nativeFailedRef = useRef(false)
+  const nativePlayableRef = useRef(false)
+  const keepNativeRef = useRef(false)
+  const downloadedUrlRef = useRef('')
   autoPlayRef.current = Boolean(autoPlay)
+  unavailableRef.current = onPlaybackUnavailable
   /** 用户想去的位置。换源之后要回到这里，而不是失败后被抹回的那个值。 */
   const pendingSeekRef = useRef(0)
   const resumeRef = useRef(false)
@@ -174,6 +179,10 @@ function SeekableVideoImpl(
     localSrcRef.current = ''
     preparingRef.current = false
     backgroundRef.current = false
+    nativeFailedRef.current = false
+    nativePlayableRef.current = false
+    keepNativeRef.current = false
+    downloadedUrlRef.current = ''
     pendingSeekRef.current = 0
     resumeRef.current = false
     autoPlayAttemptedRef.current = false
@@ -207,7 +216,7 @@ function SeekableVideoImpl(
    */
   const repair = useCallback((mode: 'foreground' | 'background' = 'foreground') => {
     const source = srcRef.current
-    if (!source || localSrcRef.current) return
+    if (!source || localSrcRef.current || keepNativeRef.current) return
     if (source.startsWith('blob:') || source.startsWith('data:')) return
 
     const video = videoRef.current
@@ -255,7 +264,11 @@ function SeekableVideoImpl(
             resumeRef.current = Boolean(current && (!current.paused || (autoPlayRef.current && !current.ended)))
           }
           localSrcRef.current = url
+          downloadedUrlRef.current = url
           setLocalSrc(url)
+        } else if (nativeFailedRef.current) {
+          keepNativeRef.current = true
+          unavailableRef.current?.(source)
         }
         setPreparedFor(source)
       })
@@ -337,6 +350,11 @@ function SeekableVideoImpl(
           resumeRef.current = false
           void playWithMutedFallback(video)
         }
+      } else if (keepNativeRef.current) {
+        if (resumeRef.current && !prepareImmediately) {
+          resumeRef.current = false
+          void playWithMutedFallback(video)
+        }
       } else if (repairOnLoad && (!Number.isFinite(video.duration) || video.duration <= 0)) {
         // 元数据到手却读不出时长：进度条上没有总时长，也没法跳。这种源只能整片抓下来；
         // 但它能播，所以边下边播，不让用户干等
@@ -362,8 +380,32 @@ function SeekableVideoImpl(
 
   const handleError = useCallback(
     (event: React.SyntheticEvent<HTMLVideoElement>) => {
-      // 源不被支持时先试一次本地副本：有些服务端的响应头会让浏览器直接判死，字节本身没问题
-      if (event.currentTarget.error?.code === MEDIA_ERR_SRC_NOT_SUPPORTED) repair()
+      const video = event.currentTarget
+      const code = video.error?.code
+      if (code && code !== MEDIA_ERR_ABORTED) {
+        const source = srcRef.current
+        const local = localSrcRef.current
+        if (local) {
+          if (video.getAttribute('src') === local) {
+            if (nativePlayableRef.current) {
+              // 部分播放器支持同一份 HTTP 视频，却不接受 Blob。保留可播放的原地址，避免反复切源。
+              keepNativeRef.current = true
+              pendingSeekRef.current = 0
+              initialPositionAppliedRef.current = true
+              autoPlayAttemptedRef.current = false
+              localSrcRef.current = ''
+              setLocalSrc('')
+            } else {
+              unavailableRef.current?.(local)
+            }
+          }
+        } else if (keepNativeRef.current || source.startsWith('blob:') || source.startsWith('data:')) {
+          unavailableRef.current?.(downloadedUrlRef.current || source)
+        } else {
+          nativeFailedRef.current = true
+          repair()
+        }
+      }
       onError?.(event)
     },
     [onError, repair],
@@ -372,6 +414,10 @@ function SeekableVideoImpl(
   const handleCanPlay = useCallback(
     (event: React.SyntheticEvent<HTMLVideoElement>) => {
       const video = event.currentTarget
+      if (!localSrcRef.current) {
+        nativePlayableRef.current = true
+        nativeFailedRef.current = false
+      }
       // 浏览器通常会拦截“带声音自动播放”。首次可播放时主动尝试，失败则静音重试，
       // 避免弹窗看起来像坏掉；用户仍可通过原生音量按钮恢复声音。
       if (

@@ -2166,6 +2166,94 @@ it('keeps an uncertain running message and reuses its ID on resend', async () =>
   await waitFor(() => expect(input).toHaveValue(''))
 })
 
+it.each(['paused', 'error'] as const)(
+  'sends the draft as a new conversation while the old one is %s',
+  async (status) => {
+    const start = vi.fn()
+    const resume = vi.fn()
+    server.use(
+      http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status }))),
+      http.post('*/agent-studio/api/runs/run1/resume', () => {
+        resume()
+        return HttpResponse.json({ ok: true })
+      }),
+      http.post('*/agent-studio/api/runs', async ({ request }) => {
+        start(await request.json())
+        return HttpResponse.json({ id: 'next' })
+      }),
+      http.get('*/agent-studio/api/runs/next', () => HttpResponse.json(snapshot({ id: 'next', status: 'running' }))),
+    )
+    render(<DeepAgentStudio />)
+    await openHistory()
+    const input = screen.getByRole('textbox', { name: '创作要求' })
+    fireEvent.change(input, { target: { value: '改做 B' } })
+    const submit = screen.getByRole('button', { name: '发送到新对话' })
+    expect(submit).toBeEnabled()
+    fireEvent.click(submit)
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '改做 B', previous: null })),
+    )
+    expect(resume).not.toHaveBeenCalled()
+  },
+)
+
+it('reopens the current conversation read-only and preserves unsent input', async () => {
+  const fetchRun = vi.fn()
+  const writes = vi.fn()
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => {
+      fetchRun()
+      return HttpResponse.json(snapshot({ status: 'running' }))
+    }),
+    http.post('*/agent-studio/api/runs*', () => {
+      writes()
+      return HttpResponse.json({ ok: true })
+    }),
+  )
+  render(<DeepAgentStudio />)
+  await openHistory()
+  const input = screen.getByRole('textbox', { name: '创作要求' })
+  fireEvent.change(input, { target: { value: '待发的下一条要求' } })
+  act(() => Socket.instances[0].emit({ event: 'stream_error', data: { message: '实时流断开' } }))
+  fireEvent.click(await screen.findByRole('button', { name: '重新读取会话' }))
+  await waitFor(() => expect(Socket.instances).toHaveLength(2))
+  expect(fetchRun).toHaveBeenCalledTimes(2)
+  expect(input).toHaveValue('待发的下一条要求')
+  expect(writes).not.toHaveBeenCalled()
+})
+
+it('refreshes the canvas wallet once for a settled cost reported by both receipts and billing', async () => {
+  const walletReads: string[] = []
+  server.use(
+    http.get('*/agent-studio/api/runs/run1', () => HttpResponse.json(snapshot({ status: 'running' }))),
+    http.get('*/api/v1/billing/wallet', ({ request }) => {
+      walletReads.push(new URL(request.url).searchParams.get('workspace_id') || '')
+      return HttpResponse.json({ data: { available: 698 } })
+    }),
+  )
+  render(<DeepAgentStudio workspaceId={54} canvasId={40} />)
+  await openHistory()
+  const socket = Socket.instances[0]
+  act(() => {
+    socket.emit({
+      event: 'update',
+      cursor: 8,
+      data: {
+        run_id: 'run1',
+        type: 'MESSAGE_UPSERT',
+        data: { id: 'task-302', kind: 'cost', text: '', data: { status: 'succeeded', actual_cost: 302 } },
+      },
+    })
+    socket.emit({
+      event: 'update',
+      cursor: 9,
+      data: { run_id: 'run1', type: 'ACTIVITY_SNAPSHOT', data: { settled_credits: '302.000' } },
+    })
+  })
+  await waitFor(() => expect(useWorkspaceSessionStore.getState().currentWallet?.available).toBe(698))
+  expect(walletReads).toEqual(['54'])
+})
+
 it('keeps the canvas locked after a run, asks inline, and only unlocks after a click', async () => {
   const unlock = vi.fn().mockResolvedValue(undefined)
   const lock = { id: 'lock-1', owner_id: 1, owner: 'Owner', running: true, can_unlock: true }

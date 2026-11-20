@@ -90,6 +90,18 @@ export async function renderAudioMix(
   checkCancelled()
   const rendered = await context.startRendering()
   checkCancelled()
+  // 多个声轨叠加可能超过 PCM 可表示的范围。只处理超限的成片，等比衰减以保留各声轨的相对音量。
+  const channels = Array.from({ length: rendered.numberOfChannels }, (_, channel) => rendered.getChannelData(channel))
+  let peak = 0
+  for (const samples of channels) {
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample))
+  }
+  if (peak > 1) {
+    const gain = 0.98 / peak
+    for (const samples of channels) {
+      for (let index = 0; index < samples.length; index++) samples[index] *= gain
+    }
+  }
   return rendered
 }
 

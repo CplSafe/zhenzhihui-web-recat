@@ -18,7 +18,7 @@ import { doudouLabels, doudouState } from './doudouState'
 import styles from './DeepAgentStudio.module.css'
 import type { CanvasReference } from './canvasReference'
 import { openMemberCenterTab } from '@/stores/ui'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 
 export interface DeepAgentStudioProps {
   apiBase?: string
@@ -103,6 +103,23 @@ export default function DeepAgentStudio({
     isInsufficientCreditsEvent([...run.events].reverse().find((event) => ['assistant', 'error'].includes(event.kind)))
   const canOpenRecharge =
     state.connected && !mismatch && activeWorkspaceId > 0 && state.workspace_id === activeWorkspaceId
+  const settledReceipts = useMemo(() => conversationCredits(serverRun?.events || []), [serverRun?.events])
+  const reportedSettledCredits = Number(serverRun?.billing?.settled_credits)
+  const settledCredits = Math.max(settledReceipts, Number.isFinite(reportedSettledCredits) ? reportedSettledCredits : 0)
+  const refreshedCredits = useRef(new Map<string, number>())
+  const serverRunId = serverRun?.id
+  useEffect(() => {
+    if (!canvasId || !canOpenRecharge || !serverRunId || serverRunId !== current) return
+    const key = `${activeWorkspaceId}:${serverRunId}`
+    const previous = refreshedCredits.current.get(key)
+    if (settledCredits === (previous ?? 0)) return
+    // Costs may arrive as both a receipt and a snapshot; coalesce wallet reads around that update.
+    const timer = window.setTimeout(() => {
+      refreshedCredits.current.set(key, settledCredits)
+      void useWorkspaceSessionStore.getState().refreshWallet(activeWorkspaceId)
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [activeWorkspaceId, canOpenRecharge, canvasId, current, serverRunId, settledCredits])
   const mediaService = useMemo(
     () => ({ refresh: (assetId: number) => api.request<Data>(`/api/runs/${current}/assets/${assetId}`) }),
     [api, current],
@@ -127,6 +144,7 @@ export default function DeepAgentStudio({
   const [stopping, setStopping] = useState(false)
   const stopLock = useRef(false)
   const steeringDraft = useRef<{ key: string; id: string } | null>(null)
+  const [steeringDelivery, setSteeringDelivery] = useState<string | null>(null)
   const [actionBusy, setActionBusy] = useState(false),
     [uncertain, setUncertain] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState<string>('')
@@ -144,11 +162,21 @@ export default function DeepAgentStudio({
     lastCanvas = useRef<Data | null>(null)
   const savedConfigurationDraft = useRef<{ id: string; text: string; skills: string[] } | null>(null)
   currentId.current = current
-  const running = run?.status === 'running',
-    unfinished = !!run && run.status !== 'complete'
+  const running = run?.status === 'running'
+  const unfinished = running || run?.status === 'waiting' || (!!current && !run)
+  const recovering = run?.status === 'paused' || run?.status === 'error'
   const draftDisabled = loading || actionBusy || mismatch || uploading
   const disabled = draftDisabled || running
   const ready = state.connected && !mismatch && !!image && !!video && !!catalog.planning_model
+  const canSteer =
+    running &&
+    state.connected &&
+    !draftDisabled &&
+    current === run.id &&
+    !run.stop &&
+    !stopping &&
+    !skills.length &&
+    !!message.trim()
   const selectedDoc = run?.documents?.find((d) => d.id === selectedDocument) || run?.documents?.[0]
 
   const initialImage = defaultModel(catalog, 'image', modelDefaults?.imageModelVersionId)
@@ -267,7 +295,7 @@ export default function DeepAgentStudio({
     prompt.current?.focus()
   }
   async function sendSteering() {
-    if (!ready || draftDisabled || !current || run?.stop || stopping || !message.trim()) return
+    if (!canSteer || !current) return
     const id = current
     const text = message.trim()
     const references = canvasReferences.map((item) => item.id)
@@ -285,8 +313,15 @@ export default function DeepAgentStudio({
       steeringDraft.current = null
       setMessage('')
       setCanvasReferences([])
+      setSteeringDelivery(id)
       followUpdates.current = true
-      await studio.reload()
+      try {
+        await studio.reload()
+      } catch {
+        if (activeAPI.current === api && currentId.current === id) {
+          studio.setError('补充要求已发送，会话更新暂不可用。可重新读取会话。')
+        }
+      }
     })
   }
   async function send(episodeDecision?: EpisodeDecision, startProduction = false) {
@@ -660,6 +695,22 @@ export default function DeepAgentStudio({
           </span>
           <span>{state.workspace_id ? `工作空间 #${state.workspace_id}` : ''}</span>
         </div>
+        {current &&
+          (!run ||
+            studio.streamState === '连接已断开' ||
+            (run.stop && unfinished) ||
+            (steeringDelivery === current && studio.error)) &&
+          !loading && (
+            <div className={styles.recovery}>
+              <button
+                type="button"
+                disabled={actionBusy || mismatch || studio.streamState === '正在读取会话'}
+                onClick={studio.reopen}
+              >
+                重新读取会话
+              </button>
+            </div>
+          )}
         {mismatch && (
           <div role="alert" className={styles.alert}>
             当前 MCP 授权空间与页面不同。请在连接设置中重新授权，避免写入其他画布。
@@ -690,6 +741,22 @@ export default function DeepAgentStudio({
               onClick={() => studio.setError('')}
             >
               <X size={16} />
+            </button>
+          </div>
+        )}
+        {uncertain && (
+          <div className={styles.recovery}>
+            <button
+              type="button"
+              disabled={actionBusy || mismatch}
+              onClick={() =>
+                void action(async () => {
+                  await studio.refreshHistory()
+                  setHistory(true)
+                })
+              }
+            >
+              刷新历史查看发送结果
             </button>
           </div>
         )}
@@ -1082,10 +1149,12 @@ export default function DeepAgentStudio({
               aria-label="创作要求"
               placeholder={
                 running
-                  ? '补充要求或引用节点，发送后调整当前任务…'
-                  : unfinished
-                    ? '可先输入下一条要求，恢复或结束后发送…'
-                    : '开始你的创作，或者上传图片与剧本文档…'
+                  ? '输入补充要求，或停止当前任务后发送新要求…'
+                  : recovering
+                    ? '输入新要求，可直接发送到新对话…'
+                    : unfinished
+                      ? '可先输入下一条要求，恢复或结束后发送…'
+                      : '开始你的创作，或者上传图片与剧本文档…'
               }
               maxLength={12000}
               value={message}
@@ -1112,6 +1181,15 @@ export default function DeepAgentStudio({
                 }
               }}
             />
+            {running && steeringDelivery === current && (
+              <small role="status" className={styles.referenceHint}>
+                补充要求已发送。已提交的素材任务仍可能继续完成。
+              </small>
+            )}
+            {running && !!skills.length && (
+              <small className={styles.referenceHint}>已选 Skill 随下一条创作要求发送。</small>
+            )}
+            {recovering && <small className={styles.referenceHint}>新要求将发到新对话。原会话保留在历史记录中。</small>}
             <div className={styles.composerToolbar}>
               <div className={styles.composerActions}>
                 <button
@@ -1184,12 +1262,7 @@ export default function DeepAgentStudio({
                 </svg>
               </span>
               {running && (
-                <button
-                  type="submit"
-                  className={styles.send}
-                  aria-label="发送补充要求"
-                  disabled={!ready || draftDisabled || stopping || run?.stop || !message.trim()}
-                >
+                <button type="submit" className={styles.send} aria-label="发送补充要求" disabled={!canSteer}>
                   <StudioIcon name="send" size={12} />
                 </button>
               )}
@@ -1207,7 +1280,8 @@ export default function DeepAgentStudio({
                 <button
                   type="submit"
                   className={styles.send}
-                  aria-label="发送创作要求"
+                  aria-label={recovering ? '发送到新对话' : '发送创作要求'}
+                  data-tooltip={recovering ? '发送到新对话' : undefined}
                   disabled={
                     !ready ||
                     disabled ||

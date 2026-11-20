@@ -61,6 +61,9 @@ test('Seedance 费用确认后才自动审核素材', async ({ page }, testInfo)
     }),
   )
   await page.route('**/api/v1/assets/501/download**', (route) => route.fulfill({ status: 404, body: '' }))
+  await page.route('**/api/v1/canvases/125/node-locks?**', (route) =>
+    route.fulfill({ json: { granted: true, nodes: {} } }),
+  )
   let releaseEstimate!: () => void
   const estimateWait = new Promise<void>((resolve) => {
     releaseEstimate = resolve

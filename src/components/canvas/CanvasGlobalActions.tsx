@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import TutorialButton from '@/components/common/TutorialButton'
 import { formatCredits } from '@/utils/creditsFormat'
 import { openMemberCenterTab } from '@/stores/ui'
@@ -36,30 +37,47 @@ export default function CanvasGlobalActions({
   onShare,
   onStatistics,
 }: Props) {
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const closeMenu = () => {
+    toggleRef.current?.focus()
+    onClose()
+  }
+
   return (
     <div
       className="canvas-actions-menu"
       data-open={open}
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest('.canvas-global-actions button')) onClose()
+        if ((event.target as HTMLElement).closest('.canvas-global-actions button')) closeMenu()
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          onClose()
+        if (open && event.key === 'Escape') {
+          closeMenu()
           event.stopPropagation()
         }
       }}
     >
       <button
+        ref={toggleRef}
         type="button"
         className="canvas-actions-toggle"
+        aria-label="画布操作"
         aria-expanded={open}
         aria-controls="canvas-global-actions"
+        title={open ? '收起画布操作' : '展开画布操作'}
         onClick={onToggle}
       >
-        画布操作
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path
+            d={open ? 'm15 6-6 6 6 6' : 'm9 6 6 6-6 6'}
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
-      <div id="canvas-global-actions" className="canvas-global-actions">
+      <div id="canvas-global-actions" className="canvas-global-actions" hidden={!open}>
         <button type="button" className="canvas-share-btn" onClick={() => openMemberCenterTab('recharge')}>
           剩余积分：{formatCredits(credits)}
         </button>

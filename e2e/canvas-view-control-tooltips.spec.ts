@@ -76,8 +76,13 @@ for (const width of [1440, 390]) {
     expect(hintBox.x).toBeGreaterThanOrEqual(zoomBox.x + zoomBox.width)
     expect(hintBox.x >= mapBox.x + mapBox.width || hintBox.y >= mapBox.y + mapBox.height).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('zoom-tooltip.png') })
+    await zoom.click()
+    await expect(zoom).toHaveText('100%')
+    await zoom.blur()
 
     await page.mouse.move(width / 2, 450)
+    await page.mouse.wheel(0, 250)
+    await expect(zoom).not.toHaveText('100%')
     await expect(zoomHint).not.toBeVisible()
     await zoom.focus()
     await expectUnobstructed(zoomHint)

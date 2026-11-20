@@ -13,6 +13,7 @@ import { Popover, Tooltip } from 'antd'
 import { createPortal } from 'react-dom'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
 import CanvasMentionInput, { type CanvasMentionInputHandle, type PromptMention } from './CanvasMentionInput'
+import CanvasPromptStylePicker, { type CanvasPromptStyle } from './CanvasPromptStylePicker'
 import RatioLabel from '@/components/common/RatioLabel'
 import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
 import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
@@ -1106,14 +1107,9 @@ export default function CanvasNodePanel({
       const newPos = start + snippet.length
       caretRef.current = newPos
       selectionEndRef.current = newPos
+      // 在富文本 DOM 更新时定位，避免下一帧的旧选区覆盖用户紧接着的输入。
+      taRef.current?.focusWithSelection(next, newPos, newPos)
       commitPrompt(next, { immediate: true })
-      requestAnimationFrame(() => {
-        const ta = taRef.current
-        if (ta) {
-          ta.focus()
-          ta.setSelectionRange(newPos, newPos)
-        }
-      })
     },
     [taskRunning, prompt, commitPrompt],
   )
@@ -1795,6 +1791,15 @@ export default function CanvasNodePanel({
     [inheritedPromptText, prompt, kind],
   )
 
+  const [styleSelection, setStyleSelection] = useState<{
+    nodeId: string
+    userId: string | number
+    style: CanvasPromptStyle | null
+  }>()
+  const activePromptStyle =
+    styleSelection && styleSelection.nodeId === node?.id && styleSelection.userId === currentUserId
+      ? styleSelection.style
+      : null
   const buildFullPrompt = useCallback(
     (userPrompt: string): string => {
       const userText = userPrompt.trim()
@@ -1803,9 +1808,11 @@ export default function CanvasNodePanel({
       // 出门前把名字型引用（@天安门）翻成模型认得的位置号（@图片1）：模型只按附图顺序理解"第几张"，
       // 名字只活在界面。位置号本身原样保留；匹配不到的不硬猜。
       const translated = translateMentionsToPositional(assembled, sourceRefs)
-      return kind === 'text' && translated ? buildCanvasStoryboardPrompt(translated) : translated
+      if (!translated) return translated
+      if (kind === 'text') return buildCanvasStoryboardPrompt(translated)
+      return activePromptStyle ? `${translated}\n\n${activePromptStyle.prompt}` : translated
     },
-    [inheritedPromptText, sourceRefs, kind],
+    [activePromptStyle, inheritedPromptText, sourceRefs, kind],
   )
 
   // 估价必须和提交用同一份 input_assets：节点自己的视频是否计入见上方 selfVideoAssetId，
@@ -1957,7 +1964,7 @@ export default function CanvasNodePanel({
   }, [sourceRefs])
 
   const canvasId = useCanvasBillingScope()?.canvasId
-  // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
+  // 等待短暂输入停顿后预估，模型或素材变化时取消已过期的报价请求。
   const quoteRequest =
     selectedModel?.modelVersionId && operationCode && workspaceId
       ? JSON.stringify({
@@ -1983,13 +1990,13 @@ export default function CanvasNodePanel({
   const [costRetry, setCostRetry] = useState(0)
 
   useEffect(() => {
-    let cancelled = false
     if (!quoteRequest) return
+    const controller = new AbortController()
     setCostEstimate({ request: quoteRequest, loading: true })
     const timer = window.setTimeout(() => {
-      estimateAiTaskCost(JSON.parse(quoteRequest))
+      estimateAiTaskCost({ ...JSON.parse(quoteRequest), signal: controller.signal })
         .then((result: any) => {
-          if (cancelled) return
+          if (controller.signal.aborted) return
           if (
             !Number.isFinite(result?.estimated_cost) ||
             result.estimated_cost < 0 ||
@@ -2007,13 +2014,13 @@ export default function CanvasNodePanel({
           })
         })
         .catch((err: any) => {
-          if (cancelled) return
+          if (controller.signal.aborted) return
           setCostEstimate({ request: quoteRequest, loading: false, error: String(err?.message || '预估失败') })
         })
-    }, 600)
+    }, 250)
     return () => {
-      cancelled = true
       window.clearTimeout(timer)
+      controller.abort()
     }
   }, [costRetry, quoteRequest])
 
@@ -3056,6 +3063,16 @@ export default function CanvasNodePanel({
               values={fieldValues}
               onModeChange={taskRunning ? undefined : onVideoModeChange}
               onFieldChange={taskRunning ? () => undefined : handleFieldChange}
+            />
+          )}
+          {(kind === 'image' || kind === 'video') && node?.id && currentUserId && (
+            <CanvasPromptStylePicker
+              key={`${currentUserId}:${node.id}`}
+              userId={currentUserId}
+              selected={activePromptStyle}
+              onChange={(style) => setStyleSelection({ nodeId: node.id, userId: currentUserId, style })}
+              disabled={taskRunning}
+              buttonClassName={styles.selector}
             />
           )}
         </div>

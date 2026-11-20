@@ -287,20 +287,24 @@ test('分享页恢复原布局并只清除当前链接保存的位置', async ({
   expect(editorRequests).toEqual([])
 })
 
-test('画布分享入口打开分享弹窗并读取状态与活动记录', async ({ page }) => {
+test('画布分享入口读取状态和活动记录，两个请求的相同错误只提示一次', async ({ page }, testInfo) => {
   const api = await installStrictAuthenticatedApp(page)
   let revision = 1
   let shareRequests = 0
   let activityRequests = 0
+  let failReads = false
+  const unavailable = '分享服务暂时不可用'
   await page.route('**/api/v1/canvases/128**', async (route) => {
     const request = route.request()
     const { pathname } = new URL(request.url())
     if (request.method() === 'GET' && pathname.endsWith('/share/activity')) {
       activityRequests++
+      if (failReads) return route.fulfill({ status: 503, json: { message: unavailable } })
       return route.fulfill({ json: { items: [], has_more: false } })
     }
     if (request.method() === 'GET' && pathname.endsWith('/share')) {
       shareRequests++
+      if (failReads) return route.fulfill({ status: 503, json: { message: unavailable } })
       return route.fulfill({ json: {} })
     }
     if (request.method() === 'PATCH') return route.fulfill({ json: { sync_revision: ++revision } })
@@ -312,12 +316,26 @@ test('画布分享入口打开分享弹窗并读取状态与活动记录', async
   })
   await page.route('**/api/v1/ai/tools?*', (route) => route.fulfill({ json: { data: [] } }))
   await page.goto('/canvas/128')
-  await page.getByRole('button', { name: '分享这块画布' }).click()
+  const actions = page.getByRole('button', { name: '画布操作', exact: true })
+  const share = page.getByRole('button', { name: '分享这块画布' })
+  await actions.click()
+  await share.click()
   const dialog = page.getByRole('dialog', { name: '分享画布' })
   await expect(dialog).toContainText('这块画布还没有分享链接')
   await expect(dialog.getByRole('region', { name: '分享活动记录' })).toContainText('暂无查看或复制记录')
   expect(shareRequests).toBe(1)
   expect(activityRequests).toBe(1)
+  failReads = true
+  await dialog.getByRole('button', { name: '关闭分享弹窗' }).click()
+  await actions.click()
+  await share.click()
+  await expect(dialog.getByRole('button', { name: '重新读取分享状态' })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: '刷新记录' })).toBeEnabled()
+  await expect(dialog.getByRole('alert')).toHaveCount(1)
+  await expect(dialog.getByRole('alert')).toHaveText(unavailable)
+  await page.screenshot({ path: testInfo.outputPath('share-single-error.png') })
+  expect(shareRequests).toBe(2)
+  expect(activityRequests).toBe(2)
   expectNoUnexpectedApi(api)
 })
 
@@ -539,7 +557,9 @@ test('分享页对齐分区标题与完整视频标题并保留编辑布局', as
 
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/canvas/129')
+  await page.getByRole('button', { name: '画布操作', exact: true }).click()
   await expect(page.getByRole('button', { name: '分享这块画布' })).toBeVisible()
+  await page.getByRole('button', { name: '画布操作', exact: true }).click()
   await expect(videoCard.locator('video')).toHaveAttribute('poster', '/t1test.png')
   await expect(edge).toHaveCount(1)
   await expect.poll(() => readGeometry(['label-0'])).toMatchObject([{ x: 82, y: 100 }])
@@ -653,6 +673,7 @@ test('分享页对齐分区标题与完整视频标题并保留编辑布局', as
   await expect.poll(() => readGeometry([...episodePair, ...fullVideoPair])).toEqual(movedPairs)
 
   await page.goto('/canvas/129')
+  await page.getByRole('button', { name: '画布操作', exact: true }).click()
   await expect(page.getByRole('button', { name: '分享这块画布' })).toBeVisible()
   await expect.poll(() => readGeometry(sectionIds)).toEqual(originalSectionGeometry)
   await expect

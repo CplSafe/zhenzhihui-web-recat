@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 900]) {
@@ -123,9 +123,15 @@ for (const width of [1440, 900]) {
     await page.goto('/canvas/238')
     const video = page.locator('.react-flow__node[data-id="video"]')
     const secondAudio = page.locator('.react-flow__node[data-id="voice-copy"]')
-    await expect(secondAudio).toBeVisible()
+    await expect(secondAudio).toBeVisible({ timeout: 30_000 })
     await secondAudio.hover()
-    await secondAudio.locator('.canvas-handle-icon--right').dragTo(video)
+    const handle = await secondAudio.locator('.canvas-handle-icon--right').boundingBox()
+    const target = await video.boundingBox()
+    if (!handle || !target) throw new Error('音频连线的把手或视频目标不可见')
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 16 })
+    await page.mouse.up()
     await expect
       .poll(() =>
         [...elements.values()].some(
@@ -141,6 +147,12 @@ for (const width of [1440, 900]) {
     await expect(panel).toContainText(/音频\s*2\/2/)
 
     const inlinePrompt = panel.getByPlaceholder(/描述你想要生成/)
+    const replacePrompt = async (editor: Locator, value: string) => {
+      await editor.press('ControlOrMeta+A')
+      if (value) await page.keyboard.insertText(value)
+      else await editor.press('Backspace')
+      await expect(editor).toHaveAttribute('data-value', value)
+    }
     await panel.getByRole('button', { name: '插入音频引用 @第一段旁白', exact: true }).click()
     await expect(inlinePrompt).toHaveAttribute('data-value', '@第一段旁白 ')
     await expect(inlinePrompt.locator('[data-mention="@第一段旁白"]')).toBeVisible()
@@ -150,7 +162,7 @@ for (const width of [1440, 900]) {
     await picker.getByRole('option', { name: /@第二段旁白/ }).click()
     await expect(inlinePrompt).toHaveAttribute('data-value', '@第一段旁白 @第二段旁白 ')
 
-    await inlinePrompt.fill('保留前文，替换这一段')
+    await replacePrompt(inlinePrompt, '保留前文，替换这一段')
     await inlinePrompt.press('End')
     for (let i = 0; i < '替换这一段'.length; i++) await inlinePrompt.press('Shift+ArrowLeft')
     await inlinePrompt.pressSequentially('＠')
@@ -162,14 +174,14 @@ for (const width of [1440, 900]) {
     const dialog = page.getByRole('dialog', { name: '编辑提示词' })
     const expandedPrompt = dialog.getByPlaceholder(/描述你想要生成/)
     await expect(expandedPrompt).toHaveAttribute('data-value', '保留前文，@第二段旁白 ')
-    await expandedPrompt.fill('')
+    await replacePrompt(expandedPrompt, '')
     await dialog.getByTitle('插入 @第一段旁白').click()
     await expect(expandedPrompt).toHaveAttribute('data-value', '@第一段旁白 ')
     await expandedPrompt.pressSequentially('@')
     await picker.getByRole('option', { name: /@第二段旁白/ }).click()
     await expect(expandedPrompt).toHaveAttribute('data-value', '@第一段旁白 @第二段旁白 ')
 
-    await expandedPrompt.fill('保留前文，替换这一段')
+    await replacePrompt(expandedPrompt, '保留前文，替换这一段')
     await expandedPrompt.press('End')
     for (let i = 0; i < '替换这一段'.length; i++) await expandedPrompt.press('Shift+ArrowLeft')
     await dialog.getByRole('button', { name: '@引用素材' }).click()

@@ -5,6 +5,7 @@ import styles from './CanvasNodePanel.module.css'
 export interface CanvasMentionInputHandle {
   focus: () => void
   setSelectionRange: (start: number, end: number) => void
+  focusWithSelection: (value: string, start: number, end: number) => void
   readonly selectionStart: number
   readonly selectionEnd: number
 }
@@ -109,6 +110,16 @@ const CanvasMentionInput = forwardRef<
       if (rootRef.current) {
         setSelection(rootRef.current, start, end)
         revealCaret(rootRef.current)
+      }
+    },
+    focusWithSelection: (value, start, end) => {
+      const root = rootRef.current
+      if (!root) return
+      if (value !== lastValue.current) pendingSelection.current = [start, end]
+      root.focus()
+      if (value === lastValue.current) {
+        setSelection(root, start, end)
+        revealCaret(root)
       }
     },
     get selectionStart() {

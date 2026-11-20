@@ -41,6 +41,7 @@ test('画布分享入口在点击前不请求分享接口', async ({ page }) => 
   })
   await page.goto('/canvas/125')
   await expect(page.getByText('点击下方「+」创建新节点')).toBeVisible()
+  await page.getByRole('button', { name: '画布操作', exact: true }).click()
   await expect(page.getByRole('button', { name: '分享这块画布' })).toBeVisible()
   expect(shareRequests).toBe(0)
   expectNoUnexpectedApi(api)

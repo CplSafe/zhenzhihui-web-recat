@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
-import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
+import {
+  expectNoUnexpectedApi,
+  fulfillFixtureVideo,
+  installStrictAuthenticatedApp,
+} from './fixtures/strict-authenticated-app'
 
-test('视频放大预览默认有声，自动播放受阻后保持声音开启，关闭重开恢复默认', async ({ page }) => {
+test('视频放大预览优先直连、无法直连才缓冲，关闭重开恢复默认音量', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools**', (route) => {
@@ -50,10 +55,8 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
   await page.goto('/canvas/122')
   const nodeVideo = page.locator('.react-flow__node[data-id="video"] video')
   await expect(nodeVideo).toBeVisible()
-  await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('100')
-  await expect
-    .poll(() => page.locator('.react-flow__viewport').evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a))
-    .toBe(1)
+  const bytes = readFileSync('public/tutorials/hot-copy.mp4')
+  let nativeUnsupported = false
   let finishDownload!: () => void
   const downloadGate = new Promise<void>((resolve) => {
     finishDownload = resolve
@@ -63,8 +66,10 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
     if (route.request().resourceType() === 'fetch') {
       fetches += 1
       await downloadGate
+    } else if (nativeUnsupported) {
+      return route.fulfill({ status: 415, body: 'unsupported media response' })
     }
-    await route.fallback()
+    return fulfillFixtureVideo(route, bytes)
   })
   await page
     .locator('.react-flow__node[data-id="video"]')
@@ -73,14 +78,11 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
   const dialog = page.getByRole('dialog', { name: '视频预览', exact: true })
   const video = dialog.locator('video')
   await expect(dialog).toBeVisible()
-  await expect.poll(() => fetches).toBe(1)
-  await expect(dialog.getByRole('status')).toBeVisible()
-  await expect(video).not.toHaveAttribute('src')
-  await expect(video).toHaveJSProperty('paused', true)
-  await page.screenshot({ path: 'test-results/canvas-video-preparing.png' })
-  finishDownload()
-  await expect(video).toHaveAttribute('src', /^blob:/)
-  await expect(video).toHaveJSProperty('readyState', 4)
+  await expect(video).toHaveAttribute('src', /^\/api\/v1\/assets\/601\/download/)
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState)).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.duration)).toBeGreaterThan(0)
+  await expect(dialog.getByRole('status')).toHaveCount(0)
+  expect(fetches).toBe(0)
   await expect(video).toHaveJSProperty('muted', false)
   await expect(video).toHaveJSProperty('volume', 1)
   await dialog.getByRole('button', { name: '静音视频', exact: true }).click()
@@ -94,15 +96,24 @@ test('视频放大预览默认有声，自动播放受阻后保持声音开启�
   await dialog.getByRole('button', { name: '静音视频', exact: true }).click()
   await page.getByRole('button', { name: '收起', exact: true }).click()
   await expect(dialog).toHaveCount(0)
+  nativeUnsupported = true
   await page
     .locator('.react-flow__node[data-id="video"]')
     .getByRole('button', { name: '放大视频', exact: true })
     .click()
   await expect(video).toBeVisible()
-  await expect(video).toHaveJSProperty('readyState', 4)
+  try {
+    await expect.poll(() => fetches).toBe(1)
+    await expect(dialog.getByRole('status')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('video-fallback-buffering.png') })
+  } finally {
+    finishDownload()
+  }
+  await expect(video).toHaveAttribute('src', /^blob:/)
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState)).toBeGreaterThanOrEqual(2)
   await expect(video).toHaveJSProperty('muted', false)
   await expect(video).toHaveJSProperty('volume', 1)
-  await page.screenshot({ path: 'test-results/canvas-video-sound.png' })
+  await page.screenshot({ path: testInfo.outputPath('video-fallback-playing.png') })
   expect(errors).toEqual([])
   expectNoUnexpectedApi(api)
 })

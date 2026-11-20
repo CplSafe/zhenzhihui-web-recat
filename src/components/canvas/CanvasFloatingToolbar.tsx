@@ -8,7 +8,6 @@
  * 滚轮平移），不再需要切模式；只留下「锁定节点」——那是个明确的意图，不是模式。
  */
 import { memo, useState, useRef, useEffect, type ReactNode } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Keyboard, Plus } from 'lucide-react'
 import {
   CANVAS_MOD,
@@ -63,7 +62,6 @@ function CanvasFloatingToolbar({
   const [addSink, setAddSink] = useState(false)
   const addPressTimerRef = useRef<number | null>(null)
   const addTriggerRef = useRef<HTMLButtonElement>(null)
-  const reduceMotion = useReducedMotion()
   const menuRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const menuHeight = useCanvasMenuHeight(toolbarRef, menuOpen)
@@ -131,7 +129,8 @@ function CanvasFloatingToolbar({
   )
 
   const pressAdd = () => {
-    setAddSink(true)
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    setAddSink(!reduceMotion)
     if (addPressTimerRef.current !== null) window.clearTimeout(addPressTimerRef.current)
     addPressTimerRef.current = window.setTimeout(
       () => {
@@ -145,14 +144,6 @@ function CanvasFloatingToolbar({
   }
 
   const menuWidth = Math.max(44, Math.min(290, window.innerWidth - 32))
-  const shapeTransition = reduceMotion
-    ? { duration: 0.01 }
-    : {
-        width: { type: 'spring' as const, stiffness: 420, damping: 30, mass: 0.5 },
-        height: { type: 'spring' as const, stiffness: 420, damping: 30, mass: 0.5 },
-        borderRadius: { type: 'spring' as const, stiffness: 420, damping: 30, mass: 0.5 },
-        opacity: { duration: 0.12 },
-      }
 
   return (
     <div className={styles.group}>
@@ -184,206 +175,173 @@ function CanvasFloatingToolbar({
       >
         {/* 1. 加号 — 弹出节点类型菜单 */}
         <div className={`${styles.addBtnWrap} ${menuOpen ? styles.addBtnWrapOpen : ''}`} ref={menuRef}>
-          <motion.button
+          <button
             ref={addTriggerRef}
-            className={`${styles.toolBtn} ${menuOpen ? styles.toolBtnActive : ''}`}
+            className={`${styles.toolBtn} ${menuOpen ? styles.toolBtnActive : ''} ${addSink ? styles.addBtnPressed : ''}`}
             onClick={pressAdd}
             title={menuOpen ? undefined : '添加节点'}
             aria-label="添加节点"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             aria-controls="canvas-add-menu"
-            animate={{ scale: addSink ? 0.94 : 1, opacity: 1 }}
-            transition={reduceMotion ? { duration: 0.01 } : { scale: { duration: 0.11 }, opacity: { duration: 0.12 } }}
           >
             <Plus size={24} strokeWidth={1.8} aria-hidden="true" />
             {!menuOpen && <span className={styles.toolLabel}>添加</span>}
-          </motion.button>
-          <AnimatePresence>
-            {menuOpen && (
-              <motion.div
-                id="canvas-add-menu"
-                className={styles.addMenu}
-                style={{ maxHeight: menuHeight }}
-                role="menu"
-                aria-label="创建或添加节点"
-                initial={{ width: 44, height: 44, borderRadius: 22, opacity: 1 }}
-                animate={{ width: menuWidth, height: 'auto', borderRadius: 28, opacity: 1 }}
-                exit={{ width: 44, height: 44, borderRadius: 22, opacity: 0 }}
-                transition={shapeTransition}
-              >
-                {/*
+          </button>
+          <div
+            id="canvas-add-menu"
+            className={`${styles.addMenu} ${menuOpen ? styles.addMenuVisible : ''}`}
+            style={{ width: menuWidth, maxHeight: menuHeight }}
+            role="menu"
+            aria-label="创建或添加节点"
+            aria-hidden={!menuOpen || undefined}
+          >
+            {/*
               分成两组是因为它们回答的是两个不同的问题：
               上面一组「新建节点」创建的是空节点，内容还要靠生成；
               下面一组「添加素材」放进来的是已经存在的素材。
               以前素材库只挂在工具栏的独立按钮上，用户在「添加」菜单里根本看不到它，
               于是想加一张已有的图时只剩「本地上传」一条路——哪怕这张图就在素材库里。
             */}
-                <span className={styles.addMenuGroup}>新建节点</span>
-                {CANVAS_AUDIO_NODES_ENABLED && (
-                  <motion.button
-                    className={styles.addMenuItem}
-                    role="menuitem"
-                    initial={{ opacity: 0, y: 7 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.07 }}
-                    onClick={() => {
-                      onAddNode('audio')
-                      setMenuOpen(false)
-                    }}
-                  >
-                    <span className={styles.addMenuIcon}>♫</span>
-                    <div className={styles.addMenuText}>
-                      <span className={styles.addMenuLabel}>音频节点</span>
-                      <span className={styles.addMenuDesc}>配音、背景音乐、音效</span>
-                    </div>
-                  </motion.button>
-                )}
-                {CANVAS_AUDIO_NODES_ENABLED && (
-                  <motion.button
-                    className={styles.addMenuItem}
-                    role="menuitem"
-                    initial={{ opacity: 0, y: 7 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.105 }}
-                    onClick={() => {
-                      onAddNode('audio-editor')
-                      setMenuOpen(false)
-                    }}
-                  >
-                    <span className={styles.addMenuIcon}>♫</span>
-                    <div className={styles.addMenuText}>
-                      <span className={styles.addMenuLabel}>音频编辑</span>
-                      <span className={styles.addMenuDesc}>裁剪、音量、淡入淡出</span>
-                    </div>
-                  </motion.button>
-                )}
-                <motion.button
-                  className={styles.addMenuItem}
-                  role="menuitem"
-                  initial={{ opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.14 }}
-                  onClick={() => {
-                    onAddNode('text')
-                    setMenuOpen(false)
-                  }}
-                >
-                  <span className={styles.addMenuIcon}>
-                    <TextTypeIcon />
-                  </span>
-                  <div className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>文本节点</span>
-                    <span className={styles.addMenuDesc}>脚本、广告词、品牌文案</span>
-                  </div>
-                </motion.button>
-                <motion.button
-                  className={styles.addMenuItem}
-                  role="menuitem"
-                  initial={{ opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.175 }}
-                  onClick={() => {
-                    onAddNode('image')
-                    setMenuOpen(false)
-                  }}
-                >
-                  <span className={styles.addMenuIcon}>
-                    <ImageTypeIcon />
-                  </span>
-                  <div className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>图片节点</span>
-                    <span className={styles.addMenuDesc}>宣传图、海报、封面</span>
-                  </div>
-                </motion.button>
-                <motion.button
-                  className={styles.addMenuItem}
-                  role="menuitem"
-                  initial={{ opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.21 }}
-                  onClick={() => {
-                    onAddNode('video')
-                    setMenuOpen(false)
-                  }}
-                >
-                  <span className={styles.addMenuIcon}>
-                    <VideoTypeIcon />
-                  </span>
-                  <div className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>视频节点</span>
-                    <span className={styles.addMenuDesc}>宣传视频、动画、电影</span>
-                  </div>
-                </motion.button>
-                <motion.button
-                  className={styles.addMenuItem}
-                  role="menuitem"
-                  initial={{ opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.245 }}
-                  onClick={() => {
-                    onAddNode('timeline')
-                    setMenuOpen(false)
-                  }}
-                >
-                  <span className={styles.addMenuIcon}>
-                    <TimelineTypeIcon />
-                  </span>
-                  <div className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>视频剪辑</span>
-                    <span className={styles.addMenuDesc}>把多段视频串成一条成片</span>
-                  </div>
-                </motion.button>
-                <span className={styles.addMenuGroup}>添加素材</span>
-                <motion.button
-                  className={styles.addMenuItem}
-                  role="menuitem"
-                  initial={{ opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.28 }}
-                  onClick={() => {
-                    onOpenAssets()
-                    setMenuOpen(false)
-                  }}
-                >
-                  <span className={styles.addMenuIcon}>
-                    <LibraryTypeIcon />
-                  </span>
-                  <div className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>素材库</span>
-                    <span className={styles.addMenuDesc}>选用本项目已有的图片或视频</span>
-                  </div>
-                </motion.button>
-                <motion.button
-                  className={styles.addMenuItem}
-                  role="menuitem"
-                  initial={{ opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 4 }}
-                  transition={reduceMotion ? { duration: 0.01 } : { duration: 0.18, delay: 0.315 }}
-                  onClick={() => {
-                    onAddLocalImage()
-                    setMenuOpen(false)
-                  }}
-                >
-                  <span className={styles.addMenuIcon}>
-                    <UploadTypeIcon />
-                  </span>
-                  <div className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>本地上传</span>
-                    <span className={styles.addMenuDesc}>图片或视频，也可直接拖拽或 {CANVAS_MOD} + V 粘贴</span>
-                  </div>
-                </motion.button>
-              </motion.div>
+            <span className={styles.addMenuGroup}>新建节点</span>
+            {CANVAS_AUDIO_NODES_ENABLED && (
+              <button
+                className={styles.addMenuItem}
+                role="menuitem"
+                tabIndex={menuOpen ? undefined : -1}
+                onClick={() => {
+                  onAddNode('audio')
+                  setMenuOpen(false)
+                }}
+              >
+                <span className={styles.addMenuIcon}>♫</span>
+                <div className={styles.addMenuText}>
+                  <span className={styles.addMenuLabel}>音频节点</span>
+                  <span className={styles.addMenuDesc}>配音、背景音乐、音效</span>
+                </div>
+              </button>
             )}
-          </AnimatePresence>
+            {CANVAS_AUDIO_NODES_ENABLED && (
+              <button
+                className={styles.addMenuItem}
+                role="menuitem"
+                tabIndex={menuOpen ? undefined : -1}
+                onClick={() => {
+                  onAddNode('audio-editor')
+                  setMenuOpen(false)
+                }}
+              >
+                <span className={styles.addMenuIcon}>♫</span>
+                <div className={styles.addMenuText}>
+                  <span className={styles.addMenuLabel}>音频编辑</span>
+                  <span className={styles.addMenuDesc}>裁剪、音量、淡入淡出</span>
+                </div>
+              </button>
+            )}
+            <button
+              className={styles.addMenuItem}
+              role="menuitem"
+              tabIndex={menuOpen ? undefined : -1}
+              onClick={() => {
+                onAddNode('text')
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <TextTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>文本节点</span>
+                <span className={styles.addMenuDesc}>脚本、广告词、品牌文案</span>
+              </div>
+            </button>
+            <button
+              className={styles.addMenuItem}
+              role="menuitem"
+              tabIndex={menuOpen ? undefined : -1}
+              onClick={() => {
+                onAddNode('image')
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <ImageTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>图片节点</span>
+                <span className={styles.addMenuDesc}>宣传图、海报、封面</span>
+              </div>
+            </button>
+            <button
+              className={styles.addMenuItem}
+              role="menuitem"
+              tabIndex={menuOpen ? undefined : -1}
+              onClick={() => {
+                onAddNode('video')
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <VideoTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>视频节点</span>
+                <span className={styles.addMenuDesc}>宣传视频、动画、电影</span>
+              </div>
+            </button>
+            <button
+              className={styles.addMenuItem}
+              role="menuitem"
+              tabIndex={menuOpen ? undefined : -1}
+              onClick={() => {
+                onAddNode('timeline')
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <TimelineTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>视频剪辑</span>
+                <span className={styles.addMenuDesc}>把多段视频串成一条成片</span>
+              </div>
+            </button>
+            <span className={styles.addMenuGroup}>添加素材</span>
+            <button
+              className={styles.addMenuItem}
+              role="menuitem"
+              tabIndex={menuOpen ? undefined : -1}
+              onClick={() => {
+                onOpenAssets()
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <LibraryTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>素材库</span>
+                <span className={styles.addMenuDesc}>选用本项目已有的图片或视频</span>
+              </div>
+            </button>
+            <button
+              className={styles.addMenuItem}
+              role="menuitem"
+              tabIndex={menuOpen ? undefined : -1}
+              onClick={() => {
+                onAddLocalImage()
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <UploadTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>本地上传</span>
+                <span className={styles.addMenuDesc}>图片或视频，也可直接拖拽或 {CANVAS_MOD} + V 粘贴</span>
+              </div>
+            </button>
+          </div>
         </div>
 
         {/*

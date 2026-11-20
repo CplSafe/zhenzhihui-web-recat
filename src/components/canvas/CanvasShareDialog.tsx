@@ -274,7 +274,7 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
               </li>
             ))}
           </ul>
-          {activityError && (
+          {activityError && activityError !== error && (
             <p role="alert" className={styles.error}>
               {activityError}
             </p>
@@ -291,7 +291,11 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
           )}
         </section>
 
-        {error && <p className={styles.error}>{error}</p>}
+        {error && (
+          <p role="alert" className={styles.error}>
+            {error}
+          </p>
+        )}
 
         <div className={styles.actions}>
           {!loading && !share ? (

@@ -32,6 +32,12 @@ const MEDIA_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
   'video/mp4': 'mp4',
   'video/webm': 'webm',
   'video/quicktime': 'mov',
+  'video/x-msvideo': 'avi',
+  'video/x-matroska': 'mkv',
+  'video/mpeg': 'mpeg',
+  'video/3gpp': '3gp',
+  'video/3gpp2': '3g2',
+  'video/x-m4v': 'm4v',
   'audio/mpeg': 'mp3',
   'audio/mp3': 'mp3',
   'audio/wav': 'wav',
@@ -65,7 +71,7 @@ function asciiAt(bytes: Uint8Array, offset: number, text: string): boolean {
 /** 从文件头识别常见图片与视频，避免错误响应头把 JPEG/WebP 保存成 PNG。 */
 async function sniffMediaMime(blob: Blob): Promise<string> {
   try {
-    const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer())
+    const bytes = new Uint8Array(await blob.slice(0, 128).arrayBuffer())
     if (
       bytes.length >= 8 &&
       bytes[0] === 0x89 &&
@@ -83,14 +89,27 @@ async function sniffMediaMime(blob: Blob): Promise<string> {
     if (asciiAt(bytes, 0, 'GIF87a') || asciiAt(bytes, 0, 'GIF89a')) return 'image/gif'
     if (asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP')) return 'image/webp'
     if (asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WAVE')) return 'audio/wav'
+    if (asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'AVI ')) return 'video/x-msvideo'
     if (asciiAt(bytes, 0, 'ID3')) return 'audio/mpeg'
     if (asciiAt(bytes, 4, 'ftyp')) {
       if (asciiAt(bytes, 8, 'avif') || asciiAt(bytes, 8, 'avis')) return 'image/avif'
       if (asciiAt(bytes, 8, 'M4A ') || asciiAt(bytes, 8, 'M4B ')) return 'audio/mp4'
+      if (asciiAt(bytes, 8, 'qt  ')) return 'video/quicktime'
+      if (asciiAt(bytes, 8, '3gp')) return 'video/3gpp'
+      if (asciiAt(bytes, 8, '3g2')) return 'video/3gpp2'
+      if (asciiAt(bytes, 8, 'M4V ')) return 'video/x-m4v'
       return 'video/mp4'
     }
+    if (bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 1 && (bytes[3] === 0xba || bytes[3] === 0xb3)) {
+      return 'video/mpeg'
+    }
     if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
-      return 'video/webm'
+      for (let index = 4; index < bytes.length - 4; index++) {
+        if (asciiAt(bytes, index, 'matroska')) return 'video/x-matroska'
+        if (asciiAt(bytes, index, 'webm')) return 'video/webm'
+      }
+      // 未确认的 EBML 容器由声明类型判定，避免把 MKV 当作 WebM。
+      return ''
     }
   } catch {
     // 极旧 WebView 不支持 Blob.arrayBuffer 时，继续使用响应头和调用方的后备 MIME。

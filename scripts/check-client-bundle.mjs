@@ -31,7 +31,11 @@ const MAX_SINGLE_JS_BYTES = 460 * 1024
 // 取景共用按需加载的 Three.js，核心与渲染器分别缓存，首屏不加载。
 // 当前完整生产构建实测约 1248 KiB，保留约 32 KiB 余量；单 JS 460 KiB 上限、
 // 图片预算以及服务端环境泄漏检测均保持原值。
-const MAX_TOTAL_JS_GZIP_BYTES = 1280 * 1024
+// 2026-11-20：画布主体编辑、DoDo Agent 与创作流程扩展后，完整产物在移除工具栏动画库、
+// 拆分按需功能后约为 1629 KiB。全路由预算继续覆盖每个 JS 文件，并为新增回归留出 26 KiB。
+const MAX_TOTAL_JS_GZIP_BYTES = 1655 * 1024
+// 单独限制 HTML 入口的完整静态依赖体积，避免把首屏开销分散到多个小文件后漏检。
+const MAX_BOOTSTRAP_JS_GZIP_BYTES = 212 * 1024
 const MAX_IMAGE_BYTES = 450 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const FORBIDDEN_CLIENT_ENV_KEY =
@@ -67,6 +71,30 @@ function walkFiles(directory) {
   })
 }
 
+function measureBootstrapGzip(bundleDirectory, javascriptStats) {
+  const manifestPath = path.resolve(bundleDirectory, '.vite/manifest.json')
+  if (!fs.existsSync(manifestPath)) throw new Error('Missing Vite manifest. Run npm run build before checking budgets.')
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  const gzipByFile = new Map(javascriptStats.map(({ file, gzipBytes }) => [file, gzipBytes]))
+  const visitedFiles = new Set()
+  const pending = ['index.html']
+  let gzipBytes = 0
+  while (pending.length) {
+    const key = pending.pop()
+    const chunk = manifest[key]
+    if (!chunk?.file) throw new Error(`Missing manifest chunk: ${key}`)
+    if (visitedFiles.has(chunk.file)) continue
+    visitedFiles.add(chunk.file)
+
+    const size = gzipByFile.get(path.resolve(bundleDirectory, chunk.file))
+    if (size === undefined) throw new Error(`Missing JavaScript file: ${chunk.file}`)
+    gzipBytes += size
+    pending.push(...(chunk.imports ?? []))
+  }
+  return gzipBytes
+}
+
 function valueVariants(value) {
   const trimmed = String(value || '').trim()
   if (!trimmed) return []
@@ -99,6 +127,7 @@ function inspectBundle(label, sensitiveValues = [], bundleDirectory = DIST_DIR) 
     current.rawBytes > largest.rawBytes ? current : largest,
   )
   const totalJavaScriptGzipBytes = javascriptStats.reduce((total, current) => total + current.gzipBytes, 0)
+  const bootstrapJavaScriptGzipBytes = measureBootstrapGzip(bundleDirectory, javascriptStats)
   const largestImage = imageFiles
     .map((file) => ({ file, rawBytes: fs.statSync(file).size }))
     .sort((left, right) => right.rawBytes - left.rawBytes)[0]
@@ -124,6 +153,11 @@ function inspectBundle(label, sensitiveValues = [], bundleDirectory = DIST_DIR) 
       `total JavaScript gzip ${formatKiB(totalJavaScriptGzipBytes)} exceeds ${formatKiB(MAX_TOTAL_JS_GZIP_BYTES)}`,
     )
   }
+  if (bootstrapJavaScriptGzipBytes > MAX_BOOTSTRAP_JS_GZIP_BYTES) {
+    failures.push(
+      `HTML bootstrap JavaScript gzip ${formatKiB(bootstrapJavaScriptGzipBytes)} exceeds ${formatKiB(MAX_BOOTSTRAP_JS_GZIP_BYTES)}`,
+    )
+  }
   if (largestImage && largestImage.rawBytes > MAX_IMAGE_BYTES) {
     failures.push(`largest image ${formatKiB(largestImage.rawBytes)} exceeds ${formatKiB(MAX_IMAGE_BYTES)}`)
   }
@@ -140,6 +174,7 @@ function inspectBundle(label, sensitiveValues = [], bundleDirectory = DIST_DIR) 
     `[${label}] Largest JavaScript: ${formatKiB(largestJavaScript.rawBytes)} (${path.relative(bundleDirectory, largestJavaScript.file)})`,
   )
   console.log(`[${label}] Total JavaScript gzip: ${formatKiB(totalJavaScriptGzipBytes)}`)
+  console.log(`[${label}] HTML bootstrap JavaScript gzip: ${formatKiB(bootstrapJavaScriptGzipBytes)}`)
   console.log(
     largestImage
       ? `[${label}] Largest image: ${formatKiB(largestImage.rawBytes)} (${path.relative(bundleDirectory, largestImage.file)})`

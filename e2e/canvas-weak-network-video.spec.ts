@@ -122,5 +122,8 @@ for (const width of [1440, 390]) {
     await expect.poll(() => downloads).toBe(2)
     release()
     await expect(node.locator('video')).toHaveAttribute('src', /^blob:/, { timeout: 15000 })
+    await expect
+      .poll(() => node.locator('video').evaluate((video: HTMLVideoElement) => video.currentTime))
+      .toBeGreaterThan(0.1)
   })
 }

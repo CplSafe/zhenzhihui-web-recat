@@ -5,6 +5,10 @@ test('素材库弹窗中的卡片边框在深色底上清楚可见', async ({ pa
   await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/v1/canvases/222/members?**', (route) => route.fulfill({ json: { items: [] } }))
+  await page.route('**/api/v1/canvases/222/node-locks?**', (route) =>
+    route.fulfill({ json: { granted: true, nodes: {} } }),
+  )
   await page.route('**/api/v1/assets?**', (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))

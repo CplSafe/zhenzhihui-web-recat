@@ -58,6 +58,58 @@
   object-fit: contain;
 }
 
+.player[hidden] {
+  display: none;
+}
+
+.playbackError {
+  display: grid;
+  height: 100%;
+  box-sizing: border-box;
+  place-items: center;
+  padding: 24px;
+  color: #f2f3f5;
+  text-align: center;
+}
+
+.playbackError p {
+  margin: 0 0 16px;
+}
+
+.playbackRecovery {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.playbackRecovery button,
+.playbackRecovery a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #6d7774;
+  border-radius: 8px;
+  background: #202724;
+  color: #fff;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.playbackRecovery button:hover,
+.playbackRecovery a:hover {
+  background: #35463f;
+}
+
+.playbackRecovery button:focus-visible,
+.playbackRecovery a:focus-visible {
+  outline: 2px solid #cbd5d9;
+  outline-offset: 3px;
+}
+
 /* 视频信息栏：贴在播放器右侧，与播放器同高、独立滚动 */
 .info {
   flex: 0 0 260px;

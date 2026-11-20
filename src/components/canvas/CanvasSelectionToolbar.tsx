@@ -26,6 +26,7 @@ export interface CanvasSelectionToolbarProps {
   onArrange?: () => void
   /** 其中有素材可下载的节点数；为 0 或不传 onDownload 时隐藏该动作 */
   downloadableCount?: number
+  downloading?: boolean
   onDownload?: () => void
   onHd?: () => void
 }
@@ -42,6 +43,7 @@ export default function CanvasSelectionToolbar({
   onClear,
   onArrange,
   downloadableCount = 0,
+  downloading = false,
   onDownload,
   onHd,
 }: CanvasSelectionToolbarProps) {
@@ -103,10 +105,12 @@ export default function CanvasSelectionToolbar({
           type="button"
           className={styles.action}
           onClick={onDownload}
-          title={`下载选中节点里已生成的 ${downloadableCount} 个素材`}
+          disabled={downloading}
+          aria-busy={downloading}
+          title={`下载选中节点里的 ${downloadableCount} 个文件`}
         >
           <DownloadIcon />
-          下载
+          {downloading ? '正在下载' : '下载'}
           {downloadableCount !== count && <em className={styles.hint}>{downloadableCount} 个</em>}
         </button>
       )}

@@ -6,6 +6,7 @@ import { normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { isAudioFile, normalizeAudioSettings, readAudioDuration } from '@/utils/canvasAudio'
 import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 import { calcNodeSize, AUTO_RATIO } from '@/utils/canvasNodeSize'
+import { MAX_SCRIPT_IMPORT_BYTES } from '@/utils/canvasScriptImport'
 import {
   isCanvasImageFile,
   isCanvasVideoFile,
@@ -98,20 +99,22 @@ export function useCanvasLocalMediaImport({
       const allImages = pickImageFiles(files)
       const allVideos = pickVideoFiles(files)
       const allAudios = CANVAS_AUDIO_NODES_ENABLED ? files.filter(isAudioFile) : []
+      const allTexts = files.filter((file) => /\.txt$/i.test(file.name))
       const unsupportedFiles = files.filter(
-        (file) => !isCanvasImageFile(file) && !isCanvasVideoFile(file) && !isAudioFile(file),
+        (file) =>
+          !isCanvasImageFile(file) && !isCanvasVideoFile(file) && !isAudioFile(file) && !allTexts.includes(file),
       )
       const audios = allAudios.filter((file) => file.size <= 100 * 1024 * 1024)
       const oversizedAudios = allAudios.length - audios.length
       const videos = allVideos.filter((file) => file.size <= LOCAL_VIDEO_MAX_BYTES)
       const oversized = allVideos.length - videos.length
-      if (allImages.length === 0 && allVideos.length === 0 && allAudios.length === 0) {
+      if (allImages.length === 0 && allVideos.length === 0 && allAudios.length === 0 && allTexts.length === 0) {
         showToast(
           unsupportedFiles.length
             ? '文件格式不受支持；视频请使用 MP4、MOV、M4V、WEBM、AVI、MKV、MPEG、MPG 或 3GP 格式'
             : CANVAS_AUDIO_NODES_ENABLED
-              ? '支持图片、视频和音频文件'
-              : '支持图片和视频文件',
+              ? '支持图片、视频、音频和 TXT 文件'
+              : '支持图片、视频和 TXT 文件',
           'error',
         )
         return
@@ -137,7 +140,33 @@ export function useCanvasLocalMediaImport({
       const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
       const imageNames = new Map(imageChecks.filter((item) => !item.error).map((item) => [item.file, item.title]))
       const failures: string[] = imageChecks.filter((item) => item.error).map((item) => item.error)
-      if (images.length === 0 && videos.length === 0 && audios.length === 0) {
+      const texts = (
+        await mapWithConcurrency(allTexts.slice(0, LOCAL_IMAGE_IMPORT_LIMIT), 4, async (file) => {
+          try {
+            if (file.size > MAX_SCRIPT_IMPORT_BYTES) throw new Error('文件超过 1MB，请拆分后导入')
+            const bytes = new Uint8Array(await new Response(file).arrayBuffer())
+            const encoding =
+              bytes[0] === 0xff && bytes[1] === 0xfe
+                ? 'utf-16le'
+                : bytes[0] === 0xfe && bytes[1] === 0xff
+                  ? 'utf-16be'
+                  : 'utf-8'
+            let text: string
+            try {
+              text = new TextDecoder(encoding, { fatal: true }).decode(bytes)
+              if (text.includes('\0')) throw new Error()
+            } catch {
+              throw new Error('无法识别文本编码，请另存为 UTF-8 再导入')
+            }
+            if (!text.trim()) throw new Error('文本文件没有内容')
+            return { title: file.name.replace(/\.txt$/i, ''), text }
+          } catch (error: unknown) {
+            failures.push(`${file.name}：${error instanceof Error ? error.message : '文本读取失败'}`)
+            return null
+          }
+        })
+      ).filter((item): item is { title: string; text: string } => item !== null)
+      if (images.length === 0 && videos.length === 0 && audios.length === 0 && texts.length === 0) {
         const rejected = [
           ...failures,
           oversized ? `${oversized} 个视频超过 512MB，请压缩后再导入` : '',
@@ -154,7 +183,13 @@ export function useCanvasLocalMediaImport({
         ...audios.map((file) => ({ file, title: file.name.replace(/\.[^.]+$/, ''), kind: 'audio' as const })),
       ]
       const accepted = media.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
-      const skipped = media.length - accepted.length
+      const acceptedTexts = texts.slice(0, LOCAL_IMAGE_IMPORT_LIMIT - accepted.length)
+      const skipped =
+        media.length -
+        accepted.length +
+        texts.length -
+        acceptedTexts.length +
+        Math.max(0, allTexts.length - LOCAL_IMAGE_IMPORT_LIMIT)
       const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
       const prepared = await mapWithConcurrency(accepted, 8, async ({ file, title, kind }) => {
         const ratio =
@@ -188,9 +223,24 @@ export function useCanvasLocalMediaImport({
         )
         return { nodeId, file, title, previewUrl, kind }
       })
+      for (const [index, item] of acceptedTexts.entries()) {
+        const offset = (created.length + index) * 36
+        const point = screenToFlowPosition({ x: origin.x + offset, y: origin.y + offset })
+        appendNewNode(
+          'text',
+          { x: point.x - 125, y: point.y - 125 },
+          {
+            ratio: '1:1',
+            size: { width: 250, height: 250 },
+            skipHistory: true,
+            deferSync: true,
+            extraData: { ...item, textGenerationMode: 'plain' },
+          },
+        )
+      }
 
       // 批量节点作为一次导入保存，避免每个节点重复同步序列化整张画布。
-      if (created.length) scheduleImportSync()
+      if (created.length || acceptedTexts.length) scheduleImportSync()
 
       await mapWithConcurrency(created, 4, async ({ nodeId, file, title, previewUrl, kind }) => {
         try {

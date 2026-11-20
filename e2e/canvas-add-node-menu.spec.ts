@@ -68,9 +68,10 @@ test('左侧添加菜单可以创建音频节点', async ({ page }) => {
   const pane = page.locator('.react-flow__pane')
   await expect(pane).toBeVisible()
   await page.getByTitle('添加节点').click()
-  const audioEntry = page.getByRole('button', { name: '音频节点' })
+  const menu = page.getByRole('menu', { name: '创建或添加节点' })
+  const audioEntry = menu.getByRole('menuitem', { name: /音频节点/ })
   await expect(audioEntry).toBeVisible()
-  await expect(page.getByRole('button', { name: '文本节点' })).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: /^文本节点/ })).toBeVisible()
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
   await audioEntry.click()
 
@@ -147,6 +148,7 @@ test('文本转为本节点提示词写入正文而不是重命名字段', async
   await page.route('**/api/v1/canvases/114**', async (route) => {
     const url = new URL(route.request().url())
     expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
+    if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
     if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
     await route.fulfill({
       json: url.pathname.endsWith('/elements')
@@ -199,10 +201,10 @@ test('文本转为本节点提示词写入正文而不是重命名字段', async
   await page.goto('/canvas/114')
   await page.locator('.react-flow__node[data-id="text-target"]').click()
   const panel = page.locator('[class*="panel"]').filter({ has: page.getByRole('button', { name: '转为本节点提示词' }) })
-  const textBody = page.locator('.canvas-panel-area textarea')
+  const textBody = page.getByRole('textbox', { name: /^输入视频主题/ })
   await panel.getByRole('button', { name: '转为本节点提示词' }).click()
 
-  await expect(textBody).toHaveValue('上游篮球文案\n\n本节点已有正文')
+  await expect(textBody).toHaveJSProperty('textContent', '上游篮球文案\n\n本节点已有正文')
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   await expect(page.locator('.canvas-node-header input')).toHaveCount(0)
   expectNoUnexpectedApi(api)
