@@ -243,6 +243,7 @@ import {
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import {
+  captureVideoFrameDataUrl,
   captureVideoFrameFromUrl,
   captureVideoFrameWithRetry,
   primeVideoFirstFrame,
@@ -925,6 +926,7 @@ interface CanvasGenerationRequest {
   /** 视频生视频的源视频（节点自己已有的那条）；为 0/缺省表示从头生成。 */
   selfVideoAssetId?: number
   subjectEdit?: true
+  requiresSeedanceModeration?: true
   audioUse?: 'reference' | 'mix' | 'replace'
   audioOriginalVolume?: number
 }
@@ -7247,22 +7249,22 @@ function CanvasInner({
             submitModel?.source?.modelName,
             submitModel?.source?.name,
           ]
-          const usesSeedance = modelNames.some((value) =>
-            /s(?:ee|ea)dance/i.test(String(value || '').replace(/[\s._-]/g, '')),
-          )
+          const usesSeedance =
+            generate.requiresSeedanceModeration ||
+            modelNames.some((value) => /s(?:ee|ea)dance/i.test(String(value || '').replace(/[\s._-]/g, '')))
           if (usesSeedance) {
-            const imageIds = [
-              ...new Set(
-                (generate.sourceRefs || [])
+            const imageAssetIds = generate.subjectEdit
+              ? generate.inputAssets
+                  .filter((asset) => asset.role === 'image' || asset.role === 'reference_image')
+                  .map((asset) => Number(asset.asset_id))
+              : (generate.sourceRefs || [])
                   .filter(
                     (ref) =>
                       ref.kind === 'image' &&
                       generate.inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
                   )
                   .map((ref) => Number(ref.assetId))
-                  .filter((id) => Number.isSafeInteger(id) && id > 0),
-              ),
-            ]
+            const imageIds = [...new Set(imageAssetIds.filter((id) => Number.isSafeInteger(id) && id > 0))]
             const videoIds = [
               ...new Set(
                 generate.inputAssets
@@ -7276,6 +7278,16 @@ function CanvasInner({
               ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
             ]
             for (const { assetId, mediaType } of moderationAssets) {
+              if (generate.subjectEdit) {
+                const moderationError = await ensureCanvasSeedanceModeration(
+                  assetId,
+                  Number(workspaceId || 0),
+                  mediaType,
+                )
+                if (!moderationError) continue
+                showToast(moderationError, 'error')
+                return
+              }
               let moderation
               try {
                 moderation = normalizeSeedanceModerationResult(
@@ -12785,6 +12797,17 @@ function CanvasInner({
                     showToast('请从当前团队选择素材', 'error')
                     return
                   }
+                  const video =
+                    kind === 'video'
+                      ? canvasRootRef.current?.querySelector<HTMLVideoElement>(
+                          `.react-flow__node[data-id="${CSS.escape(node.id)}"] video.canvas-node-media`,
+                        )
+                      : null
+                  const time = Number.isFinite(video?.currentTime) ? video.currentTime : 0
+                  const frameUrl =
+                    video && !video.seeking && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+                      ? captureVideoFrameDataUrl(video)
+                      : ''
                   setSubjectEditTarget({
                     canvasBinding: canvasBindingKey,
                     source: {
@@ -12793,6 +12816,15 @@ function CanvasInner({
                       kind,
                       title: String(node.data.title || '原素材'),
                       ratio: typeof node.data.ratio === 'string' ? node.data.ratio : undefined,
+                      initialVideo: video
+                        ? {
+                            time,
+                            duration: video.duration,
+                            width: video.videoWidth,
+                            height: video.videoHeight,
+                            frameUrl,
+                          }
+                        : undefined,
                     },
                   })
                 }}

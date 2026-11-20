@@ -55,7 +55,7 @@ const TINY_MP4 = Buffer.from(
   'base64',
 )
 
-async function fulfillTinyVideo(route: Route) {
+export async function fulfillFixtureVideo(route: Route, video = TINY_MP4) {
   const rangeHeader = route.request().headers().range
   const match = rangeHeader?.match(/^bytes=(\d+)-(\d*)$/)
   if (!match) {
@@ -64,31 +64,31 @@ async function fulfillTinyVideo(route: Route) {
       contentType: 'video/mp4',
       headers: {
         'accept-ranges': 'bytes',
-        'content-length': String(TINY_MP4.length),
+        'content-length': String(video.length),
       },
-      body: TINY_MP4,
+      body: video,
     })
     return
   }
 
   const start = Number(match[1])
-  const requestedEnd = match[2] ? Number(match[2]) : TINY_MP4.length - 1
-  if (!Number.isSafeInteger(start) || start < 0 || start >= TINY_MP4.length) {
+  const requestedEnd = match[2] ? Number(match[2]) : video.length - 1
+  if (!Number.isSafeInteger(start) || start < 0 || start >= video.length) {
     await route.fulfill({
       status: 416,
-      headers: { 'content-range': `bytes */${TINY_MP4.length}` },
+      headers: { 'content-range': `bytes */${video.length}` },
     })
     return
   }
-  const end = Math.min(Math.max(start, requestedEnd), TINY_MP4.length - 1)
-  const body = TINY_MP4.subarray(start, end + 1)
+  const end = Math.min(Math.max(start, requestedEnd), video.length - 1)
+  const body = video.subarray(start, end + 1)
   await route.fulfill({
     status: 206,
     contentType: 'video/mp4',
     headers: {
       'accept-ranges': 'bytes',
       'content-length': String(body.length),
-      'content-range': `bytes ${start}-${end}/${TINY_MP4.length}`,
+      'content-range': `bytes ${start}-${end}/${video.length}`,
     },
     body,
   })
@@ -512,7 +512,7 @@ export async function installStrictAuthenticatedApp(
     if (method === 'GET' && /^\/api\/v1\/assets\/\d+\/download$/.test(path)) {
       const isImage = path.includes('/701/') || path.includes('/502/')
       if (!isImage) {
-        await fulfillTinyVideo(route)
+        await fulfillFixtureVideo(route)
         return
       }
       await route.fulfill({

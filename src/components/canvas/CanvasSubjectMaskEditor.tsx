@@ -28,6 +28,7 @@ type Tool = 'brush' | 'eraser' | 'rectangle' | 'color' | 'subject'
 export interface CanvasSubjectMaskEditorHandle {
   exportMask(): Promise<File>
   exportCutout(maxLongEdge?: number): Promise<File>
+  clearSelection(): void
 }
 
 interface Props {
@@ -173,6 +174,10 @@ function MaskEditor({
     }
 
     return {
+      clearSelection() {
+        setPreviewing(false)
+        changeSelection(true)
+      },
       async exportMask() {
         const context = exportContext()
         renderSelection(context, edits.current)
@@ -196,7 +201,7 @@ function MaskEditor({
         }
       },
     }
-  }, [size, hasSelection, mediaLabel])
+  })
 
   function refreshSelection(context: CanvasRenderingContext2D) {
     const { width, height } = context.canvas

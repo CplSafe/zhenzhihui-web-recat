@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCanvasSubjectEditRequest,
+  buildCanvasSubjectVideoEstimateRequest,
   getCanvasSubjectEditModels,
   getCanvasSubjectVideoReferenceLimit,
+  supportsCanvasSubjectTargetReference,
   supportsCanvasSubjectVideoReference,
 } from '@/utils/canvasSubjectEdit'
 
@@ -68,6 +70,25 @@ describe('画布主体编辑请求', () => {
     })
     expect(request.prompt).toContain('消除原视频中的「森林路上移动的黑色汽车」')
     expect(request.prompt).toContain('补出的背景跨帧连续')
+  })
+
+  it('未选择主体时按同一模型和整段时长出价，正式请求仍要求指定主体', () => {
+    const preview = buildCanvasSubjectVideoEstimateRequest({
+      mode: 'remove',
+      model: videoModel,
+      sourceAssetId: video.sourceAssetId,
+      duration: video.sourceVideoDurationSec,
+      ratio: video.ratio,
+    })
+    const request = buildCanvasSubjectEditRequest(video)
+    expect(preview).toMatchObject({
+      modelVersionId: request.modelVersionId,
+      operationCode: request.operationCode,
+      inputAssets: request.inputAssets,
+      params: request.params,
+    })
+    expect(preview.prompt).toContain('主体消除')
+    expect(() => buildCanvasSubjectEditRequest({ ...video, target: '' })).toThrow('请选择或描述要处理的主体')
   })
 
   it('视频超过输入上限或不满足输出时长时拒绝提交', () => {
@@ -247,5 +268,186 @@ describe('画布主体编辑请求', () => {
     )
     expect(() => buildCanvasSubjectEditRequest({ ...replacement, model: videoModel })).toThrow('不支持附带')
     expect(() => buildCanvasSubjectEditRequest({ ...replacement, mode: 'remove' })).toThrow('仅用于视频主体替换')
+  })
+})
+
+const subjectVideoRoles = [
+  { role: 'video', min_count: 1, max_count: 1 },
+  { role: 'image', max_count: 1, mime_types: ['image/jpeg', 'image/png'] },
+]
+
+const subjectVideoModes = { name: 'mode', options: ['generate', 'edit', 'extend'] }
+const subjectVideoReferenceMode = { name: 'reference_mode', default: false }
+const subjectVideoAdaptiveRatio = { name: 'ratio', options: ['adaptive', '16:9', '9:16'] }
+const subjectVideoEditPolicies: ReadonlyArray<{
+  versions: ReadonlyArray<readonly [number, string]>
+  provider: string
+  operationCode: 'video.edit' | 'video.generate'
+  fields: ReadonlyArray<Record<string, unknown>>
+  sourceRange: readonly [number, number]
+  params: Record<string, unknown>
+  prompt: string
+  supportsSourceCutout?: boolean
+}> = [
+  {
+    versions: [[9, 'happyhorse-1.0-video-edit']],
+    provider: 'bailian',
+    operationCode: 'video.edit',
+    fields: [{ name: 'audio_setting', default: 'auto', options: ['auto', 'origin'] }],
+    sourceRange: [3, 15],
+    params: { audio_setting: 'origin' },
+    prompt: '消除原视频',
+    supportsSourceCutout: true,
+  },
+  {
+    versions: [
+      [19, 'wan3.0-video'],
+      [20, 'wan3.0-video-prime'],
+    ],
+    provider: 'bailian',
+    operationCode: 'video.edit',
+    fields: [
+      { name: 'duration', options: [-1, 5, 10, 15] },
+      { name: 'audio', default: true },
+      subjectVideoReferenceMode,
+      subjectVideoAdaptiveRatio,
+    ],
+    sourceRange: [1, 15],
+    params: { duration: -1, ratio: 'adaptive', audio: true, reference_mode: true },
+    prompt: '严格编辑原视频（视频1）',
+  },
+  {
+    versions: [
+      [5, 'doubao-seedance-2-0-260128'],
+      [15, 'doubao-seedance-2-0-fast-260128'],
+      [16, 'doubao-seedance-2-0-mini-260615'],
+    ],
+    provider: 'volcengine',
+    operationCode: 'video.generate',
+    fields: [
+      { name: 'duration', min: 4, max: 15, required: true },
+      { name: 'ratio', options: ['16:9', '1:1', '9:16'] },
+      subjectVideoReferenceMode,
+      subjectVideoModes,
+    ],
+    sourceRange: [2, 15],
+    params: { duration: 8, ratio: '1:1', mode: 'generate', reference_mode: true },
+    prompt: '严格编辑原视频（视频1）',
+  },
+  {
+    versions: [[18, 'doubao-seedance-2-5-260628']],
+    provider: 'volcengine',
+    operationCode: 'video.generate',
+    fields: [
+      { name: 'duration', min: 4, max: 30, required: true },
+      { name: 'ratio', options: ['16:9', '9:16'] },
+      subjectVideoReferenceMode,
+      subjectVideoModes,
+    ],
+    sourceRange: [4, 30],
+    params: { duration: 8, mode: 'edit', reference_mode: true },
+    prompt: '严格编辑原视频（视频1）',
+  },
+  {
+    versions: [[25, 'MiniMax-H3']],
+    provider: 'minimax',
+    operationCode: 'video.generate',
+    fields: [
+      { name: 'duration', min: 4, max: 15 },
+      { name: 'source_video_duration', min: 2, max: 15 },
+      subjectVideoReferenceMode,
+      subjectVideoAdaptiveRatio,
+    ],
+    sourceRange: [2, 15],
+    params: { duration: 8, source_video_duration: 7.25, ratio: 'adaptive', reference_mode: true },
+    prompt: '[video editing] 严格编辑原视频 <Video 1>。',
+  },
+]
+
+const subjectVideoCases = subjectVideoEditPolicies.flatMap((policy) =>
+  policy.versions.map(([id, version]) => ({
+    policy,
+    model: {
+      id,
+      version,
+      provider: policy.provider,
+      operation_codes: [policy.operationCode],
+      input_constraints: { [policy.operationCode]: { roles: subjectVideoRoles } },
+      params_schema: { fields: policy.fields },
+    },
+  })),
+)
+
+describe('团队视频主体编辑适配', () => {
+  it('隐藏 HappyHorse 和 Seedance 2.0 标准版，保留相邻版本', () => {
+    const models = subjectVideoCases.map(({ model }) => model)
+    const standard = models.find(({ version }) => version === 'doubao-seedance-2-0-260128')!
+    expect(
+      getCanvasSubjectEditModels('video', [...models, { ...standard, id: 103, version: 'doubao-seedance-2-0' }]).map(
+        ({ id }) => id,
+      ),
+    ).toEqual([19, 20, 15, 16, 18, 25])
+  })
+
+  it.each([
+    ['remove', [19, 20, 15, 18, 25, 118]],
+    ['modify', [19, 20, 15, 16, 18, 25, 116, 118]],
+    ['replace', [19, 20, 15, 16, 25, 116]],
+  ] as const)('按 %s 模式筛选 Seedance Mini 和 2.5', (mode, expected) => {
+    const models = subjectVideoCases.map(({ model }) => model)
+    const mini = models.find(({ id }) => id === 16)!
+    const seedance25 = models.find(({ id }) => id === 18)!
+    const catalog = [
+      ...models,
+      { ...mini, id: 116, model: 'doubao-seedance-2-0-mini', version: '' },
+      { ...seedance25, id: 118, modelCode: 'doubao-seedance-2-5', version: '' },
+    ]
+
+    expect(getCanvasSubjectEditModels('video', catalog, mode).map(({ id }) => id)).toEqual(expected)
+  })
+
+  it.each(subjectVideoCases)('$model.id $model.version 按模型能力编译主体编辑请求', ({ policy, model }) => {
+    const source = { ...video, model, sourceVideoDurationSec: 7.25, ratio: '4:3' }
+    expect(supportsCanvasSubjectVideoReference(model)).toBe(Boolean(policy.supportsSourceCutout))
+    expect(supportsCanvasSubjectTargetReference('video', model)).toBe(true)
+
+    const request = buildCanvasSubjectEditRequest(source)
+    expect(request).toMatchObject({
+      operationCode: policy.operationCode,
+      modelVersionId: model.id,
+      params: policy.params,
+      inputAssets: [{ asset_id: video.sourceAssetId, role: 'video' }],
+    })
+    expect(request.prompt).toContain(policy.prompt)
+    expect(request.requiresSeedanceModeration).toBe(policy.provider === 'volcengine' ? true : undefined)
+    if (model.id === 18) expect(request.params).not.toHaveProperty('ratio')
+
+    const [min, max] = policy.sourceRange
+    expect(() => buildCanvasSubjectEditRequest({ ...source, sourceVideoDurationSec: min })).not.toThrow()
+    expect(() => buildCanvasSubjectEditRequest({ ...source, sourceVideoDurationSec: max })).not.toThrow()
+    expect(() => buildCanvasSubjectEditRequest({ ...source, sourceVideoDurationSec: min - 0.25 })).toThrow('原视频')
+    expect(() => buildCanvasSubjectEditRequest({ ...source, sourceVideoDurationSec: max + 0.25 })).toThrow('原视频')
+
+    const edit = { ...source, mode: 'modify', description: '外观改为红色' } as const
+    expect(buildCanvasSubjectEditRequest(edit).inputAssets).toEqual([{ asset_id: video.sourceAssetId, role: 'video' }])
+    const withTarget = buildCanvasSubjectEditRequest({ ...edit, targetReferenceAssetId: 105 })
+    expect(withTarget.inputAssets).toEqual([
+      { asset_id: video.sourceAssetId, role: 'video' },
+      { asset_id: 105, role: 'image' },
+    ])
+    expect(withTarget.prompt).toContain('第1张参考图仅用于指定修改后的外观')
+    if (model.id === 25) expect(withTarget.prompt).toContain('<Picture 1>')
+  })
+
+  it('按当前目录约束排除缺少适配或无法输入源视频的生成模型', () => {
+    const directH3 = subjectVideoCases.find(({ model }) => model.id === 25)!.model
+    const metaso = { ...directH3, id: 26, provider: 'metaso' }
+    const noSource = { ...directH3, input_constraints: { 'video.generate': { roles: [subjectVideoRoles[1]] } } }
+    const sourceOnly = { ...directH3, input_constraints: { 'video.generate': { roles: [subjectVideoRoles[0]] } } }
+    expect(getCanvasSubjectEditModels('video', [metaso, noSource, sourceOnly])).toEqual([sourceOnly])
+    expect(supportsCanvasSubjectTargetReference('video', sourceOnly)).toBe(false)
+    expect(() =>
+      buildCanvasSubjectEditRequest({ ...video, model: sourceOnly, mode: 'replace', targetReferenceAssetId: 105 }),
+    ).toThrow('不支持附带目标参考图')
   })
 })

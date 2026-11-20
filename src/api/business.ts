@@ -1720,6 +1720,7 @@ export function estimateAiTaskCost({
   prompt = '',
   params = {},
   inputAssets = [],
+  signal,
 }: any = {}) {
   const wsId = Number(workspaceId || 0)
   const modelId = Number(modelVersionId || 0)
@@ -1741,6 +1742,7 @@ export function estimateAiTaskCost({
   }
   return requestJson('/api/v1/ai/tasks/estimate-cost', {
     method: 'POST',
+    signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(
       removeEmptyFields({
