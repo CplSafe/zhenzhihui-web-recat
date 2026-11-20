@@ -46,6 +46,8 @@ export interface StudioRun {
   title?: string
   status: RunStatus
   stop?: boolean
+  can_resume_with_guidance?: boolean
+  has_pending_receipts?: boolean
   cursor: number
   selection?: {
     image: number
@@ -250,7 +252,16 @@ export function applyStudioFrame(run: StudioRun, frame: StudioFrame): StudioRun 
     data = change.data
   const next = { ...run, cursor: frame.cursor! }
   if (change.type === 'RUN_STATE') {
-    for (const key of ['status', 'stop', 'pending', 'decision_id', 'active_batch', 'inference_failure']) {
+    for (const key of [
+      'status',
+      'stop',
+      'pending',
+      'decision_id',
+      'active_batch',
+      'inference_failure',
+      'can_resume_with_guidance',
+      'has_pending_receipts',
+    ]) {
       if (data && Object.prototype.hasOwnProperty.call(data, key)) (next as Data)[key] = data[key]
     }
   } else if (change.type === 'ACTIVITY_SNAPSHOT') next.billing = data

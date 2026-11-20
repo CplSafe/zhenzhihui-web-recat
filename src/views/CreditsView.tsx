@@ -18,6 +18,7 @@ import {
   creditLedgerKindLabel,
   extractCreditLedgerPage,
   formatCreditDelta,
+  formatLedgerCredits,
   type CreditLedgerRecord,
 } from '@/utils/creditLedger'
 import { formatCredits } from '@/utils/creditsFormat'
@@ -135,7 +136,7 @@ export default function CreditsView() {
             <div>
               <h1 className="credits__title">积分明细</h1>
               <p className="credits__sub">
-                工作空间 <b>{workspaceName}</b> · 每一笔积分的消费、退回与冻结都在这里
+                工作空间 <b>{workspaceName}</b> · 查看积分余额和每笔变动
               </p>
             </div>
             {canViewUsage && (
@@ -238,7 +239,7 @@ export default function CreditsView() {
                           {formatCreditDelta(record)}
                         </td>
                         <td className="credits__num credits__bal">
-                          {record.balanceAfter == null ? '—' : formatCredits(record.balanceAfter)}
+                          {record.balanceAfter == null ? '—' : formatLedgerCredits(record.balanceAfter, record.kind)}
                         </td>
                       </tr>
                     ))

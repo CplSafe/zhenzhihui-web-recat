@@ -1,16 +1,19 @@
 /**
  * 顶栏通知铃铛（设计稿「通知」下拉）。
  *
- * 后端暂无独立通知接口，通知项由需求市场状态与剧本审核记录推导。
- * 已读通知按用户存入 localStorage，点击通知或全部已读时更新。
+ * 积分申请通知由服务端推送并保存已读状态，其他通知保留各自的业务来源与本地已读状态。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listDemandApplications, listMyApplications, listMyDemands, formatDemandDate } from '@/api/market'
 import { getApplication, listApplications, type Application } from '@/api/studentApplications'
+import type { CreditNotification } from '@/api/creditNotifications'
 import { withRequestTimeout } from '@/api/requestTimeout'
+import { useToast } from '@/composables/useToast'
+import { formatCredits } from '@/utils/creditsFormat'
 import { MANUAL_DELIVERY_ENABLED, PROMO_DELIVERY_ENABLED } from '@/utils/manualDeliveryVisibility'
 import { loadManualDeliveryNotifications, loadPromoDeliveryNotifications } from './deliveryNotifications'
+import { useCreditNotifications } from './useCreditNotifications'
 import DeliveryNotificationDetail from './DeliveryNotificationDetail'
 import './NotificationBell.css'
 
@@ -24,6 +27,7 @@ export interface NotificationItem {
   ts: number
   dateLabel: string
   delivery?: { kind: 't1' | 't5'; id: number }
+  credit?: CreditNotification
 }
 
 const READ_STORAGE_PREFIX = 'zzh-market-notify-read:v2:'
@@ -35,6 +39,28 @@ const NOTIFICATION_LOAD_TIMEOUT_MS = 12_000
 function tsOf(value: string): number {
   const parsed = new Date(value).getTime()
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function creditNotificationItem(credit: CreditNotification): NotificationItem {
+  const amount = `${formatCredits(credit.amount, 3)} 积分`
+  const actor = credit.actor_name
+  const workspace = credit.workspace?.name
+  const received = credit.kind === 'credit_request_received'
+  const approved = credit.kind === 'credit_request_approved'
+  return {
+    key: `credit-notification-${credit.id}`,
+    title: received ? '收到积分申请' : approved ? '积分申请已通过' : '积分申请未通过',
+    text: received
+      ? `${actor} 向你申请 ${amount}${workspace ? `，到账空间「${workspace}」` : ''}`
+      : approved
+        ? `${actor} 已同意你的申请，${amount}已发放至${workspace ? `「${workspace}」` : '你的个人空间'}`
+        : `${actor} 未同意你的 ${amount}申请${workspace ? `，到账空间「${workspace}」` : ''}`,
+    tone: received ? 'info' : approved ? 'success' : 'warning',
+    href: `/settings/credit-requests?tab=${received ? 'received' : 'sent'}&request_id=${credit.request_id}`,
+    ts: tsOf(credit.created_at),
+    dateLabel: formatDemandDate(credit.created_at),
+    credit,
+  }
 }
 
 /** 从需求/申请状态推导通知列表（新在前，最多 20 条）。导出仅供单测使用。 */
@@ -181,6 +207,16 @@ interface NotificationBellProps {
 
 export default function NotificationBell({ userKey, workspaceId = 0 }: NotificationBellProps) {
   const navigate = useNavigate()
+  const { showToast } = useToast()
+  const {
+    snapshot: creditSnapshot,
+    loading: creditLoading,
+    loadError: creditLoadError,
+    markingRead: markingCreditRead,
+    readError: creditReadError,
+    refresh: refreshCredit,
+    markRead: markCreditRead,
+  } = useCreditNotifications(userKey)
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<NotificationItem[]>([])
   const [manualItems, setManualItems] = useState<NotificationItem[]>([])
@@ -294,30 +330,45 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
   }, [refresh, userKey])
 
   const visibleItems = useMemo(
-    () => [...items, ...manualItems, ...promoItems].sort((a, b) => b.ts - a.ts).slice(0, 60),
-    [items, manualItems, promoItems],
+    () =>
+      [...items, ...manualItems, ...promoItems, ...creditSnapshot.items.map(creditNotificationItem)]
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, 60),
+    [items, manualItems, promoItems, creditSnapshot.items],
   )
-  const unreadCount = useMemo(
-    () => visibleItems.filter((item) => !readKeys.has(item.key)).length,
-    [visibleItems, readKeys],
-  )
+  const unreadCount =
+    creditSnapshot.unread_count + visibleItems.filter((item) => !item.credit && !readKeys.has(item.key)).length
+  const isUnread = (item: NotificationItem) => (item.credit ? !item.credit.read_at : !readKeys.has(item.key))
 
   const persistReadKeys = useCallback(
     (next: Set<string>) => {
       const retained = [...next].slice(-200)
-      window.localStorage.setItem(storageKey, JSON.stringify(retained))
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(retained))
+      } catch {
+        // 存储不可用时仍更新当前面板。
+      }
       setReadKeys(new Set(retained))
     },
     [storageKey],
   )
 
   const markAllRead = useCallback(() => {
-    persistReadKeys(new Set([...readKeys, ...visibleItems.map((item) => item.key)]))
-  }, [visibleItems, persistReadKeys, readKeys])
+    persistReadKeys(new Set([...readKeys, ...visibleItems.filter((item) => !item.credit).map((item) => item.key)]))
+    if (creditSnapshot.unread_count) void markCreditRead(0)
+  }, [visibleItems, persistReadKeys, readKeys, creditSnapshot.unread_count, markCreditRead])
 
   const openNotification = useCallback(
-    (item: NotificationItem) => {
-      persistReadKeys(new Set([...readKeys, item.key]))
+    async (item: NotificationItem) => {
+      if (item.credit) {
+        if (!item.credit.read_at) {
+          const marked = await markCreditRead(item.credit.id)
+          if (marked === null) return
+          if (!marked) showToast('积分通知仍未读，请稍后重试', 'error')
+        }
+      } else {
+        persistReadKeys(new Set([...readKeys, item.key]))
+      }
       if (item.delivery) {
         setSelectedDelivery(item)
         return
@@ -325,15 +376,18 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
       setOpen(false)
       navigate(item.href)
     },
-    [navigate, persistReadKeys, readKeys],
+    [navigate, persistReadKeys, readKeys, markCreditRead, showToast],
   )
 
   // 副作用不能放进 setState 的 updater 里(StrictMode 下 updater 会被调用两次 → 双份请求)。
   const toggleOpen = useCallback(() => {
     const next = !open
     setOpen(next)
-    if (next) void refresh()
-  }, [open, refresh])
+    if (next) {
+      void refresh()
+      refreshCredit()
+    }
+  }, [open, refresh, refreshCredit])
 
   useEffect(() => {
     if (!open) return
@@ -375,14 +429,27 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
           <div className="notify__panel-head">
             <div>
               <strong>通知中心</strong>
-              <span>{unreadCount ? `${unreadCount} 条未读` : '消息均已读'}</span>
+              <span>{unreadCount ? `${unreadCount} 条未读` : creditLoadError ? '部分消息未加载' : '消息均已读'}</span>
             </div>
             {unreadCount > 0 && (
-              <button type="button" onClick={markAllRead}>
+              <button type="button" onClick={markAllRead} disabled={markingCreditRead}>
                 全部已读
               </button>
             )}
           </div>
+          {creditReadError && (
+            <div className="notify__partial-error" role="status">
+              积分消息标记已读失败，请重试
+            </div>
+          )}
+          {creditLoadError && (
+            <div className="notify__partial-error" role="status">
+              积分消息加载失败，
+              <button type="button" onClick={refreshCredit}>
+                重新加载积分消息
+              </button>
+            </div>
+          )}
           {selectedDelivery?.delivery ? (
             <DeliveryNotificationDetail
               kind={selectedDelivery.delivery.kind}
@@ -453,9 +520,11 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
                 {visibleItems.map((item) => (
                   <button
                     type="button"
-                    className={`notify__item notify__item--${item.tone}${!readKeys.has(item.key) ? ' is-unread' : ''}`}
+                    className={`notify__item notify__item--${item.tone}${isUnread(item) ? ' is-unread' : ''}`}
                     key={item.key}
-                    onClick={() => openNotification(item)}
+                    disabled={markingCreditRead && !!item.credit && isUnread(item)}
+                    aria-description={item.credit ? (isUnread(item) ? '未读' : '已读') : undefined}
+                    onClick={() => void openNotification(item)}
                   >
                     <span className="notify__item-icon" aria-hidden="true">
                       {item.tone === 'success' ? '✓' : item.tone === 'warning' ? '!' : 'i'}
@@ -465,7 +534,7 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
                       <span>{item.text}</span>
                       {item.dateLabel && <time>{item.dateLabel}</time>}
                     </span>
-                    {!readKeys.has(item.key) && <span className="notify__item-dot" aria-hidden="true" />}
+                    {isUnread(item) && <span className="notify__item-dot" aria-hidden="true" />}
                   </button>
                 ))}
               </div>
@@ -483,11 +552,14 @@ export default function NotificationBell({ userKey, workspaceId = 0 }: Notificat
                 重新加载
               </button>
             </div>
-          ) : marketLoading || scriptLoading || deliveryLoading ? (
+          ) : marketLoading || scriptLoading || deliveryLoading || creditLoading ? (
             <div className="notify__empty" role="status">
-              <strong>{marketLoading ? '需求消息' : scriptLoading ? '剧本消息' : '交付消息'}加载中…</strong>
+              <strong>
+                {marketLoading ? '需求消息' : scriptLoading ? '剧本消息' : deliveryLoading ? '交付消息' : '积分消息'}
+                加载中…
+              </strong>
             </div>
-          ) : (
+          ) : creditLoadError ? null : (
             <div className="notify__empty">
               <strong>暂无通知</strong>
               <span>这里只展示业务接口中真实存在的消息</span>

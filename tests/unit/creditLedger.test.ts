@@ -34,6 +34,20 @@ describe('creditLedger 归一化', () => {
     expect(formatCreditDelta(recharge)).toBe('+10,000')
   })
 
+  it('按转入转出类型显示正负积分和审批事由', () => {
+    const debit = normalizeCreditLedgerRecord({
+      kind: 'transfer_out',
+      amount: 5.125,
+      reason: 'credit_request.approved',
+    })
+    const credit = normalizeCreditLedgerRecord({ kind: 'transfer_in', amount: 5.125 })
+    expect(formatCreditDelta(debit)).toBe('-5.125')
+    expect(creditLedgerKindLabel(debit.kind, debit.direction)).toBe('积分转出')
+    expect(debit.reason).toBe('积分申请审批通过')
+    expect(formatCreditDelta(credit)).toBe('+5.125')
+    expect(creditLedgerKindLabel(credit.kind, credit.direction)).toBe('积分转入')
+  })
+
   it('兼容 snake_case / camelCase 字段名与缺失余额', () => {
     const rec = normalizeCreditLedgerRecord({
       ledger_id: 'L9',

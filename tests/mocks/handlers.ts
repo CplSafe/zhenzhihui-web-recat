@@ -27,5 +27,14 @@ const marketAndCommunityFallbacks = [
   http.get('/api/v1/community/works', emptyPage),
 ]
 
+const creditNotificationFallbacks = [
+  http.get('/api/v1/credit-notifications', () => HttpResponse.json({ code: 0, data: { items: [], unread_count: 0 } })),
+  http.get('/api/v1/credit-notifications/events', () => new HttpResponse(null, { status: 503 })),
+]
+
 /** Shared deterministic API handlers. Individual tests may add scenario-specific handlers with server.use(). */
-export const handlers: RequestHandler[] = [assetDownload, ...marketAndCommunityFallbacks]
+export const handlers: RequestHandler[] = [
+  assetDownload,
+  ...marketAndCommunityFallbacks,
+  ...creditNotificationFallbacks,
+]

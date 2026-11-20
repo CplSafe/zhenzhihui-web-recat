@@ -163,15 +163,26 @@ export default function DeepAgentStudio({
   const savedConfigurationDraft = useRef<{ id: string; text: string; skills: string[] } | null>(null)
   currentId.current = current
   const running = run?.status === 'running'
-  const unfinished = running || run?.status === 'waiting' || (!!current && !run)
   const recovering = run?.status === 'paused' || run?.status === 'error'
+  const canResumeWithGuidance = recovering && run?.can_resume_with_guidance === true
+  const sendToNewConversation = recovering && !canResumeWithGuidance
+  const unfinished = running || run?.status === 'waiting' || canResumeWithGuidance || (!!current && !run)
   const draftDisabled = loading || actionBusy || mismatch || uploading
+  const canSendGuidance =
+    state.connected &&
+    !draftDisabled &&
+    !uncertain &&
+    !!current &&
+    !!message.trim() &&
+    !attachments.length &&
+    !canvasReferences.length
   const disabled = draftDisabled || running
   const ready = state.connected && !mismatch && !!image && !!video && !!catalog.planning_model
   const canSteer =
     running &&
     state.connected &&
     !draftDisabled &&
+    !uncertain &&
     current === run.id &&
     !run.stop &&
     !stopping &&
@@ -206,11 +217,12 @@ export default function DeepAgentStudio({
   useEffect(() => {
     if (!canvasReference || !canvasId || actionBusy || consumedCanvasReference.current === canvasReference) return
     consumedCanvasReference.current = canvasReference
+    if (canResumeWithGuidance) return
     setCanvasReferences((old) => {
       if (old.some((item) => item.id === canvasReference.id)) return old
       return old.length < 8 ? [...old, canvasReference] : old
     })
-  }, [canvasReference, canvasId, actionBusy])
+  }, [canvasReference, canvasId, actionBusy, canResumeWithGuidance])
   useEffect(() => {
     if (run?.canvas && run.canvas !== lastCanvas.current) {
       lastCanvas.current = run.canvas
@@ -326,6 +338,27 @@ export default function DeepAgentStudio({
   }
   async function send(episodeDecision?: EpisodeDecision, startProduction = false) {
     if (running && !episodeDecision && !startProduction) return sendSteering()
+    if (canResumeWithGuidance && !episodeDecision && !startProduction) {
+      if (!canSendGuidance) return
+      const id = current
+      await action(async () => {
+        try {
+          await api.request(`/api/runs/${id}/resume`, { message: message.trim() })
+        } catch (e) {
+          if (activeAPI.current !== api || currentId.current !== id) return
+          if (!(e instanceof StudioHTTPError) || e.status >= 500) {
+            setUncertain(true)
+            throw new Error('补充要求的发送结果待确认。请重新打开当前会话查看记录，再决定是否重发。')
+          }
+          throw e
+        }
+        if (activeAPI.current !== api || currentId.current !== id) return
+        setMessage('')
+        followUpdates.current = true
+        await studio.reload()
+      })
+      return
+    }
     const savingConfiguration = !!episodeDecision && 'episode_plan' in episodeDecision
     if (
       !ready ||
@@ -482,7 +515,10 @@ export default function DeepAgentStudio({
       return
     }
     await action(async () => {
-      await api.request(`/api/runs/${id}/${name}`, {})
+      const result = await api.request<Data>(`/api/runs/${id}/${name}`, {})
+      if (currentId.current === id && result.retry_confirmation_required) {
+        setRetryTarget({ runId: id, id: result.task_ids[0], version: Date.now() })
+      }
       if (currentId.current === id) await studio.reload()
     })
   }
@@ -585,6 +621,13 @@ export default function DeepAgentStudio({
                       setPendingSend(null)
                       studio.setCurrent(item.id)
                       setHistory(false)
+                      if (uncertain && item.id === current) {
+                        void action(async () => {
+                          await studio.reload()
+                          setUncertain(false)
+                        })
+                        return
+                      }
                       setUncertain(false)
                       studio.setError('')
                     }}
@@ -819,7 +862,7 @@ export default function DeepAgentStudio({
                                 submitting: '正在提交',
                                 running: '生成中',
                                 succeeded: '已完成',
-                                failed: '失败',
+                                failed: node.output_issue ? '产物需核对' : '失败',
                                 cancelled: '已取消',
                               }[node.status] || node.status}
                             </span>
@@ -830,6 +873,7 @@ export default function DeepAgentStudio({
                               !run.pending &&
                               !batch.cancelled &&
                               !batchHasRunning &&
+                              !node.output_issue &&
                               node.status === 'failed' && (
                                 <button
                                   type="button"
@@ -856,6 +900,14 @@ export default function DeepAgentStudio({
                   busy={actionBusy}
                   onDecision={decide}
                 />
+              )}
+              {run.status === 'complete' && run.has_pending_receipts && (
+                <div className={styles.recovery}>
+                  <p>旧任务结果待确认。</p>
+                  <button type="button" disabled={actionBusy} onClick={() => void operation('resume')}>
+                    查询旧任务结果
+                  </button>
+                </div>
               )}
               {['paused', 'error'].includes(run.status) && (
                 <div className={styles.recovery}>
@@ -1117,7 +1169,10 @@ export default function DeepAgentStudio({
                 onConfirm={(decision) => void send(decision)}
               />
             )}
-            {canvasId && (
+            {canResumeWithGuidance && (attachments.length > 0 || canvasReferences.length > 0) && (
+              <div className={styles.referenceHint}>请先移除已有附件或画布引用，再发送补充要求。</div>
+            )}
+            {canvasId && !canResumeWithGuidance && (
               <div className={styles.referenceHint}>
                 点击画布节点添加引用{canvasReferences.length > 0 ? ` · ${canvasReferences.length}/8` : ''}
                 {canvasReferences.length === 8 ? '，移除后可添加其他节点' : ''}
@@ -1150,11 +1205,13 @@ export default function DeepAgentStudio({
               placeholder={
                 running
                   ? '输入补充要求，或停止当前任务后发送新要求…'
-                  : recovering
-                    ? '输入新要求，可直接发送到新对话…'
-                    : unfinished
-                      ? '可先输入下一条要求，恢复或结束后发送…'
-                      : '开始你的创作，或者上传图片与剧本文档…'
+                  : canResumeWithGuidance
+                    ? '给 Agent 补充要求，例如先完成剩下的场景图…'
+                    : sendToNewConversation
+                      ? '输入新要求，可直接发送到新对话…'
+                      : unfinished
+                        ? '可先输入下一条要求，恢复或结束后发送…'
+                        : '开始你的创作，或者上传图片与剧本文档…'
               }
               maxLength={12000}
               value={message}
@@ -1189,7 +1246,9 @@ export default function DeepAgentStudio({
             {running && !!skills.length && (
               <small className={styles.referenceHint}>已选 Skill 随下一条创作要求发送。</small>
             )}
-            {recovering && <small className={styles.referenceHint}>新要求将发到新对话。原会话保留在历史记录中。</small>}
+            {sendToNewConversation && (
+              <small className={styles.referenceHint}>新要求将发到新对话。原会话保留在历史记录中。</small>
+            )}
             <div className={styles.composerToolbar}>
               <div className={styles.composerActions}>
                 <button
@@ -1280,15 +1339,19 @@ export default function DeepAgentStudio({
                 <button
                   type="submit"
                   className={styles.send}
-                  aria-label={recovering ? '发送到新对话' : '发送创作要求'}
-                  data-tooltip={recovering ? '发送到新对话' : undefined}
+                  aria-label={
+                    canResumeWithGuidance ? '发送补充要求' : sendToNewConversation ? '发送到新对话' : '发送创作要求'
+                  }
+                  data-tooltip={sendToNewConversation ? '发送到新对话' : undefined}
                   disabled={
-                    !ready ||
-                    disabled ||
-                    unfinished ||
-                    uncertain ||
-                    attachments.some((a) => !a.id) ||
-                    (!message.trim() && !attachments.length)
+                    canResumeWithGuidance
+                      ? !canSendGuidance
+                      : !ready ||
+                        disabled ||
+                        unfinished ||
+                        uncertain ||
+                        attachments.some((a) => !a.id) ||
+                        (!message.trim() && !attachments.length)
                   }
                 >
                   <StudioIcon name="send" size={12} />

@@ -241,7 +241,13 @@ function RetryForm({
             disabled={busy || failure?.retry_eligible === false}
             onClick={() => void execute(!!draft)}
           >
-            {busy ? '处理中…' : draft ? (approved ? '恢复已批准的重试' : '确认重试一次') : '查看预计积分'}
+            {busy
+              ? '处理中…'
+              : draft
+                ? approved?.status === 'approved'
+                  ? '恢复已批准的重试'
+                  : '确认重试一次'
+                : '查看预计积分'}
           </button>
         </>
       )}
@@ -325,7 +331,7 @@ export function MediaRetry({
                 api={api}
                 runId={runId}
                 approved={result.items.find(
-                  (p: Data) => p.status === 'approved' && p.source.task_id === candidate.task_id,
+                  (p: Data) => ['approved', 'proposed'].includes(p.status) && p.source.task_id === candidate.task_id,
                 )}
                 onDone={async () => {
                   setVisible(false)

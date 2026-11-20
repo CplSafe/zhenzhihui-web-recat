@@ -407,6 +407,14 @@ export async function installStrictAuthenticatedApp(
       await json(route, { user })
       return
     }
+    if (method === 'GET' && path === '/api/v1/credit-notifications') {
+      await json(route, { items: [], unread_count: 0 })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/credit-notifications/events') {
+      await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/distribution/me') {
       await json(route, { is_distributor: false, status: 'not_distributor' })
       return

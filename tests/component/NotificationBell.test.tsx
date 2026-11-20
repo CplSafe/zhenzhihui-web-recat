@@ -1,9 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import NotificationBell from '@/components/layout/NotificationBell'
+import type { CreditNotification } from '@/api/creditNotifications'
+import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { server } from '../mocks/server'
 
 function installFactNotifications() {
@@ -37,9 +39,30 @@ function renderBell() {
         <Route path="*" element={<NotificationBell userKey="fact-user" />} />
         <Route path="/demand/:id" element={<h1>需求事实详情</h1>} />
         <Route path="/script-ideas/:id" element={<h1>剧本申请详情</h1>} />
+        <Route path="/settings/credit-requests" element={<CreditRequestDestination />} />
       </Routes>
     </MemoryRouter>,
   )
+}
+
+function CreditRequestDestination() {
+  const [params] = useSearchParams()
+  return (
+    <h1>
+      积分申请 {params.get('tab')} {params.get('request_id')}
+    </h1>
+  )
+}
+
+const incomingCreditNotification: CreditNotification = {
+  id: 32,
+  request_id: 11,
+  kind: 'credit_request_received',
+  actor_name: '小张',
+  amount: 25.123,
+  workspace: { id: 71, name: '后期团队', type: 'team' },
+  created_at: '2026-11-19T10:00:00.000Z',
+  read_at: null,
 }
 
 describe('NotificationBell 通知事实与已读行为', () => {
@@ -70,6 +93,144 @@ describe('NotificationBell 通知事实与已读行为', () => {
 
     expect(await screen.findByRole('heading', { name: '需求事实详情' })).toBeInTheDocument()
     expect(window.localStorage.getItem('zzh-market-notify-read:v2:fact-user')).toContain('demand-completed-8')
+  })
+
+  it('实时刷新积分申请，并在打开申请前保存这条通知的已读状态', async () => {
+    let items: CreditNotification[] = []
+    let stream: ReadableStreamDefaultController<Uint8Array>
+    let reads = 0
+    const readIds: number[] = []
+    server.use(
+      http.get('/api/v1/credit-notifications', () => {
+        reads++
+        return HttpResponse.json({ code: 0, data: { items, unread_count: items.length } })
+      }),
+      http.get(
+        '/api/v1/credit-notifications/events',
+        () =>
+          new HttpResponse(
+            new ReadableStream<Uint8Array>({
+              start: (controller) => {
+                stream = controller
+              },
+            }),
+            {
+              headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+            },
+          ),
+      ),
+      http.post('/api/v1/credit-notifications/read', async ({ request }) => {
+        const { id } = (await request.json()) as { id: number }
+        readIds.push(id)
+        return HttpResponse.json({ code: 0 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: '通知' }))
+    await waitFor(() => {
+      expect(stream).toBeDefined()
+      expect(reads).toBeGreaterThan(0)
+    })
+    expect(screen.queryByRole('button', { name: /收到积分申请/ })).not.toBeInTheDocument()
+
+    items = [incomingCreditNotification]
+    const encoder = new TextEncoder()
+    act(() => {
+      stream.enqueue(encoder.encode(': keepalive\r\n\r\nevent: cha'))
+      stream.enqueue(encoder.encode('nged\r\ndata: {}\r\n\r\n'))
+    })
+    const notice = await screen.findByRole('button', { name: /收到积分申请.*小张.*25\.123 积分.*后期团队/ })
+    expect(notice).toHaveClass('is-unread')
+    expect(readIds).toEqual([])
+    stream.close()
+
+    await user.click(notice)
+    expect(await screen.findByRole('heading', { name: '积分申请 received 11' })).toBeInTheDocument()
+    expect(readIds).toEqual([32])
+    expect(window.localStorage.getItem('zzh-market-notify-read:v2:fact-user')).toBeNull()
+  })
+
+  it.each([71, 72])('获批通知显示团队名称，只有对应活跃空间刷新钱包（%i）', async (activeWorkspaceId) => {
+    const previous = useWorkspaceSessionStore.getState()
+    const otherTeam = { id: 72, name: '其他团队', type: 'team' }
+    const refreshWallet = vi.fn().mockResolvedValue(undefined)
+    useWorkspaceSessionStore.setState({
+      userWorkspaces: [incomingCreditNotification.workspace, otherTeam],
+      activeWorkspaceOverrideId: activeWorkspaceId,
+      refreshWallet,
+    })
+    try {
+      server.use(
+        http.get('/api/v1/credit-notifications', () =>
+          HttpResponse.json({
+            code: 0,
+            data: { items: [{ ...incomingCreditNotification, kind: 'credit_request_approved' }], unread_count: 1 },
+          }),
+        ),
+      )
+      const user = userEvent.setup()
+      renderBell()
+      await user.click(screen.getByRole('button', { name: /通知(?:（\d+ 条未读）)?$/ }))
+      expect(await screen.findByRole('button', { name: /积分申请已通过.*发放至「后期团队」/ })).toBeInTheDocument()
+      if (activeWorkspaceId === 71) expect(refreshWallet).toHaveBeenCalledWith(71)
+      else expect(refreshWallet).not.toHaveBeenCalled()
+    } finally {
+      useWorkspaceSessionStore.setState(previous)
+    }
+  })
+
+  it('全部已读更新服务端积分通知，并保留原有通知的本地已读机制', async () => {
+    const items = [
+      {
+        ...incomingCreditNotification,
+        kind: 'credit_request_approved',
+        actor_name: '上级用户',
+      },
+    ]
+    let readAt: string | null = null
+    const readIds: number[] = []
+    server.use(
+      http.get('/api/v1/credit-notifications', () =>
+        HttpResponse.json({
+          code: 0,
+          data: { items: items.map((item) => ({ ...item, read_at: readAt })), unread_count: readAt ? 0 : 4 },
+        }),
+      ),
+      http.post('/api/v1/credit-notifications/read', async ({ request }) => {
+        const { id } = (await request.json()) as { id: number }
+        readIds.push(id)
+        readAt = '2026-11-19T10:05:00.000Z'
+        return HttpResponse.json({ code: 0 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: /通知(?:（\d+ 条未读）)?$/ }))
+    const notice = await screen.findByRole('button', { name: /积分申请已通过.*25\.123 积分/ })
+    expect(await screen.findByRole('button', { name: '通知（5 条未读）' })).toBeInTheDocument()
+    expect(notice).toHaveClass('is-unread')
+
+    await user.click(screen.getByRole('button', { name: '全部已读' }))
+    await waitFor(() => expect(notice).not.toHaveClass('is-unread'))
+    expect(screen.getByRole('button', { name: '通知' })).toBeInTheDocument()
+    expect(readIds).toEqual([0])
+    expect(window.localStorage.getItem('zzh-market-notify-read:v2:fact-user')).toBe('["demand-completed-8"]')
+  })
+
+  it('标记积分通知失败时，仍能查看原始申请', async () => {
+    server.use(
+      http.get('/api/v1/credit-notifications', () =>
+        HttpResponse.json({ code: 0, data: { items: [incomingCreditNotification], unread_count: 1 } }),
+      ),
+      http.post('/api/v1/credit-notifications/read', () => HttpResponse.json({ code: 1 }, { status: 503 })),
+    )
+    const user = userEvent.setup()
+    renderBell()
+    await user.click(screen.getByRole('button', { name: /通知(?:（\d+ 条未读）)?$/ }))
+    await user.click(await screen.findByRole('button', { name: /收到积分申请/ }))
+    expect(await screen.findByRole('heading', { name: '积分申请 received 11' })).toBeInTheDocument()
+    expect(window.localStorage.getItem('zzh-market-notify-read:v2:fact-user')).toBeNull()
   })
 
   it('事实来源请求失败时显示错误，不显示虚假的暂无通知', async () => {

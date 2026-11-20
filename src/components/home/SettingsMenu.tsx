@@ -1,11 +1,11 @@
 /**
- * SettingsMenu — 侧栏底部「设置」项。点击弹出菜单:个人中心 / 修改密码 / 使用手册 / 退出登录
+ * SettingsMenu — 侧栏底部「设置」项。点击弹出菜单:个人中心 / 修改密码 / 使用手册 / 积分申请 / 退出登录
  * (对齐 Figma「我的-详情」1378:8885)。个人中心打开资料弹窗;修改密码/退出登录
  * 复用顶栏右上角同一套逻辑(ChangePasswordModal + useLogout)。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiOutlined, BookOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import { BookOutlined, LockOutlined, LogoutOutlined, UserOutlined, WalletOutlined } from '@ant-design/icons'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
@@ -13,6 +13,8 @@ import { useConfirmDialog } from '@/composables/useToast'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useNavigate } from 'react-router-dom'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
+import { getCreditRequestContext } from '@/api/creditRequests'
+import { useCurrentUser } from '@/stores/workspaceSession'
 import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
 
@@ -29,8 +31,8 @@ const IconLock = <LockOutlined className="settings-menu__ico-vector" aria-hidden
 /** 使用手册菜单图标。 */
 const IconManual = <BookOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
-/** MCP 接入菜单图标。 */
-const IconMCP = <ApiOutlined className="settings-menu__ico-vector" aria-hidden="true" />
+/** 积分申请菜单图标。 */
+const IconCreditRequest = <WalletOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
 /** 退出登录菜单图标。 */
 const IconLogout = <LogoutOutlined className="settings-menu__ico-vector" aria-hidden="true" />
@@ -41,9 +43,24 @@ interface SettingsMenuProps {
   onAfterAction?: () => void
 }
 
-/** 管理设置菜单锚点、弹层焦点及个人中心、改密、退出三个动作。 */
+/** 管理侧栏设置菜单及弹层焦点。 */
 export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const [open, setOpen] = useState(false)
+  const user = useCurrentUser()
+  const userKey = String(user?.id || user?.user_id || '')
+  const [requestEligibility, setRequestEligibility] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const controller = new AbortController()
+    void getCreditRequestContext(controller.signal)
+      .then((context) => {
+        if (!controller.signal.aborted) setRequestEligibility(context.superior ? userKey : null)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRequestEligibility(null)
+      })
+    return () => controller.abort()
+  }, [open, userKey])
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const [pwdOpen, setPwdOpen] = useState(false)
@@ -60,6 +77,7 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const toggle = () => {
     void requireAuth(
       () => {
+        setRequestEligibility(null)
         setOpen((v) => {
           const next = !v
           if (next && btnRef.current) {
@@ -111,12 +129,10 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
     setOpen(false)
     onAfterAction?.()
   }
-  const openMCP = () => {
+  const openCreditRequests = () => {
     setOpen(false)
     onAfterAction?.()
-    // /mcp is reserved for the Streamable HTTP endpoint, so the management UI
-    // lives under a separate route and never gets swallowed by the dev proxy.
-    navigate('/settings/mcp')
+    navigate('/settings/credit-requests')
   }
   const doLogout = async () => {
     if (logoutConfirmRef.current || isLoggingOut) return
@@ -181,10 +197,12 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               <span className="settings-menu__ico settings-menu__ico--manual">{IconManual}</span>
               <span className="settings-menu__label">使用手册</span>
             </a>
-            <button type="button" className="settings-menu__item" role="menuitem" onClick={openMCP}>
-              <span className="settings-menu__ico settings-menu__ico--blue">{IconMCP}</span>
-              <span className="settings-menu__label">MCP 接入</span>
-            </button>
+            {requestEligibility === userKey && (
+              <button type="button" className="settings-menu__item" role="menuitem" onClick={openCreditRequests}>
+                <span className="settings-menu__ico settings-menu__ico--blue">{IconCreditRequest}</span>
+                <span className="settings-menu__label">积分申请</span>
+              </button>
+            )}
             <button
               type="button"
               className="settings-menu__item"
