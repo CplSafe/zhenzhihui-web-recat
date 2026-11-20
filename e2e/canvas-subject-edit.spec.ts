@@ -170,6 +170,23 @@ const seedanceSubjectModel: SubjectModelFixture = {
   },
 }
 
+const seedanceFlashSubjectModel: SubjectModelFixture = {
+  ...seedanceSubjectModel,
+  id: 60,
+  model: 'doubao-seedance-2-5-flash',
+  version: 'doubao-seedance-2-5-flash-261115',
+  display_name: 'Seedance 2.5 Flash',
+  input_constraints: {
+    'video.generate': {
+      roles: [
+        { role: 'image', min_count: 0, max_count: 10, mime_types: ['image/jpeg', 'image/png', 'image/webp'] },
+        { role: 'video', min_count: 0, max_count: 5, mime_types: ['video/*'] },
+        { role: 'audio', min_count: 0, max_count: 5, mime_types: ['audio/*'] },
+      ],
+    },
+  },
+}
+
 const seedanceStandardSubjectModel: SubjectModelFixture = {
   ...seedanceSubjectModel,
   id: 5,
@@ -568,10 +585,13 @@ for (const { kind, hidden, visible } of [
   })
 }
 
-test('视频主体编辑按模式隐藏 Seedance 型号并回落到可用模型', async ({ page }, testInfo) => {
+test('视频主体编辑按模式筛选 Seedance 型号并按 Flash 版本提交', async ({ page }, testInfo) => {
   const app = await setupSubjectEdit(page, 'video', {
-    extraModels: [seedanceMiniSubjectModel, seedanceSubjectModel, seedanceFastSubjectModel],
+    extraModels: [seedanceMiniSubjectModel, seedanceSubjectModel, seedanceFastSubjectModel, seedanceFlashSubjectModel],
   })
+  await page.route(`**/api/v1/assets/${videoAssetId}/seedance-moderation?**`, (route) =>
+    route.fulfill({ json: { data: { status: 'active' } } }),
+  )
   await page.goto(`/canvas/${canvasId}`)
   await app.open()
   const { dialog } = app
@@ -583,12 +603,14 @@ test('视频主体编辑按模式隐藏 Seedance 型号并回落到可用模型'
   const mini = seedanceMiniSubjectModel.display_name
   const seedance25 = seedanceSubjectModel.display_name
   const fast = seedanceFastSubjectModel.display_name
+  const flash = seedanceFlashSubjectModel.display_name
 
   await modify.click()
   let menu = await openEditModelMenu(page, dialog)
   await expect(menu.getByTitle(mini, { exact: true })).toBeVisible()
   await expect(menu.getByTitle(seedance25, { exact: true })).toBeVisible()
   await expect(menu.getByTitle(fast, { exact: true })).toBeVisible()
+  await expect(menu.getByTitle(flash, { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('video-modify-model-menu.png') })
   await menu.getByTitle(mini, { exact: true }).click()
   await expectVideoEstimate(app, { model_version_id: seedanceMiniSubjectModel.id })
@@ -604,6 +626,7 @@ test('视频主体编辑按模式隐藏 Seedance 型号并回落到可用模型'
   await expect(menu.getByTitle(mini, { exact: true })).toHaveCount(0)
   await expect(menu.getByTitle(seedance25, { exact: true })).toBeVisible()
   await expect(menu.getByTitle(fast, { exact: true })).toBeVisible()
+  await expect(menu.getByTitle(flash, { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('video-remove-model-menu.png') })
   await menu.getByTitle(seedance25, { exact: true }).click()
   await expectVideoEstimate(app, { model_version_id: seedanceSubjectModel.id })
@@ -617,8 +640,24 @@ test('视频主体编辑按模式隐藏 Seedance 型号并回落到可用模型'
   await expect(menu.getByTitle(mini, { exact: true })).toBeVisible()
   await expect(menu.getByTitle(seedance25, { exact: true })).toHaveCount(0)
   await expect(menu.getByTitle(fast, { exact: true })).toBeVisible()
+  await expect(menu.getByTitle(flash, { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('video-replace-model-menu.png') })
-  expect(app.submissions).toHaveLength(0)
+  await menu.getByTitle(flash, { exact: true }).click()
+  await dialog.getByRole('textbox', { name: '替换说明' }).fill('替换为深绿色皮卡')
+  const flashRequest = {
+    model_version_id: seedanceFlashSubjectModel.id,
+    operation_code: 'video.generate',
+    params: { mode: 'edit', duration, generate_audio: true, reference_mode: true },
+    input_assets: [{ asset_id: videoAssetId, role: 'video' }],
+  }
+  await expectVideoEstimate(app, flashRequest)
+  await expect(submit).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('video-replace-flash-estimate.png') })
+  await submit.click()
+  await expect(dialog).toBeHidden()
+  expect(app.submissions).toHaveLength(1)
+  expect(app.submissions[0]).toMatchObject(flashRequest)
+  app.expectMatchingEstimate(app.submissions[0])
   expect(app.pageErrors).toEqual([])
   expectNoUnexpectedApi(app.api)
 })

@@ -335,7 +335,10 @@ const subjectVideoEditPolicies: ReadonlyArray<{
     prompt: '严格编辑原视频（视频1）',
   },
   {
-    versions: [[18, 'doubao-seedance-2-5-260628']],
+    versions: [
+      [18, 'doubao-seedance-2-5-260628'],
+      [60, 'doubao-seedance-2-5-flash-261115'],
+    ],
     provider: 'volcengine',
     operationCode: 'video.generate',
     fields: [
@@ -386,21 +389,23 @@ describe('团队视频主体编辑适配', () => {
       getCanvasSubjectEditModels('video', [...models, { ...standard, id: 103, version: 'doubao-seedance-2-0' }]).map(
         ({ id }) => id,
       ),
-    ).toEqual([19, 20, 15, 16, 18, 25])
+    ).toEqual([19, 20, 15, 16, 18, 60, 25])
   })
 
   it.each([
-    ['remove', [19, 20, 15, 18, 25, 118]],
-    ['modify', [19, 20, 15, 16, 18, 25, 116, 118]],
-    ['replace', [19, 20, 15, 16, 25, 116]],
-  ] as const)('按 %s 模式筛选 Seedance Mini 和 2.5', (mode, expected) => {
+    ['remove', [19, 20, 15, 18, 60, 25, 118, 160]],
+    ['modify', [19, 20, 15, 16, 18, 60, 25, 116, 118, 160]],
+    ['replace', [19, 20, 15, 16, 60, 25, 116, 160]],
+  ] as const)('按 %s 模式筛选 Seedance Mini 和 2.5 标准版，保留 2.5 Flash', (mode, expected) => {
     const models = subjectVideoCases.map(({ model }) => model)
     const mini = models.find(({ id }) => id === 16)!
     const seedance25 = models.find(({ id }) => id === 18)!
+    const flash = models.find(({ id }) => id === 60)!
     const catalog = [
       ...models,
       { ...mini, id: 116, model: 'doubao-seedance-2-0-mini', version: '' },
       { ...seedance25, id: 118, modelCode: 'doubao-seedance-2-5', version: '' },
+      { ...flash, id: 160, model: 'doubao-seedance-2-5-flash', version: '' },
     ]
 
     expect(getCanvasSubjectEditModels('video', catalog, mode).map(({ id }) => id)).toEqual(expected)
@@ -420,7 +425,22 @@ describe('团队视频主体编辑适配', () => {
     })
     expect(request.prompt).toContain(policy.prompt)
     expect(request.requiresSeedanceModeration).toBe(policy.provider === 'volcengine' ? true : undefined)
-    if (model.id === 18) expect(request.params).not.toHaveProperty('ratio')
+    if (policy.params.mode === 'edit') {
+      expect(request.params).not.toHaveProperty('ratio')
+      const estimate = buildCanvasSubjectVideoEstimateRequest({
+        mode: source.mode,
+        model,
+        sourceAssetId: source.sourceAssetId,
+        duration: source.sourceVideoDurationSec,
+        ratio: source.ratio,
+      })
+      expect(estimate).toMatchObject({
+        operationCode: policy.operationCode,
+        modelVersionId: model.id,
+        inputAssets: request.inputAssets,
+        params: request.params,
+      })
+    }
 
     const [min, max] = policy.sourceRange
     expect(() => buildCanvasSubjectEditRequest({ ...source, sourceVideoDurationSec: min })).not.toThrow()
@@ -449,5 +469,19 @@ describe('团队视频主体编辑适配', () => {
     expect(() =>
       buildCanvasSubjectEditRequest({ ...video, model: sourceOnly, mode: 'replace', targetReferenceAssetId: 105 }),
     ).toThrow('不支持附带目标参考图')
+  })
+
+  it('Seedance 2.5 Flash 仍需声明编辑模式和源视频输入', () => {
+    const flash = subjectVideoCases.find(({ model }) => model.id === 60)!.model
+    const noEditMode = {
+      ...flash,
+      params_schema: { fields: [{ name: 'mode', options: ['generate', 'extend'] }] },
+    }
+    const noSourceVideo = {
+      ...flash,
+      input_constraints: { 'video.generate': { roles: [subjectVideoRoles[1]] } },
+    }
+
+    expect(getCanvasSubjectEditModels('video', [noEditMode, noSourceVideo], 'replace')).toEqual([])
   })
 })

@@ -17,7 +17,12 @@ import { buildVideoGenerationParams } from './videoTasks'
 type SubjectVideoOperation = 'video.edit' | 'video.generate'
 type SubjectVideoStrategy = 'happyhorse' | 'wan3' | 'seedance25' | 'seedance20' | 'minimax-h3' | 'legacy'
 
-const SEEDANCE_25_IDENTITIES = new Set(['doubao-seedance-2-5', 'doubao-seedance-2-5-260628'])
+const SEEDANCE_25_IDENTITIES = new Set([
+  'doubao-seedance-2-5',
+  'doubao-seedance-2-5-260628',
+  'doubao-seedance-2-5-flash',
+  'doubao-seedance-2-5-flash-261115',
+])
 const SEEDANCE_20_IDENTITIES = new Set([
   'doubao-seedance-2-0',
   'doubao-seedance-2-0-260128',
