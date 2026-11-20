@@ -1,0 +1,111 @@
+.timeline {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  color: #c1c1c1;
+  font-size: 12px;
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+}
+
+.jump {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid #4e6660;
+  border-radius: 6px;
+  background: #232e2b;
+  color: #a3e6d8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.jump:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.track {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  height: 40px;
+}
+
+.filmstrip,
+.scrubber {
+  grid-area: 1 / 1;
+}
+
+.filmstrip {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid #4c4c4c;
+  border-radius: 5px;
+  background: #343434;
+  pointer-events: none;
+}
+
+.filmstrip img {
+  flex: 1 1 0;
+  min-width: 0;
+  object-fit: cover;
+  opacity: 0.75;
+}
+
+.marker {
+  position: absolute;
+  inset-block: 0;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: 3px;
+  background: #f3c987;
+  pointer-events: none;
+}
+
+.scrubber {
+  position: relative;
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.scrubber::-webkit-slider-thumb {
+  appearance: none;
+  width: 6px;
+  height: 40px;
+  border: 1px solid #162d27;
+  border-radius: 3px;
+  background: #8ce9d5;
+}
+
+.scrubber::-moz-range-thumb {
+  width: 4px;
+  height: 38px;
+  border: 1px solid #162d27;
+  border-radius: 3px;
+  background: #8ce9d5;
+}
+
+.scrubber:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.scrubber:focus-visible,
+.jump:focus-visible {
+  outline: 2px solid #8ce9d5;
+  outline-offset: 2px;
+}

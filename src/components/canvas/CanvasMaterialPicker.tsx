@@ -65,6 +65,10 @@ interface CanvasMaterialPickerProps {
   visible: boolean
   position?: { x: number; y: number } | null
   variant?: 'popover' | 'drawer' | 'modal'
+  /** 只挑选普通图片，适用于替换主体。 */
+  imageOnly?: boolean
+  /** 在其他弹窗内打开模态素材库时调整遮罩层级。 */
+  overlayZIndex?: number
   /** 打开时默认展示的素材分类。 */
   initialTab?: TabKey
   onClose: () => void
@@ -111,6 +115,19 @@ function favoriteToMaterial(favorite: FavoriteVideo, mediaUrl: string): Material
     ratio: favorite.ratio || '',
     source: 'collected',
   }
+}
+
+function isReplacementImage(item: MaterialItem): boolean {
+  const assetId = Number(item.assetId)
+  return (
+    (item.type === 'image' || item.type === '图片') &&
+    !isVideoMaterial(item) &&
+    !isAudioMaterial(item) &&
+    item.source !== 'real_person' &&
+    !item.realPerson &&
+    Number.isSafeInteger(assetId) &&
+    assetId > 0
+  )
 }
 
 // ---- 纯函数工具（参考 ResourceManagementView）----
@@ -391,12 +408,15 @@ export default function CanvasMaterialPicker({
   visible,
   position,
   variant = 'popover',
+  imageOnly = false,
+  overlayZIndex,
   initialTab = 'all',
   onClose,
   onApply,
   selectionLimit,
   onApplyMany,
 }: CanvasMaterialPickerProps) {
+  const defaultTab = imageOnly && initialTab === 'real_person' ? 'all' : initialTab
   const [tab, setTab] = useState<TabKey>('all')
   const multiSelect = typeof selectionLimit === 'number' && Boolean(onApplyMany)
   // 勾选顺序即参考顺序；跨 tab 保留，切 tab 继续挑
@@ -411,6 +431,7 @@ export default function CanvasMaterialPicker({
   }, [visible])
   const togglePicked = useCallback(
     (item: MaterialItem) => {
+      if (imageOnly && !isReplacementImage(item)) return
       setPickHint('')
       setPicked((current) => {
         if (current.some((entry) => entry.id === item.id)) return current.filter((entry) => entry.id !== item.id)
@@ -421,7 +442,7 @@ export default function CanvasMaterialPicker({
         return [...current, item]
       })
     },
-    [selectionLimit],
+    [selectionLimit, imageOnly],
   )
   const [items, setItems] = useState<MaterialItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -430,13 +451,29 @@ export default function CanvasMaterialPicker({
   // 模糊匹配搜索：按素材名称过滤（客户端，参考 ResourceManagementView 搜索）
   const [searchQuery, setSearchQuery] = useState('')
   const loadingRef = useRef(false)
+  const modalSearchRef = useRef<HTMLInputElement>(null)
+  const imageApplySeq = useRef(0)
   // 追踪当前展示的 tab：请求完成后仅当 tab 未切换才更新界面，避免旧请求覆盖新 tab
   const tabRef = useRef<string>(tab)
   tabRef.current = tab
 
   useEffect(() => {
-    if (visible) setTab(initialTab)
-  }, [visible, initialTab])
+    if (visible) setTab(defaultTab)
+  }, [visible, defaultTab])
+  useEffect(() => {
+    if (!visible || !imageOnly || variant !== 'modal') return
+    const previousFocus = document.activeElement
+    modalSearchRef.current?.focus()
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus()
+    }
+  }, [visible, imageOnly, variant])
+  useEffect(() => {
+    if (!visible || !imageOnly) return
+    return () => {
+      imageApplySeq.current += 1
+    }
+  }, [visible, imageOnly, workspaceId])
   // 请求序号：切换 tab 后旧请求结果直接丢弃
   const requestSeqRef = useRef(0)
 
@@ -479,7 +516,7 @@ export default function CanvasMaterialPicker({
   /** 拉取一页素材并映射为展示结构（按 tab 过滤来源；全部 tab 排除真人素材） */
   const fetchAssets = useCallback(
     async (type: string, pg: number, reset: boolean) => {
-      if (loadingRef.current) return
+      if ((loadingRef.current && !(imageOnly && reset)) || (imageOnly && type === 'real_person')) return
       loadingRef.current = true
       const seq = ++requestSeqRef.current
       setLoading(true)
@@ -490,7 +527,7 @@ export default function CanvasMaterialPicker({
         }
         const data = await listAssets({
           workspaceId,
-          type: '',
+          type: imageOnly ? 'image' : '',
           source: tabAssetSource(type as TabKey),
           status: 'active',
           limit: PAGE_SIZE,
@@ -517,29 +554,40 @@ export default function CanvasMaterialPicker({
       } catch {
         // 静默：保留当前列表，接口异常不打断画布操作
       } finally {
-        if (requestSeqRef.current === seq) setLoading(false)
-        loadingRef.current = false
+        if (requestSeqRef.current === seq) {
+          setLoading(false)
+          loadingRef.current = false
+        }
       }
     },
-    [workspaceId, fetchRealPeopleAssets],
+    [workspaceId, fetchRealPeopleAssets, imageOnly],
   )
 
   // 打开面板或切换 tab：服务端 tab 重新加载第一页；收藏 tab 由下方 effect 加载
   useEffect(() => {
     if (!visible) return
-    if (tab === 'collected') return
+    if (tab === 'collected') {
+      if (imageOnly) {
+        requestSeqRef.current += 1
+        loadingRef.current = false
+        setLoading(false)
+      }
+      return
+    }
     setItems([])
     setPage(0)
     setHasMore(true)
     fetchAssets(tab, 0, true)
-  }, [visible, tab, fetchAssets])
+  }, [visible, tab, fetchAssets, imageOnly])
 
   // 收藏 tab：读取本地收藏（按用户隔离），并刷新可能过期的签名地址
   useEffect(() => {
     if (!visible || tab !== 'collected') return
     let cancelled = false
     if (userId) setFavoriteVideoUserScope(userId)
-    const favorites = loadFavorites(workspaceId)
+    const favorites = loadFavorites(workspaceId).filter(
+      (favorite) => !imageOnly || favoriteMediaKindOf(favorite) === 'image',
+    )
     setItems(
       favorites
         .map((f) => favoriteToMaterial(f, favoriteMediaUrlOf(f)))
@@ -565,7 +613,7 @@ export default function CanvasMaterialPicker({
     return () => {
       cancelled = true
     }
-  }, [visible, tab, workspaceId, userId])
+  }, [visible, tab, workspaceId, userId, imageOnly])
 
   const loadMore = useCallback(() => {
     const nextPage = page + 1
@@ -597,7 +645,10 @@ export default function CanvasMaterialPicker({
   const { showToast } = useToast()
   const resolveMaterialIdentities = useCallback(
     async (materials: MaterialItem[]): Promise<MaterialItem[]> => {
-      if (!materials.some((item) => item.type === 'image')) return materials
+      if (imageOnly && materials.some((item) => !isReplacementImage(item))) {
+        throw new Error('请选择当前团队的普通图片')
+      }
+      if (!imageOnly && !materials.some((item) => item.type === 'image')) return materials
       let people: Awaited<ReturnType<typeof listRealPeople>>
       try {
         people = await listRealPeople({ workspaceId })
@@ -605,20 +656,22 @@ export default function CanvasMaterialPicker({
         throw new Error('真人身份查询失败，请稍后重试添加素材')
       }
       return materials.map((item) => {
-        if (item.type !== 'image') return item
+        if (!imageOnly && item.type !== 'image') return item
         const realPerson = resolveCanvasAssetRealPerson(item.assetId, people, workspaceId)
+        if (imageOnly && realPerson) throw new Error('请选择普通图片作为替换参考')
         if (!realPerson && (item.realPerson || item.source === 'real_person')) {
           throw new Error('该真人素材已失效，请重新选择真人素材')
         }
         return { ...item, realPerson: realPerson ?? undefined, source: realPerson ? 'real_person' : item.source }
       })
     },
-    [workspaceId],
+    [workspaceId, imageOnly],
   )
 
   /** 点击「应用」：先确认素材身份，再解析同源流式地址（面板保持打开）。 */
   const handleApply = useCallback(
     async (item: MaterialItem) => {
+      const seq = imageOnly ? ++imageApplySeq.current : 0
       try {
         const [resolved] = await resolveMaterialIdentities([item])
         let src = ''
@@ -627,12 +680,13 @@ export default function CanvasMaterialPicker({
         } catch {
           // 地址获取失败仍可由画布按 assetId 重建；身份查询失败不能降级为普通素材。
         }
-        onApply({ ...resolved, src })
+        if (!imageOnly || imageApplySeq.current === seq) onApply({ ...resolved, src })
       } catch (error) {
-        showToast(String((error as Error)?.message || '添加素材失败，请稍后重试'), 'error')
+        if (!imageOnly || imageApplySeq.current === seq)
+          showToast(String((error as Error)?.message || '添加素材失败，请稍后重试'), 'error')
       }
     },
-    [workspaceId, onApply, resolveMaterialIdentities, showToast],
+    [workspaceId, onApply, resolveMaterialIdentities, showToast, imageOnly],
   )
 
   /** 多选确认：逐个解析同源地址后一次性交回，由画布按顺序连成参考。 */
@@ -661,13 +715,14 @@ export default function CanvasMaterialPicker({
   // 模糊匹配过滤：按素材名称（不区分大小写）
   const visibleItems = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase()
-    if (!keyword) return items
-    return items.filter((item) =>
+    const candidates = imageOnly ? items.filter(isReplacementImage) : items
+    if (!keyword) return candidates
+    return candidates.filter((item) =>
       String(item.name || '')
         .toLowerCase()
         .includes(keyword),
     )
-  }, [items, searchQuery])
+  }, [items, searchQuery, imageOnly])
 
   // popover：点击外部关闭
   useEffect(() => {
@@ -687,8 +742,41 @@ export default function CanvasMaterialPicker({
   // ---- Modal 形态：居中模态弹窗（对齐 Figma "添加素材"）----
   if (variant === 'modal') {
     return (
-      <div className={styles.overlay} onMouseDown={onClose}>
-        <div className={styles.modalPanel} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className={styles.overlay}
+        style={overlayZIndex === undefined ? undefined : { zIndex: overlayZIndex }}
+        onMouseDown={onClose}
+      >
+        <div
+          className={styles.modalPanel}
+          role={imageOnly ? 'dialog' : undefined}
+          aria-modal={imageOnly || undefined}
+          aria-label={imageOnly ? '选择图片' : undefined}
+          onMouseDown={(event) => event.stopPropagation()}
+          onKeyDown={
+            imageOnly
+              ? (event) => {
+                  if (event.key === 'Escape') {
+                    event.stopPropagation()
+                    onClose()
+                  } else if (event.key === 'Tab') {
+                    const controls = event.currentTarget.querySelectorAll<HTMLElement>(
+                      'button:not(:disabled), input:not(:disabled), [tabindex="0"]',
+                    )
+                    const first = controls[0]
+                    const last = controls[controls.length - 1]
+                    if (event.shiftKey && document.activeElement === first) {
+                      event.preventDefault()
+                      last?.focus()
+                    } else if (!event.shiftKey && document.activeElement === last) {
+                      event.preventDefault()
+                      first?.focus()
+                    }
+                  }
+                }
+              : undefined
+          }
+        >
           {/* 工具栏：Tab（左）+ 模糊搜索框（最右），无标题无关闭按钮 */}
           <div className={styles.modalToolbar}>
             <div className={styles.modalTabs}>
@@ -719,6 +807,7 @@ export default function CanvasMaterialPicker({
                 <path d="M16.5 16.5 21 21" />
               </svg>
               <input
+                ref={modalSearchRef}
                 className={styles.modalSearchInput}
                 type="text"
                 value={searchQuery}
@@ -727,6 +816,11 @@ export default function CanvasMaterialPicker({
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </label>
+            {imageOnly && (
+              <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="关闭素材库">
+                ×
+              </button>
+            )}
           </div>
 
           {/* 素材网格 */}

@@ -59,7 +59,8 @@
 }
 
 .surface img,
-.selection {
+.selection,
+.preview {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -80,8 +81,25 @@
   pointer-events: none;
 }
 
+.rectangle {
+  position: absolute;
+  border: 1px solid var(--canvas-brand, #00e5be);
+  background: rgba(0, 229, 190, 0.28);
+  pointer-events: none;
+}
+
+.preview {
+  background: repeating-conic-gradient(#3e4444 0% 25%, #222626 0% 50%) 0 0 / 16px 16px;
+}
+
 .hint {
   margin: 0;
   color: var(--canvas-text-muted, #a8a8a8);
+  font-size: 12px;
+}
+
+.error {
+  margin: 0;
+  color: #ff9c9c;
   font-size: 12px;
 }

@@ -46,6 +46,7 @@
   ],
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
+    "@mediapipe/tasks-vision": "0.10.32",
     "@openobserve/browser-logs": "^0.3.4",
     "@openobserve/browser-rum": "^0.3.4",
     "@xyflow/react": "^12.11.2",
