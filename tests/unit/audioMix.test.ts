@@ -56,12 +56,15 @@ describe('混音 WAV 导出', () => {
     expect(channels[1][0]).toBe(-1)
   })
   it('会话缓存复用解码结果，取消时不读取音频', async () => {
-    const decoded = {
+    const decoded: AudioBuffer = {
       duration: 5,
       length: 240000,
       numberOfChannels: 2,
+      sampleRate: 48000,
       getChannelData: () => new Float32Array(),
-    } as AudioBuffer
+      copyFromChannel: vi.fn(),
+      copyToChannel: vi.fn(),
+    }
     const decode = vi.fn(async () => decoded)
     vi.stubGlobal(
       'OfflineAudioContext',
