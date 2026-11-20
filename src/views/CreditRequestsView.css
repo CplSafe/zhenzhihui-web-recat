@@ -107,7 +107,7 @@
   font-weight: 600;
 }
 
-.credit-requests__form label span {
+.credit-requests__form label > span {
   margin-left: 3px;
   color: #626b84;
   font-size: 12px;
@@ -115,7 +115,6 @@
 }
 
 .credit-requests__form input,
-.credit-requests__form select,
 .credit-requests__form textarea {
   display: block;
   width: 100%;
@@ -137,7 +136,6 @@
 }
 
 .credit-requests__form input:disabled,
-.credit-requests__form select:disabled,
 .credit-requests__form textarea:disabled {
   background: #f7f8fc;
 }
@@ -346,4 +344,23 @@
   .credit-requests__panel {
     padding: 16px;
   }
+}
+
+.credit-requests__workspace-select {
+  display: flex;
+  width: 100%;
+  margin-top: 7px;
+}
+
+.credit-requests__workspace-select .filter-select__trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.credit-requests__workspace-select .filter-select__menu {
+  width: 100%;
+  box-sizing: border-box;
 }

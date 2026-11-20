@@ -15,6 +15,7 @@ import {
   type CreditRequestStatus,
   type CreditRequestWorkspace,
 } from '@/api/creditRequests'
+import FilterSelect from '@/components/common/FilterSelect'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
@@ -199,22 +200,27 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
       <form className="credit-requests__form" onSubmit={(event) => void submit(event)} noValidate>
         <label>
           到账工作空间
-          <select
-            name="workspace_id"
-            value={workspaceId || ''}
+          <FilterSelect
+            ariaLabel="到账工作空间"
+            className="credit-requests__workspace-select"
+            value={workspaceId ? String(workspaceId) : ''}
             disabled={disabled}
-            required
-            onChange={(event) => setWorkspaceId(Number(event.target.value))}
-          >
-            <option value="" disabled>
-              {!loading && superior && !workspaces.length ? '暂无可选工作空间' : '请选择工作空间'}
-            </option>
-            {workspaces.map((workspace) => (
-              <option key={workspace.id} value={workspace.id}>
-                {workspace.name}（{WORKSPACE_TYPE_LABELS[workspace.type]}）
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setWorkspaceId(Number(value))}
+            options={[
+              ...(!workspaceId
+                ? [
+                    {
+                      value: '',
+                      label: !loading && superior && !workspaces.length ? '暂无可选工作空间' : '请选择工作空间',
+                    },
+                  ]
+                : []),
+              ...workspaces.map((workspace) => ({
+                value: String(workspace.id),
+                label: `${workspace.name}（${WORKSPACE_TYPE_LABELS[workspace.type]}）`,
+              })),
+            ]}
+          />
         </label>
         <label>
           申请积分
