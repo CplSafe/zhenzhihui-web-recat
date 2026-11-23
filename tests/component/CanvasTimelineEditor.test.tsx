@@ -250,13 +250,24 @@ describe('CanvasTimelineEditor', () => {
     expect(compose).toHaveAttribute('title', '合成引擎尚未接入')
   })
 
-  it('片段不足时给出校验提示且不允许合成', () => {
-    const single = addTimelineClips(createTimelineState(), [
-      createTimelineClip({ id: 'clip-1', assetId: 1, sourceDurationSec: 5, inSec: 0, outSec: 5 }),
-    ])
-    render(<ControlledEditor initial={single} onCompose={vi.fn()} />)
-    expect(screen.getByText(/至少需要 2 个片段才能合成/)).toBeInTheDocument()
+  it('空时间线提示添加视频片段并禁用合成', () => {
+    render(<ControlledEditor initial={createTimelineState()} onCompose={vi.fn()} />)
+    expect(screen.getByText('请添加视频片段后再合成')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '合成为一条视频' })).toBeDisabled()
+  })
+
+  it('裁剪后的单个视频片段可以发起合成', async () => {
+    const user = userEvent.setup()
+    const onCompose = vi.fn()
+    const single = addTimelineClips(createTimelineState(), [
+      createTimelineClip({ id: 'clip-1', assetId: 1, sourceDurationSec: 5, inSec: 1, outSec: 4 }),
+    ])
+    render(<ControlledEditor initial={single} onCompose={onCompose} />)
+    expect(screen.getByText('1 段 · 共 00:03.0')).toBeInTheDocument()
+    const compose = screen.getByRole('button', { name: '合成为一条视频' })
+    expect(compose).toBeEnabled()
+    await user.click(compose)
+    expect(onCompose).toHaveBeenCalledExactlyOnceWith()
   })
 
   it('单视频配音允许导出，音频未就绪时不能播放画面', () => {

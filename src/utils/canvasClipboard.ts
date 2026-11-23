@@ -11,6 +11,8 @@
  * 纯函数；id 生成与连线 id 规则由调用方注入。
  */
 
+import { parseTimelineState, type TimelineState } from './timelineClips'
+
 export interface ClipboardNodeSnapshot {
   id: string
   type?: string
@@ -25,6 +27,7 @@ export interface ClipboardNodeSnapshot {
 }
 
 export interface ClipboardEdgeSnapshot {
+  id?: string
   source: string
   target: string
   sourceHandle?: string | null
@@ -68,6 +71,7 @@ interface SourceNode {
 }
 
 interface SourceEdge {
+  id?: string
   source: string
   target: string
   sourceHandle?: string | null
@@ -118,6 +122,8 @@ export function copyCanvasNodes(options: {
   nodes: SourceNode[]
   edges: SourceEdge[]
   selectedIds: Iterable<string>
+  /** 创建副本时可沿用仍在同一画布的上游节点。 */
+  reuseIncomingSources?: boolean
   /** 运行态字段名：不进剪贴板 */
   runtimeKeys: Set<string>
   /** 读文本节点正文 */
@@ -153,9 +159,11 @@ export function copyCanvasNodes(options: {
     }
   })
 
+  const existingSources = options.reuseIncomingSources ? new Set(options.nodes.map((node) => node.id)) : undefined
   const edges: ClipboardEdgeSnapshot[] = options.edges
-    .filter((edge) => wanted.has(edge.source) && wanted.has(edge.target))
+    .filter((edge) => wanted.has(edge.target) && (wanted.has(edge.source) || existingSources?.has(edge.source)))
     .map((edge) => ({
+      ...(edge.id && { id: edge.id }),
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.sourceHandle ?? null,
@@ -187,6 +195,30 @@ export interface MaterializedClipboard {
   textContents: Record<string, string>
 }
 
+function remapTimelineSources(value: unknown, sourceIds?: ReadonlyMap<string, string>): TimelineState {
+  const { clips, audioClips, detachedSourceNodeIds, ...settings } = parseTimelineState(value)
+  const detached = detachedSourceNodeIds?.flatMap((sourceId) => {
+    const mappedId = sourceIds?.get(sourceId)
+    return mappedId ? [mappedId] : []
+  })
+
+  return {
+    ...settings,
+    // 未一起复制的来源改为直接引用视频素材，保留片段和裁剪。
+    clips: clips.map(({ sourceNodeId, ...clip }) => {
+      const mappedId = sourceNodeId && sourceIds?.get(sourceNodeId)
+      return mappedId ? { ...clip, sourceNodeId: mappedId } : clip
+    }),
+    ...(audioClips && {
+      audioClips: audioClips.flatMap((clip) => {
+        const mappedId = sourceIds?.get(clip.sourceNodeId)
+        return mappedId ? [{ ...clip, sourceNodeId: mappedId }] : []
+      }),
+    }),
+    ...(detached?.length && { detachedSourceNodeIds: detached }),
+  }
+}
+
 /**
  * 把剪贴板内容落成可直接塞进画布的节点与连线。
  * `origin` 是这批节点包围盒左上角要落到的画布坐标；handle id 里带着旧节点 id，要一并换成新的。
@@ -197,39 +229,64 @@ export function materializeCanvasClipboard(
     origin: { x: number; y: number }
     createNodeId: (kind: string) => string
     buildEdgeId: (source: string, target: string, slotIndex: number | string) => string
+    reuseIncomingSources?: boolean
   },
 ): MaterializedClipboard {
   const idMap = new Map<string, string>()
   for (const node of payload.nodes) idMap.set(node.id, options.createNodeId(node.kind))
 
+  const swapHandle = (handle: string | null | undefined, oldId: string, newId: string): string | null =>
+    typeof handle === 'string' && handle ? handle.split(oldId).join(newId) : null
+
+  const sourceIdsByTarget = new Map<string, Map<string, string>>()
+  const edgeIds = new Map<string, string>()
+  const edges = payload.edges.flatMap((edge) => {
+    const source = idMap.get(edge.source) ?? (options.reuseIncomingSources ? edge.source : undefined)
+    const target = idMap.get(edge.target)
+    if (!source || !target) return []
+    let sourceIds = sourceIdsByTarget.get(target)
+    if (!sourceIds) {
+      sourceIds = new Map()
+      sourceIdsByTarget.set(target, sourceIds)
+    }
+    sourceIds.set(edge.source, source)
+    const slotIndex = Number(edge.data?.slotIndex ?? 0) || 0
+    const id = options.buildEdgeId(source, target, slotIndex)
+    if (edge.id) edgeIds.set(edge.id, id)
+    return [
+      {
+        id,
+        source,
+        target,
+        sourceHandle: swapHandle(edge.sourceHandle, edge.source, source),
+        targetHandle: swapHandle(edge.targetHandle, edge.target, target),
+        data: edge.data ? { ...edge.data } : undefined,
+      },
+    ]
+  })
+
   const textContents: Record<string, string> = {}
   const nodes = payload.nodes.map((node) => {
     const id = idMap.get(node.id)!
     if (node.text) textContents[id] = node.text
+    const data = { ...node.data }
+    if (node.kind === 'timeline' && data.timeline) {
+      data.timeline = remapTimelineSources(data.timeline, sourceIdsByTarget.get(id))
+    }
+    const crops = data.croppedInputAssets
+    if (crops && typeof crops === 'object' && !Array.isArray(crops)) {
+      // 直接连线用新 ID。沿用原上游时，继承来的连线 ID 仍然有效。
+      data.croppedInputAssets = Object.fromEntries(
+        Object.entries(crops).map(([edgeId, asset]) => [edgeIds.get(edgeId) ?? edgeId, asset]),
+      )
+    }
     return {
       id,
       type: node.type,
       position: { x: options.origin.x + node.dx, y: options.origin.y + node.dy },
-      data: { ...node.data },
+      data,
       style: node.style ? { ...node.style } : undefined,
       selected: true,
-    }
-  })
-
-  const swapHandle = (handle: string | null | undefined, oldId: string, newId: string): string | null =>
-    typeof handle === 'string' && handle ? handle.split(oldId).join(newId) : null
-
-  const edges = payload.edges.map((edge) => {
-    const source = idMap.get(edge.source)!
-    const target = idMap.get(edge.target)!
-    const slotIndex = Number(edge.data?.slotIndex ?? 0) || 0
-    return {
-      id: options.buildEdgeId(source, target, slotIndex),
-      source,
-      target,
-      sourceHandle: swapHandle(edge.sourceHandle, edge.source, source),
-      targetHandle: swapHandle(edge.targetHandle, edge.target, target),
-      data: edge.data ? { ...edge.data } : undefined,
     }
   })
 

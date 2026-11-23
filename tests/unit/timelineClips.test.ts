@@ -257,9 +257,11 @@ describe('时间线校验与 cutlist', () => {
     expect(() => buildTimelineCutlist(createTimelineState())).toThrow('请添加视频片段')
   })
 
-  it('单视频添加音频或调整原声音量后允许合成', () => {
+  it('只含一条视频的时间线可以直接合成，并保留片段裁剪区间', () => {
     const single = { clips: [createTimelineClip({ id: 'one', assetId: 101, sourceDurationSec: 5 })] }
-    expect(validateTimeline(single).join()).toContain('至少需要 2 个片段')
+    const trimmed = trimTimelineClip(single, 'one', { inSec: 1, outSec: 4 })
+    expect(validateTimeline(single)).toEqual([])
+    expect(buildTimelineCutlist(trimmed)).toMatchObject({ clips: [{ asset_id: 101, in_sec: 1, out_sec: 4 }] })
     const voiced = {
       ...single,
       audioClips: [{ sourceNodeId: 'audio', assetId: 201, title: '配音', durationSec: 5 }],

@@ -300,7 +300,7 @@ export default function CanvasAudioNode({
               ))}
               {waveformStatus && <span className={styles.waveHint}>{waveformStatus}</span>}
             </div>
-            {src && !readOnly && selected && fullDuration > 0 && (
+            {!readOnly && selected && peaks.length > 0 && fullDuration > 0 && (
               <div className={styles.trimOverlay} aria-hidden="true">
                 <span style={{ width: `${(playbackStart / fullDuration) * 100}%` }} />
                 <span style={{ width: `${Math.max(0, (fullDuration - playbackEnd) / fullDuration) * 100}%` }} />

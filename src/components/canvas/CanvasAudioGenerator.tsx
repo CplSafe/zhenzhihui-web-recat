@@ -1100,6 +1100,7 @@ export default function CanvasAudioGenerator({
       <div
         className={`${styles.references} ${draggingReference ? styles.referencesDragging : ''} nodrag nopan`}
         data-audio-section="references"
+        data-canvas-keyboard="ignore"
         aria-label="参考音频，可粘贴音频文件或已复制的画布音频节点"
         tabIndex={0}
         onPaste={pasteReference}

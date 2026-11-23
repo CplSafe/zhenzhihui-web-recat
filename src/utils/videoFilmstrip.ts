@@ -94,12 +94,16 @@ function drawFrame(video: HTMLVideoElement): string {
  * 用一个离屏 video 顺序 seek 取帧；任一帧失败就整体放弃并返回空数组，
  * 让调用方回落到纯色块，而不是画出一条缺口斑驳的胶片。
  */
-export async function buildFilmstrip(url: string, count = DEFAULT_FRAME_COUNT): Promise<string[]> {
+export async function buildFilmstrip(
+  url: string,
+  count = DEFAULT_FRAME_COUNT,
+  options: { cache?: boolean } = {},
+): Promise<string[]> {
   const source = String(url || '')
   if (!source) return []
   const key = cacheKey(source, count)
 
-  const cached = filmstripCache.get(key)
+  const cached = options.cache === false ? undefined : filmstripCache.get(key)
   if (cached) return cached
   const pending = filmstripInflight.get(key)
   if (pending) return pending
@@ -130,7 +134,7 @@ export async function buildFilmstrip(url: string, count = DEFAULT_FRAME_COUNT): 
         if (!frame) return []
         frames.push(frame)
       }
-      filmstripCache.set(key, frames)
+      if (options.cache !== false) filmstripCache.set(key, frames)
       return frames
     } catch {
       return []

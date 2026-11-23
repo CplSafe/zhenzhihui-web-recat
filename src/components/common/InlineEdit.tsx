@@ -2,7 +2,7 @@
  * InlineEdit — 双击编辑、回车确认、Esc 取消、失焦确认。
  * 平时只显示文本(简洁),双击才出现输入框。用于镜头标题 / 秒数 / 画面描述等轻量编辑。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FocusEvent } from 'react'
 import './InlineEdit.css'
 
 /** 行内编辑器的受控值、提交方式和输入约束。 */
@@ -18,6 +18,8 @@ interface InlineEditProps {
   className?: string
   editable?: boolean
   maxLength?: number
+  /** 进入编辑时选中原文，便于直接输入替换。 */
+  selectOnEdit?: boolean
   /**
    * 进入编辑的方式:单击 / 双击(默认双击) / none。
    * none = 展示态就是一段普通文本,不响应点击与键盘,只能由 openSignal 打开——
@@ -48,6 +50,7 @@ export default function InlineEdit({
   className = '',
   editable = true,
   maxLength,
+  selectOnEdit = false,
   trigger = 'dblclick',
   openSignal,
   onEditingEnd,
@@ -106,11 +109,15 @@ export default function InlineEdit({
   }
 
   const onChange = (v: string) => setDraft(numeric ? v.replace(/[^0-9.]/g, '') : v)
+  const onFocus = selectOnEdit
+    ? (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => event.currentTarget.select()
+    : undefined
   if (multiline) {
     return (
       <textarea
         className={`ie ie-input ${className}`}
         autoFocus
+        onFocus={onFocus}
         value={draft}
         maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
@@ -130,6 +137,7 @@ export default function InlineEdit({
     <input
       className={`ie ie-input ${className}`}
       autoFocus
+      onFocus={onFocus}
       value={draft}
       maxLength={maxLength}
       inputMode={numeric ? 'numeric' : undefined}

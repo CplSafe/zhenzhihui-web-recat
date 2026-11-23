@@ -30,8 +30,13 @@ test('音频通过不支持分段的素材地址加载后可播放、暂停和�
   for (let i = 0; i < frames; i++)
     wav.writeInt16LE(Math.round(14000 * Math.sin((2 * Math.PI * 440 * i) / 24000)), 44 + i * 2)
   let downloads = 0
-  await page.route('**/api/v1/assets/55/download?**', (route) => {
+  let releaseDownload: () => void
+  const downloading = new Promise<void>((resolve) => {
+    releaseDownload = resolve
+  })
+  await page.route('**/api/v1/assets/55/download?**', async (route) => {
     downloads++
+    await downloading
     // Simulate the actual proxy shape: full 200 response, no Range support, generic content type.
     return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: wav })
   })
@@ -76,8 +81,18 @@ test('音频通过不支持分段的素材地址加载后可播放、暂停和�
   )
   await page.goto('/canvas/155')
   const node = page.locator('.react-flow__node[data-id="audio-playback"]')
-  await expect(node).toBeVisible({ timeout: 30000 })
   const play = node.getByRole('button', { name: '播放音频' })
+  const trimShade = node.locator('[class*="trimOverlay"] > span')
+  try {
+    await expect(node).toBeVisible({ timeout: 30000 })
+    await node.locator('.canvas-node-header').click()
+    await expect(node.getByText('音频加载中')).toBeVisible()
+    await expect(node.getByText('选区 0.0–4.0 秒')).toBeVisible()
+    await expect(trimShade).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('audio-loading-without-trim-lines.png') })
+  } finally {
+    releaseDownload!()
+  }
   await expect(play).toBeEnabled({ timeout: 30000 })
   const audio = node.locator('audio')
   await expect(audio).toHaveAttribute('src', /^blob:/)
@@ -91,6 +106,14 @@ test('音频通过不支持分段的素材地址加载后可播放、暂停和�
   await expect.poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime)).toBeGreaterThan(1.9)
   await node.getByRole('button', { name: '播放音频' }).click()
   await expect.poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime)).toBeGreaterThan(2.2)
+  await node.getByRole('button', { name: '暂停音频' }).click()
+  const progress = node.getByRole('slider', { name: '音频播放进度' })
+  await progress.fill('2')
+  await progress.press('i')
+  await expect(node.getByText('选区 2.0–4.0 秒')).toBeVisible()
+  await expect(trimShade.first()).toHaveCSS('border-right-width', '0px')
+  await expect(trimShade.last()).toHaveCSS('border-left-width', '0px')
+  await page.screenshot({ path: testInfo.outputPath('audio-trim-without-boundary-lines.png') })
   expect(downloads).toBe(1)
   expect(errors).toEqual([])
   expect(consoleErrors).toEqual([])

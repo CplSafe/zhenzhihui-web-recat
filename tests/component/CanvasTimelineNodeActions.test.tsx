@@ -24,16 +24,20 @@ describe('CanvasTimelineNodeActions', () => {
     expect(screen.queryByRole('button', { name: /添加视频/ })).not.toBeInTheDocument()
   })
 
-  it('合成按钮交回节点 id；片段不足 2 段时禁用并说明', async () => {
+  it('只有一个视频片段时，合成按钮仍会交回节点 ID', async () => {
     const user = userEvent.setup()
-    const props = setup()
-    await user.click(screen.getByRole('button', { name: '合成' }))
-    expect(props.onCompose).toHaveBeenCalledWith('timeline-1')
+    const props = setup({ clipCount: 1 })
+    const compose = screen.getByRole('button', { name: '合成' })
+    expect(compose).toBeEnabled()
+    await user.click(compose)
+    expect(props.onCompose).toHaveBeenCalledExactlyOnceWith('timeline-1')
+  })
 
-    setup({ clipCount: 1 })
-    const compose = screen.getAllByRole('button', { name: '合成' })[1]
+  it('没有视频片段时禁用合成并说明原因', () => {
+    setup({ clipCount: 0 })
+    const compose = screen.getByRole('button', { name: '合成' })
     expect(compose).toBeDisabled()
-    expect(compose).toHaveAttribute('title', '至少需要 2 个片段才能合成')
+    expect(compose).toHaveAttribute('title', '请添加视频片段后再合成')
   })
 
   it('合成中把当前阶段显示在按钮上', () => {

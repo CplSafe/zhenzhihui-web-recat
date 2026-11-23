@@ -13,6 +13,7 @@
  * 它渲染出来的那一刻箭头就在。
  */
 import { useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BaseEdge, getBezierPath, Position, useStore, useStoreApi, type EdgeProps } from '@xyflow/react'
 import type { CanvasConnectionRole } from '@/utils/canvasGeneration'
 
@@ -53,7 +54,17 @@ export function findCanvasEdgeLabelPosition(
   )
 }
 
-function CanvasEdgeRoleLabel({ path, label }: { path: string; label: string }) {
+function CanvasEdgeRoleLabel({
+  path,
+  label,
+  actionX,
+  actionY,
+}: {
+  path: string
+  label: string
+  actionX?: number
+  actionY?: number
+}) {
   const pathRef = useRef<SVGPathElement>(null)
   const textRef = useRef<SVGTextElement>(null)
   const nodes = useStore((state) => state.nodes)
@@ -72,9 +83,11 @@ function CanvasEdgeRoleLabel({ path, label }: { path: string; label: string }) {
         width: node.measured.width || node.width || 0,
         height: node.measured.height || node.height || 0,
       }))
+    if (actionX !== undefined && actionY !== undefined)
+      obstacles.push({ x: actionX - 12, y: actionY - 12, width: 24, height: 24 })
     const point = findCanvasEdgeLabelPosition(candidates, obstacles, width, 22)
     setPlacement(point ? { x: point.x, y: point.y, width } : null)
-  }, [path, label, nodes, store])
+  }, [path, label, nodes, store, actionX, actionY])
   return (
     <g className="canvas-edge-role-label" aria-hidden="true" pointerEvents="none">
       <path ref={pathRef} d={path} fill="none" stroke="none" />
@@ -88,6 +101,51 @@ function CanvasEdgeRoleLabel({ path, label }: { path: string; label: string }) {
         </text>
       </g>
     </g>
+  )
+}
+
+function CanvasEdgeDeleteButton({ x, y, onDelete }: { x: number; y: number; onDelete: () => void }) {
+  const flowRoot = useStore((state) => state.domNode)
+  const [offsetX, offsetY, zoom] = useStore((state) => state.transform)
+  if (!flowRoot) return null
+  // 多选拖动层在缩放层之上，删除按钮挂到画布根部后仍能点击，同时沿用连线的坐标和缩放。
+  return createPortal(
+    <div
+      className="nodrag nopan"
+      style={{
+        position: 'absolute',
+        left: x * zoom + offsetX,
+        top: y * zoom + offsetY,
+        transform: `translate(-50%, -50%) scale(${zoom})`,
+        zIndex: 4,
+      }}
+    >
+      <button
+        type="button"
+        className="canvas-edge-delete"
+        title="删除连线"
+        aria-label="删除连线"
+        onClick={(event) => {
+          event.stopPropagation()
+          onDelete()
+        }}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 14 14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="M4 4l6 6M10 4l-6 6" />
+          <circle cx="7" cy="7" r="5" />
+        </svg>
+      </button>
+    </div>,
+    flowRoot,
   )
 }
 
@@ -134,7 +192,7 @@ export default function CanvasArrowEdge({
   selected,
 }: EdgeProps) {
   const [hovered, setHovered] = useState(false)
-  const [path] = getBezierPath({
+  const [path, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -145,6 +203,7 @@ export default function CanvasArrowEdge({
   const color = (style?.stroke as string) || CANVAS_EDGE_ARROW_COLOR
   const rotation = ARROW_ROTATION[targetPosition] ?? 0
   const roleLabel = data?.hdLineage ? '高清处理' : canvasConnectionRoleLabel(data?.displayRole || data?.role)
+  const deleteEdge = selected && typeof data?.onDelete === 'function' ? data.onDelete : null
 
   return (
     <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
@@ -160,7 +219,15 @@ export default function CanvasArrowEdge({
         strokeLinejoin="round"
         transform={`translate(${targetX} ${targetY}) rotate(${rotation})`}
       />
-      {roleLabel && (hovered || selected) ? <CanvasEdgeRoleLabel path={path} label={roleLabel} /> : null}
+      {roleLabel && (hovered || selected) ? (
+        <CanvasEdgeRoleLabel
+          path={path}
+          label={roleLabel}
+          actionX={deleteEdge ? labelX : undefined}
+          actionY={deleteEdge ? labelY : undefined}
+        />
+      ) : null}
+      {deleteEdge && <CanvasEdgeDeleteButton x={labelX} y={labelY} onDelete={() => deleteEdge(id)} />}
     </g>
   )
 }

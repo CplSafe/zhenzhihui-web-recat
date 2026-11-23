@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-type Props = { shortcut: string; onDuplicate: () => void; onDuplicateWithUpstream: () => void }
+type Props = {
+  shortcut: string
+  onDuplicate: () => void
+  onDuplicateWithUpstream: () => void
+  onDuplicateWithOriginalInputs: () => void
+}
 
 /** Render outside the scrollable context menu so the submenu cannot be clipped. */
-export default function CanvasDuplicateMenu({ shortcut, onDuplicate, onDuplicateWithUpstream }: Props) {
+export default function CanvasDuplicateMenu({
+  shortcut,
+  onDuplicate,
+  onDuplicateWithUpstream,
+  onDuplicateWithOriginalInputs,
+}: Props) {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<number | undefined>(undefined)
@@ -25,11 +35,11 @@ export default function CanvasDuplicateMenu({ shortcut, onDuplicate, onDuplicate
     cancelClose()
     const rect = triggerRef.current?.getBoundingClientRect()
     if (!rect) return
-    const width = 190
+    const width = 258
     const flipped = rect.right + 4 + width > window.innerWidth - 8
     setPosition({
       left: Math.max(8, flipped ? rect.left - width - 4 : rect.right + 4),
-      top: Math.max(8, Math.min(rect.top - 6, window.innerHeight - 110)),
+      top: Math.max(8, Math.min(rect.top - 6, window.innerHeight - 150)),
       flipped,
     })
   }
@@ -62,7 +72,7 @@ export default function CanvasDuplicateMenu({ shortcut, onDuplicate, onDuplicate
             ref={submenuRef}
             className={`canvas-context-menu canvas-context-menu__submenu${position.flipped ? ' is-flipped' : ''}`}
             role="menu"
-            style={{ left: position.left, top: position.top }}
+            style={{ left: position.left, top: position.top, width: 'min(258px, calc(100vw - 16px))' }}
             onMouseEnter={cancelClose}
             onMouseLeave={scheduleClose}
             onFocus={cancelClose}
@@ -70,6 +80,14 @@ export default function CanvasDuplicateMenu({ shortcut, onDuplicate, onDuplicate
           >
             <button type="button" role="menuitem" className="canvas-context-menu__item" onClick={onDuplicate}>
               只含当前节点<span className="canvas-context-menu__kbd">{shortcut}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="canvas-context-menu__item"
+              onClick={onDuplicateWithOriginalInputs}
+            >
+              包含之前所有节点（仅连接原资产）
             </button>
             <button
               type="button"

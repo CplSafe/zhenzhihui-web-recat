@@ -9,6 +9,7 @@ import {
   getModelParamFields,
   getModelParamOptionValues,
   matchModelParamOptionValue,
+  type ModelParamField,
 } from './modelSchema'
 import { parseDurationSeconds } from './videoDurationValue'
 import { withNoOnscreenTextGuard } from './videoPromptGuards'
@@ -87,11 +88,31 @@ const DURATION_FIELDS = ['duration', 'seconds']
 const RATIO_FIELDS = ['ratio', 'aspect_ratio', 'aspectRatio']
 const SOURCE_DURATION_FIELDS = ['source_video_duration', 'sourceVideoDuration']
 
+function resolveSubjectOutputDurationSec(
+  model: BackendGenerationModel,
+  field: ModelParamField | null,
+  duration: number,
+) {
+  const { constraints } = buildModelRestrictionSummary(model)
+  const supportedDuration = constraints.duration?.options?.find((seconds) => seconds >= duration)
+  if (supportedDuration !== undefined) return supportedDuration
+  if (field?.type === 'number' && !getModelConstraintConflicts(constraints, { durationSec: duration }).length)
+    return duration
+  return resolveSegmentGenerationDurationSec(model, duration)
+}
+
 /** 报价和提交都使用当前团队目录的字段名，原片和可选参考图由调用方绑定。 */
 export function compileCanvasSubjectVideoRequest(
   model: BackendGenerationModel,
-  args: { prompt: string; duration: number; ratio?: string; resolution?: string; targetReferenceIndex?: number },
-): { prompt: string; params: Record<string, unknown> } {
+  args: {
+    prompt: string
+    duration: number
+    ratio?: string
+    resolution?: string
+    sourceVideoSize?: { width: number; height: number }
+    targetReferenceIndex?: number
+  },
+): { prompt: string; params: Record<string, unknown>; outputDurationSec?: number } {
   const { duration } = args
   const strategy = subjectVideoStrategy(model)
   if (!strategy) throw new Error('当前模型不支持视频主体编辑')
@@ -100,6 +121,18 @@ export function compileCanvasSubjectVideoRequest(
   const fields = getModelParamFields(model)
   const durationField = findFirstField(fields, DURATION_FIELDS)
   const sourceDurationField = findFirstField(fields, SOURCE_DURATION_FIELDS)
+  const resolutionField = findFirstField(fields, ['resolution', 'size'])
+  const resolutionOptions = getModelParamOptionValues(resolutionField)
+  const { width = 0, height = 0 } = args.sourceVideoSize ?? {}
+  const shortEdge = Math.min(width, height)
+  const sourceResolution =
+    shortEdge > 0
+      ? [`${width}x${height}`, `${shortEdge}p`, shortEdge === 2160 ? '4k' : shortEdge === 1440 ? '2k' : '']
+          .filter(Boolean)
+          .map((value) => matchModelParamOptionValue(value, resolutionOptions))
+          .find((value): value is string => typeof value === 'string')
+      : undefined
+  const requestedResolution = args.resolution || sourceResolution
   if (sourceDurationField) {
     const minimum = Number(sourceDurationField.min ?? sourceDurationField.minimum ?? 0)
     const maximum = Number(sourceDurationField.max ?? sourceDurationField.maximum ?? Infinity)
@@ -126,7 +159,7 @@ export function compileCanvasSubjectVideoRequest(
     const { prompt, params } = compileVideoEditModelRequest(model, {
       prompt: args.prompt,
       ratio: args.ratio,
-      resolution: args.resolution,
+      resolution: requestedResolution,
       durationSec: duration,
       sourceVideoDurationSec: duration,
     })
@@ -135,7 +168,10 @@ export function compileCanvasSubjectVideoRequest(
       const origin = matchModelParamOptionValue('origin', getModelParamOptionValues(audioSetting))
       if (audioSetting && origin !== undefined) params[audioSetting.name] = origin
     }
-    return { prompt, params }
+    const outputDurationSec = durationField
+      ? (parseDurationSeconds(params[durationField.name]) ?? undefined)
+      : undefined
+    return { prompt, params, outputDurationSec }
   }
 
   const ratioField = findFirstField(fields, RATIO_FIELDS)
@@ -153,14 +189,16 @@ export function compileCanvasSubjectVideoRequest(
 
   const automaticDuration =
     strategy === 'wan3' ? matchModelParamOptionValue(-1, getModelParamOptionValues(durationField)) : undefined
-  const resolutionField = findFirstField(fields, ['resolution', 'size'])
+  // 编辑模式按原视频出片。可选的生成时长档位不应阻止提交原片编辑。
+  const omitOutputDuration = strategy === 'seedance25' && !durationField?.required
+  const hasExplicitOutputDuration = !omitOutputDuration && automaticDuration === undefined
   const params = buildVideoGenerationParams(model, {
-    duration: automaticDuration === undefined ? resolveSegmentGenerationDurationSec(model, duration) : duration,
+    duration: hasExplicitOutputDuration ? resolveSubjectOutputDurationSec(model, durationField, duration) : duration,
     durationMode: 'exact',
-    validateExactDuration: automaticDuration === undefined,
+    validateExactDuration: hasExplicitOutputDuration,
     sourceVideoDuration: duration,
     ratio,
-    resolution: args.resolution || resolutionField?.default,
+    resolution: requestedResolution || resolutionField?.default,
     generateAudio: true,
   })
   const referenceField = findFirstField(fields, ['reference_mode'])
@@ -176,6 +214,7 @@ export function compileCanvasSubjectVideoRequest(
   let compiledParams = params as Record<string, unknown>
   if (mode && strategy === 'seedance25') {
     params[mode.name] = 'edit'
+    if (omitOutputDuration && durationField) delete params[durationField.name]
     // 与常规画布视频编辑一致，服务端根据 mode 转译火山的编辑任务类型与随原片参数。
     compiledParams = applyVideoTaskModeParams(params, {
       modeFieldName: mode.name,
@@ -194,5 +233,9 @@ export function compileCanvasSubjectVideoRequest(
   const targetHint =
     strategy === 'minimax-h3' && targetReference ? `<Picture ${targetReference}> 是修改后的主体外观参考。` : ''
   const prompt = withNoOnscreenTextGuard([lead, targetHint, args.prompt].filter(Boolean).join('\n'))
-  return { prompt, params: compiledParams }
+  const outputDurationSec =
+    strategy !== 'seedance25' && durationField
+      ? (parseDurationSeconds(compiledParams[durationField.name]) ?? undefined)
+      : undefined
+  return { prompt, params: compiledParams, outputDurationSec }
 }

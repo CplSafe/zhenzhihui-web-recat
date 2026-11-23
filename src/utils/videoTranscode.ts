@@ -33,6 +33,8 @@ export interface TranscodeSegment {
   /** 参与输出的样本下标区间（含两端），由调用方按裁剪区间算好。 */
   startIndex: number
   endIndex: number
+  /** 相对首个解码样本显示时间的输出窗口，单位微秒。 */
+  outputWindow?: { startUs: number; endUs: number }
 }
 
 export interface TranscodeOptions {
@@ -53,6 +55,7 @@ const DEFAULT_BITRATE_PER_PIXEL = 0.12
  * 未压缩画面在内存里越堆越多，长片必然卡死。
  */
 const QUEUE_HIGH_WATER = 6
+const PRECISE_TRIM_STALL_TIMEOUT_MS = 8_000
 
 /**
  * 让出一个宏任务。
@@ -64,6 +67,23 @@ function nextTask(): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, 0)
   })
+}
+
+async function awaitTrimCodec<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('浏览器精确裁剪超时，可改用无损裁剪。')),
+          PRECISE_TRIM_STALL_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 type WebCodecsGlobals = {
@@ -171,21 +191,25 @@ function usToTicks(us: number): number {
  */
 const CODEC_CANDIDATES = ['avc1.640034', 'avc1.640029', 'avc1.4d4029', 'avc1.42e029'] as const
 
-async function pickSupportedCodec(target: TranscodeSpec, bitrate: number): Promise<string> {
+type EncoderOptions = Pick<
+  VideoEncoderConfig,
+  'width' | 'height' | 'bitrate' | 'hardwareAcceleration' | 'latencyMode' | 'avc'
+>
+
+async function pickSupportedCodec(options: EncoderOptions, precise: boolean): Promise<string> {
   for (const codec of CODEC_CANDIDATES) {
     try {
-      const support = await VideoEncoder.isConfigSupported({
-        codec,
-        width: target.width,
-        height: target.height,
-        bitrate,
-      })
+      const probe = VideoEncoder.isConfigSupported({ codec, ...options })
+      const support = precise ? await awaitTrimCodec(probe) : await probe
       if (support.supported) return codec
-    } catch {
+    } catch (error) {
+      if (precise && error instanceof Error && error.message.includes('超时')) throw error
       // 个别实现对未知 codec 串直接抛错而不是返回 supported:false，继续试下一个
     }
   }
-  throw new Error(`当前浏览器无法以 ${target.width}×${target.height} 编码视频，请改用规格一致的片段`)
+  throw new Error(
+    `当前浏览器无法以 ${options.width}×${options.height} 编码视频，${precise ? '可改用无损裁剪' : '请改用规格一致的片段'}`,
+  )
 }
 
 /**
@@ -205,6 +229,7 @@ export async function transcodeSegmentsToCommonSpec(
   if (!segments.length) throw new Error('没有可重编码的片段')
 
   const signal = options.signal
+  const isPreciseTrim = segments.some((segment) => segment.outputWindow)
   const ensureLive = () => {
     if (signal?.aborted) throw abortError()
   }
@@ -215,14 +240,28 @@ export async function transcodeSegmentsToCommonSpec(
     1_000_000,
     Math.round(Number(options.bitrate) || target.width * target.height * DEFAULT_BITRATE_PER_PIXEL * 30),
   )
+  const resizeRequired = segments.some(
+    (segment) =>
+      !segment.outputWindow || segment.track.width !== target.width || segment.track.height !== target.height,
+  )
 
-  const canvas = new OffscreenCanvas(target.width, target.height)
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('无法创建重编码画布，当前浏览器可能不支持 OffscreenCanvas')
+  const canvas = resizeRequired ? new OffscreenCanvas(target.width, target.height) : null
+  const context = canvas?.getContext('2d') ?? null
+  if (resizeRequired && !context) throw new Error('无法创建重编码画布，当前浏览器可能不支持 OffscreenCanvas')
 
   const encoded: Array<{ data: Bytes; timestampUs: number; durationUs: number; sync: boolean }> = []
   let description: Bytes | null = null
   let encoderError: Error | null = null
+
+  const dimensions = { width: target.width, height: target.height, bitrate }
+  const exactSettings: EncoderOptions = {
+    ...dimensions,
+    avc: { format: 'avc' },
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  }
+  const codec = await pickSupportedCodec(isPreciseTrim ? exactSettings : dimensions, isPreciseTrim)
+  ensureLive()
 
   const encoder = new VideoEncoder({
     output: (chunk, metadata) => {
@@ -248,10 +287,8 @@ export async function transcodeSegmentsToCommonSpec(
     },
   })
   encoder.configure({
-    codec: await pickSupportedCodec(target, bitrate),
-    width: target.width,
-    height: target.height,
-    bitrate,
+    codec,
+    ...(isPreciseTrim ? exactSettings : dimensions),
     // avc 格式让 output 的 metadata 带回 avcC，muxer 才有 stsd 可写；annexb 则拿不到
     avc: { format: 'avc' },
   })
@@ -262,7 +299,7 @@ export async function transcodeSegmentsToCommonSpec(
   try {
     for (const segment of segments) {
       ensureLive()
-      const { track, buffer, startIndex, endIndex } = segment
+      const { track, buffer, startIndex, endIndex, outputWindow } = segment
       if (!track.decoderConfig) throw new Error('片段缺少解码配置，无法重编码')
 
       // 时间基点取该段第一个样本，使每段都从 0 开始，再统一平移到 baseUs
@@ -284,16 +321,24 @@ export async function transcodeSegmentsToCommonSpec(
         output: (frame) => {
           try {
             if (encoderError) return
-            drawContain(context, frame, target)
-            const framePts = Math.max(0, frame.timestamp)
-            const outFrame = new VideoFrame(canvas, {
+            const sourcePts = frame.timestamp
+            const sourceDuration = Number(frame.duration) || 0
+            const visibleStart = outputWindow ? Math.max(outputWindow.startUs, sourcePts) : sourcePts
+            const visibleEnd = outputWindow
+              ? Math.min(outputWindow.endUs, sourcePts + sourceDuration)
+              : sourcePts + sourceDuration
+            if (outputWindow && visibleEnd <= visibleStart) return
+            const framePts = Math.max(0, visibleStart - (outputWindow?.startUs ?? 0))
+            const duration = outputWindow ? visibleEnd - visibleStart : sourceDuration
+            if (context) drawContain(context, frame, target)
+            const outFrame = new VideoFrame(canvas ?? frame, {
               timestamp: baseUs + framePts,
-              duration: Number(frame.duration) || 0,
+              duration,
             })
             try {
               encoder.encode(outFrame, { keyFrame: isFirstFrameOfSegment })
               isFirstFrameOfSegment = false
-              segmentDurationUs = Math.max(segmentDurationUs, framePts + (Number(frame.duration) || 0))
+              segmentDurationUs = Math.max(segmentDurationUs, framePts + duration)
             } finally {
               outFrame.close()
             }
@@ -322,11 +367,15 @@ export async function transcodeSegmentsToCommonSpec(
 
           // 背压：任一队列积压就先让出宏任务，等编解码器把已排队的处理完。
           // 必须是宏任务——output 回调排在任务队列上，只让出微任务它永远得不到执行。
+          const waitStarted = Date.now()
           while (decoder.decodeQueueSize > QUEUE_HIGH_WATER || encoder.encodeQueueSize > QUEUE_HIGH_WATER) {
             await nextTask()
             ensureLive()
             if (decoderError) throw decoderError
             if (encoderError) throw encoderError
+            if (isPreciseTrim && Date.now() - waitStarted > PRECISE_TRIM_STALL_TIMEOUT_MS) {
+              throw new Error('浏览器精确裁剪超时，可改用无损裁剪。')
+            }
           }
 
           const sample = track.samples[i]
@@ -341,7 +390,8 @@ export async function transcodeSegmentsToCommonSpec(
           processed += 1
           options.onProgress?.(processed, totalSamples)
         }
-        await decoder.flush()
+        if (isPreciseTrim) await awaitTrimCodec(decoder.flush())
+        else await decoder.flush()
       } finally {
         if (decoder.state !== 'closed') decoder.close()
       }
@@ -350,12 +400,14 @@ export async function transcodeSegmentsToCommonSpec(
 
       // 末帧没有下一帧可推算时长，用源片最后一个样本的时长兜底，避免整段少一帧
       if (segmentDurationUs <= 0) {
+        if (outputWindow) throw new Error('所选区间内没有可裁剪的画面')
         segmentDurationUs = toUs(track.samples[endIndex].cts) + sampleDurationUs(track.samples[endIndex].duration)
       }
       baseUs += segmentDurationUs
     }
 
-    await encoder.flush()
+    if (isPreciseTrim) await awaitTrimCodec(encoder.flush())
+    else await encoder.flush()
     if (encoderError) throw encoderError
   } finally {
     if (encoder.state !== 'closed') encoder.close()

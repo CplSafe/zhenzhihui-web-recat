@@ -109,6 +109,8 @@ export default function CanvasModelSelector({
   loading,
   disabled,
   emptyLabel,
+  unavailableSelectionLabel,
+  unavailableSelectionReason,
   onChange,
   onOpen,
 }: {
@@ -120,6 +122,8 @@ export default function CanvasModelSelector({
   disabled?: boolean
   /** 没有可用模型时的说明，用于区分「目录还没加载出来」和「这个操作没有可用模型」。 */
   emptyLabel?: string
+  unavailableSelectionLabel?: string
+  unavailableSelectionReason?: string
   onChange?: (modelVersionId: number) => void
   /** 打开模型菜单时通知同级新手提示收起，避免提示层遮挡模型选项。 */
   onOpen?: () => void
@@ -152,7 +156,9 @@ export default function CanvasModelSelector({
   const selected = availableModels.find((m) => m.modelVersionId === value)
   const display = loading
     ? '加载中...'
-    : selected?.displayName || (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')
+    : selected?.displayName ||
+      unavailableSelectionLabel ||
+      (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')
   // 有被挡住的模型时仍然允许展开：列表里逐条写明为什么用不了
   const canOpen = !disabled && (availableModels.length > 0 || blockedModels.length > 0)
   return (
@@ -163,7 +169,7 @@ export default function CanvasModelSelector({
         aria-haspopup="listbox"
         aria-disabled={!canOpen}
         className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
-        title={selected ? undefined : blockedReason || emptyLabel || undefined}
+        title={selected ? undefined : unavailableSelectionReason || blockedReason || emptyLabel || undefined}
         onClick={() => {
           if (!canOpen) return
           if (open) close()

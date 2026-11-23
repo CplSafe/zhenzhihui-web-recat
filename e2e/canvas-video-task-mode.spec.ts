@@ -96,6 +96,9 @@ for (const scenario of [
               : { id: 125, title: '视频任务类型验证', revision: 1 },
       }),
     )
+    await page.route('**/api/v1/canvases/125/node-locks**', (route) =>
+      route.fulfill({ json: { granted: true, nodes: {} } }),
+    )
     const submissions: Record<string, any>[] = []
     const estimates: Record<string, any>[] = []
     await page.route('**/api/v1/ai/tasks/estimate-cost', (route) => {
@@ -117,7 +120,7 @@ for (const scenario of [
     })
     await page.goto('/canvas/125')
     await expect(page.locator('.react-flow__node[data-id="video"]')).toBeVisible()
-    await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('100')
+    await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
     await expect
       .poll(() =>
         page.locator('.react-flow__viewport').evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a),

@@ -400,7 +400,7 @@ test('新画布入口打开命名弹窗并承接创建意图', async ({ page }) 
     }
     return route.fulfill({ json: { id: 999, title: '命名后的新项目', revision: 1 } })
   })
-  await page.goto('/canvas/142')
+  await page.goto('/canvas')
   const studio = page.getByRole('region', { name: '开始创作' })
   await expect(studio.getByRole('button', { name: '创建脚本' })).toBeVisible()
   await expect(page.getByRole('button', { name: '查看更多' })).toBeVisible()

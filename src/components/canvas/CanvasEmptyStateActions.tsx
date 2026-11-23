@@ -17,6 +17,7 @@ import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
 import styles from './CanvasEmptyStateActions.module.css'
 import { formatCredits } from '@/utils/creditsFormat'
+import CanvasSettingsDialog from './CanvasSettingsDialog'
 
 type Action = {
   label: string
@@ -35,6 +36,7 @@ export default function CanvasEmptyStateActions() {
   const [covers, setCovers] = useState<Record<number, CanvasCover | null>>({})
   const [loading, setLoading] = useState(false)
   const [openMenuId, setOpenMenuId] = useState(0)
+  const [settingsTarget, setSettingsTarget] = useState<{ ws: number; id: number; userId: number } | null>(null)
   const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
   const [renameName, setRenameName] = useState('')
   const [saving, setSaving] = useState(false)
@@ -43,6 +45,7 @@ export default function CanvasEmptyStateActions() {
   const duplicateBusy = useRef(false)
   const workspaceIdRef = useRef(workspaceId)
   workspaceIdRef.current = workspaceId
+  useEffect(() => setSettingsTarget(null), [workspaceId, currentUserId])
   useEffect(() => {
     if (!workspaceId) {
       setRecent([])
@@ -359,9 +362,25 @@ export default function CanvasEmptyStateActions() {
                         {duplicatingId === item.id ? '创建中…' : '创建副本'}
                       </button>
                       {item.userId && currentUserId && item.userId === currentUserId && (
-                        <button type="button" disabled={deletingId === item.id} onClick={() => void handleDelete(item)}>
-                          {deletingId === item.id ? '删除中…' : '删除画布'}
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            disabled={item.status === 'archived'}
+                            onClick={() => {
+                              setOpenMenuId(0)
+                              setSettingsTarget({ ws: Number(workspaceId), id: item.id, userId: currentUserId })
+                            }}
+                          >
+                            设置画布
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingId === item.id}
+                            onClick={() => void handleDelete(item)}
+                          >
+                            {deletingId === item.id ? '删除中…' : '删除画布'}
+                          </button>
+                        </>
                       )}
                     </span>
                   )}
@@ -389,6 +408,18 @@ export default function CanvasEmptyStateActions() {
           <p className={styles.recentHint}>暂无历史项目</p>
         )}
       </section>
+      {settingsTarget && settingsTarget.ws === Number(workspaceId) && settingsTarget.userId === currentUserId && (
+        <CanvasSettingsDialog
+          key={`${settingsTarget.ws}:${currentUserId}:${settingsTarget.id}`}
+          workspaceId={settingsTarget.ws}
+          canvasId={settingsTarget.id}
+          currentUserId={currentUserId}
+          onClose={() => setSettingsTarget(null)}
+          onSaved={(changes) => {
+            setRecent((items) => items.map((item) => (item.id === settingsTarget.id ? { ...item, ...changes } : item)))
+          }}
+        />
+      )}
       {renameTarget &&
         createPortal(
           <div

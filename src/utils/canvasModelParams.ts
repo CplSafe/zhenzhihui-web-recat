@@ -1,4 +1,22 @@
+import { naturalImageRatio } from './canvasLocalImage'
+
 export type CanvasModelParamOption = string | number
+
+export function isCanvasRatioParam(name: string): boolean {
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  return key === 'ratio' || key === 'aspectratio'
+}
+
+/** 部分模型用像素尺寸档位表示画幅。纯分辨率档位（如 2K）没有固定比例。 */
+export function canvasFrameSizeRatio(name: string, value: unknown): string | undefined {
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  if (key !== 'size' && key !== 'imagesize' && key !== 'videosize' && key !== 'resolution') return undefined
+  const dimensions = /^(\d+)\s*[x×]\s*(\d+)$/i.exec(String(value ?? '').trim())
+  if (!dimensions) return undefined
+  const [, width, height] = dimensions
+  if (!(Number(width) > 0 && Number(height) > 0)) return undefined
+  return naturalImageRatio(Number(width), Number(height))
+}
 
 /**
  * 「跟随输入素材」的比例取值。

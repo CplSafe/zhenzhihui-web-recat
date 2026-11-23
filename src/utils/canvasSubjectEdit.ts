@@ -223,10 +223,14 @@ function describeSelectionBounds({ x, y, width, height }: CanvasSubjectSelection
   return `选区从画面左边起 ${percent(x)}、从上边起 ${percent(y)}，宽 ${percent(width)}、高 ${percent(height)}`
 }
 
-function describeVideoSelection({ time, bounds }: CanvasSubjectVideoSelection, duration: number) {
+function describeVideoSelection({ time, bounds }: CanvasSubjectVideoSelection, duration: number, subject?: string) {
   if (!Number.isFinite(time) || time < 0 || time > duration) throw new Error('所选画面时刻已超出原视频')
   if (!validSelection(bounds)) throw new Error('请重新框选视频中的主体')
-  return `选区参考：原视频第 ${Number(time.toFixed(3))} 秒，${describeSelectionBounds(bounds)}。以这处选区定位该帧的主体。`
+  return (
+    `选区参考：原视频第 ${Number(time.toFixed(3))} 秒，${describeSelectionBounds(bounds)}。` +
+    '以标记帧的选区确定要编辑的主体，沿它在不同画面中实际出现的位置持续处理。' +
+    (subject ? `主体描述（辅助定位）：${subject}。` : '')
+  )
 }
 
 function describeImageSelection(bounds: CanvasSubjectSelectionBounds, strategy: 'bbox' | 'description') {
@@ -258,6 +262,7 @@ export function buildCanvasSubjectVideoEstimateRequest({
   targetReferenceAssetId,
   duration,
   ratio,
+  sourceVideoSize,
 }: {
   mode: CanvasSubjectEditMode
   model: BackendGenerationModel
@@ -265,7 +270,10 @@ export function buildCanvasSubjectVideoEstimateRequest({
   targetReferenceAssetId?: number
   duration: number
   ratio?: string
-}): Pick<CanvasSubjectEditRequest, 'modelVersionId' | 'operationCode' | 'prompt' | 'params' | 'inputAssets'> {
+  sourceVideoSize?: { width: number; height: number }
+}): Pick<CanvasSubjectEditRequest, 'modelVersionId' | 'operationCode' | 'prompt' | 'params' | 'inputAssets'> & {
+  outputDurationSec?: number
+} {
   const modelVersionId = getBackendGenerationModelVersionId(model)
   const operationCode = getCanvasSubjectVideoOperation(model)
   if (!modelVersionId || !operationCode) throw new Error('请选择当前空间支持主体编辑的模型')
@@ -276,6 +284,7 @@ export function buildCanvasSubjectVideoEstimateRequest({
     prompt: `对提供的视频进行${CANVAS_SUBJECT_EDIT_MODE_LABELS[mode]}，保持原片时长和音轨。`,
     duration,
     ratio,
+    sourceVideoSize,
     targetReferenceIndex: targetReferenceAssetId === undefined ? undefined : 1,
   })
   return { modelVersionId, operationCode, inputAssets, ...request }
@@ -297,6 +306,7 @@ export function buildCanvasSubjectEditRequest({
   replacementAssetId,
   ratio,
   resolution,
+  sourceVideoSize,
 }: {
   kind: CanvasSubjectEditKind
   mode: CanvasSubjectEditMode
@@ -312,6 +322,7 @@ export function buildCanvasSubjectEditRequest({
   replacementAssetId?: number
   ratio?: string
   resolution?: string
+  sourceVideoSize?: { width: number; height: number }
 }): CanvasSubjectEditRequest {
   const modelVersionId = getBackendGenerationModelVersionId(model)
   const imageStrategy = kind === 'image' ? getImageEditStrategy(model) : null
@@ -324,7 +335,8 @@ export function buildCanvasSubjectEditRequest({
   )
     throw new Error('请选择当前空间支持主体编辑的模型')
   if (!Number.isSafeInteger(sourceAssetId) || sourceAssetId <= 0) throw new Error('原素材尚未就绪')
-  const subject = target?.trim() || (videoSelection ? '标记帧选区内的主体' : '')
+  const targetDescription = target?.trim()
+  const subject = kind === 'video' && videoSelection ? '标记帧选区内的主体' : targetDescription
   const details = description?.trim()
   if (kind === 'video' && !subject) throw new Error('请选择或描述要处理的主体')
   if (
@@ -367,7 +379,8 @@ export function buildCanvasSubjectEditRequest({
   if (kind === 'video') {
     const duration = parseDurationSeconds(sourceVideoDurationSec)
     if (duration === null) throw new Error('无法读取原视频时长，请重新加载视频后重试')
-    const selectionPrompt = videoSelection === undefined ? '' : describeVideoSelection(videoSelection, duration)
+    const selectionPrompt =
+      videoSelection === undefined ? '' : describeVideoSelection(videoSelection, duration, targetDescription)
     const inputAssets = buildCanvasInputAssets([{ kind, assetId: sourceAssetId }], operationCode)
     const referenceId = videoSelection?.referenceAssetId
     if (referenceId !== undefined) {
@@ -397,7 +410,6 @@ export function buildCanvasSubjectEditRequest({
           : `第${referenceCount}张参考图仅用于指定修改后的外观，根据修改要求编辑原主体。`
     const request = compileCanvasSubjectVideoRequest(model, {
       prompt: [
-        instructions[mode],
         selectionPrompt,
         referenceId === undefined
           ? ''
@@ -405,7 +417,9 @@ export function buildCanvasSubjectEditRequest({
             ? '参考图片仅用于辨认选中的主体。'
             : '第1张参考图是原视频中选中的旧主体，仅用于定位。',
         targetImagePrompt,
-        '对完整视频持续处理同一个目标，保持原片镜头运动、构图、时长、其他主体和原有音轨。',
+        instructions[mode],
+        '从首帧到末帧，只要该目标出现就执行同一编辑。目标未出现的画面保留原样。保留原片镜头运动、构图、其他主体和原有音轨。',
+        '在模型支持的时长范围内保持原片时长。',
         mode === 'remove'
           ? '补出的背景跨帧连续，避免边缘闪烁、拖影和目标重新出现。'
           : '保持修改后的主体跨帧一致，避免边缘闪烁和拖影。',
@@ -414,6 +428,7 @@ export function buildCanvasSubjectEditRequest({
         .join('\n'),
       ratio,
       resolution,
+      sourceVideoSize,
       duration,
       targetReferenceIndex: targetImageId === undefined ? undefined : referenceCount,
     })

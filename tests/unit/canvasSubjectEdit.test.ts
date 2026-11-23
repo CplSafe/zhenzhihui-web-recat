@@ -121,6 +121,22 @@ describe('画布主体编辑请求', () => {
     ).toThrow('重新框选')
   })
 
+  it('视频替换以选区确定旧主体，并单独保留文字描述和替换要求', () => {
+    const request = buildCanvasSubjectEditRequest({
+      ...video,
+      mode: 'replace',
+      target: '怪兽',
+      description: '将选中的眼睛改成绿色',
+      videoSelection: { time: 2.5, bounds: { x: 0.45, y: 0.3, width: 0.1, height: 0.1 } },
+    })
+    expect(request.prompt).toContain('以标记帧的选区确定要编辑的主体')
+    expect(request.prompt).toContain('主体描述（辅助定位）：怪兽')
+    expect(request.prompt).toContain('仅替换原视频中的「标记帧选区内的主体」')
+    expect(request.prompt).toContain('替换要求：将选中的眼睛改成绿色')
+    expect(request.prompt).toContain('从首帧到末帧，只要该目标出现就执行同一编辑')
+    expect(request.prompt).not.toContain('仅替换原视频中的「怪兽」')
+  })
+
   it('可直接用标记帧选区定位主体，未选择且未填写描述时拒绝提交', () => {
     const videoSelection = { time: 5, bounds: { x: 0.1, y: 0.2, width: 0.2, height: 0.3 } }
     expect(buildCanvasSubjectEditRequest({ ...video, target: ' ', videoSelection }).prompt).toContain(
@@ -382,6 +398,78 @@ const subjectVideoCases = subjectVideoEditPolicies.flatMap((policy) =>
 )
 
 describe('团队视频主体编辑适配', () => {
+  it.each([
+    [{ name: 'duration', type: 'number', min: 4, max: 15 }, 7.25],
+    [{ name: 'duration', type: 'select', options: [5, 7.5, 15] }, 7.5],
+    [{ name: 'duration', type: 'integer', min: 4, max: 15 }, 8],
+  ])('使用模型允许的最贴近且覆盖原片的出片时长 %o', (durationField, expectedDuration) => {
+    const minimax = subjectVideoCases.find(({ model }) => model.id === 25)!.model
+    const model = {
+      ...minimax,
+      params_schema: { fields: [durationField, { name: 'source_video_duration', min: 2, max: 15 }] },
+    }
+    const sourceDuration = 7.25
+    const request = buildCanvasSubjectEditRequest({ ...video, model, sourceVideoDurationSec: sourceDuration })
+    const estimate = buildCanvasSubjectVideoEstimateRequest({
+      mode: 'remove',
+      model,
+      sourceAssetId: video.sourceAssetId,
+      duration: sourceDuration,
+    })
+    expect(request.params).toEqual({ duration: expectedDuration, source_video_duration: sourceDuration })
+    expect(estimate.params).toEqual(request.params)
+    expect(estimate.outputDurationSec).toBe(expectedDuration)
+    expect(request).not.toHaveProperty('outputDurationSec')
+  })
+
+  it.each(['duration', 'seconds'])('随原片编辑时，未必填的 %s 生成档位不限制输入时长', (name) => {
+    const flash = subjectVideoCases.find(({ model }) => model.id === 60)!.model
+    const model = {
+      ...flash,
+      params_schema: {
+        fields: [
+          { name, type: 'select', options: [5, 10, 15] },
+          { name: 'source_video_duration', min: 4, max: 30 },
+          subjectVideoModes,
+        ],
+      },
+    }
+    const request = buildCanvasSubjectEditRequest({ ...video, model, sourceVideoDurationSec: 17.25 })
+    const estimate = buildCanvasSubjectVideoEstimateRequest({
+      mode: video.mode,
+      model,
+      sourceAssetId: video.sourceAssetId,
+      duration: 17.25,
+    })
+    expect(request.params).toEqual({ mode: 'edit', source_video_duration: 17.25 })
+    expect(estimate.params).toEqual(request.params)
+    expect(estimate.outputDurationSec).toBeUndefined()
+  })
+
+  it('只有模型支持原片分辨率时才沿用该分辨率，估价与提交保持一致', () => {
+    const flash = subjectVideoCases.find(({ model }) => model.id === 60)!.model
+    const model = {
+      ...flash,
+      params_schema: {
+        fields: [{ name: 'resolution', default: '720p', options: ['720p', '1080P'] }, subjectVideoModes],
+      },
+    }
+    const sourceVideoSize = { width: 1080, height: 1920 }
+    const request = buildCanvasSubjectEditRequest({ ...video, model, sourceVideoSize })
+    const estimate = buildCanvasSubjectVideoEstimateRequest({
+      mode: video.mode,
+      model,
+      sourceAssetId: video.sourceAssetId,
+      duration: video.sourceVideoDurationSec,
+      sourceVideoSize,
+    })
+    expect(request.params).toEqual({ mode: 'edit', resolution: '1080P' })
+    expect(estimate.params).toEqual(request.params)
+    expect(
+      buildCanvasSubjectEditRequest({ ...video, model, sourceVideoSize: { width: 2160, height: 3840 } }).params,
+    ).toEqual({ mode: 'edit', resolution: '720p' })
+  })
+
   it('隐藏 HappyHorse 和 Seedance 2.0 标准版，保留相邻版本', () => {
     const models = subjectVideoCases.map(({ model }) => model)
     const standard = models.find(({ version }) => version === 'doubao-seedance-2-0-260128')!

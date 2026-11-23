@@ -49,7 +49,9 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import {
+  canvasFrameSizeRatio,
   filterInputDerivedRatioOptions,
+  isCanvasRatioParam,
   isInputDerivedRatioValue,
   resolveCanvasModelParamOption,
 } from '@/utils/canvasModelParams'
@@ -73,7 +75,12 @@ import {
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 import { getModelReferenceImageMinimum } from '@/utils/modelInputConstraints'
-import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
+import {
+  CANVAS_IMAGE_DEFAULT_RATIO,
+  CANVAS_VIDEO_DEFAULT_RATIO,
+  DEFAULT_MAX_REFS,
+  FIRST_LAST_REF_SLOTS,
+} from '@/utils/canvasNodeDefaults'
 import { resolveCanvasModelForOperation } from '@/utils/canvasModelBuckets'
 import type { CanvasResultHistoryEntry } from '@/utils/canvasElements'
 import { assetStreamUrl } from '@/utils/assetUrl'
@@ -139,7 +146,7 @@ function isNumberField(field: ParamsSchemaField): boolean {
 
 /** 比例字段名别名（归一化后均相同）。 */
 function isRatioField(field: ParamsSchemaField): boolean {
-  return normalizeParamKey(field.name) === 'ratio' || normalizeParamKey(field.name) === 'aspectratio'
+  return isCanvasRatioParam(field.name)
 }
 
 /** 视频时长字段名兼容：后端常见 duration / video_duration / duration_seconds。 */
@@ -332,21 +339,19 @@ function formatRatioValue(value: unknown): string {
   return text
 }
 
-/** 投放场景基本是竖屏，视频节点默认 9:16 */
-const VIDEO_DEFAULT_RATIO = '9:16'
-
-/**
- * 视频比例字段的初始值：节点上已选的具体比例 > 9:16 > 模型声明的默认值。
- * 以前直接用模型默认值（常见是「自适应」或 16:9），用户不展开参数菜单就发现不了，
- * 接了 1:1 参考图出来的视频就不是竖屏。
- */
-function pickVideoDefaultRatio(field: ParamsSchemaField, nodeRatio: string | undefined): unknown {
-  const options = (field.options || []).map(String)
-  if (!options.length) return field.default ?? VIDEO_DEFAULT_RATIO
+/** 优先采用节点已保存的比例，新节点使用画布默认比例。 */
+function pickDefaultRatio(
+  field: ParamsSchemaField,
+  nodeRatio: string | undefined,
+  preferredRatio: string,
+  savedValue: unknown,
+): unknown {
   const nodeValue = String(nodeRatio || '').trim()
-  if (nodeValue && !isAutoRatio(nodeValue) && options.includes(nodeValue)) return nodeValue
-  if (options.includes(VIDEO_DEFAULT_RATIO)) return VIDEO_DEFAULT_RATIO
-  return field.default
+  const canvasRatio = resolveCanvasModelParamOption(field.options, preferredRatio, field.default)
+  const ratio = nodeValue && !isInputDerivedRatioValue(nodeValue) ? nodeValue : canvasRatio
+  const nodeDefault = resolveCanvasModelParamOption(field.options, ratio, canvasRatio)
+  if (savedValue == null || savedValue === '') return nodeDefault
+  return resolveCanvasModelParamOption(field.options, savedValue, nodeDefault)
 }
 
 /** 字段当前值 → 菜单按钮上显示的文本。 */
@@ -1351,19 +1356,19 @@ export default function CanvasNodePanel({
         ? modelDefaults?.videoModelVersionId
         : undefined
 
+  const explicitOption = availableModels.find((model) => model.modelVersionId === node?.modelVersionId)
+  // 普通视频节点的显式模型（含粘贴来的配置）需要用户确认后才能换另一个付费模型。
+  // 历史 video.edit 等专用操作原本就会回到 video.generate 的可用目录。
+  const requiredVideoModelId =
+    kind === 'video' && (!node?.operationCode || node.operationCode === targetOperationCode)
+      ? node?.modelVersionId
+      : undefined
+
   // 节点自选优先；新节点使用本画布的默认模型。
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
     // 旧草稿不能静默改用另一个付费模型；必须由用户重新选择。
     if (requiresImageModelSelection) return undefined
-    const explicitOption = node?.modelVersionId
-      ? availableModels.find((m) => m.modelVersionId === node.modelVersionId)
-      : undefined
-    if (
-      node?.modelVersionId &&
-      !explicitOption &&
-      (kind === 'image' ? modelDefaults?.imageModelVersionId : kind === 'video' && modelDefaults?.videoModelVersionId)
-    )
-      return undefined
+    if (node?.modelVersionId && !explicitOption && (requiredVideoModelId || defaultVersionId)) return undefined
     if (explicitOption) return explicitOption.unavailableReason ? undefined : explicitOption
     const usable = availableModels.filter((m) => !m.unavailableReason)
     if (!node?.modelVersionId) {
@@ -1383,8 +1388,9 @@ export default function CanvasNodePanel({
     kind,
     targetOperationCode,
     requiresImageModelSelection,
+    requiredVideoModelId,
+    explicitOption,
     defaultVersionId,
-    modelDefaults,
   ])
 
   useEffect(() => {
@@ -1501,6 +1507,21 @@ export default function CanvasNodePanel({
 
   /** 缺模型时的说明文案：按目标 operation 指名道姓，不要笼统说「暂无可用模型」。 */
   const catalogOperationState = modelOperationStates?.[targetOperationCode as GenerationOperationCode]
+  const unavailableVideoModelId =
+    !selectedModel &&
+    !modelsLoading &&
+    catalogOperationState?.status !== 'error' &&
+    catalogOperationState?.status !== 'configuration-error'
+      ? requiredVideoModelId
+      : undefined
+  const unavailableVideoModel = kindModels.find((model) => model.modelVersionId === unavailableVideoModelId)
+  const unavailableVideoModelLabel = unavailableVideoModelId
+    ? unavailableVideoModel?.displayName || `模型 #${unavailableVideoModelId}`
+    : ''
+  const unavailableVideoModelReason = unavailableVideoModelLabel
+    ? explicitOption?.unavailableReason ||
+      (unavailableVideoModel ? '当前操作不支持此模型，请重新选择' : '此模型已不在当前空间的可用列表，请重新选择')
+    : ''
   const emptyModelLabel = useMemo(() => {
     if (modelsLoading) return '正在加载模型…'
     if (catalogOperationState?.status === 'error') return '模型加载失败，请重新加载'
@@ -1589,22 +1610,31 @@ export default function CanvasNodePanel({
   useEffect(() => {
     const persisted = (node?.params || {}) as Record<string, unknown>
     const next: Record<string, unknown> = {}
+    const preferredRatio =
+      kind === 'image' ? CANVAS_IMAGE_DEFAULT_RATIO : kind === 'video' ? CANVAS_VIDEO_DEFAULT_RATIO : undefined
+    const frameRatio = preferredRatio && (nodeRatioRef.current || preferredRatio)
+    const hasRatioField = schemaFields.some(isRatioField)
     for (const f of schemaFields) {
       const hasPersistedValue = Object.prototype.hasOwnProperty.call(persisted, f.name)
-      const initialValue = hasPersistedValue
-        ? persisted[f.name]
-        : kind === 'video' && isAudioField(f)
-          ? true
-          : kind === 'video' && isRatioField(f)
-            ? pickVideoDefaultRatio(f, nodeRatioRef.current)
-            : f.default
+      const defaultSize =
+        frameRatio && !hasRatioField && canvasFrameSizeRatio(f.name, f.default) !== frameRatio
+          ? f.options?.find((option) => canvasFrameSizeRatio(f.name, option) === frameRatio)
+          : undefined
+      const initialValue =
+        preferredRatio && isRatioField(f)
+          ? pickDefaultRatio(f, nodeRatioRef.current, preferredRatio, persisted[f.name])
+          : hasPersistedValue
+            ? persisted[f.name]
+            : kind === 'video' && isAudioField(f)
+              ? true
+              : (defaultSize ?? f.default)
       next[f.name] =
         kind === 'image' && isImageCountField(f)
           ? normalizeImageCountValue(initialValue)
           : normalizeFieldValue(f, initialValue)
     }
     setFieldValues(next)
-  }, [kind, schemaFields, node?.params])
+  }, [kind, schemaFields, node?.id, node?.params])
 
   /**
    * 由 schema fields + 当前字段值构建 params。
@@ -2938,6 +2968,11 @@ export default function CanvasNodePanel({
           {inputValidationError}
         </div>
       )}
+      {unavailableVideoModelReason && (
+        <div className={styles.inputError} role="status">
+          {unavailableVideoModelLabel}暂不可用。{unavailableVideoModelReason}
+        </div>
+      )}
 
       <div className={styles.textPromptTools}>
         <div className={`${styles.textPromptHint} ${polishError ? styles.textPromptError : ''}`}>
@@ -3035,6 +3070,8 @@ export default function CanvasNodePanel({
               operation={operationCode}
               // 与实际提交用的 selectedModel 同源，默认模型（含「上次使用」）才不会显示一个、提交另一个
               value={selectedModel?.modelVersionId}
+              unavailableSelectionLabel={unavailableVideoModelLabel}
+              unavailableSelectionReason={unavailableVideoModelReason}
               loading={modelsLoading}
               disabled={taskRunning}
               onOpen={() => setRealPersonHintDismissed(true)}
@@ -3142,7 +3179,7 @@ export default function CanvasNodePanel({
                         : !selectedModel
                           ? requiresImageModelSelection
                             ? '原模型已不支持普通图片节点，请重新选择模型'
-                            : emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                            : unavailableVideoModelReason || emptyModelLabel || '暂无可用模型，请先在上方选择模型'
                           : hasExistingResult
                             ? '重新制作'
                             : '开始制作')

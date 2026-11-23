@@ -946,6 +946,56 @@ test('视频主体编辑保留 12 秒原片，并分别生成新节点', async (
   await page.screenshot({ path: testInfo.outputPath('video-edit-results.png') })
 })
 
+test('视频主体替换说明固定出片档位，并以框选区域定位旧主体', async ({ page }, testInfo) => {
+  const fixedDurationModel = {
+    ...seedanceFastSubjectModel,
+    params_schema: {
+      fields: [
+        { name: 'duration', type: 'select', required: true, options: [5, 10, 15] },
+        { name: 'source_video_duration', type: 'number', min: 2, max: 15 },
+        { name: 'resolution', type: 'select', default: '720p', options: ['320p', '720p'] },
+        { name: 'mode', type: 'select', options: ['generate'] },
+      ],
+    },
+  }
+  const app = await setupSubjectEdit(page, 'video', { extraModels: [fixedDurationModel] })
+  await page.route(`**/api/v1/assets/${videoAssetId}/seedance-moderation?**`, (route) =>
+    route.fulfill({ json: { data: { status: 'active' } } }),
+  )
+  await page.goto(`/canvas/${canvasId}`)
+  await app.open()
+  await app.dialog.getByRole('button', { name: '主体替换', exact: true }).click()
+  await chooseEditModel(page, app.dialog, fixedDurationModel)
+  const params = { duration: 15, source_video_duration: duration, mode: 'generate', resolution: '320p' }
+  await expectVideoEstimate(app, { model_version_id: fixedDurationModel.id, params })
+  await expect(app.dialog.getByText('原视频 12 秒，当前模型请求 15 秒的输出。', { exact: true })).toBeVisible()
+
+  const frame = app.dialog.locator('canvas[aria-label="视频帧涂抹区域"]')
+  await expect(frame).toBeVisible()
+  await app.dialog.getByRole('button', { name: '框选', exact: true }).click()
+  await dragSelection(page, frame, [0.4, 0.25], [0.6, 0.45])
+  await app.dialog.getByRole('textbox', { name: '要处理的主体' }).fill('怪兽')
+  await app.dialog.getByRole('textbox', { name: '替换说明' }).fill('将选中的眼睛改成绿色')
+  await page.screenshot({ path: testInfo.outputPath('video-subject-replacement-duration.png') })
+  await app.dialog.getByRole('button', { name: '开始处理', exact: true }).click()
+  await expect(app.dialog).toBeHidden()
+  expect(app.submissions).toHaveLength(1)
+  const request = app.submissions[0]
+  expect(request).toMatchObject({
+    model_version_id: fixedDurationModel.id,
+    operation_code: 'video.generate',
+    params,
+    input_assets: [{ asset_id: videoAssetId, role: 'video' }],
+  })
+  expect(request.prompt).toEqual(expect.stringContaining('仅替换原视频中的「标记帧选区内的主体」'))
+  expect(request.prompt).toEqual(expect.stringContaining('主体描述（辅助定位）：怪兽'))
+  expect(request.prompt).toEqual(expect.stringContaining('从首帧到末帧'))
+  app.expectMatchingEstimate(request)
+  await expect(app.result('主体替换').locator('video')).toHaveAttribute('src', /\/assets\/602\/download/)
+  expect(app.pageErrors).toEqual([])
+  expectNoUnexpectedApi(app.api)
+})
+
 test('视频自动估价失败后可重试，最终价格变化时等用户确认', async ({ page }, testInfo) => {
   const app = await setupSubjectEdit(page, 'video')
   await page.setViewportSize({ width: 390, height: 844 })
