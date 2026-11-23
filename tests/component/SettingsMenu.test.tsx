@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -32,6 +32,11 @@ vi.mock('@/api/creditRequests', () => ({ getCreditRequestContext: mocks.context 
 
 import SettingsMenu from '@/components/home/SettingsMenu'
 import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
+
+function CreditRequestsDestination() {
+  const [params] = useSearchParams()
+  return <h1>{params.get('tab') === 'received' ? '我收到的' : '我发起的'}</h1>
+}
 
 describe('SettingsMenu', () => {
   beforeEach(() => {
@@ -141,21 +146,25 @@ describe('SettingsMenu', () => {
     expect(mocks.context).toHaveBeenCalledTimes(2)
   })
 
-  it('replaces the MCP menu item with credit requests', async () => {
+  it.each([
+    { superior: { id: 20, name: '上级' }, has_direct_subordinates: false, heading: '我发起的' },
+    { superior: null, has_direct_subordinates: true, heading: '我收到的' },
+  ])('opens $heading for the current hierarchy', async ({ superior, has_direct_subordinates, heading }) => {
+    mocks.context.mockResolvedValue({ superior, has_direct_subordinates })
     const user = userEvent.setup()
     const onAfterAction = vi.fn()
     render(
       <MemoryRouter>
         <Routes>
           <Route path="/" element={<SettingsMenu onAfterAction={onAfterAction} />} />
-          <Route path="/settings/credit-requests" element={<h1>积分申请页</h1>} />
+          <Route path="/settings/credit-requests" element={<CreditRequestsDestination />} />
         </Routes>
       </MemoryRouter>,
     )
     await user.click(screen.getByRole('button', { name: '设置' }))
     expect(screen.queryByRole('menuitem', { name: 'MCP 接入' })).not.toBeInTheDocument()
     await user.click(await screen.findByRole('menuitem', { name: '积分申请' }))
-    expect(await screen.findByRole('heading', { name: '积分申请页' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
 })

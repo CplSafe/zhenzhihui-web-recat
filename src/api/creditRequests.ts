@@ -17,13 +17,28 @@ export interface CreditRequestWorkspace {
   type: 'personal' | 'team' | 'enterprise'
 }
 
+interface CanvasUsageTotals {
+  credits_used: number
+  image_count: number
+  video_count: number
+}
+
+export interface CreditRequestCanvasUsage extends CanvasUsageTotals {
+  canvas_count: number
+  canvases: Array<
+    CanvasUsageTotals & { canvas_id: number; canvas_name: string; workspace_id: number; workspace_name: string }
+  >
+}
+
 export interface CreditRequest {
   id: number
   applicant: CreditRequestPerson
   superior: CreditRequestPerson
   workspace: CreditRequestWorkspace | null
   amount: number
+  script_name?: string
   note: string
+  canvas_usage?: CreditRequestCanvasUsage | null
   status: CreditRequestStatus
   created_at: string
   decided_at: string | null
@@ -35,10 +50,11 @@ export interface CreditRequestPage {
 }
 
 export function getCreditRequestContext(signal?: AbortSignal) {
-  return requestBusinessJson<{ superior: CreditRequestPerson | null; workspaces: CreditRequestWorkspace[] }>(
-    `${BASE}/context`,
-    { signal },
-  )
+  return requestBusinessJson<{
+    superior: CreditRequestPerson | null
+    has_direct_subordinates: boolean
+    workspaces: CreditRequestWorkspace[]
+  }>(`${BASE}/context`, { signal })
 }
 
 export function listCreditRequests(direction: CreditRequestDirection, beforeId: number, signal?: AbortSignal) {
@@ -52,7 +68,14 @@ export function getCreditRequest(id: number, signal?: AbortSignal) {
 }
 
 export function createCreditRequest(
-  body: { amount: number; note: string; request_key: string; expected_superior_id: number; workspace_id: number },
+  body: {
+    amount: number
+    script_name: string
+    note: string
+    request_key: string
+    expected_superior_id: number
+    workspace_id: number
+  },
   signal?: AbortSignal,
 ) {
   return requestBusinessJson<CreditRequest>(BASE, {

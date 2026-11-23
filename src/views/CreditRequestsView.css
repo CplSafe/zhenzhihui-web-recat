@@ -42,7 +42,7 @@
   gap: 18px;
 }
 
-.credit-requests__columns.credit-requests__columns--detail {
+.credit-requests__columns.credit-requests__columns--single {
   grid-template-columns: minmax(0, 720px);
   margin-top: 20px;
 }
@@ -288,6 +288,53 @@
   white-space: pre-wrap;
 }
 
+.credit-requests__canvas-usage {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e7e9f2;
+  border-radius: 8px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+
+.credit-requests__canvas-usage h4 {
+  margin: 0 0 8px;
+  color: #303751;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.credit-requests__usage-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.credit-requests__usage-totals dt {
+  color: #626b84;
+  font-size: 12px;
+}
+
+.credit-requests__usage-totals dd {
+  margin: 3px 0 0;
+  color: #303751;
+  font-weight: 600;
+}
+
+.credit-requests__usage-canvases {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.credit-requests__usage-canvases li {
+  padding: 8px 0;
+  border-top: 1px solid #e7e9f2;
+  font-size: 13px;
+}
+
 .credit-requests__record-foot {
   align-items: flex-end;
   flex-wrap: wrap;
@@ -307,6 +354,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.credit-requests__actions {
+  flex-wrap: wrap;
 }
 
 .credit-requests__pagination {
