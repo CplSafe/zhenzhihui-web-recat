@@ -81,8 +81,10 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
   const [duration, setDuration] = useState(
     Number.isFinite(initialVideo?.duration) && initialVideo.duration > 0 ? initialVideo.duration : 0,
   )
-  const [videoRatio, setVideoRatio] = useState(() =>
-    initialVideo ? closestRatioOption(initialVideo.width, initialVideo.height, SEEDANCE_RATIO_OPTIONS) : '',
+  const [videoSize, setVideoSize] = useState(() =>
+    initialVideo?.width > 0 && initialVideo?.height > 0
+      ? { width: initialVideo.width, height: initialVideo.height }
+      : undefined,
   )
   const [mediaError, setMediaError] = useState('')
   const [frame, setFrame] = useState<{ src: string; time: number } | null>(
@@ -154,7 +156,9 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
   )
   const modeLabel = CANVAS_SUBJECT_EDIT_MODE_LABELS[mode]
   const targetReferenceId = targetReference?.assetId
-  const quoteRatio = videoRatio || source.ratio
+  const quoteRatio = videoSize
+    ? closestRatioOption(videoSize.width, videoSize.height, SEEDANCE_RATIO_OPTIONS)
+    : source.ratio
   const videoPriceInput = useMemo(() => {
     if (!isVideo || !model || loading || mediaError || duration <= 0) return null
     try {
@@ -166,13 +170,17 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
           targetReferenceAssetId: targetReferenceId,
           duration,
           ratio: quoteRatio,
+          sourceVideoSize: videoSize,
         }),
       }
     } catch (reason) {
       return { error: reason instanceof Error ? reason.message : '当前模型无法估价' }
     }
-  }, [isVideo, model, loading, mediaError, duration, mode, source.assetId, targetReferenceId, quoteRatio])
+  }, [isVideo, model, loading, mediaError, duration, mode, source.assetId, targetReferenceId, quoteRatio, videoSize])
   const videoQuoteRequest = videoPriceInput?.request
+  const requestedOutputDurationSec = videoQuoteRequest?.outputDurationSec
+  const changesOutputDuration =
+    requestedOutputDurationSec !== undefined && duration.toFixed(2) !== requestedOutputDurationSec.toFixed(2)
   const videoPriceKey = videoQuoteRequest ? JSON.stringify({ workspaceId, canvasId, videoQuoteRequest }) : ''
   const currentVideoPrice = videoPrice?.key === videoPriceKey ? videoPrice : undefined
   const activePrice = quote ?? currentVideoPrice?.price
@@ -474,6 +482,7 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
       targetReferenceAssetId: targetReferenceId,
       sourceVideoDurationSec: duration,
       ratio: quoteRatio,
+      sourceVideoSize: videoSize,
     })
   }
 
@@ -656,16 +665,14 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
                           setVideoTime(currentTarget.currentTime)
                       }}
                       onLoadedMetadata={({ currentTarget }) => {
-                        const seconds = currentTarget.duration
-                        const ratio = closestRatioOption(
-                          currentTarget.videoWidth,
-                          currentTarget.videoHeight,
-                          SEEDANCE_RATIO_OPTIONS,
-                        )
-                        setVideoRatio(ratio)
+                        const { duration: seconds, videoWidth: width, videoHeight: height } = currentTarget
+                        const nextSize = width > 0 && height > 0 ? { width, height } : undefined
+                        const sizeChanged =
+                          nextSize?.width !== videoSize?.width || nextSize?.height !== videoSize?.height
+                        if (sizeChanged) setVideoSize(nextSize)
                         setDuration(Number.isFinite(seconds) ? seconds : 0)
                         setMediaError(Number.isFinite(seconds) && seconds > 0 ? '' : '无法读取视频时长')
-                        if (seconds !== duration || ratio !== videoRatio) invalidateQuote()
+                        if (seconds !== duration || sizeChanged) invalidateQuote()
                         applyPendingSeek(currentTarget)
                       }}
                       onLoadedData={({ currentTarget }) => captureFrameWhenReady(currentTarget)}
@@ -822,6 +829,12 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
                     })}
                   </CanvasToolSelect>
                 </label>
+              )}
+              {changesOutputDuration && (
+                <Alert
+                  type="warning"
+                  message={`原视频 ${Number(duration.toFixed(2))} 秒，当前模型请求 ${Number(requestedOutputDurationSec.toFixed(2))} 秒的输出。`}
+                />
               )}
               {showTargetPicker && (
                 <section className={styles.field} aria-label={targetReferenceLabel}>

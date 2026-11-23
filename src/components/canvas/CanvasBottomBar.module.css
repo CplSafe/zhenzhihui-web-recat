@@ -7,7 +7,7 @@
   pointer-events: none;
   container: canvas-bottom / inline-size;
 }
-.dock:has(#canvas-add-menu) {
+.dock:has(:global(#canvas-add-menu):not([aria-hidden])) {
   z-index: 1450;
 }
 .row {

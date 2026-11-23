@@ -35,7 +35,7 @@ export default function CanvasTimelineNodeActions({
   onCompose,
   onOpenEditor,
 }: CanvasTimelineNodeActionsProps) {
-  const canCompose = clipCount >= 2 && !composing
+  const canCompose = clipCount > 0 && !composing
 
   return (
     <div className={styles.actions} role="toolbar" aria-label="视频剪辑操作">
@@ -58,7 +58,7 @@ export default function CanvasTimelineNodeActions({
         type="button"
         className={`${styles.action} ${styles.compose}`}
         disabled={!canCompose}
-        title={clipCount < 2 ? '至少需要 2 个片段才能合成' : '把各段无损拼成一条视频'}
+        title={clipCount > 0 ? '将时间线合成为一条视频' : '请添加视频片段后再合成'}
         aria-label={composing ? composeProgress || '合成中…' : '合成'}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {

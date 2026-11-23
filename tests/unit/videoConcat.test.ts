@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { demuxMp4 } from '@/utils/mp4Demux'
-import { concatMp4Sources, replaceVideoRangePreservingOriginalAudio } from '@/utils/videoConcat'
+import { concatMp4Sources, concatMp4SourcesAsync, replaceVideoRangePreservingOriginalAudio } from '@/utils/videoConcat'
 import { ASC_AAC_LC_44K_STEREO, ASC_AAC_LC_48K_STEREO, AVCC_ALT, esdsBox, fixtureMp4 } from '../helpers/mp4Fixture'
 
 /** 与 fixture 默认音轨一致，用例里只改 esds。 */
@@ -239,6 +239,25 @@ describe('concatMp4Sources', () => {
     expect(result.error).toBeUndefined()
     expect(result.video!.samples[0].sync).toBe(true)
     expect(out.segments).toHaveLength(1)
+  })
+
+  it('单段时间线可将 15.07 秒裁到 15 秒，结尾跨界的视频帧和 AAC 包均不会延长成片', async () => {
+    const fixture = fixtureMp4({
+      frames: 110,
+      timescale: 1_000,
+      frameDelta: 137,
+      audio: { ...DEFAULT_AUDIO, frames: 707 },
+    })
+    const source = { buffer: fixture.buffer, inSec: 0, outSec: 15 }
+    expect(concatMp4Sources([source]).durationSec).toBe(15.07)
+
+    const out = await concatMp4SourcesAsync([source], { limitSingleSourceDuration: true })
+    const { result } = await reparse(out.blob)
+    expect(result.error).toBeUndefined()
+    expect(out.durationSec).toBe(15)
+    expect(out.segments[0]).toMatchObject({ actualInSec: 0, actualOutSec: 15 })
+    expect(result.video).toMatchObject({ duration: 15_000, timescale: 1_000 })
+    expect(result.audio).toMatchObject({ duration: 720_000, timescale: 48_000 })
   })
 
   it('素材无法解析时指出是哪一段', () => {

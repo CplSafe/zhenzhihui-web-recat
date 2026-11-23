@@ -1,9 +1,27 @@
 .list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  max-height: 50vh;
+  gap: 12px;
+  max-height: 60vh;
   overflow: auto;
+  padding: 3px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 600px) {
+  .presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .list button,
@@ -21,6 +39,33 @@
 .list button {
   overflow-wrap: anywhere;
   text-align: left;
+}
+
+.list button.card {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: center 60%;
+}
+
+.card span {
+  padding: 7px 10px;
+  font-weight: 600;
+}
+
+.list button:focus-visible {
+  outline: 2px solid #119c80;
+  outline-offset: 1px;
 }
 
 .list button:hover,

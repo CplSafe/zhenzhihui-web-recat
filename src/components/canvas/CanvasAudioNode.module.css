@@ -139,12 +139,6 @@
   box-sizing: border-box;
   background: rgb(10 15 18 / 58%);
 }
-.trimOverlay span:first-child {
-  border-right: 2px solid #9cafff;
-}
-.trimOverlay span:last-child {
-  border-left: 2px solid #9cafff;
-}
 .progress {
   position: absolute;
   inset: 0 0 auto;

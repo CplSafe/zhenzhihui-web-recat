@@ -298,12 +298,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   pointer-events: none;
 }
 
-/* 拖动节点期间隐藏：面板锚在选中节点下方，会一路跟着指针跳，还挡住正要放节点的那片区域。
-   用不透明度而不是 display:none——保持挂载，输入框内容与积分预估不会在松手后重来一遍。 */
+/* 移动节点或拖线时隐藏面板，保持挂载以保留输入内容与估价。 */
 .canvas-panel-area.is-drag-hidden {
-  opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.12s ease;
 }
 
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */

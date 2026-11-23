@@ -26,6 +26,7 @@ export function useCanvasNodeLocks(
   userId: number,
   enabled: boolean,
   selection: string[],
+  referenceSourceIds: ReadonlySet<string>,
 ) {
   const selectionKey = JSON.stringify([...new Set(selection)].sort())
   const [reply, setReply] = useState<{ key: string; scope: string; state: Snapshot } | null>(null)
@@ -98,20 +99,26 @@ export function useCanvasNodeLocks(
           if (!other.length) return []
           const writers = other.filter((h) => h.editing)
           const names = (writers.length ? writers : other).map((h) => h.name).join('、')
-          return [[id, writers.length ? `${names} 正在编辑` : `${names} 正在引用`]] as [string, string][]
+          const status = writers.length ? '正在编辑' : referenceSourceIds.has(id) ? '正在引用' : '暂时占用'
+          return [[id, `${names} ${status}`]] as const
         }),
       ),
-    [holders, userId],
+    [holders, referenceSourceIds, userId],
   )
   const labels = useMemo(
     () =>
       new Map(
-        Object.entries(holders).map(([id, owners]) => [
-          id,
-          blocked.get(id) || (owners.some((h) => h.editing) ? '你正在编辑' : '你正在引用'),
-        ]),
+        Object.entries(holders).flatMap<readonly [string, string]>(([id, owners]) => {
+          const otherLabel = blocked.get(id)
+          if (otherLabel) return [[id, otherLabel]] as const
+          const own = owners.filter((holder) => holder.user_id === userId)
+          if (own.some((holder) => holder.editing)) return [[id, '你正在编辑']] as const
+          // 协作服务返回的是持有状态。引用标签还要有画布里实际存在的素材连线。
+          if (own.length && referenceSourceIds.has(id)) return [[id, '你正在引用']] as const
+          return []
+        }),
       ),
-    [holders, blocked],
+    [holders, blocked, referenceSourceIds, userId],
   )
   // Derive the color from server-owned identity, not name, viewer or response order.
   // A writer takes precedence over shared readers; ties use the lowest user ID.

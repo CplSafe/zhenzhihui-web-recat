@@ -36,6 +36,7 @@ export interface CanvasNodeToolbarProps {
   onPreview?: () => void
   onCapture?: (position: CanvasCapturePosition) => void
   onCrop?: () => void
+  onTrimVideo?: () => void
   onSubjectEdit?: () => void
   onDelete: () => void
   onHd?: () => void
@@ -67,6 +68,7 @@ export default function CanvasNodeToolbar({
   onPreview,
   onCapture,
   onCrop,
+  onTrimVideo,
   onSubjectEdit,
   onDelete,
   onHd,
@@ -129,7 +131,7 @@ export default function CanvasNodeToolbar({
   return (
     <div
       ref={barRef}
-      className={`${styles.bar} ${kind === 'image' ? styles.imageBar : ''} nodrag nopan`}
+      className={`${styles.bar} ${isMedia ? styles.mediaBar : ''} nodrag nopan`}
       style={{ left: centerX, bottom: anchor.bottom, maxWidth: rightBoundary ? rightBoundary - 24 : undefined }}
       role="toolbar"
       aria-label="节点操作"
@@ -268,6 +270,11 @@ export default function CanvasNodeToolbar({
             超分
           </button>
         </span>
+      )}
+      {kind === 'video' && hasContent && !uploading && onTrimVideo && (
+        <button type="button" className={`${styles.action} ${styles.textAction}`} onClick={onTrimVideo}>
+          裁剪时长
+        </button>
       )}
       {onCompareHd && (
         <button type="button" className={styles.action} onClick={onCompareHd} aria-label="对比高清版">

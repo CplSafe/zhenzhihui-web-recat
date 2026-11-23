@@ -58,8 +58,26 @@ describe('canvas task restoration', () => {
     expect(restoreCanvasTaskState(saved)).toEqual({ ...saved, taskErrorHistorical: true })
   })
 
+  it.each(['reconnecting', 'status_query_failed'])(
+    'stops showing %s if the original task has no usable ID',
+    (taskStatus) => {
+      const saved = { taskId: 0, taskStatus, taskIdempotencyKey: 'existing-key' }
+      expect(restoreCanvasTaskState(saved)).toMatchObject({
+        taskStatus: 'submit_failed',
+        taskError: expect.stringContaining('缺少任务编号'),
+        taskSubmitInterrupted: true,
+        taskIdempotencyKey: 'existing-key',
+      })
+    },
+  )
+
   it('does not trigger payment settlement just by restoring a canvas', () => {
     const saved = { taskId: 15318, taskStatus: 'payment_failed', taskError: 'insufficient credits' }
+    expect(restoreCanvasTaskState(saved)).toEqual({ ...saved, taskErrorHistorical: true })
+  })
+
+  it('recognizes a saved query failure as a previous task so a missing record can be handled', () => {
+    const saved = { taskId: 15318, taskStatus: 'status_query_failed', taskError: '查询暂不可用' }
     expect(restoreCanvasTaskState(saved)).toEqual({ ...saved, taskErrorHistorical: true })
   })
 

@@ -70,10 +70,23 @@ export function restoreCanvasTaskState(data: Record<string, unknown> = {}): Reco
   const status = normalizeAiTaskStatus(data.taskStatus)
   if (status === 'result_sync_failed' && (data.videoAudioComposition as { failed?: boolean } | undefined)?.failed)
     return data
-  if (!failedTaskStatuses.has(status) && status !== 'reconnecting') return data
   const taskId = Number(data.taskId)
+  const hasTaskId = Number.isSafeInteger(taskId) && taskId > 0
+  if ((status === 'reconnecting' || status === 'status_query_failed') && !hasTaskId) {
+    return {
+      ...data,
+      taskStatus: 'submit_failed',
+      taskError: '缺少任务编号，无法恢复上次任务。请先核对任务记录，再重新生成',
+      taskErrorHistorical: true,
+      taskSubmitInterrupted: true,
+      taskProgress: 0,
+      taskStatusQueryFailures: 0,
+    }
+  }
+  if (status === 'status_query_failed') return { ...data, taskErrorHistorical: true }
+  if (!failedTaskStatuses.has(status) && status !== 'reconnecting') return data
   // Querying a payment_failed task can retry settlement; reopening must not initiate that.
-  if (status === 'payment_failed' || !Number.isSafeInteger(taskId) || taskId <= 0) {
+  if (status === 'payment_failed' || !hasTaskId) {
     return { ...data, taskErrorHistorical: true }
   }
   return {

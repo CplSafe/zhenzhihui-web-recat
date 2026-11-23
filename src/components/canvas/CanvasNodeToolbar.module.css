@@ -63,14 +63,14 @@
   display: none !important;
 }
 
-.imageBar {
+.mediaBar {
   max-width: calc(100vw - 24px);
   flex-wrap: wrap;
   justify-content: center;
   white-space: normal;
 }
 
-.imageBar > :is(button, span) {
+.mediaBar > :is(button, span) {
   flex: 0 0 auto;
 }
 

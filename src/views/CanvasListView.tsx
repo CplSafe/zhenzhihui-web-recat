@@ -14,6 +14,7 @@ import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import CanvasModelSettings from '@/components/canvas/CanvasModelSettings'
+import CanvasSettingsDialog from '@/components/canvas/CanvasSettingsDialog'
 import { formatCredits } from '@/utils/creditsFormat'
 import CanvasCreateDialog from '@/components/canvas/CanvasCreateDialog'
 import CanvasEmptyStateActions from '@/components/canvas/CanvasEmptyStateActions'
@@ -78,7 +79,7 @@ export default function CanvasListView() {
     (item: CanvasSummary | null) => Boolean(item?.userId && currentUserId && item.userId !== currentUserId),
     [currentUserId],
   )
-  const canDeleteCanvas = useCallback(
+  const isCanvasCreator = useCallback(
     (item: CanvasSummary | null) => Boolean(item?.userId && currentUserId && item.userId === currentUserId),
     [currentUserId],
   )
@@ -108,6 +109,7 @@ export default function CanvasListView() {
   }, [carriedMaterial, createCanvasAction, location.pathname, navigate])
   // 重命名弹窗：renameTarget 非空即打开
   const [modelTarget, setModelTarget] = useState<{ ws: number; id: number } | null>(null)
+  const [settingsTarget, setSettingsTarget] = useState<{ ws: number; id: number; userId: number } | null>(null)
   const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
   const [renameName, setRenameName] = useState('')
   const [renaming, setRenaming] = useState(false)
@@ -303,6 +305,7 @@ export default function CanvasListView() {
     setCanvases([])
     setCanvasesWorkspaceId(0)
     setOpenMenuId(0)
+    setSettingsTarget(null)
     setDeletingId(0)
     if (manageView || hasCarriedMaterial) loadCanvases()
     else setLoading(false)
@@ -442,7 +445,7 @@ export default function CanvasListView() {
         showToast('workspace_id 缺失,无法删除', 'error')
         return
       }
-      if (!canDeleteCanvas(item)) {
+      if (!isCanvasCreator(item)) {
         showToast('只能删除自己创建的画布', 'info')
         return
       }
@@ -476,7 +479,7 @@ export default function CanvasListView() {
         setDeletingId(0)
       }
     },
-    [canDeleteCanvas, deletingId, requestConfirm, showToast],
+    [isCanvasCreator, deletingId, requestConfirm, showToast],
   )
 
   // 创建副本：复制画布全部节点 / 连线到一张新画布，名称追加「-副本」后缀；成功后放到列表最前
@@ -679,6 +682,19 @@ export default function CanvasListView() {
                           </button>
                           {openMenuId === item.id && (
                             <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                              {isCanvasCreator(item) && (
+                                <button
+                                  type="button"
+                                  className="pm2-folder-menu-item"
+                                  disabled={item.status === 'archived'}
+                                  onClick={() => {
+                                    setOpenMenuId(0)
+                                    setSettingsTarget({ ws: activeWsId, id: item.id, userId: currentUserId })
+                                  }}
+                                >
+                                  设置画布
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 className="pm2-folder-menu-item"
@@ -712,7 +728,7 @@ export default function CanvasListView() {
                               >
                                 {duplicatingId === item.id ? '创建中…' : '创建副本'}
                               </button>
-                              {canDeleteCanvas(item) && (
+                              {isCanvasCreator(item) && (
                                 <button
                                   type="button"
                                   className="pm2-folder-menu-item is-danger"
@@ -761,6 +777,22 @@ export default function CanvasListView() {
         )}
       </div>
 
+      {settingsTarget && settingsTarget.ws === activeWsId && settingsTarget.userId === currentUserId && (
+        <CanvasSettingsDialog
+          key={`${activeWsId}:${currentUserId}:${settingsTarget.id}`}
+          workspaceId={activeWsId}
+          canvasId={settingsTarget.id}
+          currentUserId={currentUserId}
+          onClose={() => setSettingsTarget(null)}
+          onSaved={(changes) => {
+            if (canvasesWorkspaceIdRef.current !== settingsTarget.ws || currentUserIdRef.current !== currentUserId)
+              return
+            setCanvases((items) =>
+              items.map((item) => (item.id === settingsTarget.id ? { ...item, ...changes } : item)),
+            )
+          }}
+        />
+      )}
       {modelTarget && modelTarget.ws === activeWsId && (
         <CanvasModelSettings
           workspaceId={activeWsId}

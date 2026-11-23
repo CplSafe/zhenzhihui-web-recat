@@ -110,6 +110,12 @@ function buildSegmentSamples(
   return out
 }
 
+function limitSampleTail(samples: MuxSample[], endTicks: number): void {
+  while (samples.length && samples[samples.length - 1].dts >= endTicks) samples.pop()
+  const last = samples[samples.length - 1]
+  if (last) last.duration = Math.min(last.duration, endTicks - last.dts)
+}
+
 /** 找出覆盖 [fromSec, toSec) 的音频样本下标区间。音频样本全是关键帧，不需要吸附。 */
 function selectAudioRange(track: Mp4Track, fromSec: number, toSec: number): { start: number; end: number } | null {
   if (!track.samples.length || !(track.timescale > 0)) return null
@@ -192,6 +198,11 @@ function decideAudio(sources: readonly ConcatSource[], demuxed: readonly Demuxed
   return { keepAudio, warnings }
 }
 
+type ConcatOptions = {
+  /** 单段剪辑保留关键帧起点，但成片时长至多为用户选中的长度。 */
+  limitSingleSourceDuration?: boolean
+}
+
 /**
  * 把多段 MP4 无损拼成一条。
  *
@@ -199,7 +210,7 @@ function decideAudio(sources: readonly ConcatSource[], demuxed: readonly Demuxed
  * 任何一段规格对不上就抛错，宁可失败也不产出一条会花屏的成片；
  * 需要跨规格合并时改用 concatMp4SourcesAsync（会重编码）。
  */
-export function concatMp4Sources(sources: readonly ConcatSource[]): ConcatResult {
+export function concatMp4Sources(sources: readonly ConcatSource[], options: ConcatOptions = {}): ConcatResult {
   if (sources.length < 1) throw new Error('没有可拼接的片段')
 
   const demuxed = demuxAll(sources)
@@ -215,12 +226,22 @@ export function concatMp4Sources(sources: readonly ConcatSource[]): ConcatResult
   const segments: ConcatSegment[] = []
   let videoBase = 0
   let elapsedSec = 0
+  const limitDuration = sources.length === 1 && options.limitSingleSourceDuration
 
   demuxed.forEach((item, index) => {
     const source = sources[index]
     const video = item.video!
     const range = selectSampleRange(video, source.inSec, source.outSec)
     if (!range) throw new Error(`${sourceLabel(source, index)}没有可用的视频样本`)
+    if (limitDuration) {
+      const firstDts = video.samples[range.startIndex].dts
+      const durationTicks = Math.floor((source.outSec - source.inSec) * video.timescale + TICK_EPSILON)
+      if (!(durationTicks > 0)) throw new Error(`${sourceLabel(source, index)}裁剪区间太短`)
+      const last = video.samples[range.endIndex]
+      const endTicks = Math.min(last.dts + last.duration, firstDts + durationTicks)
+      while (range.endIndex > range.startIndex && video.samples[range.endIndex].dts >= endTicks) range.endIndex -= 1
+      range.actualOutSec = endTicks / video.timescale
+    }
 
     // 本段用到的字节整块复制一次，之后源缓冲区就可以被回收
     const audioRange =
@@ -274,6 +295,11 @@ export function concatMp4Sources(sources: readonly ConcatSource[]): ConcatResult
     })
   })
 
+  if (sources.length === 1) {
+    if (limitDuration) limitSampleTail(videoSamples, Math.round(elapsedSec * outVideoTimescale))
+    // AAC 末包通常跨过视频终点，整包计时会让 MP4 比画面轨更长。
+    limitSampleTail(audioSamples, Math.floor(elapsedSec * outAudioTimescale + TICK_EPSILON))
+  }
   if (!videoSamples.length) throw new Error('裁剪后没有剩下任何画面')
 
   const firstVideo = demuxed[0].video!
@@ -316,7 +342,7 @@ export function concatMp4Sources(sources: readonly ConcatSource[]): ConcatResult
   }
 }
 
-export interface ConcatAsyncOptions {
+export interface ConcatAsyncOptions extends ConcatOptions {
   /**
    * 规格不一致时是否允许重编码。
    * 关闭（默认）时行为与 concatMp4Sources 完全一致：直接报错，不动画质。
@@ -346,7 +372,7 @@ export async function concatMp4SourcesAsync(
 
   const demuxed = demuxAll(sources)
   const mismatch = findVideoSpecMismatch(demuxed)
-  if (mismatch <= 0) return concatMp4Sources(sources)
+  if (mismatch <= 0) return concatMp4Sources(sources, options)
   if (!options.allowTranscode) throw new Error(describeSpecMismatch(sources, demuxed, mismatch))
 
   const { keepAudio, warnings } = decideAudio(sources, demuxed)
@@ -453,6 +479,101 @@ export async function concatMp4SourcesAsync(
       `片段规格不一致，已统一重编码为 ${transcoded.spec.width}×${transcoded.spec.height}（画质会有损失）`,
     ],
   }
+}
+
+/** 局部裁剪从前一个关键帧开始解码，只把指定显示区间重新编码并输出。 */
+export async function trimH264Mp4Precisely(
+  buffer: ArrayBuffer,
+  video: Mp4Track,
+  audio: Mp4Track | null,
+  inSec: number,
+  outSec: number,
+  signal: AbortSignal,
+): Promise<Blob> {
+  const firstCts = video.samples[0].cts
+  const sourceStart = firstCts + inSec * video.timescale
+  const sourceEnd = firstCts + outSec * video.timescale
+  let startIndex = -1
+  let endIndex = video.samples.length - 1
+  for (let i = 0; i < video.samples.length; i += 1) {
+    const sample = video.samples[i]
+    if (!sample.sync) continue
+    if (sample.cts <= sourceStart + TICK_EPSILON) startIndex = i
+    if (sample.cts > sourceEnd) {
+      endIndex = i
+      break
+    }
+  }
+  if (startIndex < 0 || !video.sampleEntryBytes) throw new Error('原视频没有可用的裁剪起始帧。')
+
+  const startCts = video.samples[startIndex].cts
+  const relativeUs = (ticks: number) => Math.round(((ticks - startCts) * 1_000_000) / video.timescale)
+  const encoded = await transcodeSegmentsToCommonSpec(
+    [
+      {
+        buffer,
+        track: video,
+        startIndex,
+        endIndex,
+        outputWindow: { startUs: relativeUs(sourceStart), endUs: relativeUs(sourceEnd) },
+      },
+    ],
+    resolveTargetSpec([video]),
+    { signal },
+  )
+  signal.throwIfAborted()
+
+  const lastVideoSample = encoded.samples[encoded.samples.length - 1]
+  const videoDuration = (lastVideoSample.dts + lastVideoSample.duration) / encoded.timescale
+  if (Math.abs(videoDuration - (outSec - inSec)) > 0.002) throw new Error('视频时间戳无法匹配所选裁剪区间。')
+
+  const sampleEntry = new Uint8Array(video.sampleEntryBytes) as Bytes
+  const entryView = new DataView(sampleEntry.buffer)
+  entryView.setUint16(24, encoded.spec.width)
+  entryView.setUint16(26, encoded.spec.height)
+  const tracks: MuxTrack[] = [
+    {
+      kind: 'video',
+      timescale: encoded.timescale,
+      width: encoded.spec.width,
+      height: encoded.spec.height,
+      format: 'avc1',
+      sampleEntry,
+      decoderConfig: encoded.decoderConfig,
+      samples: encoded.samples,
+    },
+  ]
+  if (audio?.samples.length) {
+    const range = selectAudioRange(audio, inSec, outSec)
+    if (!range || !audio.sampleEntryBytes) throw new Error('该裁剪区间无法保留原音轨，请调整裁剪范围。')
+    const sourceBytes = new Uint8Array(buffer)
+    const audioSamples: MuxSample[] = []
+    const fromTicks = Math.floor(inSec * audio.timescale)
+    const toTicks = fromTicks + Math.floor(videoDuration * audio.timescale)
+    let dts = 0
+    for (let i = range.start; i <= range.end; i += 1) {
+      const sample = audio.samples[i]
+      const duration = Math.min(toTicks, sample.dts + sample.duration) - Math.max(fromTicks, sample.dts)
+      if (duration <= 0) continue
+      const data = sourceBytes.subarray(sample.offset, sample.offset + sample.size)
+      if (data.length !== sample.size) throw new Error('原视频音轨不完整，无法安全裁剪。')
+      audioSamples.push({ data, dts, cts: dts, duration, sync: true })
+      dts += duration
+    }
+    if (!audioSamples.length) throw new Error('该裁剪区间内没有可保留的音频。')
+    tracks.push({
+      kind: 'audio',
+      timescale: audio.timescale,
+      width: 0,
+      height: 0,
+      format: audio.format,
+      sampleEntry: audio.sampleEntryBytes,
+      decoderConfig: audio.decoderConfig,
+      samples: audioSamples,
+    })
+  }
+
+  return muxMp4(tracks)
 }
 
 /**

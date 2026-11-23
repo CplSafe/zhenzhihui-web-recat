@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const source of ['cloud', 'draft']) {
-  for (const status of ['processing', 'failed', 'missing']) {
+  for (const status of ['processing', 'failed', 'missing', 'unavailable']) {
     test(`reopening a canvas verifies ${source} failure before displaying ${status}`, async ({ page }) => {
       const api = await installStrictAuthenticatedApp(page, { preserveStorage: source === 'draft' })
       await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { code: 0, data: [] } }))
@@ -74,8 +74,15 @@ for (const source of ['cloud', 'draft']) {
         taskQueries += 1
         await pending
         if (status === 'missing') return route.fulfill({ status: 404, json: { message: 'Task not found' } })
+        if (status === 'unavailable' && taskQueries === 1)
+          return route.fulfill({ status: 503, json: { message: 'Task status endpoint unavailable' } })
         await route.fulfill({
-          json: { id: 15318, status, error_message: status === 'failed' ? latestError : '', outputs: [] },
+          json: {
+            id: 15318,
+            status: status === 'unavailable' ? 'processing' : status,
+            error_message: status === 'failed' ? latestError : '',
+            outputs: [],
+          },
         })
       })
       await page.route('**/api/v1/ai/tasks', async (route) => {
@@ -102,6 +109,10 @@ for (const source of ['cloud', 'draft']) {
         await expect(page.getByRole('button', { name: '剩余积分：329' })).toBeVisible()
         expect(terminalWalletReads).toBeGreaterThanOrEqual(2)
       } else {
+        if (status === 'unavailable') {
+          await expect(page.getByRole('status', { name: '任务状态查询异常' })).toBeVisible()
+          await expect(page.getByText(/任务编号 15318/)).toBeVisible()
+        }
         await expect(page.getByRole('status', { name: '生成中' })).toBeVisible()
         await expect(page.getByText(latestError, { exact: false })).toHaveCount(0)
       }
@@ -111,3 +122,50 @@ for (const source of ['cloud', 'draft']) {
     })
   }
 }
+
+test('打开数小时前的恢复节点时，没有任务编号则明确提示且不自动提交', async ({ page }) => {
+  const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
+  await page.route('**/api/v1/canvases/111**', (route) => {
+    const url = new URL(route.request().url())
+    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
+    const data = {
+      kind: 'image',
+      title: '旧图片任务',
+      taskStatus: 'reconnecting',
+      taskStartedAt: '2026-11-01T00:00:00Z',
+    }
+    return route.fulfill({
+      json: url.pathname.endsWith('/elements')
+        ? {
+            elements:
+              Number(url.searchParams.get('after_revision')) > 0
+                ? []
+                : [
+                    {
+                      element_id: 'old-image',
+                      kind: 'node',
+                      op: 'upsert',
+                      payload: {
+                        id: 'old-image',
+                        type: 'image',
+                        position: { x: 250, y: 150 },
+                        style: { width: 250, height: 250 },
+                        data,
+                      },
+                    },
+                  ],
+            sync_revision: 1,
+            has_more: false,
+          }
+        : { id: 111, title: '旧任务恢复', revision: 1 },
+    })
+  })
+
+  await page.goto('/canvas/111')
+  const node = page.locator('.react-flow__node[data-id="old-image"]')
+  await expect(node.getByRole('alert', { name: /缺少任务编号/ })).toBeVisible()
+  await expect(node.getByRole('status', { name: '正在恢复任务' })).toHaveCount(0)
+  expect(api.paidTaskSubmissions).toBe(0)
+  expectNoUnexpectedApi(api)
+})
