@@ -9144,10 +9144,20 @@ function CanvasInner({
     showToast('裁剪结果已添加到画布', 'success')
   }
 
+  const videoTrimGenerationBlock = (node: Node) =>
+    isGeneratingVideoNode(node) || submissionClaimsRef.current.has(node.id)
+      ? '原视频正在生成，请等任务结束后再裁剪时长'
+      : ''
+
   const openVideoTrim = (nodeId: string) => {
     if (currentBusyReason(nodeId)) return
     const node = latestRef.current.nodes.find((item) => item.id === nodeId)
     if (!node || node.data.kind !== 'video' || node.data.uploading) return
+    const generationBlock = videoTrimGenerationBlock(node)
+    if (generationBlock) {
+      showToast(generationBlock, 'info')
+      return
+    }
     const assetId = Number(node.data.assetId || 0)
     const assetWorkspaceId = Number(node.data.assetWorkspaceId || workspaceId)
     const sourceUrl = assetStreamUrl(assetId, assetWorkspaceId) || resolveNodeMediaUrl(node.data, assetWorkspaceId)
@@ -9186,6 +9196,8 @@ function CanvasInner({
         (!target.assetId && resolveNodeMediaUrl(node.data, target.assetWorkspaceId) !== target.sourceUrl)
       )
         throw new Error('原视频已更换或删除，请重新打开裁剪时长')
+      const generationBlock = videoTrimGenerationBlock(node)
+      if (generationBlock) throw new Error(generationBlock)
     }
 
     checkSource()
