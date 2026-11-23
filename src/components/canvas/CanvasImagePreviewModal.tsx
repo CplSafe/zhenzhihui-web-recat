@@ -29,6 +29,7 @@ export interface CanvasImagePreviewItem {
 }
 
 interface CanvasImagePreviewModalProps {
+  crossOrigin?: 'anonymous'
   resolveInfo?: (item: CanvasImagePreviewItem) => Promise<CanvasImageInfo | undefined>
   /** 画布上全部可预览的图片（按节点顺序） */
   items: CanvasImagePreviewItem[]
@@ -45,6 +46,7 @@ interface CanvasImagePreviewModalProps {
 
 export default function CanvasImagePreviewModal({
   items,
+  crossOrigin,
   resolveInfo,
   activeId,
   onSelect,
@@ -250,6 +252,7 @@ export default function CanvasImagePreviewModal({
             {/* key 强制换图时重挂载：上一张的画面不会在新图加载期间残留 */}
             <ImageViewport
               key={current.id + current.url}
+              crossOrigin={crossOrigin}
               src={current.url}
               alt={title || '画布图片'}
               onSize={(size) => {
@@ -390,7 +393,7 @@ export default function CanvasImagePreviewModal({
                 onClick={() => onSelectRef.current(item.id)}
                 title={String(item.title || '').trim() || `第 ${itemIndex + 1} 张`}
               >
-                <img src={item.url} alt="" aria-hidden="true" loading="lazy" />
+                <img crossOrigin={crossOrigin} src={item.url} alt="" aria-hidden="true" loading="lazy" />
                 <span className={styles.thumbNumber}>{itemIndex + 1}</span>
               </button>
             ))}

@@ -26,6 +26,7 @@ export interface ViewAsUserSession extends ViewAsUserIdentity {
 type ViewAsUserLaunch = { session: ViewAsUserSession } | { error: string }
 interface ApiEnvelope<T> {
   code: number
+  code_string?: string
   message?: string
   data?: T
 }
@@ -34,6 +35,7 @@ export class ViewAsUserError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message)
   }
@@ -103,7 +105,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       })
       const payload = (await response.json().catch(() => null)) as ApiEnvelope<T> | null
       if (!response.ok || payload?.code !== 0 || payload.data === undefined) {
-        throw new ViewAsUserError(payload?.message || '暂时无法读取，请稍后重试', response.status)
+        throw new ViewAsUserError(payload?.message || '暂时无法读取，请稍后重试', response.status, payload?.code_string)
       }
       return payload.data
     },

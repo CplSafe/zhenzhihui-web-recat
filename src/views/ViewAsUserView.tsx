@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useLoaderData } from 'react-router-dom'
 import { ArrowLeft, Eye } from 'lucide-react'
 import CanvasUsagePanel from '@/components/billing/CanvasUsagePanel'
@@ -8,6 +8,7 @@ import { endViewAsUser, readAsUser, ViewAsUserError, type loadViewAsUser } from 
 import styles from './ViewAsUserView.module.css'
 
 const PAGE_SIZE = 20
+const ViewAsUserCanvas = lazy(() => import('./ViewAsUserCanvas'))
 const dateTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
 const taskStatuses: Readonly<Record<string, string>> = {
   queued: '排队中',
@@ -178,6 +179,8 @@ function Usage({ read, workspaceId }: { read: typeof readAsUser; workspaceId?: n
 
 function Activity({ workspaceId, view, read }: { workspaceId: number; view: ActivityView; read: typeof readAsUser }) {
   const [page, setPage] = useState(1)
+  const [selectedCanvas, setSelectedCanvas] = useState<{ id: number; title: string } | null>(null)
+  const [includeArchived, setIncludeArchived] = useState(false)
   const offset = (page - 1) * PAGE_SIZE
   const query = new URLSearchParams({
     workspace_id: String(workspaceId),
@@ -185,6 +188,7 @@ function Activity({ workspaceId, view, read }: { workspaceId: number; view: Acti
     offset: String(offset),
   })
   if (view === 'projects' || view === 'tasks') query.set('mine', 'true')
+  if (view === 'canvases' && includeArchived) query.set('include_archived', 'true')
   const { label, path, details } = activityViews[view]
   const { result, retry } = useViewedData<ActivityPage | ActivityItem[]>(`${path}?${query}`, read)
   let rows: ActivityRow[] = []
@@ -206,8 +210,35 @@ function Activity({ workspaceId, view, read }: { workspaceId: number; view: Acti
   }
   const hasNext = total == null ? rows.length >= PAGE_SIZE : offset + PAGE_SIZE < total
 
+  if (selectedCanvas) {
+    return (
+      <Suspense fallback={<p role="status">正在打开画布…</p>}>
+        <ViewAsUserCanvas
+          workspaceId={workspaceId}
+          canvasId={selectedCanvas.id}
+          title={selectedCanvas.title}
+          read={read}
+          onClose={() => setSelectedCanvas(null)}
+        />
+      </Suspense>
+    )
+  }
+
   return (
     <>
+      {view === 'canvases' && (
+        <label className={styles.archiveFilter}>
+          <input
+            type="checkbox"
+            checked={includeArchived}
+            onChange={(event) => {
+              setIncludeArchived(event.target.checked)
+              setPage(1)
+            }}
+          />
+          显示已归档画布
+        </label>
+      )}
       {!result?.data ? (
         <LoadingState error={result?.error} retry={retry} />
       ) : rows.length === 0 ? (
@@ -225,7 +256,20 @@ function Activity({ workspaceId, view, read }: { workspaceId: number; view: Acti
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.name}</td>
+                  <td>
+                    {view === 'canvases' ? (
+                      <button
+                        className={styles.openCanvas}
+                        type="button"
+                        aria-label={`打开画布 ${row.name}`}
+                        onClick={() => setSelectedCanvas({ id: Number(row.id), title: row.name })}
+                      >
+                        {row.name}
+                      </button>
+                    ) : (
+                      row.name
+                    )}
+                  </td>
                   <td>{row.status}</td>
                   <td>{displayDate(row.at)}</td>
                 </tr>
@@ -277,6 +321,13 @@ export default function ViewAsUserView() {
   const workspace = workspaces.find(({ id }) => id === selectedId) || workspaces[0]
   const [view, selectView] = useState<ActivityView>('projects')
   const [showCanvasUsage, setShowCanvasUsage] = useState(false)
+  useEffect(() => {
+    const policy = document.createElement('meta')
+    policy.name = 'referrer'
+    policy.content = 'no-referrer'
+    document.head.append(policy)
+    return () => policy.remove()
+  }, [])
   const readWhileActive: typeof readAsUser = useCallback(async (path, options) => {
     try {
       return await readAsUser(path, options)

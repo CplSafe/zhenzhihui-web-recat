@@ -25,6 +25,8 @@ export interface CanvasElementMutation {
   op: 'upsert' | 'delete'
   /** 节点/连线的业务数据（自由对象）。 */
   payload?: Record<string, unknown>
+  /** 经服务端校验的私有查看素材引用，仅查看会话的节点读取返回。 */
+  preview_media?: { asset_id?: number; poster_asset_id?: number; image_asset_ids?: number[] }
 }
 
 /** 增量保存请求体（对齐 httpapi.saveCanvasElementsRequest）。 */
@@ -308,19 +310,27 @@ export async function deleteCanvas({
  * after_revision=0 初次分页；>0 返回该 revision 后的变化（含删除 tombstone）。
  * 低于 history_floor_revision 时服务端返回 CANVAS_FULL_SYNC_REQUIRED，需以 after_revision=0 全量重拉。
  */
-export async function fetchCanvasElements({
-  workspaceId,
-  canvasId,
-  afterRevision = 0,
-  cursor = '',
-  limit = 500,
-}: {
-  workspaceId: number
-  canvasId: number
-  afterRevision?: number
-  cursor?: string
-  limit?: number
-}): Promise<CanvasElementsPage> {
+interface CanvasElementsReader {
+  read: (path: string, options: { signal?: AbortSignal }) => Promise<unknown>
+  signal?: AbortSignal
+}
+
+export async function fetchCanvasElements(
+  {
+    workspaceId,
+    canvasId,
+    afterRevision = 0,
+    cursor = '',
+    limit = 500,
+  }: {
+    workspaceId: number
+    canvasId: number
+    afterRevision?: number
+    cursor?: string
+    limit?: number
+  },
+  reader?: CanvasElementsReader,
+): Promise<CanvasElementsPage> {
   const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
   const id = requirePositiveInteger(canvasId, '画布 ID 无效')
   const query = new URLSearchParams({
@@ -329,7 +339,8 @@ export async function fetchCanvasElements({
     limit: String(Math.max(1, Math.min(Number(limit) || 500, 1000))),
   })
   if (cursor) query.set('cursor', String(cursor))
-  const payload = await requestBusinessJson<unknown>(`/api/v1/canvases/${id}/elements?${query}`)
+  const path = `/api/v1/canvases/${id}/elements?${query}`
+  const payload = reader ? await reader.read(path, { signal: reader.signal }) : await requestBusinessJson(path)
   // 后端实际返回 data.items（对齐 GET 契约）；兼容 data.elements 两种字段名，避免云端元素无法解析
   const page =
     unwrap<CanvasElementsPage & { items?: CanvasElementMutation[] }>(payload) ||
@@ -360,23 +371,26 @@ export async function fetchCanvasElements({
  * revision，否则会跳过尚未读取的 mutation。遇到异常游标时直接失败，避免把不完整
  * 的页面误当成完整基线写入画布。
  */
-export async function fetchAllCanvasElements({
-  workspaceId,
-  canvasId,
-  afterRevision = 0,
-  /*
-   * 游标分页只能串行（下一页的 cursor 来自上一页响应），所以减少往返次数的唯一办法
-   * 是把每页取大一些。1000 让绝大多数画布一次拉完，首屏少等一个完整 RTT。
-   */
-  limit = 1000,
-  maxPages = 200,
-}: {
-  workspaceId: number
-  canvasId: number
-  afterRevision?: number
-  limit?: number
-  maxPages?: number
-}): Promise<CanvasElementsPage> {
+export async function fetchAllCanvasElements(
+  {
+    workspaceId,
+    canvasId,
+    afterRevision = 0,
+    /*
+     * 游标分页只能串行（下一页的 cursor 来自上一页响应），所以减少往返次数的唯一办法
+     * 是把每页取大一些。1000 让绝大多数画布一次拉完，首屏少等一个完整 RTT。
+     */
+    limit = 1000,
+    maxPages = 200,
+  }: {
+    workspaceId: number
+    canvasId: number
+    afterRevision?: number
+    limit?: number
+    maxPages?: number
+  },
+  reader?: CanvasElementsReader,
+): Promise<CanvasElementsPage> {
   const elements: CanvasElementMutation[] = []
   const seenCursors = new Set<string>()
   let cursor = ''
@@ -384,7 +398,7 @@ export async function fetchAllCanvasElements({
   let lastPage: CanvasElementsPage | null = null
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision, cursor, limit })
+    const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision, cursor, limit }, reader)
     firstPage ||= page
     lastPage = page
     elements.push(...page.elements)

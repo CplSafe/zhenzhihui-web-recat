@@ -170,6 +170,48 @@
   overflow: auto;
 }
 
+.archiveFilter,
+.canvasHeading,
+.canvasHeading button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.archiveFilter {
+  width: fit-content;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.canvasHeading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-block: 12px;
+}
+
+.canvasHeading h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.canvasViewport:global(.share-view) {
+  width: 100%;
+  height: clamp(380px, 70vh, 820px);
+  border-radius: 10px;
+  isolation: isolate;
+}
+
+.page button.openCanvas {
+  min-height: 32px;
+  border: 0;
+  padding-inline: 0;
+  color: #373f9c;
+  text-align: left;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
 .table {
   width: 100%;
   min-width: 440px;
