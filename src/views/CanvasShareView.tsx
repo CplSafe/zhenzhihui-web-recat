@@ -1,7 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { FitViewOptions } from '@xyflow/react'
-import ReadOnlyCanvas, { type ReadOnlyCanvasLayout, type ReadOnlyCanvasMedia } from '@/components/canvas/ReadOnlyCanvas'
+import ReadOnlyCanvas, {
+  READ_ONLY_CANVAS_DOCK_PADDING,
+  type ReadOnlyCanvasLayout,
+  type ReadOnlyCanvasMedia,
+} from '@/components/canvas/ReadOnlyCanvas'
 import { clearShareNodePositions, readShareNodePositions, saveShareNodePositions } from '@/utils/canvasShareLayout'
 import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia, shareAssetUrl } from '@/utils/canvasShareMedia'
 import type { CanvasElementMutation } from '@/api/canvasApi'
@@ -14,7 +18,7 @@ import {
 import { useAllWorkspaces, useCurrentUser } from '@/stores/workspaceSession'
 
 const SHARE_FIT_VIEW_OPTIONS = {
-  padding: { top: '92px', bottom: '76px', left: '24px', right: '24px' },
+  padding: { top: '92px', bottom: READ_ONLY_CANVAS_DOCK_PADDING, left: '24px', right: '24px' },
   minZoom: 0.01,
   maxZoom: 1,
 } as const

@@ -43,6 +43,7 @@ const CanvasVideoPreviewModal = lazy(() => import('./CanvasVideoPreviewModal'))
 const CanvasImagePreviewModal = lazy(() => import('./CanvasImagePreviewModal'))
 const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
 const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
+export const READ_ONLY_CANVAS_DOCK_PADDING = '76px'
 
 export interface ReadOnlyCanvasMedia {
   nodeUrls: (data: Record<string, unknown>) => { url: string; posterUrl: string }

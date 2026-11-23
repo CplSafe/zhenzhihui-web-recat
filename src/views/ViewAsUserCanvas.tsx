@@ -2,10 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { fetchAllCanvasElements, type CanvasElementMutation } from '@/api/canvasApi'
 import { ViewAsUserError, type readAsUser } from '@/api/viewAsUser'
-import ReadOnlyCanvas, { type ReadOnlyCanvasMedia } from '@/components/canvas/ReadOnlyCanvas'
+import ReadOnlyCanvas, {
+  READ_ONLY_CANVAS_DOCK_PADDING,
+  type ReadOnlyCanvasMedia,
+} from '@/components/canvas/ReadOnlyCanvas'
 import styles from './ViewAsUserView.module.css'
 
-const fitViewOptions = { padding: 0.16, minZoom: 0.01, maxZoom: 1 }
+const fitViewOptions = {
+  padding: { top: '24px', bottom: READ_ONLY_CANVAS_DOCK_PADDING, left: '24px', right: '24px' },
+  minZoom: 0.01,
+  maxZoom: 1,
+} as const
 const MAX_IMAGE_RESULTS = 15
 
 function positiveId(value: unknown): number {

@@ -5,8 +5,13 @@ import ViewAsUserCanvas from '@/views/ViewAsUserCanvas'
 import type { readAsUser } from '@/api/viewAsUser'
 
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ nodes, nodeTypes, children, nodesConnectable, elementsSelectable }: any) => (
-    <div data-connectable={nodesConnectable} data-selectable={elementsSelectable} aria-label="画布图">
+  ReactFlow: ({ nodes, nodeTypes, children, nodesConnectable, elementsSelectable, fitViewOptions }: any) => (
+    <div
+      data-connectable={nodesConnectable}
+      data-selectable={elementsSelectable}
+      data-dock-padding={fitViewOptions.padding.bottom}
+      aria-label="画布图"
+    >
       {nodes.map((node: any) => (
         <div data-testid={`node-${node.id}`} key={node.id} style={node.style}>
           {createElement(nodeTypes[node.type], { id: node.id, data: node.data })}
@@ -106,6 +111,7 @@ it('renders paginated readonly nodes and authorizes only media in the server pro
   expect(screen.queryByText('已删除正文')).not.toBeInTheDocument()
   expect(screen.getByLabelText('画布图')).toHaveAttribute('data-connectable', 'false')
   expect(screen.getByLabelText('画布图')).toHaveAttribute('data-selectable', 'false')
+  expect(screen.getByLabelText('画布图')).toHaveAttribute('data-dock-padding', '76px')
   expect(screen.getByTestId('node-image')).toHaveStyle({ width: '260px' })
   expect(screen.getByTestId('node-image').getAttribute('style')).not.toContain('background')
   expect(read.mock.calls.map(([path]) => path)).toEqual([
