@@ -14,6 +14,7 @@ import './style.css'
 import { router } from './router'
 import { initObservability } from './observability/openobserve-logger'
 import { installChunkFailureRecovery } from './utils/chunkReload'
+import { isViewAsUserPath } from './api/viewAsUser'
 
 // Ant Design 的组件文案由 ConfigProvider 控制，日期面板的月份和星期则读取 dayjs locale。
 dayjs.locale('zh-cn')
@@ -25,6 +26,7 @@ type IdleWindow = Window & {
 
 /** 把可选日志 SDK 的下载与初始化移出首屏关键渲染路径。 */
 function scheduleObservability(): void {
+  if (isViewAsUserPath(window.location.pathname)) return
   if (!import.meta.env.VITE_O2_CLIENT_TOKEN || !import.meta.env.VITE_O2_SITE) return
 
   const start = () => initObservability()

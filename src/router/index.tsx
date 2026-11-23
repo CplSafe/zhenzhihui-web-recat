@@ -23,6 +23,7 @@ import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReloa
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 import { PROMO_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
 import CanvasAccessRoute from './CanvasAccessRoute'
+import { loadViewAsUser, takeViewAsUserLaunchCode, VIEW_AS_USER_PATH } from '../api/viewAsUser'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -306,8 +307,22 @@ function WelcomeRoute() {
   return <>{lazyPage(<SplashView />)}</>
 }
 
+let viewAsUserLaunchCode = takeViewAsUserLaunchCode()
+
 /** 应用唯一的浏览器路由实例。 */
 export const router = createBrowserRouter([
+  {
+    path: VIEW_AS_USER_PATH,
+    caseSensitive: true,
+    loader: ({ request }) => {
+      const code = viewAsUserLaunchCode
+      viewAsUserLaunchCode = null
+      return loadViewAsUser(code, request.signal)
+    },
+    lazy: async () => ({ Component: (await import('../views/ViewAsUserView')).default }),
+    HydrateFallback: () => <div className="auth-session-loading" aria-label="正在开启用户身份查看" />,
+    errorElement: <RouteErrorBoundary />,
+  },
   { path: '/director', element: lazyPage(<DirectorStudioView />), errorElement: <RouteErrorBoundary /> },
   {
     // AppShell 提供全局布局、会话守卫和全局弹层；各业务页面作为它的子路由渲染。
