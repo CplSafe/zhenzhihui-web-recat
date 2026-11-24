@@ -17,13 +17,17 @@ import {
   refreshSession,
   resetAuthenticatedSession,
 } from '../api/auth'
+import {
+  clearAccountSwitchCaches,
+  getAccountSwitchId,
+  isAccountSwitchSession,
+  subscribeToAccountSwitchExpiry,
+} from '../api/accountSwitch'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
 import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
 import { clearRefineCommentDraftsForUser } from '../utils/refineCommentDraft'
 import { clearSmartDraftsForUser } from '../utils/smartDraft'
-import { clearAllCache } from '../utils/swrCache'
-import { clearPageCache } from '@/utils/pageDataCache'
 import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '../utils/logoutBarrier'
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
@@ -32,7 +36,7 @@ import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 /** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
 const AUTH_LOGOUT_EVENT_KEY = 'zzh.auth.logout-event.v1'
-type ClearAuthReason = 'expired' | 'local-logout' | 'remote-logout'
+type ClearAuthReason = 'expired' | 'local-logout' | 'remote-logout' | 'account-switch-expired'
 
 /** 从不同后端会话字段中提取稳定的用户草稿隔离标识。 */
 function getDraftUserScopeFromSession(session: any): string {
@@ -128,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isCheckingSession, setIsCheckingSession] = useState(true)
   const [authCheckError, setAuthCheckError] = useState('')
+  const [accountSwitchExpired, setAccountSwitchExpired] = useState(false)
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshEpochRef = useRef(0)
@@ -155,6 +160,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshInFlightRef.current?.controller.abort()
     refreshInFlightRef.current = null
   }, [])
+
+  const expireAccountSwitch = useCallback(() => {
+    if (getAccountSwitchId()) clearLocalAuthStateRef.current(getCurrentDraftUserScope(), 'account-switch-expired')
+  }, [])
+
+  useEffect(() => subscribeToAccountSwitchExpiry(expireAccountSwitch), [expireAccountSwitch])
 
   const runSessionRefresh = useCallback((): Promise<any> => {
     const epoch = refreshEpochRef.current
@@ -210,7 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // 开发模式：仅在未配置代理后端时用 mock session 跳过鉴权。
     const hasRemoteBackend = hasConfiguredDevBackend()
-    if (import.meta.env.DEV && !hasRemoteBackend) {
+    if (import.meta.env.DEV && !hasRemoteBackend && !getAccountSwitchId()) {
       const justLoggedOut = (window as any).__zzh_dev_logout__
       delete (window as any).__zzh_dev_logout__
       if (justLoggedOut) {
@@ -241,9 +252,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(true)
       setAuthSession(session)
       releaseDraftWriteBarrierForSession(session)
-      markAuthSessionExpected()
       sessionStorage.removeItem('zzh_sso_pending')
-      startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
+      if (isAccountSwitchSession(session)) {
+        stopSessionRefresh()
+        lastRefreshRef.current = Date.now()
+        refreshTimer.current = setTimeout(
+          expireAccountSwitch,
+          Math.max(0, Date.parse(session.access_token_expires_at) - Date.now()),
+        )
+      } else {
+        markAuthSessionExpected()
+        startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
+      }
     } catch (error: any) {
       if (isStale()) return
       if (!isUnauthorizedAuthError(error)) {
@@ -254,6 +274,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshTimer.current = setTimeout(() => {
           if (refreshEpochRef.current === retryEpoch) void loadAuthSessionRef.current()
         }, SESSION_CHECK_RETRY_MS)
+        return
+      }
+      if (getAccountSwitchId()) {
+        expireAccountSwitch()
         return
       }
       const existingDraftUserScope = getCurrentDraftUserScope()
@@ -286,7 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       if (!isStale()) setIsCheckingSession(false)
     }
-  }, [setAuthSession, startSessionRefresh, stopSessionRefresh])
+  }, [expireAccountSwitch, setAuthSession, startSessionRefresh, stopSessionRefresh])
 
   loadAuthSessionRef.current = loadAuthSession
 
@@ -336,12 +360,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearLocalAuthState = useCallback(
     (draftUserScope: string, reason: ClearAuthReason) => {
+      const switchExpired = reason === 'account-switch-expired'
       // The store switches every draft helper to the anonymous scope when the
       // session is cleared. Block both identities first so unmount cleanups or
       // delayed callbacks cannot recreate the signed-out user's draft under
       // an `anon` key.
-      beginLogoutDraftWriteBarrier(draftUserScope)
-      beginLogoutDraftWriteBarrier('anon')
+      if (draftUserScope || !switchExpired) {
+        beginLogoutDraftWriteBarrier(draftUserScope, !switchExpired)
+        beginLogoutDraftWriteBarrier('anon', !switchExpired)
+        detachRunningVideoGensForOwner(draftUserScope)
+      }
       stopSessionRefresh()
       // 作废任何在途的会话校验:bump 序号让其 isStale() 命中,不再写状态;并丢弃共享 in-flight promise。
       // 否则登出前发起的 getAuthenticatedSession 若在此之后 resolve,会把刚清掉的会话「复活」。
@@ -351,14 +379,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(false)
       setIsCheckingSession(false)
       setAuthCheckError('')
+      setAuthSession(null)
+      clearAccountSwitchCaches()
+      if (switchExpired) {
+        setAccountSwitchExpired(true)
+        return
+      }
       clearLocalDraftsOnLogout(draftUserScope)
       clearLocalDraftsOnLogout('anon')
-      detachRunningVideoGensForOwner(draftUserScope)
-      setAuthSession(null)
       clearAuthSessionMarker()
       clearOAuthLoginReturnTo()
-      clearPageCache() // 清列表页内存缓存，换账号不闪出上个账号的列表
-      clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
       if (reason === 'local-logout') {
         try {
           localStorage.setItem(
@@ -397,7 +427,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== AUTH_LOGOUT_EVENT_KEY || !event.newValue) return
+      if (event.key !== AUTH_LOGOUT_EVENT_KEY || !event.newValue || getAccountSwitchId()) return
       try {
         const payload = JSON.parse(event.newValue)
         const currentUserScope = getCurrentDraftUserScope()
@@ -425,8 +455,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const maybeRefresh = () => {
       if (document.visibilityState !== 'visible') return
       const now = Date.now()
+      if (isAccountSwitchSession(authSession) && Date.parse(authSession.access_token_expires_at) <= now) {
+        expireAccountSwitch()
+        return
+      }
       if (now - lastRefreshRef.current < VISIBILITY_REFRESH_GAP_MS) return
       lastRefreshRef.current = now
+      if (getAccountSwitchId()) {
+        void loadAuthSessionRef.current()
+        return
+      }
       const refreshEpoch = refreshEpochRef.current
       runSessionRefresh()
         .then(() => {
@@ -444,7 +482,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', maybeRefresh)
       window.removeEventListener('focus', maybeRefresh)
     }
-  }, [isAuthenticated, runSessionRefresh, stopSessionRefresh])
+  }, [authSession, expireAccountSwitch, isAuthenticated, runSessionRefresh, stopSessionRefresh])
 
   // 用 useMemo 固定 value 引用：否则每次渲染都是新对象，会让所有 useAuth() 消费者
   // （AuthProvider 包住整个路由树）连带全树重渲染。回调已是 useCallback 稳定引用。
@@ -454,6 +492,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       isCheckingSession,
       authCheckError,
+      accountSwitchExpired,
       loadAuthSession,
       handleLoginSuccess,
       handleLogoutStart,
@@ -462,6 +501,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }),
     [
       authSession,
+      accountSwitchExpired,
       isAuthenticated,
       isCheckingSession,
       authCheckError,

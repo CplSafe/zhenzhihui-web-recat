@@ -10,6 +10,7 @@ import {
 const canvasId = 968
 const sourceAssetId = 1708
 const trimmedAssetId = 1709
+const activeTaskId = 1710
 const uploadUrl = 'https://canvas-test.oss-cn-beijing.aliyuncs.com/video-trim'
 type Element = {
   element_id: string
@@ -18,19 +19,31 @@ type Element = {
   payload: Record<string, unknown>
 }
 
-for (const mode of ['lossless', 'precise', 'timeline'] as const) {
+const labels = {
+  lossless: '视频无损裁剪本地生成可播放文件，保存到原节点并保留连线',
+  precise: '视频精确裁剪本地生成可播放文件，保存到原节点并保留连线',
+  timeline: '只有一条视频的剪辑时间线可以合成并产出视频',
+  generating: '已有结果的视频节点正在生成时不能裁剪旧视频',
+} as const
+
+for (const mode of ['lossless', 'precise', 'timeline', 'generating'] as const) {
   const precise = mode === 'precise'
   const timeline = mode === 'timeline'
-  const label = timeline
-    ? '只有一条视频的剪辑时间线可以合成并产出视频'
-    : `视频${precise ? '精确' : '无损'}裁剪本地生成可播放文件，保存到原节点并保留连线`
+  const generating = mode === 'generating'
+  const label = labels[mode]
   test(label, async ({ page, browserName }, testInfo) => {
     test.skip(precise && browserName !== 'chromium', '精确裁剪案例使用 Chromium 的 H.264 WebCodecs')
     await page.setViewportSize({ width: 1024, height: 700 })
     const api = await installStrictAuthenticatedApp(page)
     const source = await readFile('e2e/fixtures/canvas-video-trim-12s.mp4')
     const position = { x: 90, y: 115 }
-    const data = { kind: 'video', title: '待裁剪视频', assetId: sourceAssetId, assetWorkspaceId: WORKSPACE_ID }
+    const data = {
+      kind: 'video',
+      title: '待裁剪视频',
+      assetId: sourceAssetId,
+      assetWorkspaceId: WORKSPACE_ID,
+      ...(generating ? { taskId: activeTaskId, taskStatus: 'running' } : {}),
+    }
     const edge = { source: 'video-source', target: 'next-node', data: { slotIndex: 0 } }
     const initialElements: Element[] = [
       { element_id: 'video-source', kind: 'node', op: 'upsert', payload: { type: 'video', position, data } },
@@ -80,6 +93,11 @@ for (const mode of ['lossless', 'precise', 'timeline'] as const) {
       }
     }, uploadUrl)
     await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
+    if (generating) {
+      await page.route(`**/api/v1/ai/tasks/${activeTaskId}**`, (route) =>
+        route.fulfill({ json: { data: { id: activeTaskId, status: 'running' } } }),
+      )
+    }
     await page.route(`**/api/v1/canvases/${canvasId}**`, async (route) => {
       const request = route.request()
       const url = new URL(request.url())
@@ -158,6 +176,14 @@ for (const mode of ['lossless', 'precise', 'timeline'] as const) {
     const trim = page.getByRole('toolbar', { name: '节点操作', exact: true }).getByRole('button', { name: '裁剪时长' })
     await trim.click()
     const dialog = page.getByRole('dialog', { name: '裁剪时长', exact: true })
+    if (generating) {
+      await expect(page.getByText('原视频正在生成，请等任务结束后再裁剪时长')).toBeVisible()
+      await expect(dialog).toHaveCount(0)
+      expect(creates).toBe(0)
+      expect(api.paidTaskSubmissions).toBe(0)
+      expectNoUnexpectedApi(api)
+      return
+    }
     await expect(dialog).toBeVisible()
     const head = dialog.getByRole('spinbutton', { name: '从头部裁剪' })
     const tail = dialog.getByRole('spinbutton', { name: '从尾部裁剪' })
@@ -170,28 +196,22 @@ for (const mode of ['lossless', 'precise', 'timeline'] as const) {
     await expect(head).toBeEnabled()
     if (browserName === 'chromium') await expect(dialog.locator('img[alt=""]')).toHaveCount(6)
     if (mode === 'lossless' && browserName === 'chromium') {
-      const handle = dialog.getByRole('slider', { name: '裁剪起点' })
-      await expect
-        .poll(() =>
-          handle.evaluate((slider) => {
-            const rect = slider.getBoundingClientRect()
-            return document.elementFromPoint(rect.left + 10, rect.top + rect.height / 2) === slider.parentElement
-          }),
-        )
-        .toBe(true)
-      const track = await handle.boundingBox()
-      expect(track).not.toBeNull()
-      if (!track) throw new Error('找不到裁剪起点滑块')
-      const y = track.y + track.height / 2
-      const drag = async (fromX: number, toX: number) => {
-        await page.mouse.move(fromX, y)
+      const track = dialog.getByRole('slider', { name: '裁剪起点' }).locator('xpath=..')
+      const drag = async (boundary: 'head' | 'tail', targetFraction: number) => {
+        // The modal animates open, and the hint below the timeline can move it after the first drag.
+        await track.hover()
+        const bounds = await track.boundingBox()
+        if (!bounds) throw new Error('找不到裁剪滑块')
+        const y = bounds.y + bounds.height / 2
+        const x = boundary === 'head' ? bounds.x + 10 : bounds.x + bounds.width - 10
+        await page.mouse.move(x, y)
         await page.mouse.down()
-        await page.mouse.move(toX, y, { steps: 8 })
+        await page.mouse.move(bounds.x + bounds.width * targetFraction, y, { steps: 8 })
         await page.mouse.up()
       }
-      await drag(track.x + 10, track.x + track.width / 4)
+      await drag('head', 0.25)
       await expect.poll(async () => Number(await head.inputValue())).toBeGreaterThan(1)
-      await drag(track.x + track.width - 10, track.x + (track.width * 3) / 4)
+      await drag('tail', 0.75)
       await expect.poll(async () => Number(await tail.inputValue())).toBeGreaterThan(1)
     }
     await head.fill('1e0')

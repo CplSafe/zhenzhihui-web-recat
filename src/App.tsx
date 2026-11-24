@@ -8,6 +8,8 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
 import AppVersionNotice from './components/common/AppVersionNotice'
+import AccountSwitchBanner from './components/auth/AccountSwitchBanner'
+import { getAccountSwitchId, isAccountSwitchSession } from './api/accountSwitch'
 import { useSafeWorkspaceSwitch } from './composables/useSafeWorkspaceSwitch'
 import { useGuideStore } from './stores/guide'
 import { useUiStore } from './stores/ui'
@@ -124,7 +126,10 @@ export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const matches = useMatches()
-  const { isAuthenticated, isCheckingSession, authCheckError, loadAuthSession } = useAuth()
+  const { authSession, accountSwitchExpired, isAuthenticated, isCheckingSession, authCheckError, loadAuthSession } =
+    useAuth()
+  const switched = isAccountSwitchSession(authSession)
+  const accountSwitchExpected = Boolean(getAccountSwitchId())
 
   // 会员中心:全局单例弹窗,任意页面顶栏点「会员中心」均可唤出(取代原 /membership 路由页)。
   const memberCenterOpen = useUiStore((s) => s.memberCenterOpen)
@@ -162,7 +167,7 @@ export function AppShell() {
   }, [])
 
   useEffect(() => {
-    if (isCheckingSession) return
+    if (isCheckingSession || accountSwitchExpired) return
     if (authCheckError) return
 
     // 受保护页(项目管理 / 素材市场等)未登录 → 直接去登录页(「需登录」)。
@@ -191,6 +196,7 @@ export function AppShell() {
   }, [
     isAuthenticated,
     isCheckingSession,
+    accountSwitchExpired,
     authCheckError,
     requiresAuth,
     location.pathname,
@@ -200,13 +206,31 @@ export function AppShell() {
     navigate,
   ])
 
+  if (accountSwitchExpired) {
+    return (
+      <main className="auth-session-error">
+        <AccountSwitchBanner expired />
+        <AppToast />
+      </main>
+    )
+  }
+
   return (
     <>
       <WorkspaceRefreshTransitionBridge />
+      {(switched || (accountSwitchExpected && authCheckError)) && (
+        <AccountSwitchBanner
+          name={
+            switched
+              ? modelUser?.nickname || modelUser?.mobile || modelUser?.email || `用户 #${modelUser?.id}`
+              : undefined
+          }
+        />
+      )}
 
       {!hasChecked && isCheckingSession ? (
         <div className="auth-session-loading" aria-label="登录状态检查中" />
-      ) : !hasChecked && authCheckError && requiresAuth ? (
+      ) : !hasChecked && authCheckError && (requiresAuth || accountSwitchExpected) ? (
         <div className="auth-session-error">
           <div className="auth-session-error__card">
             <strong>登录状态检查失败</strong>
@@ -215,9 +239,11 @@ export function AppShell() {
               <button type="button" onClick={() => loadAuthSession()}>
                 重新检查
               </button>
-              <button type="button" className="ghost" onClick={() => navigate('/welcome', { replace: true })}>
-                前往开屏页
-              </button>
+              {!accountSwitchExpected && (
+                <button type="button" className="ghost" onClick={() => navigate('/welcome', { replace: true })}>
+                  前往开屏页
+                </button>
+              )}
             </div>
           </div>
         </div>

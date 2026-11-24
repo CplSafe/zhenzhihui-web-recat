@@ -41,6 +41,8 @@ interface CanvasVideoPreviewModalProps {
   info?: CanvasVideoPreviewInfo
   showInfo?: boolean
   readOnly?: boolean
+  /** Private view-as asset URLs expire. Retry requests a new signed source. */
+  onReloadSignedSource?: () => void
   /**
    * 「截取此帧」（反馈 #7 任意帧截帧）：把当前进度条时刻传给上层，由节点在该时刻取一帧建图片节点。
    * 不传则不显示截帧按钮。
@@ -96,6 +98,7 @@ export default function CanvasVideoPreviewModal({
   info,
   showInfo = true,
   readOnly = false,
+  onReloadSignedSource,
   onCaptureFrame,
   capturing = false,
   onClose,
@@ -251,6 +254,7 @@ export default function CanvasVideoPreviewModal({
             key={retryCount}
             ref={videoRef}
             className={styles.player}
+            crossOrigin={onReloadSignedSource ? 'anonymous' : undefined}
             src={src}
             poster={poster || undefined}
             controls={!failed}
@@ -263,6 +267,7 @@ export default function CanvasVideoPreviewModal({
             onVolumeChange={(event) => setMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
             allowMutedAutoplayFallback={false}
             repairOnLoad={false}
+            allowBlobFallback={!onReloadSignedSource}
             onPlaybackUnavailable={handlePlaybackUnavailable}
             initialTime={startTime}
             playsInline
@@ -287,11 +292,16 @@ export default function CanvasVideoPreviewModal({
                     ref={retryButtonRef}
                     type="button"
                     onClick={() => {
+                      if (onReloadSignedSource) {
+                        stopPlayback()
+                        onReloadSignedSource()
+                        return
+                      }
                       setFailure(null)
                       setRetryCount((count) => count + 1)
                     }}
                   >
-                    重试播放
+                    {onReloadSignedSource ? '重新载入素材' : '重试播放'}
                   </button>
                   {download && (
                     <a

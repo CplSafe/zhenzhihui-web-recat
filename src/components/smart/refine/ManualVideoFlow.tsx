@@ -18,6 +18,7 @@ import {
   type ManualVideoTask,
 } from '@/api/manualVideo'
 import { useToast } from '@/composables/useToast'
+import { assetStreamUrl } from '@/utils/assetUrl'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
@@ -625,10 +626,7 @@ export default function ManualVideoFlow(props: Props) {
                       void downloadToDisk({
                         fileName: `精制成片_${task.id}.mp4`,
                         preserveResponseMediaType: true,
-                        resolveUrl: async () =>
-                          output?.asset_id
-                            ? (await getManualVideoDownloadUrl(workspaceId, output.asset_id)).download_url
-                            : video,
+                        resolveUrl: () => (output?.asset_id ? assetStreamUrl(output.asset_id, workspaceId) : video),
                       }).catch(() => showToast('视频下载失败，请稍后重试', 'error'))
                     }}
                   >

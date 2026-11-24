@@ -1,4 +1,5 @@
 import {
+  startOAuth,
   AuthApiError,
   clearAuthSessionMarker,
   clearExistingSession,
@@ -53,7 +54,7 @@ function installSuccessfulSessionFetch({
   profile?: Record<string, unknown>
   members?: unknown[]
 } = {}) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const path = requestPath(input)
     if (path === '/api/v1/auth/session') return jsonResponse({ data: session })
     if (path === '/api/v1/me') return jsonResponse({ data: profile })
@@ -204,6 +205,29 @@ describe('raw session lifecycle requests', () => {
 })
 
 describe('getAuthenticatedSession', () => {
+  it('uses native switch metadata when enriching the switched account with a matching profile', async () => {
+    vi.resetModules()
+    const switchedAuth = await import('@/api/auth')
+    const { acceptAccountSwitchSession } = await import('@/api/accountSwitch')
+    const switchSession = {
+      impersonating: true as const,
+      impersonation_id: 'a'.repeat(64),
+      access_token_expires_at: '2026-11-24T12:00:00.000Z',
+    }
+    acceptAccountSwitchSession(switchSession)
+    const fetchMock = installSuccessfulSessionFetch({
+      session: { ...switchSession, user: { id: 7 }, workspace: { id: 21 } },
+      profile: { impersonating: false, access_token_expires_at: null, user: { id: '7', nickname: '测试用户' } },
+    })
+
+    await expect(switchedAuth.getAuthenticatedSession()).resolves.toMatchObject({
+      ...switchSession,
+      user: { id: '7', nickname: '测试用户' },
+      currentMember: { user_id: 7, role: 'owner' },
+    })
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' })
+  })
+
   it('loads session, profile and the matching current workspace member', async () => {
     markAuthSessionExpected()
     const fetchMock = installSuccessfulSessionFetch()
@@ -514,4 +538,16 @@ describe('session response parsing', () => {
       response: '{not-json',
     })
   })
+})
+
+it('passes hierarchy context alone to the signed OAuth flow', async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+    jsonResponse({ data: { authorize_url: 'https://auth.example.test' } }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  await startOAuth({ hierarchyInvite: 'TOKEN', inviteCode: 'OLD', inviteType: 'channel' })
+  const request = new URL(String(fetchMock.mock.calls[0]![0]), window.location.origin)
+  expect(request.searchParams.get('hierarchy_invite')).toBe('TOKEN')
+  expect(request.searchParams.has('invite_code')).toBe(false)
+  expect(request.searchParams.has('invite_type')).toBe(false)
 })

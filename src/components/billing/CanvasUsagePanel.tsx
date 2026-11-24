@@ -19,11 +19,17 @@ type CanvasUsagePage = WorkspaceCanvasUsageSummary & {
   total_used_credits: number
 }
 
-export default function CanvasUsagePanel({ workspaceId, month }: { workspaceId: number; month?: string }) {
-  return <CanvasUsageContent key={`${workspaceId}:${month || ''}`} workspaceId={workspaceId} month={month} />
+interface CanvasUsagePanelProps {
+  workspaceId: number
+  month?: string
+  readUsage?: (path: string, options: { signal: AbortSignal }) => Promise<CanvasUsagePage>
 }
 
-function CanvasUsageContent({ workspaceId, month }: { workspaceId: number; month?: string }) {
+export default function CanvasUsagePanel(props: CanvasUsagePanelProps) {
+  return <CanvasUsageContent key={`${props.workspaceId}:${props.month || ''}`} {...props} />
+}
+
+function CanvasUsageContent({ workspaceId, month, readUsage = requestBusinessJson }: CanvasUsagePanelProps) {
   const [page, setPage] = useState(1)
   const [attempt, setAttempt] = useState(0)
   const [data, setData] = useState<CanvasUsagePage | null>(null)
@@ -37,7 +43,7 @@ function CanvasUsageContent({ workspaceId, month }: { workspaceId: number; month
       offset: String((page - 1) * PAGE_SIZE),
     })
     if (month) query.set('month', month)
-    requestBusinessJson<CanvasUsagePage>(`/api/v1/billing/canvas-usage?${query}`, { signal: controller.signal })
+    readUsage(`/api/v1/billing/canvas-usage?${query}`, { signal: controller.signal })
       .then((result) => {
         if (!controller.signal.aborted) setData(result)
       })
@@ -45,7 +51,7 @@ function CanvasUsageContent({ workspaceId, month }: { workspaceId: number; month
         if (!controller.signal.aborted) setError(getBusinessErrorMessage(err, '画布用量加载失败'))
       })
     return () => controller.abort()
-  }, [workspaceId, month, page, attempt])
+  }, [workspaceId, month, page, attempt, readUsage])
 
   const changePage = (next: number) => {
     setData(null)

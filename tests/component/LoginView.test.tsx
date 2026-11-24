@@ -104,6 +104,35 @@ async function fillPasswordLogin(
 }
 
 describe('LoginView behavior', () => {
+  it('上下级邀请自动打开注册，提交和重试均传递邀请关系且无推广码', async () => {
+    const user = userEvent.setup()
+    const mobile = '13900139000'
+    window.history.replaceState({}, '', '/login?hierarchy_invite=hierarchy-test-token')
+    sessionStorage.setItem('zzh_invite_code', 'STALE-REFERRAL')
+    mocks.registerAccount.mockRejectedValueOnce(new AuthApiError('验证码有误，请重试'))
+    mocks.getAuthenticatedSession.mockResolvedValue({ user: { id: 7, mobile } })
+    render(<LoginView />)
+
+    const dialog = within(await screen.findByRole('dialog', { name: '注册新用户' }))
+    await user.type(dialog.getByRole('textbox', { name: '手机号' }), mobile)
+    await user.click(dialog.getByRole('button', { name: '获取验证码' }))
+    await user.type(dialog.getByLabelText('密码'), 'Registration-Test-1!')
+    await user.type(dialog.getByRole('textbox', { name: '验证码' }), '839172')
+    expect(mocks.startOAuth).not.toHaveBeenCalled()
+
+    await user.click(dialog.getByRole('button', { name: '注册' }))
+    await dialog.findByText('验证码有误，请重试')
+    await user.click(dialog.getByRole('button', { name: '注册' }))
+    await waitFor(() => expect(mocks.handleLoginSuccess).toHaveBeenCalledTimes(1))
+
+    expect(mocks.clearExistingSession).toHaveBeenCalledTimes(2)
+    const hierarchyContext = expect.objectContaining({
+      hierarchyInvite: 'hierarchy-test-token',
+      inviteCode: '',
+      inviteType: '',
+    })
+    expect(mocks.startOAuth.mock.calls).toEqual([[hierarchyContext], [hierarchyContext]])
+  })
   it('隐私政策入口不会打开用户服务协议或自动同意', async () => {
     render(<LoginView />)
     fireEvent.click(screen.getByText('《隐私政策》'))

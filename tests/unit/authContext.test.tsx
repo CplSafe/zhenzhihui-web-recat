@@ -19,6 +19,8 @@ vi.mock('@/api/auth', () => ({
   resetAuthenticatedSession: vi.fn(),
 }))
 
+import * as accountSwitch from '@/api/accountSwitch'
+import { clearAuthSessionMarker } from '@/api/auth'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { releaseLogoutDraftWriteBarrier } from '@/utils/logoutBarrier'
@@ -26,7 +28,7 @@ import { saveSmartEntryDraft, setSmartEntryDraftScope } from '@/utils/smartEntry
 import { consumeOAuthLoginReturnTo, keepOAuthLoginReturnTo } from '@/utils/loginReturnTo'
 
 function LoginProbe({ returnTo }: { returnTo?: string } = {}) {
-  const { handleLoginSuccess, handleLogoutSuccess, isAuthenticated, loadAuthSession } = useAuth()
+  const { accountSwitchExpired, handleLoginSuccess, handleLogoutSuccess, isAuthenticated, loadAuthSession } = useAuth()
   const location = useLocation()
   return (
     <>
@@ -54,6 +56,7 @@ function LoginProbe({ returnTo }: { returnTo?: string } = {}) {
         finish logout
       </button>
       <output aria-label="authenticated">{String(isAuthenticated)}</output>
+      <output aria-label="account switch expired">{String(Boolean(accountSwitchExpired))}</output>
     </>
   )
 }
@@ -211,6 +214,54 @@ describe('AuthProvider login refresh scheduling', () => {
     fireEvent.click(screen.getByRole('button', { name: 'finish logout' }))
     expect(screen.getByLabelText('pathname')).toHaveTextContent('/welcome')
     expect(consumeOAuthLoginReturnTo()).toBe('')
+  })
+
+  it('expires a switched account without refreshing or clearing ordinary sign-in data', async () => {
+    const switchId = 'a'.repeat(64)
+    vi.spyOn(accountSwitch, 'getAccountSwitchId').mockReturnValue(switchId)
+    authMocks.getAuthenticatedSession.mockResolvedValueOnce({
+      user: { id: 9 },
+      workspaces: [{ id: 1, type: 'personal' }],
+      impersonating: true,
+      impersonation_id: switchId,
+      access_token_expires_at: new Date(Date.now() + 1000).toISOString(),
+    })
+    window.localStorage.setItem('smart_create_draft_v1_u9_ws1', '{"workspaceId":1}')
+    window.localStorage.setItem('smart_create_draft_v1_uanon_ws1', '{"workspaceId":1}')
+    await act(async () => {
+      render(
+        <MemoryRouter initialEntries={['/projects']}>
+          <AuthProvider>
+            <LoginProbe />
+          </AuthProvider>
+        </MemoryRouter>,
+      )
+    })
+    expect(screen.getByLabelText('authenticated')).toHaveTextContent('true')
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: 'zzh.auth.logout-event.v1',
+          newValue: JSON.stringify({ userId: '9', nonce: 'other-tab' }),
+        }),
+      )
+    })
+    expect(screen.getByLabelText('authenticated')).toHaveTextContent('true')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(screen.getByLabelText('authenticated')).toHaveTextContent('false')
+    expect(screen.getByLabelText('account switch expired')).toHaveTextContent('true')
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/projects')
+    expect(authMocks.refreshSession).not.toHaveBeenCalled()
+    expect(clearAuthSessionMarker).not.toHaveBeenCalled()
+    expect(window.localStorage.getItem('zzh.auth.logout-event.v1')).toBeNull()
+    expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.9')).toBeNull()
+    expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.anon')).toBeNull()
+    expect(window.localStorage.getItem('smart_create_draft_v1_u9_ws1')).not.toBeNull()
+    expect(window.localStorage.getItem('smart_create_draft_v1_uanon_ws1')).not.toBeNull()
   })
 
   it.each([{ status: 500 }, { cause: 'timeout' }, new TypeError('Failed to fetch')])(

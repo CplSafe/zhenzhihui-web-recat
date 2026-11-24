@@ -7,9 +7,17 @@
 import { lazy, Suspense, useState } from 'react'
 import { routeImporters } from './routePrefetch'
 import type { ReactNode } from 'react'
-import { createBrowserRouter, Navigate, useLocation, useParams, useRouteError } from 'react-router-dom'
+import {
+  createBrowserRouter,
+  Navigate,
+  redirectDocument,
+  useLocation,
+  useParams,
+  useRouteError,
+} from 'react-router-dom'
 import App from '../App'
 import { hasAuthSessionMarker } from '../api/auth'
+import { getAccountSwitchId } from '../api/accountSwitch'
 import { useWorkspaceId } from '../stores/workspaceSession'
 import {
   getHotCopyRouteSessionToken,
@@ -23,6 +31,7 @@ import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReloa
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 import { PROMO_DELIVERY_ENABLED } from '../utils/manualDeliveryVisibility'
 import CanvasAccessRoute from './CanvasAccessRoute'
+import { loadViewAsUser, takeViewAsUserLaunchRequest, VIEW_AS_USER_PATH } from '../api/viewAsUser'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -299,16 +308,30 @@ function DistributionAccessRoute() {
 // 根路径按会话状态进入：已登录用户直接进入爆款复刻，游客进入开屏页。
 // 同步读取本地会话标记，避免登录用户刷新时短暂闪现开屏页。
 function IndexRedirect() {
-  return <Navigate to={hasAuthSessionMarker() ? APP_HOME_PATH : '/welcome'} replace />
+  return <Navigate to={hasAuthSessionMarker() || getAccountSwitchId() ? APP_HOME_PATH : '/welcome'} replace />
 }
 /** 显式访问品牌欢迎页时，已登录用户也可以查看开屏内容。 */
 function WelcomeRoute() {
   return <>{lazyPage(<SplashView />)}</>
 }
 
+let viewAsUserLaunchRequest = takeViewAsUserLaunchRequest()
+
 /** 应用唯一的浏览器路由实例。 */
 export const router = createBrowserRouter([
-  { path: '/director', element: lazyPage(<DirectorStudioView />), errorElement: <RouteErrorBoundary /> },
+  {
+    path: VIEW_AS_USER_PATH,
+    caseSensitive: true,
+    loader: async ({ request }) => {
+      const launchRequest = viewAsUserLaunchRequest
+      viewAsUserLaunchRequest = null
+      const launch = await loadViewAsUser(launchRequest, request.signal)
+      return 'mode' in launch ? redirectDocument(APP_HOME_PATH) : launch
+    },
+    lazy: async () => ({ Component: (await import('../views/ViewAsUserView')).default }),
+    HydrateFallback: () => <div className="auth-session-loading" aria-label="正在开启用户身份查看" />,
+    errorElement: <RouteErrorBoundary />,
+  },
   {
     // AppShell 提供全局布局、会话守卫和全局弹层；各业务页面作为它的子路由渲染。
     element: <App />,
@@ -319,6 +342,7 @@ export const router = createBrowserRouter([
       { index: true, element: <IndexRedirect />, handle: { requiresAuth: false } },
       { path: 'welcome', element: <WelcomeRoute />, handle: { requiresAuth: false } },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
+      { path: 'director', element: lazyPage(<DirectorStudioView />), handle: { requiresAuth: false } },
       // 首页已下线：保留 /home 仅为旧链接 / 书签兜底，统一落到爆款复刻。
       { path: 'home', element: <Navigate to={APP_HOME_PATH} replace />, handle: { requiresAuth: false } },
       { path: 'market', element: lazyPage(<MarketView />), handle: { requiresAuth: false } },

@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   cancelled: vi.fn(),
+  getAccountSwitchId: vi.fn(),
   getError: vi.fn((_error: unknown, fallback: string) => fallback),
   hasConfiguredDevBackend: vi.fn(),
+  leaveAccountSwitch: vi.fn(),
   logoutSession: vi.fn(),
   markDevLogout: vi.fn(),
   showToast: vi.fn(),
@@ -12,11 +14,16 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
 }))
 
+vi.mock('@/api/accountSwitch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/accountSwitch')>()),
+  getAccountSwitchId: mocks.getAccountSwitchId,
+}))
 vi.mock('@/api/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/auth')>()),
   getAuthErrorMessage: mocks.getError,
   logoutSession: mocks.logoutSession,
 }))
+vi.mock('@/api/viewAsUser', () => ({ leaveAccountSwitch: mocks.leaveAccountSwitch }))
 vi.mock('@/auth/AuthContext', () => ({
   useAuth: () => ({
     handleLogoutCancelled: mocks.cancelled,
@@ -43,7 +50,9 @@ describe('useLogout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubEnv('DEV', false)
+    mocks.getAccountSwitchId.mockReturnValue('')
     mocks.hasConfiguredDevBackend.mockReturnValue(true)
+    mocks.leaveAccountSwitch.mockResolvedValue(undefined)
     mocks.logoutSession.mockResolvedValue(undefined)
   })
 
@@ -84,6 +93,22 @@ describe('useLogout', () => {
     await act(async () => result.current.logout())
     expect(mocks.logoutSession).toHaveBeenCalledTimes(2)
     expect(mocks.success).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries ending a switched account session without logging out the ordinary account', async () => {
+    mocks.getAccountSwitchId.mockReturnValue('switched-session')
+    mocks.leaveAccountSwitch.mockRejectedValueOnce(new Error('暂时不可用'))
+    const { result } = renderHook(() => useLogout())
+
+    await act(async () => result.current.logout())
+    expect(mocks.showToast).toHaveBeenCalledWith('暂时无法退出切换，请重试。', 'error')
+    expect(result.current.isLoggingOut).toBe(false)
+
+    await act(async () => result.current.logout())
+    expect(mocks.leaveAccountSwitch).toHaveBeenNthCalledWith(2, 'switched-session')
+    expect(mocks.logoutSession).not.toHaveBeenCalled()
+    expect(mocks.start).not.toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
   })
 
   it.each([{ status: 401 }, { code: 10101, status: 200 }, { code: 'UNAUTHORIZED', status: 200 }])(

@@ -23,6 +23,8 @@ interface SeekableVideoProps extends VideoHTMLAttributes<HTMLVideoElement> {
    * 大图预览应关闭：先让原地址立即播放，只有用户真的拖动失败时才下载本地副本。
    */
   repairOnLoad?: boolean
+  /** Signed browser media already supports Range. Keep playback on the native anonymous request. */
+  allowBlobFallback?: boolean
   /** 挂载后立即准备本地可播放副本；用于后端下载接口无法渐进播放的放大预览。 */
   prepareImmediately?: boolean
   /** 自动播放受阻时是否允许静音重试；需要默认有声的预览可关闭。 */
@@ -94,6 +96,7 @@ function SeekableVideoImpl(
     src,
     quiet = false,
     repairOnLoad = true,
+    allowBlobFallback = true,
     prepareImmediately = false,
     allowMutedAutoplayFallback = true,
     initialTime = 0,
@@ -214,71 +217,75 @@ function SeekableVideoImpl(
    *   换源后回到用户要去的位置。
    * 后台下载途中用户拖了进度条，就地升级成前台模式，不重新下载。
    */
-  const repair = useCallback((mode: 'foreground' | 'background' = 'foreground') => {
-    const source = srcRef.current
-    if (!source || localSrcRef.current || keepNativeRef.current) return
-    if (source.startsWith('blob:') || source.startsWith('data:')) return
+  const repair = useCallback(
+    (mode: 'foreground' | 'background' = 'foreground') => {
+      if (!allowBlobFallback) return
+      const source = srcRef.current
+      if (!source || localSrcRef.current || keepNativeRef.current) return
+      if (source.startsWith('blob:') || source.startsWith('data:')) return
 
-    const video = videoRef.current
-    if (preparingRef.current) {
-      // 已在后台下载：前台请求只需改成「暂停 + 显示进度」，下载继续用同一份
-      if (mode === 'foreground' && backgroundRef.current) {
-        backgroundRef.current = false
+      const video = videoRef.current
+      if (preparingRef.current) {
+        // 已在后台下载：前台请求只需改成「暂停 + 显示进度」，下载继续用同一份
+        if (mode === 'foreground' && backgroundRef.current) {
+          backgroundRef.current = false
+          resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
+          video?.pause()
+          setPreparing(true)
+        }
+        return
+      }
+
+      backgroundRef.current = mode === 'background'
+      if (mode === 'foreground') {
+        // 下载期间先暂停：这时播放位置本来就是错的，让它继续跑只会在换源时又跳一下
+        // repair 可能早于原生 autoplay 真正起播；此时 paused 仍为 true，不能因此丢掉自动播放意图。
         resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
         video?.pause()
         setPreparing(true)
       }
-      return
-    }
 
-    backgroundRef.current = mode === 'background'
-    if (mode === 'foreground') {
-      // 下载期间先暂停：这时播放位置本来就是错的，让它继续跑只会在换源时又跳一下
-      // repair 可能早于原生 autoplay 真正起播；此时 paused 仍为 true，不能因此丢掉自动播放意图。
-      resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
-      video?.pause()
-      setPreparing(true)
-    }
+      preparingRef.current = true
+      setPercent(0)
 
-    preparingRef.current = true
-    setPercent(0)
+      const handle = acquireSeekableSource(source, {
+        onProgress: ({ loadedBytes, totalBytes }) => {
+          if (!aliveRef.current || srcRef.current !== source) return
+          setPercent(totalBytes > 0 ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100)) : 0)
+        },
+      })
+      handleRef.current?.release()
+      handleRef.current = handle
 
-    const handle = acquireSeekableSource(source, {
-      onProgress: ({ loadedBytes, totalBytes }) => {
-        if (!aliveRef.current || srcRef.current !== source) return
-        setPercent(totalBytes > 0 ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100)) : 0)
-      },
-    })
-    handleRef.current?.release()
-    handleRef.current = handle
-
-    void handle.ready
-      .then(({ url, local }) => {
-        if (!aliveRef.current || srcRef.current !== source || handleRef.current !== handle) return
-        // local 为 false 表示没抓下来（鉴权/网络/跨域）：保持原地址，别把 src 换成同一个值触发重载
-        if (local && url) {
-          if (backgroundRef.current) {
-            // 边下边播：在此刻的播放位置换源，原来在播就接着播
-            const current = videoRef.current
-            pendingSeekRef.current = current ? current.currentTime : 0
-            resumeRef.current = Boolean(current && (!current.paused || (autoPlayRef.current && !current.ended)))
+      void handle.ready
+        .then(({ url, local }) => {
+          if (!aliveRef.current || srcRef.current !== source || handleRef.current !== handle) return
+          // local 为 false 表示没抓下来（鉴权/网络/跨域）：保持原地址，别把 src 换成同一个值触发重载
+          if (local && url) {
+            if (backgroundRef.current) {
+              // 边下边播：在此刻的播放位置换源，原来在播就接着播
+              const current = videoRef.current
+              pendingSeekRef.current = current ? current.currentTime : 0
+              resumeRef.current = Boolean(current && (!current.paused || (autoPlayRef.current && !current.ended)))
+            }
+            localSrcRef.current = url
+            downloadedUrlRef.current = url
+            setLocalSrc(url)
+          } else if (nativeFailedRef.current) {
+            keepNativeRef.current = true
+            unavailableRef.current?.(source)
           }
-          localSrcRef.current = url
-          downloadedUrlRef.current = url
-          setLocalSrc(url)
-        } else if (nativeFailedRef.current) {
-          keepNativeRef.current = true
-          unavailableRef.current?.(source)
-        }
-        setPreparedFor(source)
-      })
-      .finally(() => {
-        if (handleRef.current !== handle) return
-        preparingRef.current = false
-        backgroundRef.current = false
-        if (aliveRef.current) setPreparing(false)
-      })
-  }, [])
+          setPreparedFor(source)
+        })
+        .finally(() => {
+          if (handleRef.current !== handle) return
+          preparingRef.current = false
+          backgroundRef.current = false
+          if (aliveRef.current) setPreparing(false)
+        })
+    },
+    [allowBlobFallback],
+  )
 
   useEffect(() => {
     // prepareImmediately 用于原地址根本无法渐进播放的场景：边下边播只会是一片黑，保持前台模式（暂停 + 进度）
@@ -297,7 +304,7 @@ function SeekableVideoImpl(
   const handleSeeking = useCallback(
     (event: React.SyntheticEvent<HTMLVideoElement>) => {
       const video = event.currentTarget
-      if (!localSrcRef.current) {
+      if (allowBlobFallback && !localSrcRef.current) {
         pendingSeekRef.current = video.currentTime
         window.clearTimeout(verifyTimerRef.current)
         /*
@@ -314,7 +321,7 @@ function SeekableVideoImpl(
       }
       onSeeking?.(event)
     },
-    [onSeeking, repair, verifySeek],
+    [allowBlobFallback, onSeeking, repair, verifySeek],
   )
 
   const handleSeeked = useCallback(
@@ -385,7 +392,9 @@ function SeekableVideoImpl(
       if (code && code !== MEDIA_ERR_ABORTED) {
         const source = srcRef.current
         const local = localSrcRef.current
-        if (local) {
+        if (!allowBlobFallback) {
+          unavailableRef.current?.(source)
+        } else if (local) {
           if (video.getAttribute('src') === local) {
             if (nativePlayableRef.current) {
               // 部分播放器支持同一份 HTTP 视频，却不接受 Blob。保留可播放的原地址，避免反复切源。
@@ -408,7 +417,7 @@ function SeekableVideoImpl(
       }
       onError?.(event)
     },
-    [onError, repair],
+    [allowBlobFallback, onError, repair],
   )
 
   const handleCanPlay = useCallback(
@@ -439,10 +448,14 @@ function SeekableVideoImpl(
     <span style={wrapperStyle}>
       <video
         {...rest}
-        autoPlay={autoPlay && !prepareImmediately}
+        autoPlay={autoPlay && !(allowBlobFallback && prepareImmediately)}
         ref={bindRef}
         src={
-          prepareImmediately && !src.startsWith('blob:') && !src.startsWith('data:') && preparedFor !== src
+          allowBlobFallback &&
+          prepareImmediately &&
+          !src.startsWith('blob:') &&
+          !src.startsWith('data:') &&
+          preparedFor !== src
             ? undefined
             : localSrc || src
         }

@@ -8,6 +8,7 @@ import {
   getCreditRequestContext,
   listCreditRequests,
   type CreditRequest,
+  type CreditRequestCanvasUsage,
   type CreditRequestDecision,
   type CreditRequestDirection,
   type CreditRequestPage,
@@ -30,6 +31,7 @@ import { formatCredits } from '@/utils/creditsFormat'
 import './CreditRequestsView.css'
 
 const MAX_REQUEST_CREDITS = 1_000_000_000
+const SCRIPT_NAME_LIMIT = 128
 const NOTE_LIMIT = 500
 
 const STATUS_LABELS: Record<CreditRequestStatus, string> = {
@@ -59,7 +61,7 @@ function newRequestKey(): string {
   return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
 }
 
-function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }) {
+function RequestForm({ hidden, onCreated }: { hidden: boolean; onCreated: (item: CreditRequest) => void }) {
   const activeWorkspace = useCurrentWorkspace()
   const activeTeamId =
     activeWorkspace?.type === 'team' || activeWorkspace?.type === 'enterprise' ? Number(activeWorkspace.id) : 0
@@ -70,12 +72,14 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
   const [amount, setAmount] = useState('')
+  const [scriptName, setScriptName] = useState('')
   const [note, setNote] = useState('')
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submitController = useRef<AbortController | null>(null)
   const requestKey = useRef<{
     amount: number
+    scriptName: string
     note: string
     superiorId: number
     workspaceId: number
@@ -83,6 +87,7 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
   } | null>(null)
 
   useEffect(() => {
+    if (hidden) return
     const controller = new AbortController()
     setLoading(true)
     setLoadError('')
@@ -105,7 +110,7 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [activeTeamId, reload])
+  }, [activeTeamId, hidden, reload])
 
   useEffect(() => () => submitController.current?.abort(), [])
 
@@ -129,6 +134,12 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
       return
     }
 
+    const trimmedScriptName = scriptName.trim()
+    if (!trimmedScriptName || Array.from(trimmedScriptName).length > SCRIPT_NAME_LIMIT) {
+      setFormError(`请输入剧本名称，最多 ${SCRIPT_NAME_LIMIT} 字。`)
+      return
+    }
+
     const trimmedNote = note.trim()
     const controller = new AbortController()
     submitController.current = controller
@@ -139,16 +150,25 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
       if (
         !draft ||
         credits !== draft.amount ||
+        trimmedScriptName !== draft.scriptName ||
         trimmedNote !== draft.note ||
         superior.id !== draft.superiorId ||
         workspaceId !== draft.workspaceId
       ) {
-        draft = { amount: credits, note: trimmedNote, superiorId: superior.id, workspaceId, key: newRequestKey() }
+        draft = {
+          amount: credits,
+          scriptName: trimmedScriptName,
+          note: trimmedNote,
+          superiorId: superior.id,
+          workspaceId,
+          key: newRequestKey(),
+        }
         requestKey.current = draft
       }
       const item = await createCreditRequest(
         {
           amount: credits,
+          script_name: trimmedScriptName,
           note: trimmedNote,
           expected_superior_id: superior.id,
           request_key: draft.key,
@@ -159,6 +179,7 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
       if (controller.signal.aborted) return
       requestKey.current = null
       setAmount('')
+      setScriptName('')
       setNote('')
       onCreated(item)
     } catch (error) {
@@ -175,7 +196,7 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
   const disabled = loading || Boolean(loadError) || !superior || !workspaces.length || submitting
 
   return (
-    <section className="credit-requests__panel" aria-labelledby="credit-request-form-title">
+    <section className="credit-requests__panel" aria-labelledby="credit-request-form-title" hidden={hidden}>
       <h2 id="credit-request-form-title">发起申请</h2>
       {loading ? (
         <p className="credit-requests__muted" role="status">
@@ -238,6 +259,20 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
           />
         </label>
         <label>
+          剧本名称 <span>必填，最多 {SCRIPT_NAME_LIMIT} 字</span>
+          <input
+            name="script_name"
+            type="text"
+            autoComplete="off"
+            placeholder="例如《夏日来信》剧组"
+            value={scriptName}
+            maxLength={SCRIPT_NAME_LIMIT * 2}
+            disabled={disabled}
+            required
+            onChange={(event) => setScriptName(event.target.value)}
+          />
+        </label>
+        <label>
           申请说明 <span>选填，最多 {NOTE_LIMIT} 字</span>
           <textarea
             name="note"
@@ -254,6 +289,9 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
             {formError}
           </p>
         )}
+        {superior && (
+          <p className="credit-requests__muted">提交时会附上你在当前所属团队的无限画布用量，供上级审批参考。</p>
+        )}
         <button
           type="submit"
           className="credit-requests__button credit-requests__button--primary"
@@ -269,17 +307,77 @@ function RequestForm({ onCreated }: { onCreated: (item: CreditRequest) => void }
 interface RequestCardProps {
   item: CreditRequest
   direction: CreditRequestDirection
+  isDetail: boolean
   canDecide: boolean
   processing: boolean
   onDecide: (item: CreditRequest, decision: CreditRequestDecision) => void
 }
 
-function RequestCard({ item, direction, canDecide, processing, onDecide }: RequestCardProps) {
+function CanvasUsage({ usage, isDetail }: { usage?: CreditRequestCanvasUsage | null; isDetail: boolean }) {
+  return (
+    <section className="credit-requests__canvas-usage">
+      <h4>团队无限画布用量（申请提交时）</h4>
+      {!usage ? (
+        <p className="credit-requests__muted">本次申请未记录画布用量。</p>
+      ) : (
+        <>
+          <dl className="credit-requests__usage-totals">
+            <div>
+              <dt>画布</dt>
+              <dd>{usage.canvas_count.toLocaleString('zh-CN')} 个</dd>
+            </div>
+            <div>
+              <dt>累计消耗</dt>
+              <dd>{formatCredits(usage.credits_used, 3)} 积分</dd>
+            </div>
+            <div>
+              <dt>视频</dt>
+              <dd>{usage.video_count.toLocaleString('zh-CN')} 个</dd>
+            </div>
+            <div>
+              <dt>图片</dt>
+              <dd>{usage.image_count.toLocaleString('zh-CN')} 张</dd>
+            </div>
+          </dl>
+          {isDetail && usage.canvases.length > 0 && (
+            <>
+              <ul className="credit-requests__usage-canvases" aria-label="无限画布明细">
+                {usage.canvases.map((canvas) => (
+                  <li key={canvas.canvas_id}>
+                    <strong>{canvas.canvas_name || `画布 #${canvas.canvas_id}`}</strong>
+                    <p className="credit-requests__muted">{canvas.workspace_name}</p>
+                    <p className="credit-requests__muted">
+                      消耗 {formatCredits(canvas.credits_used, 3)} 积分 · 视频{' '}
+                      {canvas.video_count.toLocaleString('zh-CN')} 个 · 图片{' '}
+                      {canvas.image_count.toLocaleString('zh-CN')} 张
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              {usage.canvases.length < usage.canvas_count && (
+                <p className="credit-requests__muted">显示最近 {usage.canvases.length} 个画布。</p>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function RequestCard({ item, direction, isDetail, canDecide, processing, onDecide }: RequestCardProps) {
+  const showDecision = canDecide && item.status === 'pending'
+
   return (
     <article className="credit-requests__record">
       <div className="credit-requests__record-head">
         <div>
           <h3>{formatCredits(item.amount, 3)} 积分</h3>
+          {item.script_name && (
+            <p className="credit-requests__muted">
+              剧本名称 <strong>{item.script_name}</strong>
+            </p>
+          )}
           <p className="credit-requests__muted">
             {direction === 'received' ? '申请人' : '审批人'}{' '}
             <strong>{direction === 'received' ? item.applicant.name : item.superior.name}</strong>
@@ -294,6 +392,7 @@ function RequestCard({ item, direction, canDecide, processing, onDecide }: Reque
         </span>
       </div>
       {item.note && <p className="credit-requests__note">{item.note}</p>}
+      {direction === 'received' && <CanvasUsage usage={item.canvas_usage} isDetail={isDetail} />}
       <div className="credit-requests__record-foot">
         <div className="credit-requests__dates">
           <span>
@@ -305,24 +404,33 @@ function RequestCard({ item, direction, canDecide, processing, onDecide }: Reque
             </span>
           )}
         </div>
-        {canDecide && item.status === 'pending' && (
+        {(!isDetail || showDecision) && (
           <div className="credit-requests__actions">
-            <button
-              type="button"
-              className="credit-requests__button"
-              disabled={processing}
-              onClick={() => onDecide(item, 'reject')}
-            >
-              拒绝
-            </button>
-            <button
-              type="button"
-              className="credit-requests__button credit-requests__button--primary"
-              disabled={processing}
-              onClick={() => onDecide(item, 'approve')}
-            >
-              同意并发放
-            </button>
+            {!isDetail && (
+              <Link className="credit-requests__link" to={`?tab=${direction}&request_id=${item.id}`}>
+                查看详情
+              </Link>
+            )}
+            {showDecision && (
+              <>
+                <button
+                  type="button"
+                  className="credit-requests__button"
+                  disabled={processing}
+                  onClick={() => onDecide(item, 'reject')}
+                >
+                  拒绝
+                </button>
+                <button
+                  type="button"
+                  className="credit-requests__button credit-requests__button--primary"
+                  disabled={processing}
+                  onClick={() => onDecide(item, 'approve')}
+                >
+                  同意并发放
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -426,6 +534,7 @@ function RequestHistory({ direction, requestId, userId }: RequestHistoryProps) {
       <RequestCard
         item={item}
         direction={recordDirection}
+        isDetail={Boolean(requestId)}
         canDecide={item.superior.id === userId}
         processing={processing}
         onDecide={(target, decision) => void handleDecision(target, decision)}
@@ -524,14 +633,16 @@ function CreditRequestContent({ userId }: { userId: number }) {
   const direction = params.get('tab') === 'received' ? 'received' : 'sent'
   const rawRequestId = Number(params.get('request_id'))
   const requestId = Number.isSafeInteger(rawRequestId) && rawRequestId > 0 ? rawRequestId : 0
+  const showForm = !requestId && direction === 'sent'
 
   return (
     <main className="credit-requests__content">
       <h1>积分申请</h1>
-      {!requestId && <p className="credit-requests__intro">选择积分到账的工作空间，向直属上级提交申请。</p>}
-      <div className={`credit-requests__columns${requestId ? ' credit-requests__columns--detail' : ''}`}>
+      {showForm && <p className="credit-requests__intro">选择积分到账的工作空间，向直属上级提交申请。</p>}
+      <div className={`credit-requests__columns${showForm ? '' : ' credit-requests__columns--single'}`}>
         {!requestId && (
           <RequestForm
+            hidden={!showForm}
             onCreated={(item) => {
               showToast('申请已提交，等待上级审批', 'success')
               setParams({ tab: 'sent', request_id: String(item.id) })

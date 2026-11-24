@@ -144,6 +144,32 @@ describe('shared session refresh single-flight', () => {
     expect(events).toEqual(['/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/refresh'])
   })
 
+  it('rechecks the switched account before refreshing after a pending logout', async () => {
+    vi.stubGlobal('navigator', {})
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.resetModules()
+    const { runSessionLogoutWithoutLock, runSharedSessionRefresh: refresh } = await import('@/api/sessionRefresh')
+    const { acceptAccountSwitchSession } = await import('@/api/accountSwitch')
+    const logoutGate = deferred<void>()
+
+    const logout = runSessionLogoutWithoutLock(() => logoutGate.promise)
+    const pendingRefresh = refresh()
+    try {
+      acceptAccountSwitchSession({
+        impersonating: true,
+        impersonation_id: 'a'.repeat(64),
+        access_token_expires_at: '2026-11-24T12:00:00.000Z',
+      })
+      logoutGate.resolve()
+      await logout
+      await expect(pendingRefresh).resolves.toMatchObject({ ok: false, status: 401 })
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      localStorage.removeItem('zzh.auth.account-switch.v1')
+    }
+  })
+
   it('surfaces a rejected refresh as an unauthorized AuthApiError without throwing from the shared layer', async () => {
     vi.stubGlobal(
       'fetch',

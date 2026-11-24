@@ -55,3 +55,48 @@
   background: #eef2ff;
   color: #5767e5;
 }
+
+.account-switch-banner {
+  position: fixed;
+  z-index: 1100;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 24px);
+  width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid #e5bc68;
+  border-radius: 8px;
+  background: #fff4dc;
+  color: #653f13;
+  box-shadow: 0 2px 8px rgb(75 49 13 / 12%);
+  font-size: 13px;
+}
+
+.account-switch-banner--expired {
+  position: static;
+  transform: none;
+}
+
+.account-switch-banner strong {
+  overflow-wrap: anywhere;
+}
+
+.account-switch-banner button {
+  flex: none;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #754a1b;
+  color: #fff;
+  cursor: pointer;
+}
+
+.account-switch-banner button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}

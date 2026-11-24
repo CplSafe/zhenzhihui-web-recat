@@ -19,11 +19,14 @@ async function resetBrowserStorage(page: import('@playwright/test').Page, option
   }, options)
 }
 
-test('注册短信支持失败重试、更换手机号以及填完后提交', async ({ page }, testInfo) => {
+test('层级邀请注册支持短信重试、更换手机号和提交', async ({ page }, testInfo) => {
   await resetBrowserStorage(page)
   await page.route('**/api/v1/auth/logout', (route) => route.fulfill({ status: 401, body: unauthorizedResponse }))
   let oauthStarts = 0
   await page.route('**/api/v1/auth/oauth-start?**', (route) => {
+    const params = new URL(route.request().url()).searchParams
+    expect(params.get('hierarchy_invite')).toBe('browser-hierarchy')
+    expect(params.has('invite_code')).toBe(false)
     oauthStarts++
     return route.fulfill({ json: { code: 0, data: { client_id: 'browser-test', return_to: '/auth/callback' } } })
   })
@@ -48,8 +51,7 @@ test('注册短信支持失败重试、更换手机号以及填完后提交', as
     return route.fulfill({ status: 400, json: { code: 10003, message: '验证码错误' } })
   })
 
-  await page.goto('/login')
-  await page.getByRole('button', { name: '免费注册' }).click()
+  await page.goto('/login?hierarchy_invite=browser-hierarchy&invite_code=stale-referral')
   const dialog = page.getByRole('dialog', { name: '注册新用户' })
   const mobile = dialog.getByRole('textbox', { name: '手机号' })
   const password = dialog.getByLabel('密码', { exact: true })
@@ -110,6 +112,7 @@ test('注册短信支持失败重试、更换手机号以及填完后提交', as
   expect(registrations).toEqual([
     expect.objectContaining({ mobile: '13900000000', sms_code: '654321', terms_accepted: true }),
   ])
+  expect(registrations[0]).not.toHaveProperty('invite_code')
   await dialog.getByRole('button', { name: '关闭' }).click()
   await expect(dialog).toBeHidden()
 })
@@ -289,6 +292,58 @@ test('提交注册才清理旧会话并用新的 OAuth 回调登录新账号', a
     'callback',
     'callback-completed',
   ])
+  expectNoUnexpectedApi(api)
+})
+
+test('身份切换过期可重试退出并恢复普通账号', async ({ page }, testInfo) => {
+  const api = await installStrictAuthenticatedApp(page, { preserveStorage: true })
+  const switchId = 'a'.repeat(64)
+  const switchHint = 'zzh.auth.account-switch.v1'
+  await page.addInitScript(
+    ({ switchHint, switchId }) => {
+      if (!sessionStorage.getItem('e2e-switch-initialized')) {
+        localStorage.setItem(switchHint, switchId)
+        localStorage.setItem('zzh_has_auth_session', '1')
+        sessionStorage.setItem('e2e-switch-initialized', '1')
+      }
+    },
+    { switchHint, switchId },
+  )
+
+  let ordinaryReads = 0
+  await page.route('**/api/v1/auth/session', (route) => {
+    if (route.request().headers()['x-zzh-account-switch'] === switchId) {
+      return route.fulfill({ status: 401, json: { code_string: 'IMPERSONATION_EXPIRED' } })
+    }
+    ordinaryReads++
+    return route.fallback()
+  })
+  let endAttempts = 0
+  await page.route('**/api/v1/auth/impersonation/end', (route) => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers()['x-zzh-account-switch']).toBe(switchId)
+    endAttempts++
+    return endAttempts === 1
+      ? route.fulfill({ status: 503, json: { message: '暂时不可用' } })
+      : route.fulfill({ json: { code: 0, data: null } })
+  })
+
+  await page.goto('/projects')
+  await expect(page.getByText('用户身份切换已失效', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/projects$/)
+  const endSwitch = page.getByRole('button', { name: '退出身份切换' })
+  await endSwitch.click()
+  await expect(page.getByText('暂时无法退出切换，请重试。', { exact: true })).toBeVisible()
+  await expect(endSwitch).toBeEnabled()
+  expect(ordinaryReads).toBe(0)
+  await page.screenshot({ path: testInfo.outputPath('expired-account-switch-retry.png') })
+  await endSwitch.click()
+
+  await expect(page.getByText('E2E 用户', { exact: true })).toBeVisible()
+  await expect(endSwitch).toHaveCount(0)
+  expect(endAttempts).toBe(2)
+  expect(ordinaryReads).toBeGreaterThan(0)
+  expect(api.seen.some(({ path }) => path === '/api/v1/auth/refresh' || path === '/api/v1/auth/logout')).toBe(false)
   expectNoUnexpectedApi(api)
 })
 

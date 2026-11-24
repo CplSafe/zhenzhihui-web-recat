@@ -146,6 +146,44 @@
   pointer-events: auto;
 }
 
+.share-view .read-only-canvas-load {
+  margin: auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--canvas-border);
+  border-radius: 7px;
+  background: var(--canvas-surface-input);
+  color: var(--canvas-text);
+  cursor: pointer;
+}
+
+.share-view .read-only-canvas-load:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.read-only-canvas-audio {
+  width: calc(100% - 16px);
+  margin: auto;
+}
+
+.read-only-canvas-group {
+  position: absolute;
+  border: 1px dashed var(--canvas-text-muted);
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.read-only-canvas-group > span {
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 0;
+  color: var(--canvas-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* 连接点只供 React Flow 计算分享页的历史连线路径，不接受访客交互。 */
 .share-node-handle {
   width: 1px;

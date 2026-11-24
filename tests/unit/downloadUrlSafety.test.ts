@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
+import { assetAttachmentUrl, resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
 
 const PAGE_ORIGIN = 'https://app.example.com'
 
@@ -53,5 +53,17 @@ describe('downloadUrlSafety', () => {
       kind: 'http',
       isCrossOrigin: false,
     })
+  })
+})
+
+describe('assetAttachmentUrl', () => {
+  it.each([
+    ['/api/v1/assets/42/download?workspace_id=7', '/api/v1/assets/42/download?workspace_id=7&attachment=1'],
+    ['/api/v1/assets/42/download-url?workspace_id=7', '/api/v1/assets/42/download-url?workspace_id=7'],
+    ['https://cdn.example.com/api/v1/assets/42/download', 'https://cdn.example.com/api/v1/assets/42/download'],
+    ['blob:https://app.example.com/object-id', 'blob:https://app.example.com/object-id'],
+  ])('routes explicit downloads from %s', (input, expected) => {
+    const address = resolveSafeDownloadUrl(input, PAGE_ORIGIN)!
+    expect(assetAttachmentUrl(address, PAGE_ORIGIN)).toBe(expected)
   })
 })

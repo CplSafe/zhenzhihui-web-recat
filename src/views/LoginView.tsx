@@ -36,6 +36,7 @@ import { logger } from '@/observability/openobserve-logger'
 import { createLoginBridgeDiagnostic, type LoginBridgeWarningReason } from '@/utils/loginObservability'
 import { hasConfiguredDevBackend } from '@/utils/devBackend'
 import { getInviteCode, getInviteType } from '@/utils/inviteCode'
+import { getHierarchyInvite } from '@/utils/hierarchyInvite'
 import MediaSoundToggle from '@/components/common/MediaSoundToggle'
 import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 import { useLatestCallback } from '@/composables/useLatestCallback'
@@ -332,7 +333,7 @@ export default function LoginView() {
         // iframe 可能已用掉原 state。整页回退必须重新初始化 OAuth，不再发送凭据。
         let freshUrl = ''
         try {
-          const freshOAuth = await startOAuth({ redirectTo: getRedirectTo() })
+          const freshOAuth = await startOAuth({ redirectTo: getRedirectTo(), hierarchyInvite: getHierarchyInvite() })
           if (signal.aborted) return false
           freshUrl = getFreshAuthorizeUrl(freshOAuth, oauth, navUrl)
         } catch {
@@ -394,6 +395,7 @@ export default function LoginView() {
     const inviteCode = getInviteCode()
     return startOAuth({
       redirectTo: getRedirectTo(),
+      hierarchyInvite: getHierarchyInvite(),
       inviteCode,
       inviteType: inviteCode ? getInviteType() : '',
     })
@@ -591,10 +593,10 @@ export default function LoginView() {
   }, [locationState, navigate, search, showToast])
 
   // 带推广码进站(分享链接 /login?invite_code=…):属新用户场景,直接弹出注册框,省掉手点「免费注册」。
-  // (推广码本身由 App 的 captureInviteCode 落地即捕获,注册时读取;这里只负责自动打开注册。)
+  // 推广邀请和上下级邀请都会打开注册弹窗，上下级邀请由 OAuth 传给后端。
   useEffect(() => {
     const invited = new URLSearchParams(window.location.search).get('invite_code')
-    if (invited && invited.trim()) setAuthModal('register')
+    if ((invited && invited.trim()) || getHierarchyInvite()) setAuthModal('register')
   }, [])
 
   // ── 登录页大图轮播(slug=login)──────────────────────────────────────

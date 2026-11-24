@@ -7,6 +7,7 @@ import { shouldRequestAuthenticatedSession } from '../utils/workflowGuards'
 import { createKeyedSingleFlight, createSingleFlight } from '../utils/singleFlight'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { AUTH_REFRESH_LOCK_NAME, runSessionLogoutWithoutLock, runSharedSessionRefresh } from './sessionRefresh'
+import { acceptAccountSwitchSession, getAccountSwitchId, isAccountSwitchSession } from './accountSwitch'
 
 /** 记录浏览器是否期待存在已登录会话，避免匿名页反复请求鉴权端点。 */
 const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
@@ -30,9 +31,14 @@ export class AuthApiError extends Error {
 }
 
 /** 向业务后端申请 OAuth 上下文，可携带登录完成后的目标页和待确认的邀请归因。 */
-export async function startOAuth({ redirectTo, inviteCode = '', inviteType = '' }: any = {}) {
+export async function startOAuth({ redirectTo, inviteCode = '', inviteType = '', hierarchyInvite = '' }: any = {}) {
   const params = new URLSearchParams()
   if (redirectTo) params.set('redirect_to', redirectTo)
+  if (hierarchyInvite) {
+    params.set('hierarchy_invite', hierarchyInvite)
+    inviteCode = ''
+    inviteType = ''
+  }
   if (String(inviteCode || '').trim()) params.set('invite_code', String(inviteCode).trim())
   if (String(inviteCode || '').trim() && String(inviteType || '').trim()) {
     params.set('invite_type', String(inviteType).trim())
@@ -127,7 +133,7 @@ export function getCaptcha() {
 
 /** 读取当前业务会话，未登录时由请求层转换为 AuthApiError。 */
 export function getSession() {
-  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/auth/session'))
+  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/auth/session'), { cache: 'no-store' })
 }
 
 /**
@@ -265,9 +271,10 @@ function readAuthUserId(user) {
 async function fetchAuthenticatedSession() {
   // 如果正在进行 SSO 登录回调，即使没有历史 marker 也应该尝试获取 session
   const ssoPending = window.sessionStorage.getItem('zzh_sso_pending') === '1'
-  const shouldAttemptRefresh = hasAuthSessionMarker() || ssoPending
+  const accountSwitchId = getAccountSwitchId()
+  const shouldAttemptRefresh = !accountSwitchId && (hasAuthSessionMarker() || ssoPending)
 
-  if (!shouldRequestAuthenticatedSession(shouldAttemptRefresh)) {
+  if (!accountSwitchId && !shouldRequestAuthenticatedSession(shouldAttemptRefresh)) {
     throw new AuthApiError('未登录', {
       status: 401,
       code: 'UNAUTHORIZED',
@@ -295,6 +302,12 @@ async function fetchAuthenticatedSession() {
       response: session,
     })
   }
+
+  const switched = isAccountSwitchSession(session)
+  if (accountSwitchId && (!switched || session.impersonation_id !== accountSwitchId)) {
+    throw new AuthApiError('切换会话已失效', { status: 401, code: 'IMPERSONATION_EXPIRED' })
+  }
+  if (switched) acceptAccountSwitchSession(session)
 
   if (Object.keys(session).length === 0) {
     throw new AuthApiError('未获取到有效账号会话，请稍后重试', { code: 'SESSION_IDENTITY_MISSING' })
@@ -324,6 +337,11 @@ async function fetchAuthenticatedSession() {
 
   const authContext = profileUserId ? { ...session, ...profile } : { ...session }
   if (profileUserId && sessionUserId) authContext.user = { ...session.user, ...profile.user }
+  if (switched) {
+    authContext.impersonating = session.impersonating
+    authContext.impersonation_id = session.impersonation_id
+    authContext.access_token_expires_at = session.access_token_expires_at
+  }
   if (profileLoadError) authContext.profileLoadError = profileLoadError
   authContext.currentMember = await getCurrentWorkspaceMember(authContext)
 

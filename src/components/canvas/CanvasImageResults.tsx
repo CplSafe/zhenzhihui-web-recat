@@ -6,6 +6,7 @@ interface Props {
   primaryAssetId: number
   expanded: boolean
   resolveUrl: (assetId: number) => string
+  crossOrigin?: 'anonymous'
   disabled?: boolean
   onToggle: () => void
   onSelectPrimary?: (assetId: number) => void
@@ -21,6 +22,7 @@ export default function CanvasImageResults({
   primaryAssetId,
   expanded,
   resolveUrl,
+  crossOrigin,
   disabled,
   onToggle,
   onSelectPrimary,
@@ -44,7 +46,8 @@ export default function CanvasImageResults({
             <img
               key={assetId}
               className={styles.stack}
-              src={resolveUrl(assetId)}
+              crossOrigin={crossOrigin}
+              src={resolveUrl(assetId) || undefined}
               alt=""
               aria-hidden="true"
               draggable={false}
@@ -57,7 +60,8 @@ export default function CanvasImageResults({
           <div key={assetId} className={styles.item}>
             <img
               className={styles.image}
-              src={resolveUrl(assetId)}
+              crossOrigin={crossOrigin}
+              src={resolveUrl(assetId) || undefined}
               alt={`生成图片 ${assetIds.indexOf(assetId) + 1}${primary ? '（主图）' : ''}`}
               draggable={false}
               onDoubleClick={(event) => {

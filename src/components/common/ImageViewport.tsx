@@ -7,12 +7,14 @@ const clamp = (value: number) => Math.min(8, Math.max(0.01, value))
 export default function ImageViewport({
   src,
   alt,
+  crossOrigin,
   onError,
   onSize,
   overlay,
 }: {
   src: string
   alt: string
+  crossOrigin?: 'anonymous'
   onError?: () => void
   onSize?: (size: { width: number; height: number }) => void
   overlay?: ReactNode
@@ -150,6 +152,7 @@ export default function ImageViewport({
         }}
       >
         <img
+          crossOrigin={crossOrigin}
           src={src}
           alt={alt}
           draggable={false}
