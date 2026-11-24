@@ -31,9 +31,14 @@ export class AuthApiError extends Error {
 }
 
 /** 向业务后端申请 OAuth 上下文，可携带登录完成后的目标页和待确认的邀请归因。 */
-export async function startOAuth({ redirectTo, inviteCode = '', inviteType = '' }: any = {}) {
+export async function startOAuth({ redirectTo, inviteCode = '', inviteType = '', hierarchyInvite = '' }: any = {}) {
   const params = new URLSearchParams()
   if (redirectTo) params.set('redirect_to', redirectTo)
+  if (hierarchyInvite) {
+    params.set('hierarchy_invite', hierarchyInvite)
+    inviteCode = ''
+    inviteType = ''
+  }
   if (String(inviteCode || '').trim()) params.set('invite_code', String(inviteCode).trim())
   if (String(inviteCode || '').trim() && String(inviteType || '').trim()) {
     params.set('invite_type', String(inviteType).trim())

@@ -41,3 +41,14 @@ describe('invite code context', () => {
     expect(getInviteType()).toBe('customer')
   })
 })
+
+it('hierarchy registration clears stale and mixed referral codes', () => {
+  window.history.replaceState({}, '', '/login?invite_code=OLD&invite_type=channel')
+  captureInviteCode()
+  window.history.replaceState({}, '', '/login?hierarchy_invite=TOKEN&invite_code=MIXED')
+  expect(getInviteCode()).toBe('')
+  captureInviteCode()
+  window.history.replaceState({}, '', '/login')
+  expect(getInviteCode()).toBe('')
+  expect(getInviteType()).toBe('customer')
+})

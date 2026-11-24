@@ -1,4 +1,5 @@
 import {
+  startOAuth,
   AuthApiError,
   clearAuthSessionMarker,
   clearExistingSession,
@@ -384,4 +385,16 @@ describe('session response parsing', () => {
       response: '{not-json',
     })
   })
+})
+
+it('passes hierarchy context alone to the signed OAuth flow', async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+    jsonResponse({ data: { authorize_url: 'https://auth.example.test' } }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  await startOAuth({ hierarchyInvite: 'TOKEN', inviteCode: 'OLD', inviteType: 'channel' })
+  const request = new URL(String(fetchMock.mock.calls[0]![0]), window.location.origin)
+  expect(request.searchParams.get('hierarchy_invite')).toBe('TOKEN')
+  expect(request.searchParams.has('invite_code')).toBe(false)
+  expect(request.searchParams.has('invite_type')).toBe(false)
 })

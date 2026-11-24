@@ -17,6 +17,7 @@ import {
 } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { getInviteCode, getInviteType, clearInviteCode } from '@/utils/inviteCode'
+import { getHierarchyInvite } from '@/utils/hierarchyInvite'
 import './AuthActionModal.css'
 
 /** 弹窗支持的注册、找回密码和短信登录补注册三种业务模式。 */
@@ -263,6 +264,9 @@ export default function AuthActionModal({
           ×
         </button>
         <h2 className="zauth-title">{title ?? TITLES[mode]}</h2>
+        {mode !== 'forgot' && getHierarchyInvite() && (
+          <p className="zauth-sub">通过此链接注册的新账号将自动绑定直属上级，不涉及邀请返利。已有账号保持原关系。</p>
+        )}
         {mode === 'sms-register' && (
           <p className="zauth-sub">请获取并填写注册验证码后完成注册。登录验证码不能用于注册；密码可不填。</p>
         )}

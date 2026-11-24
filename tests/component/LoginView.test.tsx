@@ -103,6 +103,11 @@ async function fillPasswordLogin(
 }
 
 describe('LoginView behavior', () => {
+  it('opens registration automatically for a hierarchy link', async () => {
+    window.history.replaceState({}, '', '/login?hierarchy_invite=TOKEN')
+    render(<LoginView />)
+    expect(await screen.findByRole('dialog', { name: '认证操作-register' })).toBeInTheDocument()
+  })
   it('隐私政策入口不会打开用户服务协议或自动同意', async () => {
     render(<LoginView />)
     fireEvent.click(screen.getByText('《隐私政策》'))

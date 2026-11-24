@@ -33,6 +33,7 @@ import { logger } from '@/observability/openobserve-logger'
 import { createLoginBridgeDiagnostic, type LoginBridgeWarningReason } from '@/utils/loginObservability'
 import { hasConfiguredDevBackend } from '@/utils/devBackend'
 import { getInviteCode, getInviteType } from '@/utils/inviteCode'
+import { getHierarchyInvite } from '@/utils/hierarchyInvite'
 import MediaSoundToggle from '@/components/common/MediaSoundToggle'
 import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 import { useLatestCallback } from '@/composables/useLatestCallback'
@@ -279,6 +280,7 @@ export default function LoginView() {
       const inviteCode = getInviteCode()
       authStartPromiseRef.current = startOAuth({
         redirectTo: getRedirectTo(),
+        hierarchyInvite: getHierarchyInvite(),
         inviteCode,
         inviteType: inviteCode ? getInviteType() : '',
       })
@@ -489,7 +491,7 @@ export default function LoginView() {
   // (推广码本身由 App 的 captureInviteCode 落地即捕获,注册时读取;这里只负责自动打开注册。)
   useEffect(() => {
     const invited = new URLSearchParams(window.location.search).get('invite_code')
-    if (invited && invited.trim()) setAuthModal('register')
+    if ((invited && invited.trim()) || getHierarchyInvite()) setAuthModal('register')
   }, [])
 
   // ── 登录页大图轮播(slug=login)──────────────────────────────────────
