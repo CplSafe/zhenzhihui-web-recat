@@ -28,8 +28,6 @@ import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
 import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
 import { clearRefineCommentDraftsForUser } from '../utils/refineCommentDraft'
 import { clearSmartDraftsForUser } from '../utils/smartDraft'
-import { clearAllCache } from '../utils/swrCache'
-import { clearPageCache } from '@/utils/pageDataCache'
 import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '../utils/logoutBarrier'
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
@@ -147,7 +145,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
   // loadAuthSession 定义在登出清理回调之前；通过 ref 复用同一条隐私安全清理链，
   // 避免自动会话失效路径为了声明顺序而复制一份容易漂移的清理逻辑。
-  const clearLocalAuthStateRef = useRef<(draftUserScope: string, broadcast: boolean) => void>(() => {})
+  const clearLocalAuthStateRef = useRef<(draftUserScope: string, broadcast: boolean, switchExpired?: boolean) => void>(
+    () => {},
+  )
   // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
   const loadSeqRef = useRef(0)
   // 上次成功续期的时间戳，供「回到页面时续期」节流用。
@@ -164,24 +164,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const expireAccountSwitch = useCallback(() => {
-    if (!getAccountSwitchId()) return
-    const ownerScope = getCurrentDraftUserScope()
-    if (ownerScope) {
-      beginLogoutDraftWriteBarrier(ownerScope, false)
-      beginLogoutDraftWriteBarrier('anon', false)
-      detachRunningVideoGensForOwner(ownerScope)
-    }
-    stopSessionRefresh()
-    loadSeqRef.current += 1
-    resetAuthenticatedSession()
-    clearAccountSwitchCaches()
-    setSession(null)
-    setAuthSession(null)
-    setIsAuthenticated(false)
-    setIsCheckingSession(false)
-    setAuthCheckError('')
-    setAccountSwitchExpired(true)
-  }, [setAuthSession, stopSessionRefresh])
+    if (getAccountSwitchId()) clearLocalAuthStateRef.current(getCurrentDraftUserScope(), false, true)
+  }, [])
 
   useEffect(() => subscribeToAccountSwitchExpiry(expireAccountSwitch), [expireAccountSwitch])
 
@@ -373,14 +357,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const clearLocalAuthState = useCallback(
-    (draftUserScope: string, broadcast: boolean) => {
-      resetCanvasRealPersonHint(draftUserScope)
+    (draftUserScope: string, broadcast: boolean, switchExpired = false) => {
+      if (!switchExpired) resetCanvasRealPersonHint(draftUserScope)
       // The store switches every draft helper to the anonymous scope when the
       // session is cleared. Block both identities first so unmount cleanups or
       // delayed callbacks cannot recreate the signed-out user's draft under
       // an `anon` key.
-      beginLogoutDraftWriteBarrier(draftUserScope)
-      beginLogoutDraftWriteBarrier('anon')
+      if (draftUserScope || !switchExpired) {
+        beginLogoutDraftWriteBarrier(draftUserScope, !switchExpired)
+        beginLogoutDraftWriteBarrier('anon', !switchExpired)
+        detachRunningVideoGensForOwner(draftUserScope)
+      }
       stopSessionRefresh()
       // 作废任何在途的会话校验:bump 序号让其 isStale() 命中,不再写状态;并丢弃共享 in-flight promise。
       // 否则登出前发起的 getAuthenticatedSession 若在此之后 resolve,会把刚清掉的会话「复活」。
@@ -390,13 +377,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(false)
       setIsCheckingSession(false)
       setAuthCheckError('')
+      setAuthSession(null)
+      clearAccountSwitchCaches()
+      if (switchExpired) {
+        setAccountSwitchExpired(true)
+        return
+      }
       clearLocalDraftsOnLogout(draftUserScope)
       clearLocalDraftsOnLogout('anon')
-      detachRunningVideoGensForOwner(draftUserScope)
-      setAuthSession(null)
       clearAuthSessionMarker()
-      clearPageCache() // 清列表页内存缓存，换账号不闪出上个账号的列表
-      clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
       if (broadcast) {
         try {
           localStorage.setItem(

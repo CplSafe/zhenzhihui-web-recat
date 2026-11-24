@@ -197,6 +197,7 @@ export function AppShell() {
     return (
       <main className="auth-session-error">
         <AccountSwitchBanner expired />
+        <AppToast />
       </main>
     )
   }
@@ -204,9 +205,13 @@ export function AppShell() {
   return (
     <>
       <WorkspaceRefreshTransitionBridge />
-      {switched && (
+      {(switched || (accountSwitchExpected && authCheckError)) && (
         <AccountSwitchBanner
-          name={modelUser?.nickname || modelUser?.mobile || modelUser?.email || `用户 #${modelUser?.id}`}
+          name={
+            switched
+              ? modelUser?.nickname || modelUser?.mobile || modelUser?.email || `用户 #${modelUser?.id}`
+              : undefined
+          }
         />
       )}
 
@@ -221,9 +226,7 @@ export function AppShell() {
               <button type="button" onClick={() => loadAuthSession()}>
                 重新检查
               </button>
-              {accountSwitchExpected ? (
-                <AccountSwitchBanner />
-              ) : (
+              {!accountSwitchExpected && (
                 <button type="button" className="ghost" onClick={() => navigate('/welcome', { replace: true })}>
                   前往开屏页
                 </button>

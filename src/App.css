@@ -81,9 +81,7 @@
   transform: none;
 }
 
-.account-switch-banner__identity {
-  display: grid;
-  gap: 2px;
+.account-switch-banner strong {
   overflow-wrap: anywhere;
 }
 

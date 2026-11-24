@@ -24,9 +24,10 @@ export function useLogout() {
     loggingOutRef.current = true
     setIsLoggingOut(true)
 
-    if (getAccountSwitchId()) {
+    const accountSwitchId = getAccountSwitchId()
+    if (accountSwitchId) {
       try {
-        await leaveAccountSwitch()
+        await leaveAccountSwitch(accountSwitchId)
       } catch {
         showToast('暂时无法退出切换，请重试。', 'error')
         loggingOutRef.current = false

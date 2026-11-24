@@ -2,7 +2,6 @@ import { withRequestTimeout } from './requestTimeout'
 import {
   acceptAccountSwitchSession,
   ACCOUNT_SWITCH_HEADER,
-  getAccountSwitchId,
   isAccountSwitchSession,
   restoreOrdinaryAccount,
   USER_VIEW_END_PATH,
@@ -224,9 +223,7 @@ export function endViewAsUser(): void {
 }
 
 /** Revoke the switched identity before reloading the ordinary account. */
-export async function leaveAccountSwitch(): Promise<void> {
-  const id = getAccountSwitchId()
-  if (!id) throw new ViewAsUserError('无法确认切换会话', 401)
+export async function leaveAccountSwitch(id: string): Promise<void> {
   await revokeAccountSwitch(id)
   restoreOrdinaryAccount(id)
 }
