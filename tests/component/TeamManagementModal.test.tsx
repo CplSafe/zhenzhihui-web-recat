@@ -66,6 +66,7 @@ vi.mock('@/composables/useSafeWorkspaceSwitch', () => ({
 }))
 
 import TeamManagementModal from '@/components/team/TeamManagementModal'
+import { markInitialTeamInvitation } from '@/utils/teamInitialInvitation'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -183,7 +184,7 @@ describe('TeamManagementModal behavior', () => {
     expect(onToast).not.toHaveBeenCalled()
   })
 
-  it('lets only the owner manage invitations and member roles', async () => {
+  it('lets the owner manage invitations and member roles and keeps ordinary members from inviting', async () => {
     const user = userEvent.setup()
     mocks.listWorkspaceMembers.mockResolvedValue([member(7, '所有者', 'owner'), member(8, '普通成员')])
     mocks.listWorkspaceInvitations.mockResolvedValue([
@@ -213,9 +214,140 @@ describe('TeamManagementModal behavior', () => {
     render(<TeamManagementModal {...ordinary} />)
     expect(await screen.findByText('普通成员')).toBeInTheDocument()
     expect(mocks.listWorkspaceInvitations).not.toHaveBeenCalled()
-    expect(screen.getByText('仅空间所有者可管理邀请码')).toBeInTheDocument()
+    expect(screen.getByText('仅空间所有者和管理员可管理邀请码')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '复制邀请码' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成邀请码' })).not.toBeInTheDocument()
+  })
+
+  it('lets a team admin copy and generate member invitations without revoking an existing code', async () => {
+    const user = userEvent.setup()
+    const onToast = vi.fn()
+    mocks.listWorkspaceMembers.mockResolvedValue([{ ...member(7, '管理员', 'admin'), id: 91 }, member(8, '普通成员')])
+    mocks.listWorkspaceInvitations.mockResolvedValue([
+      {
+        code: 'MEMB1234',
+        created_at: '2026-07-01T00:00:00.000Z',
+        expires_at: '2099-01-01',
+        id: 3,
+        role: 'member',
+      },
+      {
+        code: 'ADMIN123',
+        created_at: '2026-07-02T00:00:00.000Z',
+        expires_at: '2099-01-01',
+        id: 4,
+        role: 'admin',
+      },
+    ])
+    const props = modalProps({
+      currentMember: null,
+      onToast,
+      workspace: { id: 21, name: '甲团队', owner_user_id: 99, type: 'team' },
+    })
+    const view = render(<TeamManagementModal {...props} />)
+
+    expect(await screen.findByText('MEMB 1234')).toBeInTheDocument()
+    expect(screen.queryByText('ADMI N123')).not.toBeInTheDocument()
+    expect(mocks.listWorkspaceInvitations).toHaveBeenCalledWith(21)
+    expect(screen.queryByRole('button', { name: '撤销邀请' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '复制邀请码' }))
+    expect(await navigator.clipboard.readText()).toBe('MEMB1234')
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '有效期' }), '30')
+    await user.click(screen.getByRole('button', { name: '生成邀请码' }))
+    expect(mocks.createWorkspaceInvitation).toHaveBeenCalledWith({ workspaceId: 21, expiryDays: 30 })
+    expect(await screen.findByText('NEWC ODE1')).toBeInTheDocument()
+    expect(onToast).toHaveBeenCalledWith('邀请码已生成', 'success')
+    expect(mocks.deleteWorkspaceInvitation).not.toHaveBeenCalled()
+
+    mocks.listWorkspaceMembers.mockResolvedValue([member(7, '乙空间成员')])
+    view.rerender(
+      <TeamManagementModal
+        {...props}
+        currentMember={{ role: 'admin', user_id: 7, workspace_id: 21 }}
+        workspace={{ id: 22, name: '乙团队', owner_user_id: 99, type: 'team' }}
+        workspaceId={22}
+      />,
+    )
+    expect(await screen.findByText('乙空间成员')).toBeInTheDocument()
+    expect(mocks.listWorkspaceInvitations).not.toHaveBeenCalledWith(22)
+    expect(screen.queryByRole('button', { name: '生成邀请码' })).not.toBeInTheDocument()
+    expect(screen.queryByText('NEWC ODE1')).not.toBeInTheDocument()
+  })
+
+  it('keeps invitation actions unavailable in a full team and a personal space', async () => {
+    mocks.getSubscription.mockResolvedValue({ max_members: 2 })
+    mocks.listWorkspaceMembers.mockResolvedValue([member(7, '管理员', 'admin'), member(99, '所有者', 'owner')])
+    const props = modalProps({
+      currentMember: { role: 'admin', user_id: 7, workspace_id: 21 },
+      workspace: { id: 21, name: '甲团队', owner_user_id: 99, type: 'team' },
+    })
+    const view = render(<TeamManagementModal {...props} />)
+
+    expect(await screen.findByText('席位已满(2/2),暂不可再邀请')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制邀请码' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '生成邀请码' })).not.toBeInTheDocument()
+
+    view.rerender(
+      <TeamManagementModal
+        {...props}
+        workspace={{ id: 22, name: '个人空间', owner_user_id: 7, type: 'personal' }}
+        workspaceId={22}
+      />,
+    )
+    expect(screen.getByText('个人空间不支持邀请码')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成邀请码' })).not.toBeInTheDocument()
+    expect(mocks.listWorkspaceInvitations).not.toHaveBeenCalledWith(22)
+    expect(mocks.createWorkspaceInvitation).not.toHaveBeenCalled()
+  })
+
+  it('lets the owner replace the current code and retry revoking the replacement after an API failure', async () => {
+    const user = userEvent.setup()
+    const onToast = vi.fn()
+    mocks.listWorkspaceMembers.mockResolvedValue([member(7, '所有者', 'owner')])
+    mocks.listWorkspaceInvitations
+      .mockResolvedValueOnce([{ code: 'ABCD1234', expires_at: '2099-01-01', id: 3 }])
+      .mockResolvedValueOnce([{ code: 'NEWCODE1', expires_at: '2099-01-01', id: 9 }])
+    mocks.deleteWorkspaceInvitation
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('撤销失败，请重试'))
+      .mockResolvedValueOnce(undefined)
+    render(<TeamManagementModal {...modalProps({ onToast })} />)
+
+    await user.click(await screen.findByRole('button', { name: '重新生成' }))
+    expect(await screen.findByText('NEWC ODE1')).toBeInTheDocument()
+    expect(mocks.deleteWorkspaceInvitation).toHaveBeenNthCalledWith(1, { workspaceId: 21, invitationId: 3 })
+    expect(onToast).toHaveBeenCalledWith('邀请码已重新生成', 'success')
+
+    await user.click(screen.getByRole('button', { name: '撤销邀请' }))
+    expect(onToast).toHaveBeenCalledWith('撤销失败，请重试', 'error')
+    expect(screen.getByText('NEWC ODE1')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '撤销邀请' }))
+    expect(mocks.deleteWorkspaceInvitation).toHaveBeenNthCalledWith(3, { workspaceId: 21, invitationId: 9 })
+    expect(await screen.findByText('暂无邀请码')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制邀请码' })).toBeDisabled()
+  })
+
+  it('keeps the first automatic invitation reserved for the owner', async () => {
+    const invitations = deferred<any[]>()
+    mocks.listWorkspaceInvitations.mockReturnValueOnce(invitations.promise)
+    const admin = modalProps({
+      currentMember: { role: 'admin', user_id: 8, workspace_id: 21 },
+      sessionUserId: 8,
+    })
+    markInitialTeamInvitation(8, 21)
+    const view = render(<TeamManagementModal {...admin} />)
+    await waitFor(() => expect(mocks.listWorkspaceInvitations).toHaveBeenCalledWith(21))
+    await act(async () => {
+      invitations.resolve([])
+      await invitations.promise
+    })
+    expect(mocks.createWorkspaceInvitation).not.toHaveBeenCalled()
+
+    markInitialTeamInvitation(7, 21)
+    view.rerender(<TeamManagementModal {...modalProps()} />)
+    expect(await screen.findByText('NEWC ODE1')).toBeInTheDocument()
+    expect(mocks.createWorkspaceInvitation).toHaveBeenCalledExactlyOnceWith({ workspaceId: 21, expiryDays: 7 })
   })
 
   it('deduplicates invitation generation, recovers after failure, and can retry', async () => {

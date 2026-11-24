@@ -136,6 +136,8 @@ export default defineConfig({
         'src/components/task/TaskCenterCoordinator.tsx',
         'src/components/task/TaskCenterDrawer.tsx',
         'src/components/layout/NotificationBell.tsx',
+        'src/components/layout/PersonalPanel.tsx',
+        'src/components/team/TeamManagementModal.tsx',
         'src/views/ProjectVideoDetailView.tsx',
       ],
       thresholds: {

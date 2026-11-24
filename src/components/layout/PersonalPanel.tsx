@@ -134,9 +134,8 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const role = roleLabelOf(roleValue)
   const isTeamWs = Boolean(currentWs?.type) && String(currentWs.type).toLowerCase() !== 'personal'
   const canRevealTeamInfo = !isTeamWs || Boolean(roleValue)
-  const canInviteMembers = isTeamWs && roleValue === 'owner'
-  const canManageMembers = isTeamWs && (roleValue === 'owner' || roleValue === 'admin')
-  const teamActionLabel = canInviteMembers ? '邀请成员' : canManageMembers ? '成员管理' : '团队成员'
+  const canInviteMembers = isTeamWs && (roleValue === 'owner' || roleValue === 'admin')
+  const teamActionLabel = roleValue === 'owner' ? '邀请成员' : canInviteMembers ? '成员管理' : '团队成员'
   const wsName = canRevealTeamInfo ? currentWs?.name || '个人空间' : '团队空间'
   // 重命名当前团队:只向已确认的所有者展示，最终权限仍由后端校验。
   // 全流程加锁避免重复提交；点击列表项右侧铅笔不会触发空间切换。
@@ -274,7 +273,6 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
             </button>
           ) : null}
 
-          {/* 团队操作随当前角色展示：所有者邀请成员、管理员管理成员、普通成员查看成员。 */}
           {isTeamWs && canRevealTeamInfo ? (
             <button
               type="button"

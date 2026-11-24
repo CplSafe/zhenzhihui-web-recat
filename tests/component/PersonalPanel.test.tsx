@@ -142,15 +142,18 @@ describe('PersonalPanel', () => {
     expect(onMember).toHaveBeenCalledTimes(1)
   })
 
-  it('does not reveal team identity when member data belongs to another workspace', () => {
-    mocks.state.currentMember = { role: 'owner', workspace_id: 999 }
-    mocks.state.currentWorkspace = { id: 21, name: '机密团队名称', type: 'team' }
-    render(<PersonalPanel />)
+  it.each(['owner', 'admin'])(
+    'does not reveal team identity or invite access when the %s role belongs to another workspace',
+    (role) => {
+      mocks.state.currentMember = { role, workspace_id: 999 }
+      mocks.state.currentWorkspace = { id: 21, name: '机密团队名称', type: 'team' }
+      render(<PersonalPanel />)
 
-    expect(screen.queryByText('机密团队名称')).not.toBeInTheDocument()
-    expect(screen.getAllByText('团队空间')).toHaveLength(2)
-    expect(screen.queryByRole('button', { name: '邀请成员' })).not.toBeInTheDocument()
-  })
+      expect(screen.queryByText('机密团队名称')).not.toBeInTheDocument()
+      expect(screen.getAllByText('团队空间')).toHaveLength(2)
+      expect(screen.queryByRole('button', { name: /邀请成员/ })).not.toBeInTheDocument()
+    },
+  )
 
   it('only exposes rename for team workspaces and renames the selected team without switching', async () => {
     const user = userEvent.setup()
@@ -205,14 +208,17 @@ describe('PersonalPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('uses member management wording for a team administrator', () => {
+  it('lets a team administrator open invitations from the current team', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
     mocks.state.currentMember = { role: 'admin', workspace_id: 21 }
     mocks.state.currentWorkspace = { id: 21, name: 'Alpha团队', owner_user_id: 999, type: 'team' }
-    render(<PersonalPanel />)
+    render(<PersonalPanel onClose={onClose} />)
 
     expect(screen.getByRole('button', { name: '成员管理' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '邀请成员' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '邀请成员（当前团队）' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '邀请成员（当前团队）' }))
+    expect(mocks.openTeamManage).toHaveBeenCalledWith('members')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('deduplicates rename confirmation while a rename is pending', async () => {
