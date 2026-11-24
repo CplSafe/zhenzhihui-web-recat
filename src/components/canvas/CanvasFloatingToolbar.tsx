@@ -18,6 +18,7 @@ import {
 import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasFloatingToolbar.module.css'
 import doudouLogo from '@/assets/logo/doudou.png'
+import { getTypeIcon } from './CanvasNodeFrame'
 import { useCanvasMenuHeight } from './useCanvasMenuHeight'
 
 interface CanvasFloatingToolbarProps {
@@ -214,7 +215,7 @@ function CanvasFloatingToolbar({
                   setMenuOpen(false)
                 }}
               >
-                <span className={styles.addMenuIcon}>♫</span>
+                <span className={styles.addMenuIcon}>{getTypeIcon('audio', 14)}</span>
                 <div className={styles.addMenuText}>
                   <span className={styles.addMenuLabel}>音频节点</span>
                   <span className={styles.addMenuDesc}>配音、背景音乐、音效</span>
@@ -231,7 +232,7 @@ function CanvasFloatingToolbar({
                   setMenuOpen(false)
                 }}
               >
-                <span className={styles.addMenuIcon}>♫</span>
+                <span className={styles.addMenuIcon}>{getTypeIcon('audio-editor', 14)}</span>
                 <div className={styles.addMenuText}>
                   <span className={styles.addMenuLabel}>音频编辑</span>
                   <span className={styles.addMenuDesc}>裁剪、音量、淡入淡出</span>

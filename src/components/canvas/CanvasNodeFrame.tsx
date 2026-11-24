@@ -1,4 +1,5 @@
 import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from 'react'
+import { EighthNotes, Scissors } from 'lucide-react'
 
 type DivProps = ComponentPropsWithoutRef<'div'>
 
@@ -66,10 +67,12 @@ export function CanvasNodeImage(props: ComponentPropsWithoutRef<'img'>) {
   return <img className="canvas-node-media nopan" loading="lazy" {...props} />
 }
 
-export function getTypeIcon(kind: string) {
+export function getTypeIcon(kind: string, size = 12) {
+  if (kind === 'audio') return <EighthNotes size={size} aria-hidden="true" />
+  if (kind === 'audio-editor') return <Scissors size={size} aria-hidden="true" />
   if (kind === 'image') {
     return (
-      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+      <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
         <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" />
         <circle cx="5" cy="5" r="1.2" fill="currentColor" />
         <path
@@ -84,7 +87,7 @@ export function getTypeIcon(kind: string) {
   }
   if (kind === 'video') {
     return (
-      <svg width="12" height="12" viewBox="0 0 48 48" fill="none">
+      <svg width={size} height={size} viewBox="0 0 48 48" fill="none">
         <path
           fillRule="evenodd"
           clipRule="evenodd"
@@ -98,7 +101,7 @@ export function getTypeIcon(kind: string) {
     // 胶片格：时间线节点此前没有自己的图标，会掉进下面的 text 分支显示成一支笔，
     // 和「文本」节点撞脸。
     return (
-      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+      <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
         <rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
         <path d="M4.2 2.5v9M9.8 2.5v9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       </svg>
@@ -106,7 +109,7 @@ export function getTypeIcon(kind: string) {
   }
   // text
   return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
       <path
         d="M9.7 10.3c.3 0 .6.2.6.6 0 .3-.2.6-.6.6H2c-.3 0-.6-.3-.6-.6 0-.3.3-.6.6-.6h7.7zM7.8 6.4c.3 0 .6.3.6.6 0 .3-.3.6-.6.6H2c-.3 0-.6-.3-.6-.6 0-.3.3-.6.6-.6h5.8zm4.2-3.8c.3 0 .5.3.5.6s-.2.6-.5.6H2c-.3 0-.6-.3-.6-.6s.3-.6.6-.6h9.9z"
         fill="currentColor"
