@@ -439,7 +439,7 @@ describe('LoginView behavior', () => {
     )
   })
 
-  it('lets an unregistered number request its own registration SMS during the login SMS cooldown', async () => {
+  it('waits for the phone-wide cooldown before sending a separate registration SMS', async () => {
     const user = userEvent.setup()
     const mobile = '13900139000'
     const session = { user: { id: 8, mobile } }
@@ -459,7 +459,15 @@ describe('LoginView behavior', () => {
     await user.click(dialog.getByRole('button', { name: '完成并登录' }))
     expect(mocks.registerAccount).not.toHaveBeenCalled()
 
-    const getRegistrationCode = dialog.getByRole('button', { name: '获取验证码' })
+    expect(dialog.getByRole('button', { name: /s后重发/ })).toBeDisabled()
+    expect(mocks.sendAuthSms).toHaveBeenCalledTimes(1)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 61_000)
+    let getRegistrationCode: HTMLElement
+    try {
+      getRegistrationCode = await dialog.findByRole('button', { name: '获取验证码' }, { timeout: 2000 })
+    } finally {
+      clock.mockRestore()
+    }
     expect(getRegistrationCode).toBeEnabled()
     await user.click(getRegistrationCode)
     expect(mocks.sendAuthSms.mock.calls.map(([request]) => [request.mobile, request.purpose])).toEqual([

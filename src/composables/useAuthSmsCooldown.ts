@@ -3,11 +3,12 @@ import { useEffect, useState } from 'react'
 const SMS_RESEND_DELAY_MS = 60_000
 
 /** Records successful SMS sends per target for the lifetime of the current form. */
-export function useAuthSmsCooldown(target: string) {
+export function useAuthSmsCooldown(target: string, externalDeadline = 0) {
   const [resendAfter, setResendAfter] = useState<Record<string, number>>({})
   const [clock, setClock] = useState(Date.now)
-  const deadline = resendAfter[target] || 0
-  const hasActiveCooldown = Object.values(resendAfter).some((entry) => entry > clock)
+  const ownDeadline = resendAfter[target] || 0
+  const deadline = Math.max(ownDeadline, externalDeadline)
+  const hasActiveCooldown = deadline > clock || Object.values(resendAfter).some((entry) => entry > clock)
 
   useEffect(() => {
     if (!hasActiveCooldown) return
@@ -23,7 +24,8 @@ export function useAuthSmsCooldown(target: string) {
 
   return {
     remainingSeconds: Math.max(0, Math.ceil((deadline - clock) / 1000)),
-    hasSentCode: deadline > 0,
+    hasSentCode: ownDeadline > 0,
+    resendAt: deadline,
     markSent,
   }
 }

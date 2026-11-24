@@ -27,6 +27,7 @@ export type AuthActionMode = 'register' | 'forgot' | 'sms-register'
 /** 不同认证模式共用的输入上下文和完成回调。 */
 interface AuthActionModalProps {
   mode: AuthActionMode
+  smsCooldownUntil?: number
   /** 覆盖默认标题(如登录态下「修改密码」复用 forgot 流程) */
   title?: string
   /** 普通注册和短信补注册提交时清理旧会话，再启动 OAuth。 */
@@ -60,6 +61,7 @@ function randomPassword(): string {
 /** 根据认证模式复用手机号、验证码和密码表单，并把认证成功结果交还登录页。 */
 export default function AuthActionModal({
   mode,
+  smsCooldownUntil = 0,
   title,
   prepareRegistration,
   prefill,
@@ -99,7 +101,7 @@ export default function AuthActionModal({
   const smsTarget = `${smsPurpose}:${normalizedMobile}`
   const smsTargetRef = useRef(smsTarget)
   smsTargetRef.current = smsTarget
-  const { remainingSeconds: countdown, hasSentCode, markSent } = useAuthSmsCooldown(smsTarget)
+  const { remainingSeconds: countdown, hasSentCode, markSent } = useAuthSmsCooldown(smsTarget, smsCooldownUntil)
   const canRegister = mobileValid && hasSentCode && (!pwdRequired || !!password.trim()) && !!code.trim() && !alreadyReg
   const closeIfIdle = useCallback(() => {
     if (!isRegistration || !submittingRef.current) onCloseRef.current()
@@ -246,7 +248,10 @@ export default function AuthActionModal({
         </button>
         <h2 className="zauth-title">{title ?? TITLES[mode]}</h2>
         {mode !== 'forgot' && getHierarchyInvite() && (
-          <p className="zauth-sub">通过此链接注册的新账号将自动绑定直属上级，不涉及邀请返利。已有账号保持原关系。</p>
+          <p className="zauth-sub">
+            通过此链接注册后将绑定直属上级，并须填写团队名称以开通 7
+            天团队试用；不赠送套餐积分，不涉及邀请返利。已有账号保持原关系。
+          </p>
         )}
         {mode === 'sms-register' && (
           <p className="zauth-sub">请获取并填写注册验证码后完成注册。登录验证码不能用于注册；密码可不填。</p>

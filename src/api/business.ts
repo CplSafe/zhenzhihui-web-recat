@@ -1801,6 +1801,14 @@ export function listWorkspaces() {
  * @returns {Promise<{ id: number, type: string, name: string, owner_user_id: number, status: string }>}
  */
 /** 创建个人或团队工作空间。 */
+export function completeTeamSetup({ name }: { name: string }) {
+  return requestJson('/api/v1/me/team-setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim() }),
+  })
+}
+
 export function createWorkspace({ name, type = 'team' }) {
   return requestJson('/api/v1/workspaces', {
     method: 'POST',

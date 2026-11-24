@@ -166,7 +166,7 @@ export default function LoginView() {
   const [captcha, setCaptcha] = useState(EMPTY_CAPTCHA)
   const [agreed, setAgreed] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  const { remainingSeconds: codeCountdown, markSent } = useAuthSmsCooldown(phone)
+  const { remainingSeconds: codeCountdown, resendAt: codeResendAt, markSent } = useAuthSmsCooldown(phone)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [loginErrors, setLoginErrors] = useState({ phone: '', password: '', code: '', captcha: '' })
@@ -1062,6 +1062,7 @@ export default function LoginView() {
       {smsRegister && (
         <AuthActionModal
           mode="sms-register"
+          smsCooldownUntil={codeResendAt}
           prepareRegistration={prepareAuthStart}
           prefill={smsRegister}
           onAlreadyRegistered={(m) => {

@@ -28,6 +28,8 @@ import { prefetchCommonRoutesWhenIdle } from './router/routePrefetch'
 import { installFullscreenVideoSpaceToggle } from './utils/fullscreenVideoSpace'
 import './App.css'
 
+/** 下级注册完成前的必填团队名称弹窗。 */
+const RequiredTeamSetup = lazy(() => import('./components/team/RequiredTeamSetup'))
 /** 登录后按需加载的帮助中心悬浮入口。 */
 const HelpCenter = lazy(() => import('./components/common/HelpCenter'))
 /** 按需加载的新手引导聚光覆盖层。 */
@@ -128,6 +130,7 @@ export function AppShell() {
   const matches = useMatches()
   const { authSession, accountSwitchExpired, isAuthenticated, isCheckingSession, authCheckError, loadAuthSession } =
     useAuth()
+  const teamSetupRequired = isAuthenticated && authSession?.user?.team_setup_required === true
   const switched = isAccountSwitchSession(authSession)
   const accountSwitchExpected = Boolean(getAccountSwitchId())
 
@@ -247,6 +250,8 @@ export function AppShell() {
             </div>
           </div>
         </div>
+      ) : teamSetupRequired ? (
+        <div className="auth-session-loading" aria-label="请先创建团队空间" />
       ) : protectedRouteDenied ? (
         <div className="auth-session-loading" aria-label="正在跳转登录页" />
       ) : (
@@ -290,6 +295,11 @@ export function AppShell() {
         </Suspense>
       ) : null}
 
+      {teamSetupRequired && (
+        <Suspense fallback={null}>
+          <RequiredTeamSetup key={authSession.user.id} userId={authSession.user.id} />
+        </Suspense>
+      )}
       <AppToast />
       <AppConfirmDialog />
       <AppVersionNotice />
