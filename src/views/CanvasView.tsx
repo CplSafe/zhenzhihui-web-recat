@@ -73,6 +73,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   useMemo,
   type CSSProperties,
 } from 'react'
@@ -726,6 +727,10 @@ function localMediaDisplayName(fileName: string): string {
 
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
 const NODE_PANEL_GAP = 24
+const NODE_PANEL_VIEWPORT_MARGIN = 16
+const MIN_NODE_PANEL_SPACE = 160
+const NODE_TOOLBAR_GAP = 42
+const NODE_TOOLBAR_SPACE = NODE_TOOLBAR_GAP + 48
 
 /**
  * 模型版本 ID → 展示名。
@@ -1030,8 +1035,68 @@ function HandleIcon({ nodeId, side, visible }: { nodeId: string; side: 'left' | 
  */
 const MIN_CANVAS_ZOOM = 0.01
 const MAX_CANVAS_ZOOM = Number.POSITIVE_INFINITY
+const COMPACT_NODE_PANEL_MAX_WIDTH = 384
+const REDUCED_NODE_PANEL_MAX_WIDTH = 550
 const MAX_WHEEL_ZOOM_RATIO = 1.12
+const CANVAS_WHEEL_PAN_SPEED = 0.8
+const NODE_PANEL_SELECTOR = '.canvas-panel-area, .canvas-audio-panel'
+const NODE_TOOLBAR_SELECTOR = '[data-canvas-node-toolbar]'
+const NODE_TOOLBAR_MENU_SELECTOR = '[role="menu"]'
+const NODE_TOOLBAR_DRAG_THRESHOLD = 4
+const NODE_PANEL_FIELD_SELECTOR =
+  'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"]'
+const NODE_PANEL_POPUP_SELECTOR = '[role="menu"], [role="listbox"], [role="dialog"], [aria-expanded="true"]'
+const NODE_LOCK_STATUS_DELAY_MS = 300
 const selectedNodeCountCache = new WeakMap<Node[], number>()
+
+function CanvasPanelLockStatus({ pending, message }: { pending: boolean; message?: string }) {
+  const [delayElapsed, setDelayElapsed] = useState(false)
+  useEffect(() => {
+    if (!pending) {
+      setDelayElapsed(false)
+      return
+    }
+    const timer = window.setTimeout(() => setDelayElapsed(true), NODE_LOCK_STATUS_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [pending])
+
+  const status = message || (pending && delayElapsed ? '正在确认编辑权限' : '')
+  return (
+    <div className="canvas-panel-lock-status" role="status">
+      {status && <span>{status}</span>}
+    </div>
+  )
+}
+
+function handleNodePanelWheel(event: WheelEvent, target: Element): boolean {
+  if (target.closest(NODE_PANEL_POPUP_SELECTOR)) return true
+  const field = target.closest(NODE_PANEL_FIELD_SELECTOR)
+  if (field) {
+    if (!field.contains(document.activeElement)) return false
+    // WebKit 可将已到边界的富文本滚轮继续交给外层正文。
+    if (
+      field.matches('textarea, [contenteditable]') &&
+      ((event.deltaY < 0 && field.scrollTop <= 0) ||
+        (event.deltaY > 0 && field.scrollTop + field.clientHeight >= field.scrollHeight - 1))
+    ) {
+      event.preventDefault()
+    }
+    return true
+  }
+
+  // 点击或用 Tab 进入溢出的正文后，可以滚动内部内容。
+  const body = target.closest<HTMLElement>(
+    '[data-canvas-node-panel-body], .canvas-panel-edit-content, .canvas-audio-panel',
+  )
+  if (!body || body !== document.activeElement) return false
+  for (let element: Element | null = target; element; element = element.parentElement) {
+    if (element.scrollHeight > element.clientHeight && /^(auto|scroll)$/.test(getComputedStyle(element).overflowY)) {
+      return true
+    }
+    if (element === body) break
+  }
+  return false
+}
 
 function areCanvasTaskPatchValuesEqual(current: unknown, next: unknown): boolean {
   if (Object.is(current, next)) return true
@@ -2816,6 +2881,7 @@ function CanvasInner({
    * 用 ref 镜像一份给轮询等长生命周期闭包读，免得为一个开关把整个 effect 重建。
    */
   const [preferences, setPreferences] = useState<CanvasPreferences>(loadCanvasPreferences)
+  const canvasUiScale = { standard: 1, large: 1.5, 'extra-large': 2 }[preferences.uiSize]
   useEffect(() => {
     const body = document.body
     const previous = body.getAttribute('data-canvas-ui')
@@ -2828,15 +2894,12 @@ function CanvasInner({
   useEffect(() => {
     const body = document.body
     const previous = body.style.getPropertyValue('--canvas-ui-scale')
-    body.style.setProperty(
-      '--canvas-ui-scale',
-      String({ standard: 1, large: 1.5, 'extra-large': 2 }[preferences.uiSize]),
-    )
+    body.style.setProperty('--canvas-ui-scale', String(canvasUiScale))
     return () => {
       if (previous) body.style.setProperty('--canvas-ui-scale', previous)
       else body.style.removeProperty('--canvas-ui-scale')
     }
-  }, [preferences.uiSize])
+  }, [canvasUiScale])
   const preferencesRef = useRef(preferences)
   preferencesRef.current = preferences
   const handlePanModeToggle = useCallback(() => {
@@ -2865,6 +2928,7 @@ function CanvasInner({
   const canvasRootRef = useRef<HTMLDivElement>(null)
   const nodePointerSelectionRef = useRef<{ id: string; selectedIds: string[] } | null>(null)
   const pointerStartedInPanelRef = useRef(false)
+  const panelPanRef = useRef<{ id: number; x: number; y: number } | null>(null)
   const shortcutsBlockedRef = useRef(false)
   const [canvasKeyboardActive, setCanvasKeyboardActive] = useState(false)
   const [spaceHeld, setSpaceHeld] = useState(false)
@@ -2886,13 +2950,61 @@ function CanvasInner({
     return isCanvasShortcutTarget(root, target) && isCanvasShortcutTarget(root, focused)
   }, [])
   useEffect(() => {
+    let toolbarGesture: AbortController | undefined
+    const startToolbarPan = (event: PointerEvent) => {
+      const root = canvasRootRef.current
+      const target = event.target
+      if (!root || !(target instanceof Element) || !root.contains(target)) return
+      const useHand = event.button === 0 && !event.shiftKey && root.classList.contains('is-space-panning')
+      if (
+        event.pointerType !== 'mouse' ||
+        (event.button !== 1 && !useHand) ||
+        shortcutsBlockedRef.current ||
+        !target.closest(NODE_TOOLBAR_SELECTOR) ||
+        target.closest(NODE_TOOLBAR_MENU_SELECTOR)
+      )
+        return
+
+      if (event.button === 1) event.preventDefault()
+      toolbarGesture?.abort()
+      const drag = new AbortController()
+      toolbarGesture = drag
+      const { pointerId } = event
+      let { clientX, clientY } = event
+      let dragging = false
+      const move = (event: PointerEvent) => {
+        if (event.pointerId !== pointerId) return
+        if (!event.buttons) return drag.abort()
+        const x = event.clientX - clientX
+        const y = event.clientY - clientY
+        if (!dragging) {
+          if (Math.hypot(x, y) < NODE_TOOLBAR_DRAG_THRESHOLD) return
+          // 达到拖动阈值才接管指针。此时工具条按钮不会收到松手产生的点击。
+          root.setPointerCapture(pointerId)
+          dragging = true
+        }
+        clientX = event.clientX
+        clientY = event.clientY
+        void getCanvasStoreState().panBy({ x, y })
+      }
+      const end = (event: PointerEvent) => {
+        if (event.pointerId === pointerId) drag.abort()
+      }
+      const options = { capture: true, signal: drag.signal }
+      window.addEventListener('pointermove', move, options)
+      window.addEventListener('pointerup', end, options)
+      window.addEventListener('pointercancel', end, options)
+    }
     const deactivate = (event: PointerEvent) => {
+      // 临时抓手的状态依赖画布焦点，需要在按钮移走焦点前记录本次手势。
+      startToolbarPan(event)
       if (isCanvasShortcutTarget(canvasRootRef.current, event.target)) return
       setCanvasKeyboardActive(false)
       const active = document.activeElement
       if (isCanvasShortcutTarget(canvasRootRef.current, active) && active instanceof HTMLElement) active.blur()
     }
     const onWindowBlur = () => {
+      toolbarGesture?.abort()
       setCanvasKeyboardActive(false)
       const active = document.activeElement
       if (isCanvasShortcutTarget(canvasRootRef.current, active) && active instanceof HTMLElement) active.blur()
@@ -2900,10 +3012,11 @@ function CanvasInner({
     window.addEventListener('pointerdown', deactivate, true)
     window.addEventListener('blur', onWindowBlur)
     return () => {
+      toolbarGesture?.abort()
       window.removeEventListener('pointerdown', deactivate, true)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [])
+  }, [getCanvasStoreState])
 
   /** 拖动节点时的对齐辅助线（画布坐标）；松手即清 */
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([])
@@ -2970,6 +3083,7 @@ function CanvasInner({
     reason: busyReason,
     granted: canEditSelection,
     denied: selectionDenied,
+    requestFailed: selectionRequestFailed,
   } = useCanvasNodeLocks(
     workspaceId,
     canvasId,
@@ -2984,14 +3098,12 @@ function CanvasInner({
     if (!canUseSelectedNodePanel) guardCanvasReadOnlyInteraction(event)
   }
   useEffect(() => {
-    if (!selectionDenied) return
+    // 有编辑面板时，在面板里持续显示占用原因。
+    if (!selectionDenied || hasSelectedNodePanel) return
     showToast(lockSelection.map((id) => busyReason(id)).find(Boolean) || '节点已被其他成员占用', 'error')
-    // 单节点编辑面板保持只读可见；没有面板的批量、音频和时间线操作仍在拒绝锁时清除选择。
-    if (!hasSelectedNodePanel) {
-      setSelectedNode(null)
-      setSelectedNodeIds([])
-      setNodes((items) => items.map((node) => (node.selected ? { ...node, selected: false } : node)))
-    }
+    setSelectedNode(null)
+    setSelectedNodeIds([])
+    setNodes((items) => items.map((node) => (node.selected ? { ...node, selected: false } : node)))
   }, [selectionDenied, busyReason, hasSelectedNodePanel, lockSelection, setNodes])
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('saved')
   /**
@@ -3162,8 +3274,20 @@ function CanvasInner({
     const root = canvasRootRef.current
     if (!root) return
     const onWheelCapture = (event: WheelEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const panel = target.closest(NODE_PANEL_SELECTOR)
+      const toolbar = target.closest(NODE_TOOLBAR_SELECTOR)
+      const overOverlay = panel || toolbar
+      if ((panel && handleNodePanelWheel(event, target)) || (toolbar && target.closest(NODE_TOOLBAR_MENU_SELECTOR))) {
+        // 聚焦控件接管滚轮时，同时阻止 Ctrl/触控板捏合触发浏览器缩放。
+        if (event.ctrlKey) event.preventDefault()
+        return
+      }
+
       const zoomKeys = canvasWheelActivationKeys(preferencesRef.current.shortcuts.zoomWheel)
       const isZoomGesture =
+        (overOverlay && event.ctrlKey) ||
         preferencesRef.current.wheelMode === 'zoom' ||
         zoomKeys.some((key) =>
           key === 'Control'
@@ -3174,13 +3298,24 @@ function CanvasInner({
                 ? event.altKey
                 : event.shiftKey,
         )
-      if (!isZoomGesture) return
-      const target = event.target
       if (
-        target instanceof HTMLElement &&
-        target.closest('.nowheel, input, textarea, select, button, [contenteditable="true"], .nopan')
+        !overOverlay &&
+        (!isZoomGesture ||
+          target.closest('.nowheel, input, textarea, select, button, [contenteditable="true"], .nopan'))
       )
         return
+
+      if (!isZoomGesture) {
+        const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 20 : 1
+        const horizontal = !CANVAS_IS_MAC && event.shiftKey
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        void getCanvasStoreState().panBy({
+          x: -(horizontal ? event.deltaY : event.deltaX) * unit * CANVAS_WHEEL_PAN_SPEED,
+          y: -(horizontal ? 0 : event.deltaY) * unit * CANVAS_WHEEL_PAN_SPEED,
+        })
+        return
+      }
 
       const lineFactor = event.deltaMode === 1 ? 0.05 : event.deltaMode === 2 ? 1 : 0.002
       const platformFactor = event.ctrlKey && CANVAS_IS_MAC ? 10 : 1
@@ -3193,7 +3328,7 @@ function CanvasInner({
       if (!bounds) return
       const pointerX = event.clientX - bounds.left
       const pointerY = event.clientY - bounds.top
-      const [x, y, zoom] = transform
+      const [x, y, zoom] = getCanvasStoreState().transform
       const nextZoom = Math.max(MIN_CANVAS_ZOOM, zoom * 2 ** exponent)
       const flowX = (pointerX - x) / zoom
       const flowY = (pointerY - y) / zoom
@@ -3206,8 +3341,16 @@ function CanvasInner({
     }
     root.addEventListener('wheel', onWheelCapture, { capture: true, passive: false })
     return () => root.removeEventListener('wheel', onWheelCapture, true)
-  }, [setViewport, transform])
+  }, [getCanvasStoreState, setViewport])
+
   const viewportZoom = transform[2]
+  const panelDensity = viewportZoom < 0.2 ? 'compact' : viewportZoom < 0.4 ? 'reduced' : 'normal'
+  const densityPanelWidth =
+    panelDensity === 'compact'
+      ? COMPACT_NODE_PANEL_MAX_WIDTH
+      : panelDensity === 'reduced'
+        ? REDUCED_NODE_PANEL_MAX_WIDTH
+        : undefined
 
   // 图片工具属于打开它的节点；切换选择时关闭，避免失去锚点后回落到左侧。
   useEffect(() => {
@@ -3242,7 +3385,7 @@ function CanvasInner({
     directorOpen && !stackedNodeControls && directorBounds ? directorBounds.left - 12 : undefined
   const stackedPanelTop = 144
   const panelRef = useRef<HTMLDivElement>(null)
-  const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
+  const [measuredPanelWidth, setMeasuredPanelWidth] = useState(0)
   useEffect(() => {
     const el =
       selectedNode?.kind === 'audio'
@@ -3252,14 +3395,13 @@ function CanvasInner({
         : panelRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
     const measure = () => {
-      const rect = el.getBoundingClientRect()
-      setPanelSize({ width: rect.width, height: rect.height })
+      setMeasuredPanelWidth(el.getBoundingClientRect().width)
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [selectedNode?.id, selectedNode?.kind, imageTool, preferences.uiSize, viewportZoom])
+  }, [selectedNode?.id, selectedNode?.kind, imageTool, canvasUiScale, viewportZoom])
 
   /**
    * 选中节点在屏幕上的矩形：由画布坐标 × 当前 transform 换算，不读节点 DOM。
@@ -3298,9 +3440,14 @@ function CanvasInner({
     )
   }, [selectedNodeScreenRect, canvasViewportWidth, canvasViewportHeight])
 
-  useEffect(() => {
-    panelRef.current?.toggleAttribute('inert', !selectedNodeVisible)
-  }, [selectedNodeVisible])
+  useLayoutEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+    if (!selectedNodeVisible && panel.contains(document.activeElement)) {
+      canvasRootRef.current?.focus({ preventScroll: true })
+    }
+    panel.toggleAttribute('inert', !selectedNodeVisible)
+  }, [selectedNodeVisible, selectedNode?.id])
 
   const imageToolAnchor =
     imageTool && selectedNode?.id === imageTool.source.nodeId && selectedNodeScreenRect
@@ -3345,26 +3492,46 @@ function CanvasInner({
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
     const bottomY = selectedNodeScreenRect.bottom
     const isVideoUpscale = selectedNode?.operationCode === 'video.upscale'
-    const panelWidth = isVideoUpscale
-      ? Math.min(420, (canvasViewportWidth || window.innerWidth) - 32)
-      : Math.min(panelSize.width || 640, (canvasViewportWidth || window.innerWidth) - 24)
+    const panelWidth = Math.min(
+      densityPanelWidth ?? (isVideoUpscale ? 420 : measuredPanelWidth || 640),
+      (canvasViewportWidth || window.innerWidth) - (isVideoUpscale ? 32 : 24),
+    )
     const halfWidth = panelWidth / 2
     const below = bottomY + (isVideoUpscale ? 16 : NODE_PANEL_GAP)
-    // 始终放在节点下方，保留用户刚选中的画布位置。
     const viewportWidth = directorLeftBoundary ?? (canvasViewportWidth || window.innerWidth)
     // 只在面板超出视口时夹取到边界；空间足够时始终严格居中在选中节点下方。
     const minCenterX = Math.min(halfWidth + NODE_PANEL_GAP, viewportWidth / 2)
     const maxCenterX = Math.max(viewportWidth - halfWidth - NODE_PANEL_GAP, viewportWidth / 2)
     const left = Math.min(Math.max(centerX, minCenterX), maxCenterX)
-    return {
-      left,
-      top: below,
+    // 工具条也在节点上方，窄屏时为可能换行的第二排按钮留出空间。
+    const above = selectedNodeScreenRect.top - NODE_TOOLBAR_SPACE - (canvasViewportWidth <= 600 ? 34 : 0)
+    const viewportHeight = canvasViewportHeight || window.innerHeight
+    const spaceBelow = viewportHeight - below - NODE_PANEL_VIEWPORT_MARGIN
+    const spaceAbove = above - NODE_PANEL_VIEWPORT_MARGIN
+    if (densityPanelWidth || (selectedNode?.kind === 'video' && !isVideoUpscale)) {
+      const minimumSpace = Math.min(
+        densityPanelWidth ? MIN_NODE_PANEL_SPACE : MIN_NODE_PANEL_SPACE * canvasUiScale,
+        viewportHeight - 2 * NODE_PANEL_VIEWPORT_MARGIN,
+      )
+      const minimumEdge = NODE_PANEL_VIEWPORT_MARGIN + minimumSpace
+      if (spaceBelow < minimumSpace && spaceAbove > spaceBelow) {
+        return { left, bottom: viewportHeight - Math.max(above, minimumEdge) }
+      }
+      return { left, top: Math.min(below, viewportHeight - minimumEdge) }
     }
+    if (selectedNode?.kind === 'video' && spaceBelow < MIN_NODE_PANEL_SPACE && spaceAbove > spaceBelow) {
+      return { left, bottom: viewportHeight - above }
+    }
+    return { left, top: below }
   }, [
     selectedNodeScreenRect,
     selectedNodeVisible,
     selectedNode?.operationCode,
-    panelSize.width,
+    measuredPanelWidth,
+    densityPanelWidth,
+    selectedNode?.kind,
+    canvasUiScale,
+    canvasViewportHeight,
     canvasViewportWidth,
     stackedNodeControls,
     directorLeftBoundary,
@@ -3373,7 +3540,7 @@ function CanvasInner({
   /**
    * 单选工具条的位置：贴在节点上方。
    *
-   * 编辑面板在节点下方，工具条放上方两者才不打架。多选时不出现——
+   * 编辑面板摆到上方时会预留工具条的空间。多选时不出现——
    * 那种情况由 CanvasSelectionToolbar 接管，两条同时浮出会分不清谁作用于什么。
    * 两端做夹取，节点被拖到视口外时工具条仍留在屏幕内。
    */
@@ -3382,13 +3549,12 @@ function CanvasInner({
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
     const topY = selectedNodeScreenRect.top
     // 让开节点上方的标题行，否则工具条会压住刚做好的名称
-    const gap = 42
     const viewportWidth = canvasViewportWidth || window.innerWidth
     const viewportHeight = canvasViewportHeight || window.innerHeight
     if (stackedNodeControls) return { centerX: viewportWidth / 2, bottom: viewportHeight - stackedPanelTop + 8 }
     return {
       centerX: Math.min(Math.max(centerX, 150), Math.max(150, viewportWidth - 150)),
-      bottom: Math.min(Math.max(viewportHeight - topY + gap, 16), Math.max(16, viewportHeight - 72)),
+      bottom: Math.min(Math.max(viewportHeight - topY + NODE_TOOLBAR_GAP, 16), Math.max(16, viewportHeight - 72)),
     }
   }, [
     selectedNodeScreenRect,
@@ -3413,55 +3579,55 @@ function CanvasInner({
     return resolveNodeToolbarState((node?.data || {}) as Record<string, unknown>, workspaceId)
   }, [selectedNode, nodes, workspaceId])
 
-  const panelPanRef = useRef('')
-  useEffect(() => {
-    const height = panelSize.height
-    if (imageTool || selectedNode?.kind !== 'audio' || !(height > 0)) return
-    const audioDockRight = directorLeftBoundary
-    const audioDockTop = stackedNodeControls ? directorBounds?.top : undefined
-    const key = `${selectedNode.id}:${Math.round(height)}:${Math.round(panelSize.width)}:${canvasViewportWidth}:${canvasViewportHeight}:${audioDockRight}:${audioDockTop}`
-    if (panelPanRef.current === key) return
-    panelPanRef.current = key
-    const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-    if (!node) return
-    const [tx, ty, tz] = transform
-    const style = (node.style || {}) as Record<string, unknown>
-    const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
-    const bottomY = (node.position.y + nodeHeight) * tz + ty
-    const topY = node.position.y * tz + ty
-    // 音频面板在节点内渲染，始终居中；空间不足时移动画布而不是把面板翻到左右。
-    const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
-    const center = (node.position.x + nodeWidth / 2) * tz + tx
-    const halfWidth = panelSize.width / 2
-    const right = audioDockRight ?? window.innerWidth
-    const safeCenter = Math.max(Math.min(halfWidth + 24, right / 2), Math.min(right - halfWidth - 24, center))
-    const nextX = tx + safeCenter - center
-    // 靠近屏幕顶部的节点下移，保留操作条和标题的完整空间，避免夹取后贴住图片。
-    const topSafe = window.innerWidth <= 600 ? 100 : 144
-    if (topY < topSafe) {
-      setViewport({ x: nextX, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
-      return
-    }
-    const deficit = bottomY + NODE_PANEL_GAP * 2 + height - (audioDockTop ?? window.innerHeight)
-    if (deficit <= 0) {
-      if (Math.abs(nextX - tx) > 1) setViewport({ x: nextX, y: ty, zoom: tz }, { duration: 200 })
-      return
-    }
-    const shift = Math.min(deficit, Math.max(0, topY - topSafe))
-    if (shift <= 1 && Math.abs(nextX - tx) <= 1) return
-    setViewport({ x: nextX, y: ty - shift, zoom: tz }, { duration: 200 })
+  const audioPanelStyle = useMemo(() => {
+    if (selectedNode?.kind !== 'audio' || !selectedNodeScreenRect) return undefined
+    const { left, top, bottom, width } = selectedNodeScreenRect
+    // 音频面板位于缩放层内，保留屏幕可读尺寸，滚动和节点定位仍按同一比例换算。
+    const panelZoom = Math.max(canvasUiScale, 1 / viewportZoom)
+    const scale = viewportZoom * panelZoom
+    const margin = NODE_PANEL_VIEWPORT_MARGIN
+    const right = directorLeftBoundary ?? (canvasViewportWidth || window.innerWidth)
+    const viewportBottom = (stackedNodeControls ? directorBounds?.top : undefined) ?? window.innerHeight
+    const maxWidth = Math.min(densityPanelWidth ?? Infinity, Math.max(0, right - 2 * margin))
+    const halfWidth = Math.min(measuredPanelWidth || 680 * scale, maxWidth) / 2
+    const center = left + width / 2
+    const safeCenter = Math.min(Math.max(center, margin + halfWidth), right - margin - halfWidth)
+    const below = bottom + 12
+    const above = top - NODE_TOOLBAR_SPACE
+    const spaceBelow = viewportBottom - margin - below
+    const spaceAbove = above - margin
+    const placeAbove = spaceBelow < MIN_NODE_PANEL_SPACE && spaceAbove > spaceBelow
+    const minimumHeight = Math.min(MIN_NODE_PANEL_SPACE, Math.max(0, viewportBottom / 2 - margin))
+    const space = placeAbove ? spaceAbove : spaceBelow
+    const availableHeight = Math.max(minimumHeight, space)
+    const heightLimit =
+      panelDensity === 'compact'
+        ? Math.max(200, Math.min(window.innerHeight * 0.34, 310))
+        : panelDensity === 'reduced'
+          ? Math.max(250, Math.min(window.innerHeight * 0.47, 420))
+          : Infinity
+    // 面板位于缩放层内，将屏幕距离换回它的 CSS 坐标，画布位置保持不动。
+    const gap = ((placeAbove ? NODE_TOOLBAR_SPACE : 12) - (availableHeight - space)) / scale
+    return {
+      '--canvas-audio-panel-zoom': panelZoom,
+      '--canvas-audio-panel-x': `${(safeCenter - center) / scale}px`,
+      '--canvas-audio-panel-top': placeAbove ? 'auto' : `calc(100% + ${gap}px)`,
+      '--canvas-audio-panel-bottom': placeAbove ? `calc(100% + ${gap}px)` : 'auto',
+      '--canvas-audio-panel-max-width': `${maxWidth / scale}px`,
+      '--canvas-audio-panel-max-height': `${Math.min(availableHeight, heightLimit) / scale}px`,
+    } as CSSProperties
   }, [
-    selectedNode,
-    panelSize.height,
-    panelSize.width,
-    transform,
-    setViewport,
-    imageTool,
-    canvasViewportHeight,
+    selectedNode?.kind,
+    selectedNodeScreenRect,
+    viewportZoom,
+    canvasUiScale,
+    densityPanelWidth,
+    panelDensity,
+    directorLeftBoundary,
     canvasViewportWidth,
     stackedNodeControls,
     directorBounds?.top,
-    directorLeftBoundary,
+    measuredPanelWidth,
   ])
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
@@ -11901,6 +12067,18 @@ function CanvasInner({
     }
   })
 
+  const showSelectedNodeToolbar =
+    selectedNodeVisible &&
+    canUseSelectedNodePanel &&
+    !imageTool &&
+    !subjectEdit &&
+    !standaloneCrop &&
+    !videoTrim &&
+    !reversePromptTarget &&
+    !hdRequest &&
+    !hdModalOpen &&
+    !canvasModalOpen
+
   return (
     <CanvasReservationContext.Provider value={reservation}>
       <CanvasNodeActionsContext.Provider value={nodeActions}>
@@ -12022,18 +12200,7 @@ function CanvasInner({
           再往 data 里塞一个字段又会污染持久化。
         */
           ref={canvasRootRef}
-          style={
-            directorOpen
-              ? ({
-                  '--canvas-audio-editor-width': directorLeftBoundary
-                    ? `${(directorLeftBoundary - 48) / Math.max(1, viewportZoom)}px`
-                    : undefined,
-                  '--canvas-audio-editor-height': stackedNodeControls
-                    ? `${Math.max(64, (canvasViewportHeight * 0.54 - 180) / 2) / Math.max(1, viewportZoom)}px`
-                    : undefined,
-                } as CSSProperties)
-              : undefined
-          }
+          style={audioPanelStyle}
           tabIndex={-1}
           onClickCapture={(event) => {
             if (agentOwner) return guardCanvasReadOnlyInteraction(event)
@@ -12699,7 +12866,7 @@ function CanvasInner({
                */
               panOnScroll={preferences.wheelMode === 'pan'}
               panOnScrollMode={PanOnScrollMode.Free}
-              panOnScrollSpeed={0.8}
+              panOnScrollSpeed={CANVAS_WHEEL_PAN_SPEED}
               zoomOnScroll={preferences.wheelMode === 'zoom'}
               zoomOnPinch
               zoomActivationKeyCode={canvasWheelActivationKeys(preferences.shortcuts.zoomWheel)}
@@ -12909,125 +13076,108 @@ function CanvasInner({
           </CanvasNodeActionsContext.Provider>
 
           {/* 单选节点操作条贴在节点上方。 */}
-          {nodeToolbarAnchor &&
-            selectedNodeVisible &&
-            selectedNode &&
-            canUseSelectedNodePanel &&
-            !imageTool &&
-            !subjectEdit &&
-            !standaloneCrop &&
-            !videoTrim &&
-            !reversePromptTarget &&
-            !hdRequest &&
-            !hdModalOpen &&
-            !canvasModalOpen && (
-              <CanvasNodeToolbar
-                anchor={nodeToolbarAnchor}
-                rightBoundary={directorLeftBoundary}
-                kind={selectedNodeToolbarState.kind}
-                hasContent={selectedNodeToolbarState.hasContent}
-                uploading={selectedNodeToolbarState.uploading}
-                capturing={capturingNodeId === selectedNode.id}
-                onRename={() => setRenamingNodeId(selectedNode.id)}
-                onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
-                onHd={
-                  ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
-                    ? () => {
-                        setImageTool(null)
-                        setHdRequest({ ids: [selectedNode.id], key: Date.now() })
-                      }
-                    : undefined
+          {showSelectedNodeToolbar && nodeToolbarAnchor && selectedNode && (
+            <CanvasNodeToolbar
+              anchor={nodeToolbarAnchor}
+              density={panelDensity}
+              rightBoundary={directorLeftBoundary}
+              kind={selectedNodeToolbarState.kind}
+              hasContent={selectedNodeToolbarState.hasContent}
+              uploading={selectedNodeToolbarState.uploading}
+              capturing={capturingNodeId === selectedNode.id}
+              onRename={() => setRenamingNodeId(selectedNode.id)}
+              onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
+              onHd={
+                ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
+                  ? () => {
+                      setImageTool(null)
+                      setHdRequest({ ids: [selectedNode.id], key: Date.now() })
+                    }
+                  : undefined
+              }
+              hdDisabledReason={
+                Number(nodes.find((node) => node.id === selectedNode.id)?.data.assetId) > 0 ? '' : '请先上传或生成素材'
+              }
+              onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
+              onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
+              onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
+              onCrop={() => openStandaloneCrop(selectedNode.id)}
+              onTrimVideo={() => openVideoTrim(selectedNode.id)}
+              onSubjectEdit={() => {
+                const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                const kind = node?.data.kind || node?.type
+                const assetId = Number(node?.data.assetId)
+                if (!node || (kind !== 'image' && kind !== 'video') || !Number.isSafeInteger(assetId) || assetId <= 0) {
+                  showToast('请先上传或生成素材', 'error')
+                  return
                 }
-                hdDisabledReason={
-                  Number(nodes.find((node) => node.id === selectedNode.id)?.data.assetId) > 0
-                    ? ''
-                    : '请先上传或生成素材'
+                if (Number(node.data.assetWorkspaceId || workspaceId) !== Number(workspaceId)) {
+                  showToast('请从当前团队选择素材', 'error')
+                  return
                 }
-                onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
-                onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
-                onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
-                onCrop={() => openStandaloneCrop(selectedNode.id)}
-                onTrimVideo={() => openVideoTrim(selectedNode.id)}
-                onSubjectEdit={() => {
-                  const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                  const kind = node?.data.kind || node?.type
-                  const assetId = Number(node?.data.assetId)
-                  if (
-                    !node ||
-                    (kind !== 'image' && kind !== 'video') ||
-                    !Number.isSafeInteger(assetId) ||
-                    assetId <= 0
-                  ) {
-                    showToast('请先上传或生成素材', 'error')
-                    return
-                  }
-                  if (Number(node.data.assetWorkspaceId || workspaceId) !== Number(workspaceId)) {
-                    showToast('请从当前团队选择素材', 'error')
-                    return
-                  }
-                  const video =
-                    kind === 'video'
-                      ? canvasRootRef.current?.querySelector<HTMLVideoElement>(
-                          `.react-flow__node[data-id="${CSS.escape(node.id)}"] video.canvas-node-media`,
-                        )
-                      : null
-                  const time = Number.isFinite(video?.currentTime) ? video.currentTime : 0
-                  const frameUrl =
-                    video && !video.seeking && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-                      ? captureVideoFrameDataUrl(video)
-                      : ''
-                  setSubjectEditTarget({
-                    canvasBinding: canvasBindingKey,
-                    source: {
-                      nodeId: node.id,
-                      assetId,
-                      kind,
-                      title: String(node.data.title || '原素材'),
-                      ratio: typeof node.data.ratio === 'string' ? node.data.ratio : undefined,
-                      initialVideo: video
-                        ? {
-                            time,
-                            duration: video.duration,
-                            width: video.videoWidth,
-                            height: video.videoHeight,
-                            frameUrl,
-                          }
-                        : undefined,
-                    },
-                  })
-                }}
-                onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
-                imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
-                onImageTool={(code) => {
-                  const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                  const assetId = Number(node?.data.assetId)
-                  if (!Number.isSafeInteger(assetId) || assetId <= 0) {
-                    showToast('请先上传或生成图片', 'error')
-                    return
-                  }
-                  const initial =
-                    code === 'image.panorama' &&
-                    imageToolCatalog?.codes.includes('panorama.view') &&
-                    (node.data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama'
-                      ? 'panorama.view'
-                      : code
-                  setImageTool({
-                    code: initial,
-                    source: { nodeId: node.id, assetId, title: String(node.data.title || '图片') },
-                  })
-                }}
-                onReversePrompt={() => {
-                  const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                  if (!node) return
-                  if (String(node.data.kind || node.type) === 'video') {
-                    void handleReversePrompt(node.id)
-                    return
-                  }
-                  const assetIds = canvasImageResultIds(node.data as Record<string, unknown>)
-                  void handleReversePrompt(node.id, Number(node.data.assetId) || assetIds[0])
-                }}
-              />
-            )}
+                const video =
+                  kind === 'video'
+                    ? canvasRootRef.current?.querySelector<HTMLVideoElement>(
+                        `.react-flow__node[data-id="${CSS.escape(node.id)}"] video.canvas-node-media`,
+                      )
+                    : null
+                const time = Number.isFinite(video?.currentTime) ? video.currentTime : 0
+                const frameUrl =
+                  video && !video.seeking && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+                    ? captureVideoFrameDataUrl(video)
+                    : ''
+                setSubjectEditTarget({
+                  canvasBinding: canvasBindingKey,
+                  source: {
+                    nodeId: node.id,
+                    assetId,
+                    kind,
+                    title: String(node.data.title || '原素材'),
+                    ratio: typeof node.data.ratio === 'string' ? node.data.ratio : undefined,
+                    initialVideo: video
+                      ? {
+                          time,
+                          duration: video.duration,
+                          width: video.videoWidth,
+                          height: video.videoHeight,
+                          frameUrl,
+                        }
+                      : undefined,
+                  },
+                })
+              }}
+              onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
+              imageToolCodes={imageToolCatalog?.workspaceId === Number(workspaceId) ? imageToolCatalog.codes : []}
+              onImageTool={(code) => {
+                const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                const assetId = Number(node?.data.assetId)
+                if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+                  showToast('请先上传或生成图片', 'error')
+                  return
+                }
+                const initial =
+                  code === 'image.panorama' &&
+                  imageToolCatalog?.codes.includes('panorama.view') &&
+                  (node.data.params as Record<string, unknown> | undefined)?.tool === 'image.panorama'
+                    ? 'panorama.view'
+                    : code
+                setImageTool({
+                  code: initial,
+                  source: { nodeId: node.id, assetId, title: String(node.data.title || '图片') },
+                })
+              }}
+              onReversePrompt={() => {
+                const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                if (!node) return
+                if (String(node.data.kind || node.type) === 'video') {
+                  void handleReversePrompt(node.id)
+                  return
+                }
+                const assetIds = canvasImageResultIds(node.data as Record<string, unknown>)
+                void handleReversePrompt(node.id, Number(node.data.assetId) || assetIds[0])
+              }}
+            />
+          )}
 
           {reversePromptTarget && (
             <CanvasReversePromptPanel
@@ -13682,7 +13832,7 @@ function CanvasInner({
             }}
           />
 
-          {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中。
+          {/* 节点编辑面板 — 根据选中节点位置和屏幕可用空间定位。
           时间线节点没有模型/提示词的概念，编辑入口是双击打开的剪辑编辑器，这里不渲染面板。
           多选期间一并让位给批量操作条：这个面板改的是「唯一那个节点」的参数，
           多选时它既指代不明，又会和批量条一起压满画布。
@@ -13699,12 +13849,50 @@ function CanvasInner({
               <div
                 ref={panelRef}
                 aria-hidden={!selectedNodeVisible || hidePanelDuringDrag}
-                className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${hidePanelDuringDrag ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
+                className={`canvas-panel-area nowheel${selectedNode.kind === 'image' ? ' is-image-editor' : ''}${selectedNode.kind === 'video' && selectedNodeForPanel?.operationCode !== 'video.upscale' ? ' is-video-editor' : ''}${panelDensity === 'normal' ? '' : ` is-${panelDensity}-editor`}${panelAnchor ? ' is-anchored' : ''}${hidePanelDuringDrag ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
+                onPointerDown={(event) => {
+                  const target = event.target
+                  if (
+                    event.pointerType !== 'mouse' ||
+                    (event.button !== 1 &&
+                      !(event.button === 0 && !event.shiftKey && (panModeEnabled || spacePanning))) ||
+                    canvasModalOpen ||
+                    isPickingRef ||
+                    !(target instanceof Element) ||
+                    !event.currentTarget.contains(target) ||
+                    target.closest(
+                      `button, a, label, summary, video, audio, [role="button"], ${NODE_PANEL_FIELD_SELECTOR}, ${NODE_PANEL_POPUP_SELECTOR}`,
+                    )
+                  )
+                    return
+                  event.preventDefault()
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                  panelPanRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
+                }}
+                onPointerMove={(event) => {
+                  const drag = panelPanRef.current
+                  if (!drag || drag.id !== event.pointerId || !event.currentTarget.hasPointerCapture(event.pointerId))
+                    return
+                  const x = event.clientX - drag.x
+                  const y = event.clientY - drag.y
+                  drag.x = event.clientX
+                  drag.y = event.clientY
+                  void getCanvasStoreState().panBy({ x, y })
+                }}
+                onLostPointerCapture={(event) => {
+                  if (panelPanRef.current?.id === event.pointerId) panelPanRef.current = null
+                }}
                 style={
                   panelAnchor
                     ? ({
-                        ...panelAnchor,
-                        '--canvas-panel-space-below': `${Math.max(80, window.innerHeight - Number(panelAnchor.top) - 16)}px`,
+                        left: panelAnchor.left,
+                        top: panelAnchor.top,
+                        bottom: panelAnchor.bottom,
+                        '--canvas-density-panel-width': densityPanelWidth ? `${densityPanelWidth}px` : undefined,
+                        '--canvas-panel-available-height': `${Math.max(
+                          80,
+                          window.innerHeight - (panelAnchor.top ?? panelAnchor.bottom) - NODE_PANEL_VIEWPORT_MARGIN,
+                        )}px`,
                         '--canvas-node-panel-width': directorLeftBoundary
                           ? `${directorLeftBoundary - 2 * NODE_PANEL_GAP}px`
                           : undefined,
@@ -13715,15 +13903,25 @@ function CanvasInner({
                     : undefined
                 }
               >
-                {!canUseSelectedNodePanel && (
-                  <div className="canvas-panel-lock-status" role="status">
-                    {selectionDenied || agentOwner
+                <CanvasPanelLockStatus
+                  key={`${workspaceId}/${canvasId}/${currentUserId}/${selectedNode.id}`}
+                  pending={!canUseSelectedNodePanel && !selectionDenied && !selectionRequestFailed}
+                  message={
+                    selectionDenied
                       ? busyReason(selectedNode.id) || '节点已被其他成员占用'
-                      : '正在确认编辑权限，请稍候'}
-                  </div>
-                )}
+                      : selectionRequestFailed
+                        ? '暂时无法确认，正在重试'
+                        : undefined
+                  }
+                />
                 <div
                   className="canvas-panel-edit-content"
+                  tabIndex={
+                    selectedNodeForPanel?.operationCode === 'video.upscale' ||
+                    (selectedNode.kind !== 'video' && panelDensity === 'normal')
+                      ? 0
+                      : undefined
+                  }
                   ref={(element) => {
                     element?.toggleAttribute('inert', !canUseSelectedNodePanel)
                   }}
@@ -13751,6 +13949,7 @@ function CanvasInner({
                       <Suspense fallback={null}>
                         <CanvasNodePanel
                           node={selectedNodeForPanel}
+                          density={panelDensity}
                           mediaConnectionCounts={
                             selectedNode
                               ? {

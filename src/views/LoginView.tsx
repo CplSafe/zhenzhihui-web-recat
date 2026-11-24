@@ -1,7 +1,7 @@
 /**
  * 页面职责：提供帧智汇统一登录入口，并在认证成功后把业务会话交给全局 AuthContext。
  * 页面效果：左侧展示可轮播的品牌媒体，右侧支持密码登录、短信登录、验证码挑战、协议确认和注册/找回密码弹窗。
- * 关键流程：提交凭证前清理旧会话，复用同一次 OAuth start；登录接口成功后继续确认业务会话，必要时通过隐藏 iframe 完成 SSO 桥接。
+ * 关键流程：登录或注册提交时清理旧会话，再启动本次 OAuth；认证成功后确认业务会话，必要时通过隐藏 iframe 完成 SSO 桥接。
  * 安全边界：不记录令牌、认证响应或完整跳转地址；组件卸载时终止倒计时和迟到的会话桥接回调。
  */
 import { useEffect, useRef, useState } from 'react'
@@ -13,6 +13,8 @@ import AgreementModal from '@/components/auth/AgreementModal'
 import PrivacyPolicyModal from '@/components/auth/PrivacyPolicyModal'
 import AuthActionModal, { type AuthActionMode } from '@/components/auth/AuthActionModal'
 import {
+  AuthApiError,
+  clearAuthSessionMarker,
   clearExistingSession,
   getAuthErrorMessage,
   getAuthNavigationUrl,
@@ -26,6 +28,7 @@ import {
   startOAuth,
 } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
+import { useAuthSmsCooldown } from '@/composables/useAuthSmsCooldown'
 import { useToast } from '@/composables/useToast'
 import { listBanners } from '@/api/banners'
 import { useSwr } from '@/composables/useSwr' // 复用首页同一套 SWR 缓存(先返缓存秒出、后台刷新)
@@ -36,7 +39,12 @@ import { getInviteCode, getInviteType } from '@/utils/inviteCode'
 import MediaSoundToggle from '@/components/common/MediaSoundToggle'
 import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 import { useLatestCallback } from '@/composables/useLatestCallback'
-import { readLoginReturnTo } from '@/utils/loginReturnTo'
+import {
+  consumeOAuthLoginReturnTo,
+  hasOAuthCallbackFailure,
+  keepOAuthLoginReturnTo,
+  readLoginReturnTo,
+} from '@/utils/loginReturnTo'
 
 /** 短信登录前的人机验证码会话状态。 */
 interface CaptchaState {
@@ -44,6 +52,7 @@ interface CaptchaState {
   image: string
   answer: string
 }
+const EMPTY_CAPTCHA: CaptchaState = { id: '', image: '', answer: '' }
 
 // 登录页大图轮播数据的 SWR 缓存键(slug=login)
 const LOGIN_BANNERS_CACHE_KEY = 'login-banners'
@@ -59,6 +68,9 @@ function readRememberedAccount(): string | null {
 }
 // 图片幻灯片自动切换间隔(视频则播完即切)
 const IMAGE_AUTOPLAY_MS = 3000
+const DIRECT_SESSION_TIMEOUT_MS = 1200
+const SESSION_BRIDGE_TIMEOUT_MS = 6000
+const CALLBACK_FAILURE_MESSAGE = '登录回调失败，请重新登录。'
 // 接口无数据时的兜底标题(保持原静态四项)
 const NAV_ITEMS = ['食品饮料', '生活服务', '餐饮美食', '丽人服务']
 
@@ -80,17 +92,51 @@ function reportLoginBridgeWarning(
   logger.warn('login_session_bridge_warning', diagnostic)
 }
 
+function isRejectedOAuthCallback(frame: HTMLIFrameElement): boolean {
+  try {
+    const location = frame.contentWindow?.location
+    if (location?.origin !== window.location.origin) return false
+    if (!['/auth/callback', '/api/v1/auth/callback'].includes(location.pathname)) return false
+    const doc = frame.contentDocument
+    const text = doc?.querySelector('pre')?.textContent ?? doc?.body?.textContent
+    if (!text || text.length > 4096) return false
+    const response = JSON.parse(text)
+    return Number(response?.code) > 0 || (typeof response?.code_string === 'string' && response.code_string !== 'OK')
+  } catch {
+    // 受浏览器限制无法读取的页面，其回调结果仍未知。
+    return false
+  }
+}
+
+function getFreshAuthorizeUrl(oauth: any, previousOauth: any, previousUrl: string): string {
+  const candidate = getAuthNavigationUrl(oauth, undefined)
+  const url = new URL(candidate, window.location.origin)
+  const state = url.searchParams.get('state')
+  const previousState = new URL(previousUrl, window.location.origin).searchParams.get('state')
+  const previousAuthorizeUrl = new URL(getAuthNavigationUrl(previousOauth, undefined), window.location.origin)
+  return url.origin === window.location.origin &&
+    ['/deepauth/oauth2/authorize', '/sso/oauth2/authorize'].includes(url.pathname) &&
+    !url.searchParams.has('code') &&
+    state &&
+    state !== previousState &&
+    state !== previousAuthorizeUrl.searchParams.get('state')
+    ? candidate
+    : ''
+}
+
 /** 渲染密码/短信登录，并把认证结果安全交给全局会话。 */
 export default function LoginView() {
   const navigate = useNavigate()
   // 「返回」写死:始终回到开屏页 /welcome。
   const goBack = () => {
+    loginAttemptRef.current?.abort()
     navigate('/welcome', { replace: true })
   }
   const { showToast, clearToast } = useToast()
   const { handleLoginSuccess: finishLogin } = useAuth()
   // 被守卫/需登录动作弹到登录页时携带的站内回跳地址;登录成功后回到原页,而不是一律落首页。
-  const returnTo = readLoginReturnTo(useLocation().state)
+  const { search, state: locationState } = useLocation()
+  const returnTo = readLoginReturnTo(locationState)
   const handleLoginSuccess = (session?: any) => finishLogin(session, returnTo)
 
   const hasRemoteBackend = hasConfiguredDevBackend()
@@ -116,10 +162,10 @@ export default function LoginView() {
   }, [rememberAccount, phone])
   const [password, setPassword] = useState('')
   const [smsCode, setSmsCode] = useState('')
-  const [captcha, setCaptcha] = useState<CaptchaState>({ id: '', image: '', answer: '' })
+  const [captcha, setCaptcha] = useState(EMPTY_CAPTCHA)
   const [agreed, setAgreed] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  const [codeCountdown, setCodeCountdown] = useState(0)
+  const { remainingSeconds: codeCountdown, markSent } = useAuthSmsCooldown(phone)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [loginErrors, setLoginErrors] = useState({ phone: '', password: '', code: '', captcha: '' })
@@ -131,14 +177,15 @@ export default function LoginView() {
 
   // 'login' | 'view'：协议弹窗的来源上下文
   const agreementModalContextRef = useRef('login')
-  const authStartRef = useRef<any>(null)
-  const authStartPromiseRef = useRef<Promise<any> | null>(null)
-  const codeTimerRef = useRef<number | null>(null)
-  const loginFlowSequenceRef = useRef(0)
-  const silentBridgeCleanupRef = useRef<() => void>(() => undefined)
+  const smsRequestRef = useRef<symbol | null>(null)
+  const mobileRevisionRef = useRef(0)
+  const captchaRequestRef = useRef(0)
+  const handledCallbackFailureRef = useRef(false)
+  const loginAttemptRef = useRef<AbortController | null>(null)
 
   const credentialLabel = loginMode === 'password' ? '密码' : '验证码'
   const codeButtonText = codeCountdown > 0 ? `${codeCountdown}s后重发` : '获取验证码'
+  const authActionOpen = Boolean(authModal || smsRegister)
 
   function setNoticeMessage(message: string, type = 'info') {
     if (message) showToast(message, type as any, type === 'error' ? 5000 : 3000)
@@ -150,6 +197,16 @@ export default function LoginView() {
   }
   function clearLoginError(field: string) {
     setLoginErrors((prev) => ({ ...prev, [field]: '' }))
+  }
+
+  function resetLoginCredentials(mobile: string) {
+    mobileRevisionRef.current += 1
+    setPhone(mobile)
+    setPassword('')
+    setShowPassword(false)
+    setSmsCode('')
+    setCaptcha(EMPTY_CAPTCHA)
+    clearLoginErrors()
   }
 
   function normalizeMobile(value: string) {
@@ -165,132 +222,181 @@ export default function LoginView() {
   function getRedirectTo() {
     return `${window.location.origin}/home`
   }
-  // 登录成功后获取会话进首页。业务会话需经 OAuth 回调建立(login 200 不一定直接下发 cookie)。
-  // 策略:① 先直接重试取会话(cookie 已就绪即直接进);② 拿不到 → 用【隐藏 iframe 静默跑完 SSO 桥接】
-  // (authorize 地址同源经代理,cookie 共享),期间轮询会话,全程不弹出 DeepAuth 页;
-  // ③ 静默被拦/超时 → 兜底回退到可见重定向,保证一定能登录。
-  async function handleLoginFlowComplete(oauth: any, authResult?: any) {
-    // 每次登录生成独立序号；旧流程即使晚返回，也不能再更新提示、会话或页面位置。
-    silentBridgeCleanupRef.current()
-    silentBridgeCleanupRef.current = () => undefined
-    const flowSequence = ++loginFlowSequenceRef.current
-    const isFlowActive = () => loginFlowSequenceRef.current === flowSequence
-    markAuthSessionExpected()
-    if (import.meta.env.DEV && !hasRemoteBackend) {
-      if (!isFlowActive()) return
-      setNoticeMessage('登录成功', 'success')
-      handleLoginSuccess()
-      return
+
+  async function runLoginAttempt(run: (signal: AbortSignal) => Promise<void>) {
+    if (loginAttemptRef.current) return
+    const controller = new AbortController()
+    loginAttemptRef.current = controller
+    setIsSubmitting(true)
+    try {
+      await run(controller.signal)
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setNoticeMessage(getAuthErrorMessage(error, '未能建立登录会话，请重新登录。'), 'error')
+      }
+    } finally {
+      if (loginAttemptRef.current === controller) {
+        loginAttemptRef.current = null
+        if (!controller.signal.aborted) setIsSubmitting(false)
+      }
     }
-    // 仅在真正拿到业务会话后才提示「登录成功」并进首页(避免先成功后失败的误导)
-    const trySession = async () => {
-      try {
-        const session = await getAuthenticatedSession()
-        if (!isFlowActive()) return false
+  }
+
+  // 先探测业务会话，再在 iframe 内静默跑 OAuth。
+  async function handleLoginFlowComplete(signal: AbortSignal, oauth?: any, authResult?: any, mobile?: string) {
+    if (signal.aborted) return false
+    let keepSessionMarker = false
+    let accountMismatch = false
+    const waitForSession = (timeoutMs: number, pollInterval: number, firstPollDelay = 0, rejected?: AbortSignal) =>
+      new Promise<any>((resolve) => {
+        if (signal.aborted || rejected?.aborted) {
+          resolve(null)
+          return
+        }
+        let settled = false
+        let pollTimer: number | undefined
+        const finish = (session: any) => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(pollTimer)
+          window.clearTimeout(deadlineTimer)
+          signal.removeEventListener('abort', stop)
+          rejected?.removeEventListener('abort', stop)
+          resolve(session)
+        }
+        const stop = () => finish(null)
+        const deadlineTimer = window.setTimeout(stop, timeoutMs)
+        const poll = async () => {
+          try {
+            const session = await getAuthenticatedSession()
+            if (settled) return
+            const sessionMobile = normalizeMobile(String(session?.user?.mobile ?? ''))
+            if (!mobile || !isValidSmsMobile(sessionMobile) || sessionMobile === mobile) {
+              finish(session)
+              return
+            }
+            accountMismatch = true
+          } catch (error) {
+            if (settled) return
+            if (error instanceof AuthApiError && 'code' in error && error.code === 'SESSION_IDENTITY_MISMATCH') {
+              accountMismatch = true
+            }
+          }
+          pollTimer = window.setTimeout(poll, pollInterval)
+        }
+        signal.addEventListener('abort', stop, { once: true })
+        rejected?.addEventListener('abort', stop, { once: true })
+        if (firstPollDelay) pollTimer = window.setTimeout(poll, firstPollDelay)
+        else void poll()
+      })
+
+    markAuthSessionExpected()
+    try {
+      const isLocalDev = import.meta.env.DEV && !hasRemoteBackend
+      let session = isLocalDev ? undefined : await waitForSession(DIRECT_SESSION_TIMEOUT_MS, 300)
+      if (signal.aborted) return false
+      const navUrl = !isLocalDev && !session ? getAuthNavigationUrl(oauth, authResult) : ''
+      const callbackRejected = new AbortController()
+      if (navUrl && navUrl !== '/') {
+        const iframe = document.createElement('iframe')
+        iframe.style.display = 'none'
+        iframe.setAttribute('aria-hidden', 'true')
+        iframe.addEventListener('load', () => {
+          if (isRejectedOAuthCallback(iframe)) callbackRejected.abort()
+        })
+        iframe.src = navUrl
+        document.body.appendChild(iframe)
+        try {
+          session = await waitForSession(SESSION_BRIDGE_TIMEOUT_MS, 500, 700, callbackRejected.signal)
+        } finally {
+          iframe.remove()
+        }
+      }
+      if (signal.aborted) return false
+      if (isLocalDev || session) {
+        keepSessionMarker = true
         setNoticeMessage('登录成功', 'success')
         handleLoginSuccess(session)
         return true
-      } catch {
-        return false
+      } else if (callbackRejected.signal.aborted) {
+        reportLoginBridgeWarning('oauth_callback_rejected', oauth, authResult, navUrl)
+        setNoticeMessage(CALLBACK_FAILURE_MESSAGE, 'error')
+      } else if (accountMismatch) {
+        reportLoginBridgeWarning('session_account_mismatch', oauth, authResult, navUrl)
+        setNoticeMessage('登录会话与提交的账号不一致，请重新登录。', 'error')
+      } else if (!navUrl || navUrl === '/') {
+        reportLoginBridgeWarning('navigation_url_missing', oauth, authResult, navUrl)
+        setNoticeMessage('未能建立登录会话，请重新登录。', 'error')
+      } else {
+        reportLoginBridgeWarning('silent_bridge_unavailable', oauth, authResult, navUrl)
+        // iframe 可能已用掉原 state。整页回退必须重新初始化 OAuth，不再发送凭据。
+        let freshUrl = ''
+        try {
+          const freshOAuth = await startOAuth({ redirectTo: getRedirectTo() })
+          if (signal.aborted) return false
+          freshUrl = getFreshAuthorizeUrl(freshOAuth, oauth, navUrl)
+        } catch {
+          if (signal.aborted) return false
+        }
+        if (freshUrl) {
+          keepOAuthLoginReturnTo(returnTo)
+          window.location.href = freshUrl
+          keepSessionMarker = true
+          return true
+        }
+        reportLoginBridgeWarning('fresh_oauth_unavailable', oauth, authResult, freshUrl)
+        setNoticeMessage(CALLBACK_FAILURE_MESSAGE, 'error')
       }
+      return false
+    } finally {
+      if (!keepSessionMarker) clearAuthSessionMarker()
     }
-    // ① 直接重试(cookie 就绪即可)
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (await trySession()) return
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      if (!isFlowActive()) return
-    }
-    const navUrl = getAuthNavigationUrl(oauth, authResult)
-    if (!navUrl || navUrl === '/') {
-      reportLoginBridgeWarning('navigation_url_missing', oauth, authResult, navUrl)
-      setNoticeMessage('登录失败:未获取到会话,且缺少 SSO 跳转地址,请稍后重试或联系管理员', 'error')
-      return
-    }
-    // ② 隐藏 iframe 静默桥接:后台跑完 OAuth 回调种 cookie,同时轮询会话
-    const silentOk = await new Promise<boolean>((resolve) => {
-      const iframe = document.createElement('iframe')
-      iframe.style.display = 'none'
-      iframe.setAttribute('aria-hidden', 'true')
-      iframe.src = navUrl
-      document.body.appendChild(iframe)
-      let settled = false
-      let pollTimer = 0
-      const finish = (ok: boolean) => {
-        if (settled) return
-        settled = true
-        if (pollTimer) window.clearTimeout(pollTimer)
-        iframe.remove()
-        if (silentBridgeCleanupRef.current === cancel) {
-          silentBridgeCleanupRef.current = () => undefined
-        }
-        resolve(ok)
-      }
-      const cancel = () => finish(false)
-      silentBridgeCleanupRef.current = cancel
-      const deadline = Date.now() + 6000
-      const poll = async () => {
-        if (settled || !isFlowActive()) {
-          finish(false)
-          return
-        }
-        if (await trySession()) {
-          finish(true)
-          return
-        }
-        if (Date.now() >= deadline) {
-          finish(false)
-          return
-        }
-        pollTimer = window.setTimeout(poll, 500)
-      }
-      pollTimer = window.setTimeout(poll, 700) // 给 iframe 一点时间跑完重定向链
-    })
-    if (!isFlowActive() || silentOk) return
-    // ③ 静默失败(被 X-Frame-Options 拦截 / 超时)→ 兜底可见重定向,保证能登录
-    reportLoginBridgeWarning('silent_bridge_unavailable', oauth, authResult, navUrl)
-    window.location.href = navUrl
   }
 
-  async function refreshCaptcha({ silent = false } = {}) {
+  function finishRegistration(oauth: any, result: any, mobile: string) {
+    void runLoginAttempt(async (signal) => {
+      const completed = await handleLoginFlowComplete(signal, oauth, result, mobile)
+      if (!completed && !signal.aborted) {
+        resetLoginCredentials(mobile)
+        setLoginMode('sms')
+      }
+    })
+  }
+
+  async function refreshCaptcha({ silent = false, signal }: { silent?: boolean; signal?: AbortSignal } = {}) {
+    const mobileRevision = mobileRevisionRef.current
+    const request = ++captchaRequestRef.current
+    const isCurrent = () =>
+      !signal?.aborted && mobileRevisionRef.current === mobileRevision && captchaRequestRef.current === request
     try {
       const next = await getCaptcha()
-      setCaptcha({ id: next.id || '', image: next.image || '', answer: '' })
+      if (isCurrent()) setCaptcha({ id: next.id || '', image: next.image || '', answer: '' })
     } catch (error) {
-      if (!silent) setNoticeMessage(getAuthErrorMessage(error, '图形验证码刷新失败，请稍后重试'), 'error')
-      throw error
+      if (!silent && isCurrent()) {
+        setNoticeMessage(getAuthErrorMessage(error, '图形验证码刷新失败，请稍后重试'), 'error')
+      }
     }
   }
 
-  async function handleCaptchaError(error: any) {
+  async function handleCaptchaError(error: any, signal?: AbortSignal) {
     if (!isCaptchaChallengeError(error)) return false
-    try {
-      await refreshCaptcha({ silent: true })
-    } catch {
-      /* 即使刷新失败，仍保留原始验证码挑战错误提示 */
+    const mobileRevision = mobileRevisionRef.current
+    await refreshCaptcha({ silent: true, signal })
+    if (!signal?.aborted && mobileRevisionRef.current === mobileRevision) {
+      setLoginErrors((prev) => ({ ...prev, captcha: getAuthErrorMessage(error, '请输入图形验证码') }))
     }
-    setLoginErrors((prev) => ({ ...prev, captcha: getAuthErrorMessage(error, '请输入图形验证码') }))
     return true
   }
 
-  async function ensureAuthStart() {
-    // 缓存进行中的 OAuth start Promise，避免发送验证码与提交登录并发创建不同 state。
-    if (authStartRef.current) return authStartRef.current
-    if (!authStartPromiseRef.current) {
-      const inviteCode = getInviteCode()
-      authStartPromiseRef.current = startOAuth({
-        redirectTo: getRedirectTo(),
-        inviteCode,
-        inviteType: inviteCode ? getInviteType() : '',
-      })
-        .then((data) => {
-          authStartRef.current = data
-          return data
-        })
-        .finally(() => {
-          authStartPromiseRef.current = null
-        })
-    }
-    return authStartPromiseRef.current
+  async function prepareAuthStart(signal?: AbortSignal) {
+    await clearExistingSession()
+    if (signal?.aborted) return null
+    const inviteCode = getInviteCode()
+    return startOAuth({
+      redirectTo: getRedirectTo(),
+      inviteCode,
+      inviteType: inviteCode ? getInviteType() : '',
+    })
   }
 
   function switchMode(mode: 'password' | 'sms') {
@@ -299,29 +405,8 @@ export default function LoginView() {
     clearLoginErrors()
   }
 
-  function clearCodeTimer() {
-    if (codeTimerRef.current) {
-      window.clearInterval(codeTimerRef.current)
-      codeTimerRef.current = null
-    }
-  }
-  function startCodeCountdown() {
-    clearCodeTimer()
-    setCodeCountdown(60)
-    codeTimerRef.current = window.setInterval(() => {
-      setCodeCountdown((prev) => {
-        if (prev <= 1) {
-          clearCodeTimer()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }
-
   async function requestCode() {
-    // 先做本地校验，再取得 OAuth 上下文并发送短信；验证码挑战失败时刷新图片供用户重试。
-    if (codeCountdown > 0) return
+    if (codeCountdown > 0 || authActionOpen || loginAttemptRef.current || smsRequestRef.current) return
     const mobile = normalizeMobile(phone)
     if (!mobile) {
       setLoginErrors((prev) => ({ ...prev, phone: '请输入手机号' }))
@@ -336,26 +421,33 @@ export default function LoginView() {
       return
     }
     clearLoginError('phone')
+    const request = Symbol()
+    const mobileRevision = mobileRevisionRef.current
+    const isCurrent = () => smsRequestRef.current === request && mobileRevisionRef.current === mobileRevision
+    smsRequestRef.current = request
     setIsSendingCode(true)
     try {
-      const oauth = await ensureAuthStart()
       await sendAuthSms({
-        authStart: oauth,
+        authStart: null,
         mobile,
         purpose: 'login',
         captchaId: captcha.id,
         captchaAnswer: captcha.answer.trim(),
       })
-      startCodeCountdown()
-      setNoticeMessage('验证码已发送', 'success')
+      if (smsRequestRef.current === request) markSent(mobile)
+      if (isCurrent()) setNoticeMessage('验证码已发送', 'success')
     } catch (error) {
-      if (await handleCaptchaError(error)) {
-        setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
-        return
+      if (!isCurrent()) return
+      const captchaRequired = await handleCaptchaError(error)
+      if (isCurrent()) {
+        const fallback = captchaRequired ? '请输入图形验证码' : '验证码发送失败，请稍后重试'
+        setNoticeMessage(getAuthErrorMessage(error, fallback), 'error')
       }
-      setNoticeMessage(getAuthErrorMessage(error, '验证码发送失败，请稍后重试'), 'error')
     } finally {
-      setIsSendingCode(false)
+      if (smsRequestRef.current === request) {
+        smsRequestRef.current = null
+        setIsSendingCode(false)
+      }
     }
   }
 
@@ -388,53 +480,55 @@ export default function LoginView() {
   }
 
   // 实际提交（协议已确认后调用）。
-  async function submitLogin(mobile: string, credential: string) {
-    setIsSubmitting(true)
+  function submitLogin(mobile: string, credential: string) {
+    if (authActionOpen) return
+    return runLoginAttempt(async (signal) => {
+      if (import.meta.env.DEV && !hasRemoteBackend) {
+        await handleLoginFlowComplete(signal)
+        return
+      }
 
-    // 仅在未配置远程后端时跳过真实 API 调用（走本地 mock 登录）。
-    if (import.meta.env.DEV && !hasRemoteBackend) {
-      setIsSubmitting(false)
-      handleLoginFlowComplete(null as any)
-      return
-    }
-
-    try {
-      // 账号切换必须先清理旧业务会话，再创建本次 OAuth state，避免登录后仍读到上一账号。
-      // 换账号关键：先登出旧业务会话，否则登录后立即 getSession() 会读回旧账号。
-      // 必须在 oauth-start 之前，否则会清掉本次 OAuth 的 state 导致回调 400。
-      await clearExistingSession()
-      // 发短信时可能已生成过 authStart（其 state 绑定旧会话），登出后需重新获取。
-      authStartRef.current = null
-      authStartPromiseRef.current = null
-      const oauth = await ensureAuthStart()
-      const common = { authStart: oauth, mobile, captchaId: captcha.id, captchaAnswer: captcha.answer.trim() }
+      let oauth: any
       let loginResult: any
-      if (loginMode === 'password') {
-        loginResult = await loginWithPassword({ ...common, password: credential })
-      } else {
-        loginResult = await loginWithSmsCode({ ...common, smsCode: credential })
-      }
-      // 不再在此提前弹「登录成功」——改由 handleLoginFlowComplete 确认会话后再弹
-      handleLoginFlowComplete(oauth, loginResult)
-    } catch (error) {
-      if (await handleCaptchaError(error)) {
-        setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
+      try {
+        oauth = await prepareAuthStart(signal)
+      } catch (error) {
+        if (!signal.aborted) {
+          setNoticeMessage(getAuthErrorMessage(error, '登录初始化失败，请稍后重试。'), 'error')
+        }
         return
       }
-      // 验证码登录 + 该手机号未注册(后端 code 20003)→ 获取独立的注册验证码完成注册
-      if (loginMode === 'sms' && Number((error as any)?.code) === 20003) {
-        setSmsRegister({ mobile })
+      if (signal.aborted) return
+      try {
+        const common = { authStart: oauth, mobile, captchaId: captcha.id, captchaAnswer: captcha.answer.trim() }
+        loginResult =
+          loginMode === 'password'
+            ? await loginWithPassword({ ...common, password: credential })
+            : await loginWithSmsCode({ ...common, smsCode: credential })
+      } catch (error) {
+        if (signal.aborted) return
+        const captchaRequired = await handleCaptchaError(error, signal)
+        if (signal.aborted) return
+        if (captchaRequired) {
+          setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
+          return
+        }
+        // 该号码未注册时，引导用户获取独立的注册验证码。
+        if (loginMode === 'sms' && Number((error as any)?.code) === 20003) {
+          setSmsRegister({ mobile })
+          return
+        }
+        const fallback =
+          loginMode === 'password' ? '登录失败，请稍后重试，也可以尝试短信验证码登录。' : '登录失败，请稍后重试。'
+        setNoticeMessage(getAuthErrorMessage(error, fallback), 'error')
         return
       }
-      const fallback = loginMode === 'password' ? '手机号或密码错误' : '手机号或验证码错误'
-      setNoticeMessage(getAuthErrorMessage(error, fallback), 'error')
-    } finally {
-      setIsSubmitting(false)
-    }
+      await handleLoginFlowComplete(signal, oauth, loginResult, mobile)
+    })
   }
 
   function handleSubmit() {
-    if (isSubmitting) return // 回车提交也走这里,补上按钮 disabled 之外的并发守卫,避免连按并发提交/会话互踩
+    if (authActionOpen || loginAttemptRef.current) return // 回车和按钮共用同步提交锁。
     clearLoginErrors()
     setNoticeMessage('')
     const valid = validateLogin()
@@ -476,14 +570,25 @@ export default function LoginView() {
   }
 
   useEffect(() => {
-    // 卸载时同时终止短信倒计时和静默 SSO 桥接，防止离开登录页后迟到回调把用户强制导航回首页。
+    // 离开页面时作废本次登录，包括还未启动桥接的凭据请求。
     return () => {
-      clearCodeTimer()
-      loginFlowSequenceRef.current += 1
-      silentBridgeCleanupRef.current()
-      silentBridgeCleanupRef.current = () => undefined
+      smsRequestRef.current = null
+      mobileRevisionRef.current += 1
+      loginAttemptRef.current?.abort()
     }
   }, [])
+
+  useEffect(() => {
+    if (!hasOAuthCallbackFailure(search)) {
+      handledCallbackFailureRef.current = false
+      return
+    }
+    if (handledCallbackFailureRef.current) return
+    handledCallbackFailureRef.current = true
+    const retryTarget = consumeOAuthLoginReturnTo() || readLoginReturnTo(locationState)
+    showToast(CALLBACK_FAILURE_MESSAGE, 'error', 5000)
+    navigate('/login', { replace: true, state: retryTarget ? { returnTo: retryTarget } : undefined })
+  }, [locationState, navigate, search, showToast])
 
   // 带推广码进站(分享链接 /login?invite_code=…):属新用户场景,直接弹出注册框,省掉手点「免费注册」。
   // (推广码本身由 App 的 captureInviteCode 落地即捕获,注册时读取;这里只负责自动打开注册。)
@@ -684,7 +789,13 @@ export default function LoginView() {
       </aside>
 
       <section className="zlogin-panel" aria-label="帧智汇登录">
-        <button type="button" className="zlogin-back" onClick={goBack} aria-label="返回上一页">
+        <button
+          type="button"
+          className="zlogin-back"
+          disabled={authActionOpen}
+          onClick={goBack}
+          aria-label="返回上一页"
+        >
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
             <path
               d="M15 18l-6-6 6-6"
@@ -699,7 +810,12 @@ export default function LoginView() {
           <h1 className="zlogin-title">欢迎加入帧智汇</h1>
           <p className="zlogin-sub">
             还没有账号？
-            <button type="button" className="zlogin-link" onClick={() => setAuthModal('register')}>
+            <button
+              type="button"
+              className="zlogin-link"
+              disabled={isSubmitting || authActionOpen}
+              onClick={() => setAuthModal('register')}
+            >
               免费注册
             </button>
           </p>
@@ -709,6 +825,7 @@ export default function LoginView() {
               type="button"
               role="tab"
               aria-selected={loginMode === 'sms'}
+              disabled={isSubmitting || authActionOpen}
               className={`zlogin-tab${loginMode === 'sms' ? ' is-active' : ''}`}
               onClick={() => switchMode('sms')}
             >
@@ -718,6 +835,7 @@ export default function LoginView() {
               type="button"
               role="tab"
               aria-selected={loginMode === 'password'}
+              disabled={isSubmitting || authActionOpen}
               className={`zlogin-tab${loginMode === 'password' ? ' is-active' : ''}`}
               onClick={() => switchMode('password')}
             >
@@ -735,9 +853,10 @@ export default function LoginView() {
                 placeholder="手机号"
                 aria-label="手机号"
                 value={phone}
+                readOnly={isSubmitting}
                 onChange={(e) => {
-                  setPhone(e.target.value.replace(/\D/g, '').slice(0, 11))
-                  clearLoginError('phone')
+                  const next = e.target.value.replace(/\D/g, '').slice(0, 11)
+                  if (next !== phone) resetLoginCredentials(next)
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
               />
@@ -747,6 +866,7 @@ export default function LoginView() {
               <div className={`zlogin-field${loginErrors.password ? ' has-error' : ''}`}>
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
                   placeholder="密码"
                   aria-label="密码"
                   value={password}
@@ -804,7 +924,7 @@ export default function LoginView() {
                 <button
                   type="button"
                   className="zlogin-code-btn"
-                  disabled={codeCountdown > 0 || isSendingCode}
+                  disabled={codeCountdown > 0 || isSendingCode || isSubmitting || authActionOpen}
                   onClick={requestCode}
                 >
                   {isSendingCode ? '发送中…' : codeButtonText}
@@ -825,12 +945,15 @@ export default function LoginView() {
                   }}
                   onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
                 />
-                <img
-                  className="zlogin-captcha-img"
-                  src={captcha.image}
-                  alt="点击刷新图形验证码"
-                  onClick={() => refreshCaptcha()}
-                />
+                <button
+                  type="button"
+                  className="zlogin-captcha-refresh"
+                  aria-label="刷新图形验证码"
+                  disabled={isSubmitting || authActionOpen}
+                  onClick={() => void refreshCaptcha()}
+                >
+                  <img src={captcha.image} alt="" />
+                </button>
               </div>
             )}
           </div>
@@ -841,7 +964,12 @@ export default function LoginView() {
             </span>
           )}
 
-          <button type="button" className="zlogin-submit" disabled={isSubmitting} onClick={handleSubmit}>
+          <button
+            type="button"
+            className="zlogin-submit"
+            disabled={isSubmitting || authActionOpen}
+            onClick={handleSubmit}
+          >
             {isSubmitting ? '登录中…' : '登录'}
           </button>
 
@@ -854,7 +982,12 @@ export default function LoginView() {
               />
               <span>记住账号</span>
             </label>
-            <button type="button" className="zlogin-forgot" onClick={() => setAuthModal('forgot')}>
+            <button
+              type="button"
+              className="zlogin-forgot"
+              disabled={isSubmitting || authActionOpen}
+              onClick={() => setAuthModal('forgot')}
+            >
               忘记密码？
             </button>
           </div>
@@ -901,23 +1034,24 @@ export default function LoginView() {
       {/* 注册 / 重置密码 弹窗 */}
       {authModal && (
         <AuthActionModal
+          key={authModal}
           mode={authModal}
-          ensureAuthStart={ensureAuthStart}
+          prepareRegistration={prepareAuthStart}
           onClose={() => setAuthModal(null)}
-          onAuthed={(as, result) => {
+          onAuthed={(as, result, mobile) => {
             setAuthModal(null)
-            void handleLoginFlowComplete(as, result)
+            finishRegistration(as, result, mobile)
           }}
           onResetDone={(m) => {
             setAuthModal(null)
             switchMode('password')
-            setPhone(m)
+            resetLoginCredentials(m)
             setNoticeMessage('重置密码成功,请用新密码登录', 'success')
           }}
           onAlreadyRegistered={(m) => {
             setAuthModal(null)
             switchMode('password')
-            setPhone(m)
+            resetLoginCredentials(m)
           }}
         />
       )}
@@ -926,19 +1060,17 @@ export default function LoginView() {
       {smsRegister && (
         <AuthActionModal
           mode="sms-register"
-          ensureAuthStart={ensureAuthStart}
-          authStart={authStartRef.current}
+          prepareRegistration={prepareAuthStart}
           prefill={smsRegister}
-          smsCooldown={codeCountdown}
           onAlreadyRegistered={(m) => {
             setSmsRegister(null)
             switchMode('password')
-            setPhone(m)
+            resetLoginCredentials(m)
           }}
           onClose={() => setSmsRegister(null)}
-          onAuthed={(as, result) => {
+          onAuthed={(as, result, mobile) => {
             setSmsRegister(null)
-            void handleLoginFlowComplete(as, result)
+            finishRegistration(as, result, mobile)
           }}
         />
       )}

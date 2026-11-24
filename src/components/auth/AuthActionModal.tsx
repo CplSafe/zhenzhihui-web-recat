@@ -6,7 +6,7 @@
  *
  * 成功后由父级接管:register/sms-register → onAuthed(走 OAuth 桥接登录);forgot → onResetDone(切回登录)。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getAuthErrorMessage,
   getCaptcha,
@@ -15,6 +15,7 @@ import {
   resetPassword,
   sendAuthSms,
 } from '@/api/auth'
+import { useAuthSmsCooldown } from '@/composables/useAuthSmsCooldown'
 import { useToast } from '@/composables/useToast'
 import { getInviteCode, getInviteType, clearInviteCode } from '@/utils/inviteCode'
 import './AuthActionModal.css'
@@ -27,18 +28,14 @@ interface AuthActionModalProps {
   mode: AuthActionMode
   /** 覆盖默认标题(如登录态下「修改密码」复用 forgot 流程) */
   title?: string
-  /** 父级共享的 authStart 获取(注册/重置用其 client_id/return_to,并供后续 OAuth 桥接) */
-  ensureAuthStart: () => Promise<any>
-  /** sms-register:复用登录时已生成的 authStart(其 state 与登录一致),以及预填手机号 */
-  authStart?: any
+  /** 普通注册和短信补注册提交时清理旧会话，再启动 OAuth。 */
+  prepareRegistration: () => Promise<any>
   prefill?: { mobile?: string }
-  /** 登录页仍在进行的短信发送冷却，避免切换到注册后立即重发。 */
-  smsCooldown?: number
   /** 锁定手机号为只读(登录态下「修改密码」已知手机号,不允许改) */
   lockMobile?: boolean
   onClose: () => void
   /** 注册/补全注册成功 → 父级走登录流程(OAuth 桥接);forgot 模式不需要 */
-  onAuthed?: (authStart: any, result: any) => void
+  onAuthed?: (authStart: any, result: any, mobile: string) => void
   /** 重置密码成功 → 父级切回登录并预填手机号 */
   onResetDone?: (mobile: string) => void
   /** 注册时发现已注册 → 父级引导直接登录(切到密码登录并预填手机号) */
@@ -63,10 +60,8 @@ function randomPassword(): string {
 export default function AuthActionModal({
   mode,
   title,
-  ensureAuthStart,
-  authStart,
+  prepareRegistration,
   prefill,
-  smsCooldown = 0,
   lockMobile,
   onClose,
   onAuthed,
@@ -78,9 +73,6 @@ export default function AuthActionModal({
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [captcha, setCaptcha] = useState({ id: '', image: '', answer: '' })
-  const [resendAfter, setResendAfter] = useState<Record<string, number>>({})
-  const [clock, setClock] = useState(Date.now)
-  const [sentMobile, setSentMobile] = useState('')
   const [sending, setSending] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showPwd, setShowPwd] = useState(false)
@@ -100,62 +92,50 @@ export default function AuthActionModal({
   const smsPurpose = mode === 'forgot' ? 'reset_password' : 'register'
   const pwdLabel = mode === 'forgot' ? '新密码' : mode === 'sms-register' ? '设置密码(可不填)' : '密码'
   const submitLabel = mode === 'forgot' ? '重置密码' : mode === 'sms-register' ? '完成并登录' : '注册'
-  const isRegistration = mode === 'register'
+  const isRegistration = mode !== 'forgot'
   const normalizedMobile = mobile.replace(/\s/g, '')
   const mobileValid = /^1\d{10}$/.test(normalizedMobile)
-  const cooldownKey = isRegistration ? normalizedMobile : ''
-  const resendDeadline = resendAfter[cooldownKey] || 0
-  const countdown = Math.max(0, Math.ceil((resendDeadline - clock) / 1000))
-  const effectiveCountdown = Math.max(countdown, smsCooldown)
-  const canRegister =
-    mobileValid && sentMobile === normalizedMobile && !!password.trim() && !!code.trim() && !alreadyReg
-  const registrationBlocked = isRegistration && (sending || !canRegister)
+  const smsTarget = `${smsPurpose}:${normalizedMobile}`
+  const smsTargetRef = useRef(smsTarget)
+  smsTargetRef.current = smsTarget
+  const { remainingSeconds: countdown, hasSentCode, markSent } = useAuthSmsCooldown(smsTarget)
+  const canRegister = mobileValid && hasSentCode && (!pwdRequired || !!password.trim()) && !!code.trim() && !alreadyReg
+  const closeIfIdle = useCallback(() => {
+    if (!isRegistration || !submittingRef.current) onCloseRef.current()
+  }, [isRegistration])
 
   useEffect(() => {
     aliveRef.current = true
     ;(mobileLocked ? passwordInputRef : mobileInputRef).current?.focus()
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current()
+      if (event.key === 'Escape') closeIfIdle()
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       aliveRef.current = false
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [mobileLocked])
+  }, [closeIfIdle, mobileLocked])
 
-  const coolingDown = countdown > 0
-  useEffect(() => {
-    if (!coolingDown) return
-    const timer = window.setInterval(() => setClock(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [coolingDown, resendDeadline])
-
-  const refreshCaptcha = async () => {
+  const refreshCaptcha = async (target = smsTargetRef.current) => {
     try {
       const c: any = await getCaptcha()
-      if (!aliveRef.current) return
+      if (!aliveRef.current || smsTargetRef.current !== target) return
       setCaptcha({ id: c?.id || '', image: c?.image || '', answer: '' })
     } catch {
       /* ignore */
     }
   }
-  const handleCaptchaErr = async (e: any) => {
+  const handleCaptchaErr = async (e: any, target: string) => {
     if (!isCaptchaChallengeError(e)) return false
-    await refreshCaptcha()
-    if (!aliveRef.current) return true
+    await refreshCaptcha(target)
+    if (!aliveRef.current || smsTargetRef.current !== target) return true
     setErr('请输入图形验证码')
     return true
   }
 
   const sendCode = async () => {
-    if (
-      resendDeadline > Date.now() ||
-      smsCooldown > 0 ||
-      sendingRef.current ||
-      (isRegistration && submittingRef.current)
-    )
-      return
+    if (countdown > 0 || sendingRef.current || submittingRef.current) return
     const m = normalizedMobile
     if (!m) return setErr('请输入手机号')
     if (!mobileValid) return setErr('请输入正确的手机号')
@@ -163,26 +143,21 @@ export default function AuthActionModal({
     sendingRef.current = true
     setSending(true)
     setErr('')
+    if (mode === 'sms-register') setCode('')
     try {
-      if (!aliveRef.current) return
-      const as = await ensureAuthStart()
-      if (!aliveRef.current) return
       await sendAuthSms({
-        authStart: as,
+        authStart: null,
         mobile: m,
         purpose: smsPurpose,
         captchaId: captcha.id,
         captchaAnswer: captcha.answer.trim(),
       })
       if (!aliveRef.current) return
-      const now = Date.now()
-      setClock(now)
-      setResendAfter((previous) => ({ ...previous, [cooldownKey]: now + 60_000 }))
-      if (isRegistration) setSentMobile(m)
-      showToast('验证码已发送', 'success')
+      markSent(smsTarget)
+      if (smsTargetRef.current === smsTarget) showToast('验证码已发送', 'success')
     } catch (e: any) {
-      if (!aliveRef.current) return
-      if (await handleCaptchaErr(e)) return
+      if (!aliveRef.current || smsTargetRef.current !== smsTarget) return
+      if (await handleCaptchaErr(e, smsTarget)) return
       if (isRegistration && Number(e?.code) === 10401) {
         setAlreadyReg(true)
         return
@@ -195,9 +170,9 @@ export default function AuthActionModal({
   }
 
   const submit = async () => {
-    if (submittingRef.current || (isRegistration && (sendingRef.current || !canRegister))) return
+    if (submittingRef.current || sendingRef.current || (isRegistration && !canRegister)) return
     setErr('')
-    const m = (needsMobileInput ? mobile : prefill?.mobile || '').replace(/\s/g, '')
+    const m = normalizedMobile
     if (needsMobileInput && !m) return setErr('请输入手机号')
     if (needsMobileInput && !/^1\d{10}$/.test(m)) return setErr('请输入正确的手机号')
     if (pwdRequired && !password.trim()) return setErr(mode === 'forgot' ? '请输入新密码' : '请输入密码')
@@ -205,10 +180,8 @@ export default function AuthActionModal({
     submittingRef.current = true
     setSubmitting(true)
     try {
-      const as = authStart || (await ensureAuthStart())
-      if (!aliveRef.current) return
       if (mode === 'forgot') {
-        await resetPassword({ authStart: as, mobile: m, newPassword: password.trim(), smsCode: code.trim() })
+        await resetPassword({ authStart: null, mobile: m, newPassword: password.trim(), smsCode: code.trim() })
         if (!aliveRef.current) return
         showToast('重置密码成功,可重新登录', 'success')
         onResetDone?.(m)
@@ -216,6 +189,8 @@ export default function AuthActionModal({
         return
       }
       // 注册与短信补注册成功后都交回登录页完成统一 OAuth 桥接。
+      const as = await prepareRegistration()
+      if (!aliveRef.current) return
       const pwd = password.trim() || (mode === 'sms-register' ? randomPassword() : '')
       const inviteCode = getInviteCode()
       const inviteType = inviteCode ? getInviteType() : ''
@@ -231,11 +206,11 @@ export default function AuthActionModal({
       if (!aliveRef.current) return
       clearInviteCode() // 注册成功即清除,避免后续误归因
       showToast(mode === 'sms-register' ? '注册成功,正在登录…' : '注册成功', 'success')
-      onAuthed?.(as, result)
+      onAuthed?.(as, result, m)
       onClose()
     } catch (e: any) {
       if (!aliveRef.current) return
-      if (await handleCaptchaErr(e)) {
+      if (await handleCaptchaErr(e, smsTarget)) {
         return
       }
       // 注册:该手机号已注册 → 弹窗内红字提示并提供「去登录」入口(不关闭弹窗)
@@ -251,7 +226,7 @@ export default function AuthActionModal({
   }
 
   return (
-    <div className="zauth-mask" onClick={onClose}>
+    <div className="zauth-mask" onClick={closeIfIdle}>
       <div
         className="zauth-card"
         role="dialog"
@@ -259,7 +234,13 @@ export default function AuthActionModal({
         aria-label={title ?? TITLES[mode]}
         onClick={(e) => e.stopPropagation()}
       >
-        <button type="button" className="zauth-x" aria-label="关闭" onClick={onClose}>
+        <button
+          type="button"
+          className="zauth-x"
+          aria-label="关闭"
+          disabled={isRegistration && submitting}
+          onClick={closeIfIdle}
+        >
           ×
         </button>
         <h2 className="zauth-title">{title ?? TITLES[mode]}</h2>
@@ -277,12 +258,13 @@ export default function AuthActionModal({
                 inputMode="numeric"
                 placeholder="手机号"
                 value={mobile}
-                readOnly={isRegistration && (sending || submitting)}
+                readOnly={submitting || (mode === 'register' && sending)}
                 onChange={(e) => {
                   const next = e.target.value
-                  if (isRegistration && next.replace(/\s/g, '') !== normalizedMobile) {
+                  const nextMobile = next.replace(/\s/g, '')
+                  if (nextMobile !== normalizedMobile) {
+                    smsTargetRef.current = `${smsPurpose}:${nextMobile}`
                     setCode('')
-                    setClock(Date.now())
                     setCaptcha({ id: '', image: '', answer: '' })
                   }
                   setMobile(next)
@@ -365,10 +347,10 @@ export default function AuthActionModal({
             <button
               type="button"
               className="zauth-code-btn"
-              disabled={effectiveCountdown > 0 || sending || (isRegistration && submitting)}
+              disabled={countdown > 0 || sending || submitting}
               onClick={sendCode}
             >
-              {sending ? '发送中…' : effectiveCountdown > 0 ? `${effectiveCountdown}s后重发` : '获取验证码'}
+              {sending ? '发送中…' : countdown > 0 ? `${countdown}s后重发` : '获取验证码'}
             </button>
           </div>
 
@@ -388,7 +370,7 @@ export default function AuthActionModal({
                 type="button"
                 className="zauth-captcha-button"
                 aria-label="刷新图形验证码"
-                onClick={refreshCaptcha}
+                onClick={() => void refreshCaptcha()}
               >
                 <img className="zauth-captcha" src={captcha.image} alt="" />
               </button>
@@ -411,7 +393,12 @@ export default function AuthActionModal({
           err && <span className="zauth-err">{err}</span>
         )}
 
-        <button type="button" className="zauth-submit" disabled={submitting || registrationBlocked} onClick={submit}>
+        <button
+          type="button"
+          className="zauth-submit"
+          disabled={submitting || sending || (isRegistration && !canRegister)}
+          onClick={submit}
+        >
           {submitting ? '处理中…' : submitLabel}
         </button>
       </div>

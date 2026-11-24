@@ -15,6 +15,41 @@
   color: var(--canvas-text, #e5e7eb);
 }
 
+:is(.imagePanel, .videoPanel) {
+  /* 面板使用内容盒，给两侧内边距和边框留出空间。 */
+  max-width: calc(100% - 34px);
+}
+
+.imagePanel {
+  width: clamp(630px, 55vw, 780px);
+}
+
+.videoPanel {
+  width: 680px;
+  min-height: 0;
+}
+
+.panelBodyInline {
+  display: contents;
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--canvas-text-muted, #7a8496) transparent;
+}
+
+.panelBody > *,
+.videoPanel > .actions {
+  flex-shrink: 0;
+}
+
 .tags {
   display: flex;
   align-items: center;
@@ -50,6 +85,7 @@
 }
 
 .inputError {
+  box-sizing: border-box;
   width: 100%;
   padding: 7px 10px;
   border: 1px solid rgba(217, 76, 76, 0.22);
@@ -58,9 +94,11 @@
   color: #d14343;
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .catalogNotice {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -101,29 +139,40 @@
   flex-wrap: wrap;
 }
 
-.maskField {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 10px 12px;
-  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
-  border-radius: 10px;
-  background: rgb(255 255 255 / 3%);
-}
-.maskHeading {
+.refMaskPair,
+.maskControl,
+.maskPopoverActions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
+  max-width: 100%;
 }
-.maskTitle {
-  font-size: 13px;
-  font-weight: 600;
+
+.refMaskPair {
+  flex-wrap: wrap;
 }
-.maskTitle span {
-  color: #9299a4;
-  font-weight: 400;
+
+.refMaskPair > .refThumb {
+  flex: none;
 }
+
+.maskPopover {
+  display: grid;
+  gap: 10px;
+  width: min(278px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 10px 12px;
+}
+
+.maskPopoverActions {
+  justify-content: flex-end;
+}
+
+.selector.maskAction {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .maskUpload {
   position: relative;
   flex: none;
@@ -158,37 +207,13 @@
   line-height: 1.5;
 }
 .maskPreview {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #c7cdd2;
-  font-size: 12px;
-}
-.maskPreview img {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
+  flex: none;
   object-fit: contain;
+  border: 1px solid var(--canvas-border);
   border-radius: 6px;
   background: #161a1c;
-}
-.maskPreview button {
-  margin-left: auto;
-  padding: 5px 8px;
-  border: 0;
-  background: transparent;
-  color: #aeb7bd;
-  cursor: pointer;
-}
-.maskPreview button:hover {
-  color: #fff;
-}
-.maskPreview button:focus-visible {
-  outline: 2px solid #42d6bb;
-  border-radius: 4px;
-}
-.maskPreview button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .refThumb {
@@ -325,22 +350,6 @@
   display: inline-flex;
 }
 
-.realPersonHint {
-  position: fixed;
-  z-index: 1450;
-  visibility: hidden;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: #5767e5;
-  color: #fff;
-  font-size: 12px;
-  max-width: calc(100vw - 32px);
-  white-space: normal;
-  cursor: pointer;
-  box-shadow: 0 4px 14px #5767e533;
-}
-
 .refAddMenu {
   display: flex;
   min-width: calc(132px * var(--canvas-ui-scale, 1));
@@ -377,6 +386,15 @@
 .refAddMenu button:focus-visible {
   outline: 2px solid var(--canvas-border-active, #cbd5d9);
   outline-offset: -2px;
+}
+
+.refAddDescription {
+  display: block;
+  margin-top: 3px;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: calc(12px * var(--canvas-ui-scale, 1));
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .refSwapIcon {
@@ -1037,6 +1055,10 @@
   gap: 12px;
 }
 
+:is(.imagePanel, .videoPanel) > .actions {
+  flex-wrap: wrap;
+}
+
 .selectors {
   display: flex;
   align-items: center;
@@ -1049,6 +1071,26 @@
 .selectorWrap {
   position: relative;
   min-width: 0;
+}
+
+:is(.imagePanel, .videoPanel) .selectors {
+  /* 可用宽度不足时，把制作区域整体换到第二行。 */
+  flex-basis: 310px;
+  flex-wrap: nowrap;
+  gap: clamp(4px, 1vw, 10px);
+}
+
+:is(.imagePanel, .videoPanel) .selectors > .selectorWrap {
+  display: flex;
+}
+
+:is(.imagePanel, .videoPanel) .selectorWrap > .selector {
+  min-width: 0;
+}
+
+:is(.imagePanel, .videoPanel) .selectors > .selector {
+  flex: none;
+  max-width: min(160px, 34%);
 }
 
 .selector {
@@ -1743,6 +1785,12 @@
   margin-left: auto;
 }
 
+:is(.imagePanel, .videoPanel) .generateActions {
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .moderationBtn {
   flex: none;
   height: 34px;
@@ -1907,6 +1955,139 @@
   color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* 画布缩小时收紧编辑面板间距，正文可滚动，底部操作区始终留在面板内。 */
+:global(.canvas-panel-area.is-reduced-editor) .panel {
+  --dense-panel-width: 550px;
+  --dense-panel-padding: 10px 12px;
+  --dense-panel-gap: 7px;
+  --dense-panel-control-height: 30px;
+  --dense-panel-control-padding: 9px;
+  --dense-panel-reference-size: 42px;
+  --dense-panel-prompt-height: 49px;
+}
+
+:global(.canvas-panel-area.is-compact-editor) .panel {
+  --dense-panel-width: 384px;
+  --dense-panel-padding: 8px 10px;
+  --dense-panel-gap: 6px;
+  --dense-panel-control-height: 28px;
+  --dense-panel-control-padding: 7px;
+  --dense-panel-reference-size: 36px;
+  --dense-panel-prompt-height: 40px;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel {
+  flex: 0 1 auto;
+  box-sizing: border-box;
+  width: var(--dense-panel-width);
+  max-width: 100%;
+  min-height: 0;
+  max-height: inherit;
+  padding: var(--dense-panel-padding);
+  gap: var(--dense-panel-gap);
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panelBody {
+  flex: 1 1 auto;
+  gap: var(--dense-panel-gap);
+  scrollbar-width: none;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panelBody::-webkit-scrollbar {
+  display: none;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .actions {
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--dense-panel-gap);
+  padding-top: var(--dense-panel-gap);
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors {
+  flex-basis: min(100%, 240px);
+  flex-wrap: nowrap;
+  gap: var(--dense-panel-gap);
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors > .selectorWrap {
+  display: flex;
+  flex: 0 1 110px;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors > .selectorWrap:first-child {
+  flex: 1 1 140px;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectorWrap > .selector {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors > .selector {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 34%;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor))
+  .panel
+  :is(.selector, .expandBtn, .micBtn, .polishBtn, .moderationBtn, .generateBtn) {
+  box-sizing: border-box;
+  height: var(--dense-panel-control-height);
+  padding: 0 var(--dense-panel-control-padding);
+  font-size: 12px;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .micBtn {
+  width: var(--dense-panel-control-height);
+  padding: 0;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .generateBtn {
+  min-width: 68px;
+  font-weight: 600;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor))
+  .panel
+  :is(.tags, .refImages, .referenceLimits, .textPromptActions, .generateActions) {
+  gap: var(--dense-panel-gap);
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel :is(.refThumb, .refAddBtn, .historyItem) {
+  width: var(--dense-panel-reference-size);
+  height: var(--dense-panel-reference-size);
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .textarea:not(.textareaExpanded) {
+  min-height: var(--dense-panel-prompt-height);
+  max-height: 108px;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor))
+  .panel
+  :is(.textarea:not(.textareaExpanded), .promptHl) {
+  font-size: 13px;
+  line-height: 19px;
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .textPromptTools {
+  flex-wrap: wrap;
+  gap: var(--dense-panel-gap);
+  padding-top: var(--dense-panel-gap);
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel :is(.textPromptHint, .inputLimitHint) {
+  color: var(--canvas-text-muted, #9ca3af);
+}
+
+:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .textPromptError {
+  color: #d95757;
 }
 
 .promptModalBackdrop {

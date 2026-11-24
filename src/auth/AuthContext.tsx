@@ -27,12 +27,12 @@ import { clearPageCache } from '@/utils/pageDataCache'
 import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '../utils/logoutBarrier'
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
-import { sanitizeLoginReturnTo } from '../utils/loginReturnTo'
-import { resetCanvasRealPersonHint } from '../utils/canvasRealPersonHint'
+import { clearOAuthLoginReturnTo, hasOAuthCallbackFailure, sanitizeLoginReturnTo } from '../utils/loginReturnTo'
 import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 /** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
 const AUTH_LOGOUT_EVENT_KEY = 'zzh.auth.logout-event.v1'
+type ClearAuthReason = 'expired' | 'local-logout' | 'remote-logout'
 
 /** 从不同后端会话字段中提取稳定的用户草稿隔离标识。 */
 function getDraftUserScopeFromSession(session: any): string {
@@ -140,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
   // loadAuthSession 定义在登出清理回调之前；通过 ref 复用同一条隐私安全清理链，
   // 避免自动会话失效路径为了声明顺序而复制一份容易漂移的清理逻辑。
-  const clearLocalAuthStateRef = useRef<(draftUserScope: string, broadcast: boolean) => void>(() => {})
+  const clearLocalAuthStateRef = useRef<(draftUserScope: string, reason: ClearAuthReason) => void>(() => {})
   // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
   const loadSeqRef = useRef(0)
   // 上次成功续期的时间戳，供「回到页面时续期」节流用。
@@ -261,10 +261,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // 已登录会话自动过期/被服务端撤销时，与显式登出使用同一条清理链。
         // 必须在 store 切到 anon 之前同时封锁旧账号与 anon，防止仍挂载的
         // /smart、/hot-copy 页面把旧内容异步保存到匿名草稿。
-        clearLocalAuthStateRef.current(existingDraftUserScope, false)
+        clearLocalAuthStateRef.current(existingDraftUserScope, 'expired')
       } else {
         // 首次匿名访客的会话探测失败不应永久封锁 anon 草稿。
         stopSessionRefresh()
+        // 回调错误回到登录页时，保留原地址供登录页本次重试使用。
+        if (window.location.pathname !== '/login' || !hasOAuthCallbackFailure(window.location.search)) {
+          clearOAuthLoginReturnTo()
+        }
         setSession(null)
         setIsAuthenticated(false)
         setAuthSession(null)
@@ -288,8 +292,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const handleLoginSuccess = useCallback(
     (session?: any, returnTo?: string) => {
-      resetCanvasRealPersonHint(getDraftUserScopeFromSession(session) || getCurrentDraftUserScope())
       sessionStorage.removeItem('zzh_sso_pending')
+      clearOAuthLoginReturnTo()
       const target = sanitizeLoginReturnTo(returnTo) || APP_HOME_PATH
       // A login result is newer than any session bootstrap already in flight.
       loadSeqRef.current += 1
@@ -331,8 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const clearLocalAuthState = useCallback(
-    (draftUserScope: string, broadcast: boolean) => {
-      resetCanvasRealPersonHint(draftUserScope)
+    (draftUserScope: string, reason: ClearAuthReason) => {
       // The store switches every draft helper to the anonymous scope when the
       // session is cleared. Block both identities first so unmount cleanups or
       // delayed callbacks cannot recreate the signed-out user's draft under
@@ -353,9 +356,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       detachRunningVideoGensForOwner(draftUserScope)
       setAuthSession(null)
       clearAuthSessionMarker()
+      clearOAuthLoginReturnTo()
       clearPageCache() // 清列表页内存缓存，换账号不闪出上个账号的列表
       clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
-      if (broadcast) {
+      if (reason === 'local-logout') {
         try {
           localStorage.setItem(
             AUTH_LOGOUT_EVENT_KEY,
@@ -368,7 +372,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           /* Storage may be unavailable; the current tab is still cleared. */
         }
       }
-      navigate('/welcome', { replace: true })
+      // 会话自动过期时，由 App 的路由守卫保留原页面并引导重新登录。
+      if (reason !== 'expired') navigate('/welcome', { replace: true })
     },
     [navigate, setAuthSession, stopSessionRefresh],
   )
@@ -387,7 +392,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [authSession, isAuthenticated, startSessionRefresh])
 
   const handleLogoutSuccess = useCallback(() => {
-    clearLocalAuthState(getCurrentDraftUserScope(), true)
+    clearLocalAuthState(getCurrentDraftUserScope(), 'local-logout')
   }, [clearLocalAuthState])
 
   useEffect(() => {
@@ -398,7 +403,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const currentUserScope = getCurrentDraftUserScope()
         if (!currentUserScope) return
         if (String(payload?.userId || '') !== currentUserScope) return
-        clearLocalAuthState(currentUserScope, false)
+        clearLocalAuthState(currentUserScope, 'remote-logout')
       } catch {
         /* Ignore malformed cross-tab events. */
       }

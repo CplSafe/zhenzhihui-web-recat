@@ -1,5 +1,6 @@
 import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import { useCanvasReservation } from '@/composables/useCanvasReservation'
+import { useLatestCallback } from '@/composables/useLatestCallback'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
 /**
  * 节点编辑面板 — 始终显示在页面底部，内容根据选中节点类型切换
@@ -8,15 +9,15 @@ import type { CanvasModelDefaults } from '@/api/canvasApi'
  * 图片：模型 + 比例 + 生成
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useId } from 'react'
 import { Popover, Tooltip } from 'antd'
 import { createPortal } from 'react-dom'
 import ViewportFloatingPanel from './ViewportFloatingPanel'
+import CanvasPortalBoundary from './CanvasPortalBoundary'
 import CanvasMentionInput, { type CanvasMentionInputHandle, type PromptMention } from './CanvasMentionInput'
 import CanvasPromptStylePicker, { type CanvasPromptStyle } from './CanvasPromptStylePicker'
 import RatioLabel from '@/components/common/RatioLabel'
 import ModelAvailabilityNotice from '@/components/common/ModelAvailabilityNotice'
-import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
 import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
 export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
@@ -575,6 +576,7 @@ interface CanvasNodePanelProps {
   onStartPickRef?: (slotIndex?: number) => void
   /** 画布点选或其他素材弹窗打开时暂时让出提示词遮罩。 */
   promptEditorSuspended?: boolean
+  density?: 'normal' | 'reduced' | 'compact'
   /**
    * 从素材库挑一条素材作为参考：会先落成新节点再连到本节点。
    *
@@ -678,61 +680,26 @@ const EMPTY_INHERITED_TEXTS: InheritedPromptText[] = []
  */
 function RefAddButton({
   disabled,
+
   title,
   onPickFromCanvas,
   onPickFromLibrary,
   onPickRealPerson,
-  hintUserId,
-  hintDismissed,
 }: {
   disabled?: boolean
+
   title: string
   onPickFromCanvas: () => void
   onPickFromLibrary?: () => void
   onPickRealPerson?: () => void
-  hintUserId?: string | number
-  hintDismissed?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  const userId = String(hintUserId || '')
-  const [hintOwner, setHintOwner] = useState('')
-  const hintEligible = Boolean(onPickRealPerson)
-  useEffect(() => {
-    if (!hintEligible || disabled) {
-      setHintOwner('')
-      return
-    }
-    if (claimCanvasRealPersonHint(userId)) setHintOwner(userId)
-  }, [hintEligible, disabled, userId])
+  const menuOpen = open && !disabled
   const wrapRef = useRef<HTMLSpanElement>(null)
-  const hintRef = useRef<HTMLButtonElement>(null)
-  const showHint = Boolean(hintOwner === userId && userId && onPickRealPerson && !disabled && !open && !hintDismissed)
+  const realPersonItemId = useId()
 
   useEffect(() => {
-    if (!showHint) return
-    let frame = 0
-    const update = () => {
-      const bounds = wrapRef.current?.getBoundingClientRect()
-      const hint = hintRef.current
-      if (bounds && hint) {
-        const left = Math.max(12, Math.min(bounds.left, window.innerWidth - hint.offsetWidth - 12))
-        const above = bounds.top - hint.offsetHeight - 10
-        const top = Math.max(
-          12,
-          Math.min(above >= 12 ? above : bounds.bottom + 10, window.innerHeight - hint.offsetHeight - 12),
-        )
-        hint.style.left = `${left}px`
-        hint.style.top = `${top}px`
-        hint.style.visibility = 'visible'
-      }
-      frame = requestAnimationFrame(update)
-    }
-    update()
-    return () => cancelAnimationFrame(frame)
-  }, [showHint])
-
-  useEffect(() => {
-    if (!open) return
+    if (!menuOpen) return
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation()
@@ -744,7 +711,7 @@ function RefAddButton({
     return () => {
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [menuOpen])
 
   // 没接素材库回调时退回原来的单一行为，不平白给一个只有一项的菜单
   if (!onPickFromLibrary && !onPickRealPerson) {
@@ -757,24 +724,8 @@ function RefAddButton({
 
   return (
     <span className={styles.refAddWrap} ref={wrapRef}>
-      {showHint &&
-        createPortal(
-          <button
-            ref={hintRef}
-            type="button"
-            className={`${styles.realPersonHint} nodrag nopan nowheel`}
-            onClick={() => {
-              setHintOwner('')
-              setOpen(false)
-              onPickRealPerson?.()
-            }}
-          >
-            可使用已认证的真人素材
-          </button>,
-          document.body,
-        )}
       <Popover
-        open={open && !disabled}
+        open={menuOpen}
         trigger="click"
         placement="topLeft"
         arrow={false}
@@ -785,15 +736,12 @@ function RefAddButton({
         getPopupContainer={() => document.body}
         rootClassName="nodrag nopan nowheel"
         styles={{ body: { padding: 0 } }}
-        onOpenChange={(next) => {
-          setHintOwner('')
-          setOpen(next)
-        }}
+        onOpenChange={setOpen}
         content={
           <div
             className={styles.refAddMenu}
             role="menu"
-            aria-hidden={!open || disabled}
+            aria-hidden={!menuOpen}
             onWheel={(event) => event.stopPropagation()}
           >
             <button
@@ -822,13 +770,17 @@ function RefAddButton({
               <button
                 type="button"
                 role="menuitem"
+                aria-labelledby={`${realPersonItemId}-label`}
+                aria-describedby={`${realPersonItemId}-description`}
                 onClick={() => {
-                  setHintOwner('')
                   setOpen(false)
                   onPickRealPerson()
                 }}
               >
-                从真人库选择
+                <span id={`${realPersonItemId}-label`}>从真人库选择</span>
+                <span id={`${realPersonItemId}-description`} className={styles.refAddDescription}>
+                  可使用已认证的真人素材
+                </span>
               </button>
             )}
           </div>
@@ -840,7 +792,7 @@ function RefAddButton({
           disabled={disabled}
           title={title}
           aria-haspopup="menu"
-          aria-expanded={open && !disabled}
+          aria-expanded={menuOpen}
         >
           <PlusSmIcon />
         </button>
@@ -866,6 +818,7 @@ export default function CanvasNodePanel({
   currentUserId,
   onStartPickRef,
   promptEditorSuspended = false,
+  density = 'normal',
   onPickRefFromLibrary,
   onPickRealPerson,
   onRemoveRef,
@@ -895,7 +848,6 @@ export default function CanvasNodePanel({
 }: CanvasNodePanelProps) {
   const submissionBlockedReason = useCanvasReservation()?.blockedReason
   const kind = node?.kind || 'text'
-  const [realPersonHintDismissed, setRealPersonHintDismissed] = useState(false)
   const taskRunning = [
     'submitting',
     'queued',
@@ -957,10 +909,6 @@ export default function CanvasNodePanel({
     }
   }, [promptExpanded, promptEditorSuspended])
   const [checkingAssets, setCheckingAssets] = useState(false)
-
-  useEffect(() => {
-    setRealPersonHintDismissed(false)
-  }, [node?.id])
 
   // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
   // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
@@ -1649,8 +1597,11 @@ export default function CanvasNodePanel({
     kind === 'image' && selectedModel?.source?.provider === 'openai' && operationCode === 'image.image_to_image'
   const maskAssetId = supportsMask ? Number(node?.params?.mask_asset_id || 0) : 0
   const [maskUploading, setMaskUploading] = useState(false)
-  const activeNodeId = useRef(node?.id)
-  activeNodeId.current = node?.id
+  const firstMaskReference = supportsMask
+    ? sourceRefs.find(
+        (ref) => ref.kind === 'image' && Number.isSafeInteger(Number(ref.assetId)) && Number(ref.assetId) > 0,
+      )
+    : undefined
   const buildSchemaParams = useCallback(
     (values: Record<string, unknown>): Record<string, unknown> => {
       const params: Record<string, unknown> = {}
@@ -2445,8 +2396,8 @@ export default function CanvasNodePanel({
     </div>
   )
 
-  return (
-    <div className={styles.panel} data-canvas-node-panel>
+  const panelBody = (
+    <>
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
         {(kind === 'image' || kind === 'video') && (
@@ -2552,8 +2503,6 @@ export default function CanvasNodePanel({
                       </>
                     ) : (
                       <RefAddButton
-                        hintUserId={currentUserId}
-                        hintDismissed={realPersonHintDismissed}
                         disabled={taskRunning}
                         title={taskRunning ? '生成中不可修改素材' : title}
                         onPickFromCanvas={() => onStartPickRef?.(slot)}
@@ -2622,8 +2571,6 @@ export default function CanvasNodePanel({
               )}
             {canAddReference && (
               <RefAddButton
-                hintUserId={currentUserId}
-                hintDismissed={realPersonHintDismissed}
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
                 onPickRealPerson={
@@ -2649,51 +2596,68 @@ export default function CanvasNodePanel({
             {/* 文本来源节点不显示缩略图（仅作为 prompt 文本引用），只展示图片/视频缩略图 */}
             {sourceRefs
               .filter((ref) => ref.kind !== 'text')
-              .map((ref) => (
-                <div
-                  key={ref.edgeId}
-                  className={`${styles.refThumb} ${styles.refThumbClickable}`}
-                  title={ref.kind === 'audio' ? '点击插入音频引用' : '点击预览素材，点击名称插入引用'}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => (ref.kind === 'audio' ? insertRefMention(ref) : onPreviewMentionRef?.(ref))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      if (ref.kind === 'audio') insertRefMention(ref)
-                      else onPreviewMentionRef?.(ref)
-                    }
-                  }}
-                >
-                  <RefThumbMedia sourceRef={ref} label={ref.kind} />
-                  {refLabelByEdge.get(ref.edgeId) && (
-                    <button
-                      type="button"
-                      className={styles.refThumbTag}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        insertRefMention(ref)
-                      }}
-                    >
-                      @{refLabelByEdge.get(ref.edgeId)}
-                    </button>
-                  )}
-                  <button
-                    className={styles.refDelete}
-                    disabled={taskRunning}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleRemoveRefWithReindex(ref)
+              .map((ref) => {
+                const thumbnail = (
+                  <div
+                    key={ref.edgeId}
+                    className={`${styles.refThumb} ${styles.refThumbClickable}`}
+                    title={ref.kind === 'audio' ? '点击插入音频引用' : '点击预览素材，点击名称插入引用'}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => (ref.kind === 'audio' ? insertRefMention(ref) : onPreviewMentionRef?.(ref))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        if (ref.kind === 'audio') insertRefMention(ref)
+                        else onPreviewMentionRef?.(ref)
+                      }
                     }}
                   >
-                    &times;
-                  </button>
-                </div>
-              ))}
+                    <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                    {refLabelByEdge.get(ref.edgeId) && (
+                      <button
+                        type="button"
+                        className={styles.refThumbTag}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          insertRefMention(ref)
+                        }}
+                      >
+                        @{refLabelByEdge.get(ref.edgeId)}
+                      </button>
+                    )}
+                    <button
+                      className={styles.refDelete}
+                      disabled={taskRunning}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleRemoveRefWithReindex(ref)
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )
+                if (ref.edgeId !== firstMaskReference?.edgeId) return thumbnail
+                return (
+                  <div className={styles.refMaskPair} key={ref.edgeId}>
+                    {thumbnail}
+                    <CanvasImageMaskControl
+                      key={`${workspaceId}:${node?.id}:${selectedModel?.modelVersionId}:${ref.assetId}`}
+                      assetId={maskAssetId}
+                      workspaceId={workspaceId}
+                      uploading={maskUploading}
+                      onUploadingChange={setMaskUploading}
+                      disabled={taskRunning || promptEditorSuspended || promptExpanded}
+                      onChange={(assetId) =>
+                        onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: assetId })
+                      }
+                    />
+                  </div>
+                )
+              })}
             {mediaRefCount < maxRefs && (
               <RefAddButton
-                hintUserId={currentUserId}
-                hintDismissed={realPersonHintDismissed}
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
                 onPickFromCanvas={() => onStartPickRef?.(sourceRefs.length)}
@@ -2703,8 +2667,6 @@ export default function CanvasNodePanel({
           </div>
         ) : (
           <RefAddButton
-            hintUserId={currentUserId}
-            hintDismissed={realPersonHintDismissed}
             disabled={taskRunning}
             title={taskRunning ? '生成中不可修改素材' : '添加参考'}
             onPickFromCanvas={() => onStartPickRef?.(0)}
@@ -2712,61 +2674,6 @@ export default function CanvasNodePanel({
           />
         )}
       </div>
-
-      {supportsMask && (
-        <div className={styles.maskField}>
-          <div className={styles.maskHeading}>
-            <span className={styles.maskTitle}>
-              编辑蒙版 <span>（可选）</span>
-            </span>
-            <label className={`${styles.maskUpload} ${taskRunning || maskUploading ? styles.maskUploadDisabled : ''}`}>
-              <span aria-hidden="true">{maskUploading ? '上传中…' : maskAssetId > 0 ? '更换蒙版' : '上传 PNG'}</span>
-              <input
-                className={styles.maskInput}
-                type="file"
-                accept="image/png"
-                aria-label="上传编辑蒙版"
-                disabled={taskRunning || maskUploading}
-                onChange={async (event) => {
-                  const file = event.target.files?.[0]
-                  event.target.value = ''
-                  if (!file) return
-                  if (file.type !== 'image/png' || file.size >= 4 * 1024 * 1024) {
-                    showToast('请使用小于 4 MB 的 PNG 蒙版', 'error')
-                    return
-                  }
-                  const targetNode = node?.id
-                  setMaskUploading(true)
-                  try {
-                    const uploaded = await uploadAssetFile({ workspaceId, file })
-                    if (activeNodeId.current === targetNode)
-                      onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: uploaded.asset.id })
-                  } catch {
-                    showToast('蒙版上传失败，请重试', 'error')
-                  } finally {
-                    setMaskUploading(false)
-                  }
-                }}
-              />
-            </label>
-          </div>
-          <small className={styles.maskHint}>透明区域将被修改；尺寸须与第一张参考图一致，PNG 小于 4 MB。</small>
-          {maskUploading && <span role="status">蒙版上传中…</span>}
-          {maskAssetId > 0 && (
-            <div className={styles.maskPreview}>
-              <img src={assetStreamUrl(maskAssetId, workspaceId)} alt="编辑蒙版" />
-              <span>已上传蒙版</span>
-              <button
-                type="button"
-                disabled={taskRunning || maskUploading}
-                onClick={() => onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: 0 })}
-              >
-                移除蒙版
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       {/*
         继承自上游文本节点、但还没落进输入框的那部分。
@@ -3035,9 +2942,25 @@ export default function CanvasNodePanel({
           </button>
         </div>
       </div>
+    </>
+  )
 
-      {/* 底部操作栏 */}
-      <div className={styles.actions}>
+  const panelClass = [styles.panel, kind === 'image' && styles.imagePanel, kind === 'video' && styles.videoPanel]
+    .filter(Boolean)
+    .join(' ')
+
+  const hasScrollableBody = kind === 'video' || density !== 'normal'
+
+  return (
+    <div className={panelClass} data-canvas-node-panel>
+      <div
+        className={hasScrollableBody ? styles.panelBody : styles.panelBodyInline}
+        tabIndex={hasScrollableBody ? 0 : undefined}
+        data-canvas-node-panel-body={hasScrollableBody || undefined}
+      >
+        {panelBody}
+      </div>
+      <div className={styles.actions} data-canvas-node-panel-actions>
         <div className={styles.selectors}>
           {kind === 'text' && (
             <>
@@ -3074,7 +2997,6 @@ export default function CanvasNodePanel({
               unavailableSelectionReason={unavailableVideoModelReason}
               loading={modelsLoading}
               disabled={taskRunning}
-              onOpen={() => setRealPersonHintDismissed(true)}
               // 缺模型时要说清缺的是哪一种能力：接了参考图走图生图、没接走文生图，
               // 两者在后端是不同的 operation_code，可用性也各自独立。
               // 只说一句「暂无可用模型」，用户会以为是素材或连线出了问题。
@@ -3158,6 +3080,7 @@ export default function CanvasNodePanel({
               Boolean(submissionBlockedReason) ||
               taskRunning ||
               checkingAssets ||
+              maskUploading ||
               costEstimate.loading ||
               !selectedModel ||
               !operationCode ||
@@ -3194,6 +3117,138 @@ export default function CanvasNodePanel({
 }
 
 /* ---------- 子组件：选择器 ---------- */
+
+function CanvasImageMaskControl({
+  assetId,
+  workspaceId,
+  uploading,
+  disabled,
+
+  onUploadingChange,
+  onChange,
+}: {
+  assetId: number
+  workspaceId?: number
+  uploading: boolean
+  disabled: boolean
+
+  onUploadingChange: (uploading: boolean) => void
+  onChange: (assetId: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const popupOpen = open && !disabled
+  const trigger = useRef<HTMLButtonElement>(null)
+  const mounted = useRef(false)
+
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const close = () => {
+    setOpen(false)
+    trigger.current?.focus({ preventScroll: true })
+  }
+  const commitMask = useLatestCallback((nextAssetId: number) => {
+    if (!mounted.current || disabled) return
+    onChange(nextAssetId)
+    if (open || nextAssetId === 0) close()
+  })
+  const handleEscape = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Escape' || !popupOpen) return
+    event.preventDefault()
+    event.stopPropagation()
+    close()
+  }
+
+  return (
+    <div className={styles.maskControl} data-canvas-reference-mask>
+      {assetId > 0 && <img className={styles.maskPreview} src={assetStreamUrl(assetId, workspaceId)} alt="编辑蒙版" />}
+      <Popover
+        open={popupOpen}
+        onOpenChange={(nextOpen) => setOpen(nextOpen)}
+        trigger="click"
+        placement="topLeft"
+        arrow={false}
+        autoAdjustOverflow
+        destroyOnHidden
+        fresh
+        zIndex={1450}
+        getPopupContainer={() => document.body}
+        rootClassName="nodrag nopan nowheel"
+        styles={{ body: { padding: 0 } }}
+        content={
+          <CanvasPortalBoundary floating>
+            <div className={styles.maskPopover} role="dialog" aria-label="上传蒙版" onKeyDown={handleEscape}>
+              <small className={styles.maskHint}>透明区域将被修改；尺寸须与第一张参考图一致，PNG 小于 4 MB。</small>
+              <div className={styles.maskPopoverActions}>
+                <label className={`${styles.maskUpload}${uploading ? ` ${styles.maskUploadDisabled}` : ''}`}>
+                  <span aria-hidden="true">{uploading ? '上传中…' : '上传 PNG'}</span>
+                  <input
+                    className={styles.maskInput}
+                    type="file"
+                    accept="image/png"
+                    aria-label="上传编辑蒙版"
+                    autoFocus
+                    disabled={disabled || uploading}
+                    onChange={async (event) => {
+                      const file = event.currentTarget.files?.[0]
+                      event.currentTarget.value = ''
+                      if (!file || disabled || uploading) return
+                      if (file.type !== 'image/png' || file.size >= 4 * 1024 * 1024) {
+                        showToast('请使用小于 4 MB 的 PNG 蒙版', 'error')
+                        return
+                      }
+                      onUploadingChange(true)
+                      try {
+                        const uploaded = await uploadAssetFile({ workspaceId, file })
+                        commitMask(uploaded.asset.id)
+                      } catch {
+                        if (mounted.current) showToast('蒙版上传失败，请重试', 'error')
+                      } finally {
+                        onUploadingChange(false)
+                      }
+                    }}
+                  />
+                </label>
+                <button className={`${styles.selector} ${styles.maskAction}`} type="button" onClick={close}>
+                  取消
+                </button>
+              </div>
+            </div>
+          </CanvasPortalBoundary>
+        }
+      >
+        <button
+          ref={trigger}
+          className={`${styles.selector} ${styles.maskAction}`}
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={popupOpen}
+          aria-label={assetId > 0 ? '替换蒙版' : undefined}
+          aria-busy={uploading || undefined}
+          disabled={disabled}
+          onKeyDown={handleEscape}
+        >
+          {uploading ? '上传中…' : assetId > 0 ? '替换' : '添加蒙版'}
+        </button>
+      </Popover>
+      {assetId > 0 && (
+        <button
+          className={`${styles.selector} ${styles.maskAction}`}
+          type="button"
+          aria-label="移除蒙版"
+          disabled={disabled || uploading}
+          onClick={() => commitMask(0)}
+        >
+          移除
+        </button>
+      )}
+    </div>
+  )
+}
 
 /* ── 模型参数菜单（生成方式[视频] + params_schema 动态参数，所有节点类型通用） ── */
 function SchemaFieldMenu({

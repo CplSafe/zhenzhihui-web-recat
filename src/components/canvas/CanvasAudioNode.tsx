@@ -384,8 +384,9 @@ export default function CanvasAudioNode({
       {!readOnly && (
         <section
           ref={panelElement}
-          className={`${styles.settings} canvas-audio-panel nodrag nopan ${isEditor ? styles.editorPanel : ''}`}
+          className={`${styles.settings} canvas-audio-panel nodrag nopan nowheel ${isEditor ? styles.editorPanel : ''}`}
           hidden={!panelVisible}
+          tabIndex={0}
           aria-label={isEditor ? '音频编辑' : '音频参数'}
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}

@@ -11,6 +11,7 @@ import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout }
 
 /** 业务后端的续期端点(同源代理)。 */
 export const AUTH_REFRESH_PATH = '/api/v1/auth/refresh'
+export const AUTH_REFRESH_LOCK_NAME = 'zzh.auth.refresh'
 
 /** 一次续期的结果:HTTP 层面是否成功、状态码、解析后的响应体,以及网络层错误。 */
 export interface SessionRefreshOutcome {
@@ -24,6 +25,18 @@ export interface SessionRefreshOutcome {
 }
 
 let inFlight: Promise<SessionRefreshOutcome> | null = null
+let logoutInFlight: Promise<unknown> | null = null
+
+/** 没有 Web Locks 时，按同一标签页内的调用顺序执行续期和注销。 */
+export function runSessionLogoutWithoutLock<T>(logout: () => Promise<T>): Promise<T> {
+  const request = Promise.resolve(logoutInFlight ?? inFlight).then(logout, logout)
+  logoutInFlight = request
+  const clear = () => {
+    if (logoutInFlight === request) logoutInFlight = null
+  }
+  void request.then(clear, clear)
+  return request
+}
 
 /** 与 auth.ts / business.ts 相同的响应体读取:空体为 null,非 JSON 原样返回文本。 */
 async function readJsonResponse(response: Response): Promise<any> {
@@ -42,6 +55,7 @@ async function readJsonResponse(response: Response): Promise<any> {
  * (AuthContext 登出)在拿到结果后自行按 signal / epoch 丢弃即可。
  */
 export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
+  if (logoutInFlight) return logoutInFlight.then(runSharedSessionRefresh, runSharedSessionRefresh)
   if (inFlight) return inFlight
   const request = withRequestTimeout(
     async (signal) => {
@@ -57,7 +71,7 @@ export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
       // Cookies are shared by tabs, module single-flight is not. Serialize token
       // rotation across the origin; lock waiting shares the request timeout.
       return typeof navigator !== 'undefined' && navigator.locks
-        ? navigator.locks.request('zzh.auth.refresh', { signal }, refresh)
+        ? navigator.locks.request(AUTH_REFRESH_LOCK_NAME, { signal }, refresh)
         : refresh()
     },
     { defaultTimeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS },
@@ -81,4 +95,5 @@ export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
 /** 仅供测试:丢弃在途请求引用。 */
 export function resetSharedSessionRefreshForTests(): void {
   inFlight = null
+  logoutInFlight = null
 }

@@ -20,7 +20,7 @@ import {
 } from './stores/workspaceSession'
 import ModelAvailabilityProvider from './components/common/ModelAvailabilityProvider'
 import { captureInviteCode } from './utils/inviteCode'
-import { readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
+import { consumeOAuthLoginReturnTo, readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
 import { APP_HOME_PATH } from './utils/sidebarNavigation'
 import { prefetchCommonRoutesWhenIdle } from './router/routePrefetch'
 import { installFullscreenVideoSpaceToggle } from './utils/fullscreenVideoSpace'
@@ -169,12 +169,24 @@ export function AppShell() {
     // 不再用全屏游客遮罩(它会盖住侧边栏导致无法切换其它菜单)。
     // 带上当前地址作为 returnTo:分享出去的项目/画布深链接,登录后要回到原页而不是落首页。
     if (requiresAuth && !isAuthenticated) {
-      const returnTo = sanitizeLoginReturnTo(`${location.pathname}${location.search}`)
+      const returnTo = sanitizeLoginReturnTo(`${location.pathname}${location.search}${location.hash}`)
       navigate('/login', { replace: true, state: returnTo ? { returnTo } : undefined })
       return
     }
     if (!requiresAuth && isAuthenticated && (location.pathname === '/login' || location.pathname === '/welcome')) {
       navigate(readLoginReturnTo(location.state) || APP_HOME_PATH, { replace: true })
+      return
+    }
+    // 整页 OAuth 只在已完成会话校验的顶层默认落点恢复同标签页的原地址。
+    if (
+      isAuthenticated &&
+      window.top === window &&
+      (location.pathname === '/home' || location.pathname === APP_HOME_PATH)
+    ) {
+      const target = consumeOAuthLoginReturnTo()
+      if (target && target !== `${location.pathname}${location.search}${location.hash}`) {
+        navigate(target, { replace: true })
+      }
     }
   }, [
     isAuthenticated,
@@ -183,6 +195,7 @@ export function AppShell() {
     requiresAuth,
     location.pathname,
     location.search,
+    location.hash,
     location.state,
     navigate,
   ])

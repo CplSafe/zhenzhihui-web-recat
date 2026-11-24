@@ -3,7 +3,12 @@
  * 输出用于生产可观测平台定位静默登录失败，同时遵循最小化采集原则。
  */
 /** 登录桥接可能产生的安全诊断原因。 */
-export type LoginBridgeWarningReason = 'navigation_url_missing' | 'silent_bridge_unavailable'
+export type LoginBridgeWarningReason =
+  | 'navigation_url_missing'
+  | 'silent_bridge_unavailable'
+  | 'oauth_callback_rejected'
+  | 'fresh_oauth_unavailable'
+  | 'session_account_mismatch'
 
 /** 构建登录桥接诊断所需的非敏感输入。 */
 export interface LoginBridgeDiagnosticInput {

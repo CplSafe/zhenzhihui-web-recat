@@ -62,6 +62,9 @@ for (const width of [1440, 900]) {
           : { id: 147, title: '音频多选面板验证', status: 'active', revision },
       })
     })
+    await page.route('**/api/v1/canvases/147/node-locks**', (route) =>
+      route.fulfill({ json: { granted: true, nodes: {} } }),
+    )
     await page.goto('/canvas/147')
     const a = page.locator('.react-flow__node[data-id="a"]')
     const b = page.locator('.react-flow__node[data-id="b"]')

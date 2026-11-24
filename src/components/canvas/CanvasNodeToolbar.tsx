@@ -8,7 +8,8 @@
  * 位置由调用方按节点包围盒算好后传入（视口坐标），组件本身不关心画布变换。
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Crop } from 'lucide-react'
+import { Crop, Ellipsis } from 'lucide-react'
+import ViewportFloatingPanel from './ViewportFloatingPanel'
 import styles from './CanvasNodeToolbar.module.css'
 
 /**
@@ -21,6 +22,7 @@ export interface CanvasNodeToolbarProps {
   /** 视口坐标：工具条的水平中心与底边位置 */
   anchor: { centerX: number; bottom: number }
   rightBoundary?: number
+  density?: 'compact' | 'reduced' | 'normal'
   /** 节点类型，决定显示哪些动作 */
   kind: string
   /** 是否已有素材（决定「上传」还是「替换」、能否下载） */
@@ -55,9 +57,25 @@ const CAPTURE_ITEMS: Array<{ position: CanvasCapturePosition; label: string; hin
   { position: 'custom', label: '自定义截帧…', hint: '拖动进度条选取任意一帧' },
 ]
 
+type SecondaryAction = {
+  label: string
+  onClick: () => void
+  text?: boolean
+  ariaLabel?: string
+  title?: string
+  disabled?: boolean
+}
+
+const COMPACT_MAX_WIDTH = 380
+// 紧凑按钮的宽度加 2px 间距；外框另计内边距、边框和分隔线。
+const COMPACT_BUTTON_SPACE = 30
+const COMPACT_TEXT_SPACE = 54
+const COMPACT_BAR_INSET = 15
+
 export default function CanvasNodeToolbar({
   anchor,
   rightBoundary,
+  density = 'normal',
   kind,
   hasContent,
   uploading,
@@ -79,7 +97,10 @@ export default function CanvasNodeToolbar({
   imageToolCodes = [],
 }: CanvasNodeToolbarProps) {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
+  const [overflowOpen, setOverflowOpen] = useState(false)
   const captureWrapRef = useRef<HTMLSpanElement | null>(null)
+  const overflowTriggerRef = useRef<HTMLButtonElement>(null)
+  const overflowMenuRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState(0)
   useLayoutEffect(() => {
@@ -127,14 +148,113 @@ export default function CanvasNodeToolbar({
   const showCrop = Boolean(onCrop) && kind === 'image' && hasContent && !uploading
   // 空图片/视频节点还没有可处理的素材；时间线继续保留现有超分入口。
   const showHd = Boolean(onHd) && (kind === 'timeline' || (isMedia && hasContent && !uploading))
+  const showTrim = kind === 'video' && hasContent && !uploading && Boolean(onTrimVideo)
+
+  const subjectAction =
+    isMedia && hasContent && !uploading && onSubjectEdit
+      ? { label: '主体编辑', onClick: onSubjectEdit, text: true }
+      : null
+  const imageActions: SecondaryAction[] = []
+  if (kind === 'image' && hasContent && !uploading && onImageTool) {
+    if (imageToolCodes.includes('image.multi_angle')) {
+      imageActions.push({ label: '多角度', text: true, onClick: () => onImageTool('image.multi_angle') })
+    }
+    if (imageToolCodes.includes('image.relight')) {
+      imageActions.push({ label: '打光', text: true, onClick: () => onImageTool('image.relight') })
+    }
+    if (imageToolCodes.includes('image.panorama') || imageToolCodes.includes('panorama.view')) {
+      const code = imageToolCodes.includes('image.panorama') ? 'image.panorama' : 'panorama.view'
+      imageActions.push({ label: '全景', text: true, onClick: () => onImageTool(code) })
+    }
+  }
+  const hdAction =
+    showHd && onHd
+      ? {
+          label: '超分',
+          onClick: onHd,
+          title: hdDisabledReason || '提升画质，保留原文件',
+          disabled: Boolean(hdDisabledReason),
+        }
+      : null
+  const compareAction = onCompareHd ? { label: '对比', ariaLabel: '对比高清版', onClick: onCompareHd } : null
+
+  const secondaryActions = [subjectAction, hdAction, compareAction, ...imageActions].filter(
+    (action): action is SecondaryAction => Boolean(action),
+  )
+  const overflowActions: SecondaryAction[] = []
+  const compactWidth = Math.min(COMPACT_MAX_WIDTH, Math.max(0, right - 24))
+  if (density === 'compact') {
+    const coreCount = 2 + [showUpload, showCapture, showCrop, showDownload, showPreview].filter(Boolean).length
+    const coreWidth = COMPACT_BAR_INSET + coreCount * COMPACT_BUTTON_SPACE + (showTrim ? COMPACT_TEXT_SPACE : 0)
+    const secondaryWidth = secondaryActions.reduce(
+      (width, action) => width + (action.text ? COMPACT_TEXT_SPACE : COMPACT_BUTTON_SPACE),
+      0,
+    )
+    if (coreWidth + secondaryWidth > compactWidth) {
+      let remaining = compactWidth - coreWidth - COMPACT_BUTTON_SPACE
+      for (const action of secondaryActions) {
+        const width = action.text ? COMPACT_TEXT_SPACE : COMPACT_BUTTON_SPACE
+        if (width <= remaining) remaining -= width
+        else overflowActions.push(action)
+      }
+    }
+  }
+  const overflowAvailable = overflowActions.length > 0
+  const showOverflowMenu = overflowOpen && overflowAvailable
+  useEffect(() => {
+    if (!overflowAvailable) setOverflowOpen(false)
+  }, [overflowAvailable])
+  useEffect(() => {
+    if (!showOverflowMenu) return
+    overflowMenuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        (overflowTriggerRef.current?.contains(event.target) || overflowMenuRef.current?.contains(event.target))
+      )
+        return
+      setOverflowOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [showOverflowMenu])
+
+  const renderSecondary = (action: SecondaryAction | null) => {
+    if (!action || overflowActions.includes(action)) return null
+    const button = (
+      <button
+        key={action.label}
+        type="button"
+        className={action.text ? `${styles.action} ${styles.textAction}` : styles.action}
+        aria-label={action.ariaLabel}
+        disabled={action.disabled}
+        onClick={action.onClick}
+      >
+        {action.label}
+      </button>
+    )
+    return action.title ? (
+      <span key={action.label} title={action.title}>
+        {button}
+      </span>
+    ) : (
+      button
+    )
+  }
 
   return (
     <div
       ref={barRef}
-      className={`${styles.bar} ${isMedia ? styles.mediaBar : ''} nodrag nopan`}
-      style={{ left: centerX, bottom: anchor.bottom, maxWidth: rightBoundary ? rightBoundary - 24 : undefined }}
+      className={`${styles.bar} ${isMedia ? styles.mediaBar : ''} ${density === 'normal' ? '' : styles[density]} nodrag nopan`}
+      style={{
+        left: centerX,
+        bottom: anchor.bottom,
+        maxWidth: density === 'compact' ? compactWidth : rightBoundary ? rightBoundary - 24 : undefined,
+      }}
       role="toolbar"
       aria-label="节点操作"
+      data-canvas-node-toolbar
+      data-toolbar-density={density}
       // 画布在捕获阶段处理指针事件，不拦住会连带触发框选与取消选中
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
@@ -167,7 +287,10 @@ export default function CanvasNodeToolbar({
             aria-haspopup="menu"
             aria-expanded={captureMenuOpen}
             disabled={capturing}
-            onClick={() => setCaptureMenuOpen((open) => !open)}
+            onClick={() => {
+              setOverflowOpen(false)
+              setCaptureMenuOpen((open) => !open)
+            }}
           >
             <CaptureIcon />
           </button>
@@ -206,45 +329,8 @@ export default function CanvasNodeToolbar({
         </button>
       )}
 
-      {isMedia && hasContent && !uploading && onSubjectEdit && (
-        <button type="button" className={`${styles.action} ${styles.textAction}`} onClick={onSubjectEdit}>
-          主体编辑
-        </button>
-      )}
-
-      {kind === 'image' && hasContent && !uploading && onImageTool && (
-        <>
-          {imageToolCodes.includes('image.multi_angle') && (
-            <button
-              type="button"
-              className={`${styles.action} ${styles.textAction}`}
-              onClick={() => onImageTool('image.multi_angle')}
-            >
-              多角度
-            </button>
-          )}
-          {imageToolCodes.includes('image.relight') && (
-            <button
-              type="button"
-              className={`${styles.action} ${styles.textAction}`}
-              onClick={() => onImageTool('image.relight')}
-            >
-              打光
-            </button>
-          )}
-          {(imageToolCodes.includes('image.panorama') || imageToolCodes.includes('panorama.view')) && (
-            <button
-              type="button"
-              className={`${styles.action} ${styles.textAction}`}
-              onClick={() =>
-                onImageTool(imageToolCodes.includes('image.panorama') ? 'image.panorama' : 'panorama.view')
-              }
-            >
-              全景
-            </button>
-          )}
-        </>
-      )}
+      {renderSecondary(subjectAction)}
+      {imageActions.map(renderSecondary)}
 
       {isMedia && hasContent && !uploading && onReversePrompt && (
         <button
@@ -258,27 +344,36 @@ export default function CanvasNodeToolbar({
         </button>
       )}
 
-      {showHd && onHd && (
-        <span title={hdDisabledReason || '提升画质，保留原文件'}>
-          <button
-            type="button"
-            className={styles.action}
-            onClick={onHd}
-            disabled={Boolean(hdDisabledReason)}
-            aria-label="超分"
-          >
-            超分
-          </button>
-        </span>
-      )}
-      {kind === 'video' && hasContent && !uploading && onTrimVideo && (
+      {renderSecondary(hdAction)}
+      {showTrim && (
         <button type="button" className={`${styles.action} ${styles.textAction}`} onClick={onTrimVideo}>
           裁剪时长
         </button>
       )}
-      {onCompareHd && (
-        <button type="button" className={styles.action} onClick={onCompareHd} aria-label="对比高清版">
-          对比
+      {renderSecondary(compareAction)}
+      {overflowAvailable && (
+        <button
+          ref={overflowTriggerRef}
+          type="button"
+          className={styles.action}
+          data-tip="更多"
+          aria-label="更多"
+          aria-haspopup="menu"
+          aria-expanded={showOverflowMenu}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault()
+              event.stopPropagation()
+              setCaptureMenuOpen(false)
+              setOverflowOpen(true)
+            }
+          }}
+          onClick={() => {
+            setCaptureMenuOpen(false)
+            setOverflowOpen((value) => !value)
+          }}
+        >
+          <Ellipsis aria-hidden="true" />
         </button>
       )}
       <span className={styles.divider} aria-hidden="true" />
@@ -303,6 +398,56 @@ export default function CanvasNodeToolbar({
         >
           <PreviewIcon />
         </button>
+      )}
+      {showOverflowMenu && (
+        <ViewportFloatingPanel
+          panelRef={overflowMenuRef}
+          anchorElement={overflowTriggerRef.current}
+          className={`${styles.menu} ${styles.overflowMenu} nodrag nopan nowheel`}
+          role="menu"
+          aria-label="更多节点操作"
+          onKeyDown={(event) => {
+            const { key } = event
+            if (key === 'Tab') {
+              // 浮层挂在 body 根下；从触发按钮继续原生 Tab 顺序。
+              overflowTriggerRef.current?.focus({ preventScroll: true })
+              setOverflowOpen(false)
+              return
+            }
+            if (!['Escape', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(key)) return
+            event.preventDefault()
+            event.stopPropagation()
+            if (key === 'Escape') {
+              setOverflowOpen(false)
+              overflowTriggerRef.current?.focus({ preventScroll: true })
+              return
+            }
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+            if (!items.length) return
+            const index = items.indexOf(event.target as HTMLButtonElement)
+            if (key === 'Home') items[0]?.focus()
+            else if (key === 'End') items[items.length - 1]?.focus()
+            else items[(index + (key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus()
+          }}
+        >
+          {overflowActions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              role="menuitem"
+              className={styles.menuItem}
+              aria-label={action.ariaLabel}
+              title={action.title}
+              disabled={action.disabled}
+              onClick={() => {
+                setOverflowOpen(false)
+                action.onClick()
+              }}
+            >
+              {action.label}
+            </button>
+          ))}
+        </ViewportFloatingPanel>
       )}
     </div>
   )

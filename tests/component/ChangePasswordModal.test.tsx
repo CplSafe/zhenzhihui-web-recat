@@ -67,6 +67,31 @@ describe('ChangePasswordModal behavior', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('prefills the profile mobile when the user leaves the field untouched', async () => {
+    mocks.store.authSession = { user: { id: 7 } }
+    render(<ChangePasswordModal onClose={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue('17633125265'))
+  })
+
+  it.each([false, true])('keeps manual mobile edits when the profile arrives late (cleared=%s)', async (cleared) => {
+    const user = userEvent.setup()
+    const pending = deferred<{ user: { mobile: string } }>()
+    mocks.store.authSession = { user: { id: 7 } }
+    mocks.getCurrentUser.mockReturnValueOnce(pending.promise)
+    render(<ChangePasswordModal onClose={vi.fn()} />)
+
+    const mobile = screen.getByRole('textbox', { name: '手机号' })
+    await user.type(mobile, '13900000000')
+    if (cleared) await user.clear(mobile)
+    await act(async () => {
+      pending.resolve({ user: { mobile: '17633125265' } })
+      await pending.promise
+    })
+
+    expect(mobile).toHaveValue(cleared ? '' : '13900000000')
+  })
+
   it('validates password and code before reset and keeps SMS disabled for an invalid mobile', async () => {
     const user = userEvent.setup()
     mocks.store.authSession = null as any
@@ -87,6 +112,39 @@ describe('ChangePasswordModal behavior', () => {
     await user.type(screen.getByLabelText('新密码'), 'Changed-Password-1!')
     await user.click(screen.getByRole('button', { name: '确认修改' }))
     expect(screen.getByText('请输入验证码')).toBeInTheDocument()
+  })
+
+  it.each([true, false])('scopes a late SMS response to the requested phone (success=%s)', async (success) => {
+    const user = userEvent.setup()
+    const pending = deferred<void>()
+    mocks.sendAuthSms.mockReturnValueOnce(pending.promise)
+    render(<ChangePasswordModal onClose={vi.fn()} />)
+    const mobile = screen.getByRole('textbox', { name: '手机号' })
+    const code = screen.getByRole('textbox', { name: '验证码' })
+    await user.type(code, '123456')
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    await user.clear(mobile)
+    await user.type(mobile, '13900000000')
+    expect(code).toHaveValue('')
+
+    await act(async () => {
+      if (success) pending.resolve()
+      else pending.reject(new Error('旧手机号的发送错误'))
+      await pending.promise.catch(() => undefined)
+    })
+    expect(screen.queryByText('旧手机号的发送错误')).not.toBeInTheDocument()
+    expect(mocks.showToast).not.toHaveBeenCalled()
+    const send = screen.getByRole('button', { name: '获取验证码' })
+    expect(send).toBeEnabled()
+    await user.click(send)
+    expect(mocks.sendAuthSms).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mobile: '13900000000', purpose: 'reset_password' }),
+    )
+
+    await user.clear(mobile)
+    await user.type(mobile, '17633125265')
+    if (success) expect(screen.getByRole('button', { name: /s后重发/ })).toBeDisabled()
+    else expect(screen.getByRole('button', { name: '获取验证码' })).toBeEnabled()
   })
 
   it('deduplicates reset submission, recovers after failure, and allows retry', async () => {

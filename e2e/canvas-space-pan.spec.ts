@@ -51,7 +51,7 @@ for (const panKey of ['Space', 'p']) {
     const position = () => node.evaluate((el) => (el as HTMLElement).style.transform)
     const view = () => viewport.evaluate((el) => (el as HTMLElement).style.transform)
     await expect(node).toBeVisible()
-    await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('100')
+    await page.getByRole('button', { name: /当前缩放 .*点击回到 100%/ }).click()
     await expect.poll(() => viewport.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a)).toBe(1)
     const drag = async (selector: string) => {
       const box = await page.locator(selector).first().boundingBox()
@@ -107,7 +107,8 @@ for (const panKey of ['Space', 'p']) {
     await page.keyboard.up(panKey)
     await page.screenshot({ path: testInfo.outputPath('space-pan-desktop.png') })
     await page.setViewportSize({ width: 760, height: 800 })
-    await page.getByRole('button', { name: '复位视图', exact: true }).click()
+    await root.focus()
+    await page.keyboard.press('ControlOrMeta+0')
     await expect
       .poll(async () => {
         const box = await node.boundingBox()

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
-test('音频面板始终下方居中，音色库打开时隐藏节点操作且关闭后恢复', async ({ page }) => {
+test('空间充足时音频面板在下方居中，音色库关闭后恢复节点操作', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const state = await installStrictAuthenticatedApp(page)
   const errors: string[] = []
@@ -20,10 +20,15 @@ test('音频面板始终下方居中，音色库打开时隐藏节点操作且�
     }),
   )
   await page.route('**/api/v1/voices**', (route) => route.fulfill({ json: { items: [], total: 0 } }))
-  await page.route('**/api/v1/canvases/121**', (route) => {
+  await page.route('**/api/v1/canvases/121/members?**', (route) =>
+    route.fulfill({ json: { creator_id: 7, can_manage: true, member_user_ids: [], members_restricted: false } }),
+  )
+  await page.route(/\/api\/v1\/canvases\/121(?:\/(?:elements|node-locks))?(?:\?.*)?$/, (route) => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
     if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
     return route.fulfill({
-      json: new URL(route.request().url()).pathname.endsWith('/elements')
+      json: pathname.endsWith('/elements')
         ? {
             elements: [
               {

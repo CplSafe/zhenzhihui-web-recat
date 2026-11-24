@@ -832,6 +832,7 @@ export default function CanvasAudioGenerator({
     setReferenceRange(null)
   }
   const mentionInputRef = useRef<HTMLTextAreaElement>(null)
+  const mentionOptionsRef = useRef<HTMLDivElement>(null)
   const { activeIndex: referenceActive, setActiveIndex: setReferenceActive } = useMentionNavigation(
     referenceSearch !== null,
     canvasAudioReferences.map((node) => node.id),
@@ -844,7 +845,7 @@ export default function CanvasAudioGenerator({
   )
   useEffect(() => {
     if (referenceSearch !== null)
-      mentionInputRef.current?.parentElement
+      mentionOptionsRef.current
         ?.querySelector('[aria-selected="true"]')
         ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
   }, [referenceSearch, referenceActive])
@@ -1295,8 +1296,14 @@ export default function CanvasAudioGenerator({
             }
           }}
         />
-        {referenceSearch !== null && (
-          <div className={styles.mentionMenu} role="listbox" aria-label="引用画布音频">
+        {active && referenceSearch !== null && (
+          <ViewportFloatingPanel
+            panelRef={mentionOptionsRef}
+            anchorElement={mentionInputRef.current}
+            className={styles.mentionMenu}
+            role="listbox"
+            aria-label="引用画布音频"
+          >
             {canvasAudioReferences.length ? (
               canvasAudioReferences.map((node, index) => (
                 <button
@@ -1316,7 +1323,7 @@ export default function CanvasAudioGenerator({
             ) : (
               <span>没有可引用的画布音频</span>
             )}
-          </div>
+          </ViewportFloatingPanel>
         )}
         <span
           className={styles.characterCount}

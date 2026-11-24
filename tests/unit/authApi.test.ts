@@ -138,17 +138,67 @@ describe('raw session lifecycle requests', () => {
     })
   })
 
-  it.each([200, 401, 500])('always clears the marker when logout returns HTTP %i', async (status) => {
+  it.each([
+    ['success', 200, { data: { ok: true } }],
+    ['HTTP unauthorized', 401, { message: 'not signed in' }],
+    ['business unauthorized name', 200, { code_string: 'UNAUTHORIZED' }],
+    ['business unauthorized code', 200, { code: 10101 }],
+  ])('clears the marker when logout returns %s', async (_name, status, payload) => {
     markAuthSessionExpected()
-    const fetchMock = vi.fn(async () =>
-      status === 200
-        ? jsonResponse({ data: { ok: true } }, status)
-        : jsonResponse({ message: 'logout failed' }, status),
-    )
+    const fetchMock = vi.fn(async () => jsonResponse(payload, status))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(clearExistingSession()).resolves.toBeUndefined()
     expect(hasAuthSessionMarker()).toBe(false)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the marker and lets the caller handle an unconfirmed logout', async () => {
+    markAuthSessionExpected()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ message: 'logout failed' }, 500)),
+    )
+
+    await expect(clearExistingSession()).rejects.toMatchObject({ status: 500, message: 'logout failed' })
+    expect(hasAuthSessionMarker()).toBe(true)
+  })
+
+  it('allows a new session probe after clearing the previous session', async () => {
+    const oldSession = deferred<Response>()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input)
+      if (path === '/api/v1/auth/session') return jsonResponse({ data: { user: { id: 9 } } })
+      if (path === '/api/v1/auth/logout' || path === '/api/v1/me') return emptyResponse()
+      throw new Error(`Unexpected request: ${path}`)
+    })
+    fetchMock.mockImplementationOnce(() => oldSession.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    markAuthSessionExpected()
+    const oldProbe = getAuthenticatedSession()
+    await clearExistingSession()
+
+    markAuthSessionExpected()
+    await expect(getAuthenticatedSession()).resolves.toMatchObject({ user: { id: 9 } })
+    oldSession.resolve(jsonResponse({ data: { user: { id: 7 } } }))
+    await expect(oldProbe).resolves.toMatchObject({ user: { id: 7 } })
+  })
+
+  it('waits for the shared refresh lock before issuing a logout request', async () => {
+    const refreshFinished = deferred<void>()
+    const request = vi.fn(async (_name: string, _options: LockOptions, callback: () => Promise<unknown>) => {
+      await refreshFinished.promise
+      return callback()
+    })
+    const fetchMock = vi.fn(async () => emptyResponse())
+    vi.stubGlobal('navigator', { locks: { request } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const logout = logoutSession()
+    expect(request).toHaveBeenCalledWith('zzh.auth.refresh', { signal: expect.any(AbortSignal) }, expect.any(Function))
+    expect(fetchMock).not.toHaveBeenCalled()
+    refreshFinished.resolve(undefined)
+    await logout
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 })
@@ -168,6 +218,86 @@ describe('getAuthenticatedSession', () => {
       '/api/v1/me',
       '/api/v1/workspaces/21/members',
     ])
+  })
+
+  it('accepts a workspace-only session with a valid identity from the profile', async () => {
+    markAuthSessionExpected()
+    installSuccessfulSessionFetch({ session: { workspace: { id: 21 } } })
+
+    await expect(getAuthenticatedSession()).resolves.toMatchObject({
+      user: { id: 7, nickname: '测试用户' },
+      currentMember: { user_id: 7, role: 'owner' },
+    })
+  })
+
+  it('uses only the verified profile user when the session user has no valid identity', async () => {
+    markAuthSessionExpected()
+    installSuccessfulSessionFetch({
+      session: { user: { id: 0, mobile: '13800000000' }, workspace: { id: 21 } },
+      profile: { user: { user_id: 7 } },
+    })
+
+    const authContext = await getAuthenticatedSession()
+    expect(authContext.user).toEqual({ user_id: 7 })
+  })
+
+  it('preserves trusted session fields when the verified profile is partial', async () => {
+    markAuthSessionExpected()
+    installSuccessfulSessionFetch({
+      session: { user: { id: 7, mobile: '13800000000' }, workspace: { id: 21 } },
+      profile: { user: { id: '7', nickname: '测试用户' } },
+    })
+
+    await expect(getAuthenticatedSession()).resolves.toMatchObject({
+      user: { id: '7', nickname: '测试用户', mobile: '13800000000' },
+    })
+  })
+
+  it('discards profile fields when the profile has no valid identity to compare', async () => {
+    markAuthSessionExpected()
+    installSuccessfulSessionFetch({ profile: { user: { id: null, nickname: '未验证资料' } } })
+
+    await expect(getAuthenticatedSession()).resolves.toEqual({
+      user: { id: 7 },
+      workspace: { id: 21 },
+      currentMember: { user_id: 7, role: 'owner' },
+    })
+  })
+
+  it('rejects divergent session and profile identities before loading workspace members', async () => {
+    markAuthSessionExpected()
+    const fetchMock = installSuccessfulSessionFetch({ profile: { user: { user_id: 8 } } })
+
+    await expect(getAuthenticatedSession()).rejects.toMatchObject({
+      name: 'AuthApiError',
+      code: 'SESSION_IDENTITY_MISMATCH',
+    })
+    expect(fetchMock.mock.calls.map(([input]) => requestPath(input))).toEqual(['/api/v1/auth/session', '/api/v1/me'])
+  })
+
+  it('rejects a successful empty session response before loading the profile', async () => {
+    markAuthSessionExpected()
+    const fetchMock = installSuccessfulSessionFetch({ session: {} })
+
+    await expect(getAuthenticatedSession()).rejects.toMatchObject({
+      name: 'AuthApiError',
+      code: 'SESSION_IDENTITY_MISSING',
+    })
+    expect(fetchMock.mock.calls.map(([input]) => requestPath(input))).toEqual(['/api/v1/auth/session'])
+  })
+
+  it('rejects assembled sessions without a valid identity before loading members', async () => {
+    markAuthSessionExpected()
+    const fetchMock = installSuccessfulSessionFetch({
+      session: { user: { id: 0 }, workspace: { id: 21 } },
+      profile: { user: { id: {} } },
+    })
+
+    await expect(getAuthenticatedSession()).rejects.toMatchObject({
+      name: 'AuthApiError',
+      code: 'SESSION_IDENTITY_MISSING',
+    })
+    expect(fetchMock.mock.calls.map(([input]) => requestPath(input))).toEqual(['/api/v1/auth/session', '/api/v1/me'])
   })
 
   it('refreshes exactly once after a session 401 and continues with the refreshed session', async () => {

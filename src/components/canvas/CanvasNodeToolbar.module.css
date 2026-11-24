@@ -105,6 +105,40 @@
   height: 16px;
 }
 
+.reduced {
+  gap: 1px;
+  padding: 2px 3px;
+}
+
+.reduced .action {
+  width: 30px;
+  height: 30px;
+}
+
+.reduced .textAction {
+  min-width: 44px;
+  padding-inline: 6px;
+}
+
+.compact {
+  padding-block: 2px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.compact .action {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.compact .textAction {
+  width: 52px !important;
+  min-width: 0;
+  padding-inline: 0;
+}
+
 .action:hover:not(:disabled) {
   background: var(--canvas-surface-highest, #2b3145);
   color: #0e9377;
@@ -196,6 +230,15 @@
   transform: translateX(-50%);
 }
 
+.overflowMenu {
+  --floating-max-height: 240px;
+  width: 160px !important;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  transform: none;
+}
+
 .menuItem {
   display: block;
   width: 100%;
@@ -214,6 +257,11 @@
 .menuItem:hover {
   background: var(--canvas-surface-highest, #2b3145);
   color: #0e9377;
+}
+
+.menuItem:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .menuItem:focus-visible {

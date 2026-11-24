@@ -112,7 +112,6 @@ export default function CanvasModelSelector({
   unavailableSelectionLabel,
   unavailableSelectionReason,
   onChange,
-  onOpen,
 }: {
   models: GenerationModelOption[]
   durationLabel: (model: GenerationModelOption) => string
@@ -125,8 +124,6 @@ export default function CanvasModelSelector({
   unavailableSelectionLabel?: string
   unavailableSelectionReason?: string
   onChange?: (modelVersionId: number) => void
-  /** 打开模型菜单时通知同级新手提示收起，避免提示层遮挡模型选项。 */
-  onOpen?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -134,10 +131,6 @@ export default function CanvasModelSelector({
   const close = () => {
     setInspected(null)
     setOpen(false)
-  }
-  const openMenu = () => {
-    onOpen?.()
-    setOpen(true)
   }
   const inspect = (id: number) => {
     // 悬停时立即展开模型说明；延迟会让菜单显得迟钝。
@@ -169,18 +162,18 @@ export default function CanvasModelSelector({
         aria-haspopup="listbox"
         aria-disabled={!canOpen}
         className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
-        title={selected ? undefined : unavailableSelectionReason || blockedReason || emptyLabel || undefined}
+        title={selected ? display : unavailableSelectionReason || blockedReason || emptyLabel || undefined}
         onClick={() => {
           if (!canOpen) return
           if (open) close()
-          else openMenu()
+          else setOpen(true)
         }}
         aria-expanded={open && canOpen}
         onKeyDown={(event) => {
           if (event.key === 'Escape') setOpen(false)
           if (canOpen && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
             event.preventDefault()
-            openMenu()
+            setOpen(true)
             requestAnimationFrame(() =>
               document
                 .querySelector<HTMLElement>(

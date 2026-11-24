@@ -58,6 +58,9 @@ test('音频模型浮层脱离裁切并保持键盘操作', async ({ page }) => 
         : { id: 116, title: 'Audio layout', status: 'active', revision: 1 },
     })
   })
+  await page.route('**/api/v1/canvases/116/node-locks**', (route) =>
+    route.fulfill({ json: { granted: true, nodes: {} } }),
+  )
   await page.goto('/canvas/116')
   await page.locator('.react-flow__node[data-id="audio-layout"]').click()
   const model = page.getByRole('button', { name: '音频生成模型', exact: true })

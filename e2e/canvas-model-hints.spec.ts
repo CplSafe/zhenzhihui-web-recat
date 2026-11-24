@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { installStrictAuthenticatedApp, expectNoUnexpectedApi } from './fixtures/strict-authenticated-app'
+import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const viewport of [
   { width: 1440, height: 900 },
@@ -42,15 +42,22 @@ for (const viewport of [
         },
       }),
     )
-    await page.route('**/api/v1/real-people?**', (route) => route.fulfill({ json: { data: [] } }))
-    await page.route('**/api/v1/canvases/119**', (route) =>
-      route.fulfill({
-        json:
-          route.request().method() === 'PATCH'
-            ? { revision: 2 }
-            : new URL(route.request().url()).pathname.endsWith('/elements')
-              ? {
-                  elements: [
+    await page.route(/\/api\/v1\/canvases\/119(?:\/(?:elements|node-locks|members))?(?:\?.*)?$/, (route) => {
+      const { pathname, searchParams } = new URL(route.request().url())
+      if (pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
+      if (pathname.endsWith('/members')) {
+        return route.fulfill({
+          json: { creator_id: 7, can_manage: true, member_user_ids: [], members_restricted: false },
+        })
+      }
+      if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
+      if (pathname.endsWith('/elements')) {
+        return route.fulfill({
+          json: {
+            elements:
+              Number(searchParams.get('after_revision')) > 0
+                ? []
+                : [
                     {
                       element_id: 'source',
                       kind: 'node',
@@ -63,28 +70,30 @@ for (const viewport of [
                       },
                     },
                   ],
-                  sync_revision: 1,
-                  history_floor_revision: 0,
-                  has_more: false,
-                }
-              : { id: 119, title: '真人引导布局检查', revision: 1 },
-      }),
-    )
+            sync_revision: 1,
+            history_floor_revision: 0,
+            has_more: false,
+          },
+        })
+      }
+      return route.fulfill({ json: { id: 119, title: '模型说明布局检查', revision: 1 } })
+    })
     await page.goto('/canvas/119')
     await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
     await page.locator('.react-flow__node[data-id="source"]').click()
     const editor = page.locator('[data-canvas-node-panel]')
-    const realPersonHint = page.getByRole('button', { name: '可使用已认证的真人素材' })
+    const realPersonHintText = '可使用已认证的真人素材'
+    const realPersonHint = page.getByText(realPersonHintText, { exact: true })
     await expect(editor.getByText(/Seedance 2.0，适用于/)).toHaveCount(0)
     await expect(editor.locator('[data-canvas-model-hint]')).toHaveCount(0)
     const trigger = editor.getByRole('button', { name: 'Seedance 2.0', exact: true })
-    await expect(realPersonHint).toBeVisible()
+    await expect(realPersonHint).toBeHidden()
     await trigger.hover()
     await page.waitForTimeout(250)
     await expect(page.getByRole('listbox', { name: '生成模型列表' })).toHaveCount(0)
     await trigger.click()
     await expect(page.getByRole('listbox', { name: '生成模型列表' })).toBeVisible()
-    await expect(realPersonHint).toHaveCount(0)
+    await expect(realPersonHint).toBeHidden()
     const option = page.getByRole('option', { name: /Seedance 2.0/ })
     await expect(option.locator('[data-canvas-model-hint]')).toHaveCount(0)
     await expect(option).toContainText('最长 15 秒')
@@ -136,6 +145,10 @@ for (const viewport of [
     await other.press('Escape')
     await expect(menu).toHaveCount(0)
     await expect(reopenedTrigger).toBeFocused()
+    await expect(realPersonHint).toBeHidden()
+    await editor.getByRole('button', { name: '添加参考', exact: true }).click()
+    const realPersonRow = page.getByRole('menuitem', { name: '从真人库选择', exact: true })
+    await expect(realPersonRow.getByText(realPersonHintText, { exact: true })).toBeVisible()
     expect(errors).toEqual([])
     expect(state.paidTaskSubmissions).toBe(0)
     expectNoUnexpectedApi(state)

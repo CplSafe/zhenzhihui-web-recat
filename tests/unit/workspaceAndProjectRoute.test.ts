@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WORKSPACE_NAME_MAX, normalizeWorkspaceNameForCompare, validateWorkspaceName } from '@/utils/workspaceName'
-import { shouldClearSessionAfterLogoutFailure, shouldRequestAuthenticatedSession } from '@/utils/workflowGuards'
+import { shouldRequestAuthenticatedSession } from '@/utils/workflowGuards'
 
 const mocks = vi.hoisted(() => ({ getCreativeProject: vi.fn() }))
 
@@ -48,13 +48,6 @@ describe('workflow guards', () => {
     expect(shouldRequestAuthenticatedSession(true)).toBe(true)
     for (const value of [false, 1, 'true', null, undefined]) {
       expect(shouldRequestAuthenticatedSession(value)).toBe(false)
-    }
-  })
-
-  it('only clears local session state after an unauthorized logout failure', () => {
-    expect(shouldClearSessionAfterLogoutFailure({ status: 401 })).toBe(true)
-    for (const value of [{ status: 0 }, { status: 403 }, { response: { status: 401 } }, null]) {
-      expect(shouldClearSessionAfterLogoutFailure(value)).toBe(false)
     }
   })
 })

@@ -1,6 +1,6 @@
 /**
  * ChangePasswordModal — 登录态下「修改密码」独立弹窗(不复用注册/找回的 AuthActionModal)。
- * 取当前用户手机号(只读展示,不可改)+ 新密码 + 短信验证码,走公开找回密码接口完成改密。
+ * 预填可用的手机号，由用户填写新密码和短信验证码，走公开找回密码接口完成改密。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -13,6 +13,7 @@ import {
   sendAuthSms,
 } from '@/api/auth'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { useAuthSmsCooldown } from '@/composables/useAuthSmsCooldown'
 import { useToast } from '@/composables/useToast'
 import './ChangePasswordModal.css'
 
@@ -57,17 +58,18 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
   const [code, setCode] = useState('')
   const [showPwd, setShowPwd] = useState(false)
   const [captcha, setCaptcha] = useState({ id: '', image: '', answer: '' })
-  const [countdown, setCountdown] = useState(0)
   const [sending, setSending] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState('')
-  const timerRef = useRef<number | null>(null)
   const aliveRef = useRef(true)
   const sendingRef = useRef(false)
   const submittingRef = useRef(false)
+  const mobileEditedRef = useRef(false)
+  const currentMobileRef = useRef(mobile)
   const mobileInputRef = useRef<HTMLInputElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const { remainingSeconds: countdown, markSent } = useAuthSmsCooldown(mobile)
 
   useEffect(() => {
     aliveRef.current = true
@@ -88,8 +90,12 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
     let cancelled = false
     getCurrentUser()
       .then((me: any) => {
+        if (cancelled || mobileEditedRef.current) return
         const m = pickMobile(me)
-        if (!cancelled && m) setMobile(m)
+        if (m) {
+          currentMobileRef.current = m
+          setMobile(m)
+        }
       })
       .catch(() => {})
     return () => {
@@ -98,30 +104,10 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(
-    () => () => {
-      if (timerRef.current) window.clearInterval(timerRef.current)
-    },
-    [],
-  )
-
-  const startCountdown = () => {
-    setCountdown(60)
-    timerRef.current = window.setInterval(() => {
-      setCountdown((p) => {
-        if (p <= 1) {
-          if (timerRef.current) window.clearInterval(timerRef.current)
-          return 0
-        }
-        return p - 1
-      })
-    }, 1000)
-  }
-
-  const refreshCaptcha = async () => {
+  const refreshCaptcha = async (target = currentMobileRef.current) => {
     try {
       const c: any = await getCaptcha()
-      if (!aliveRef.current) return
+      if (!aliveRef.current || currentMobileRef.current !== target) return
       setCaptcha({ id: c?.id || '', image: c?.image || '', answer: '' })
     } catch {
       /* ignore */
@@ -129,7 +115,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
   }
 
   const sendCode = async () => {
-    if (countdown > 0 || sendingRef.current) return
+    if (countdown > 0 || sendingRef.current || submittingRef.current) return
     if (!/^1\d{10}$/.test(mobile)) return setErr('请输入正确的手机号')
     if (captcha.image && !captcha.answer.trim()) return setErr('请输入图形验证码')
     sendingRef.current = true
@@ -144,13 +130,13 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
         captchaAnswer: captcha.answer.trim(),
       })
       if (!aliveRef.current) return
-      startCountdown()
-      showToast('验证码已发送', 'success')
+      markSent(mobile)
+      if (currentMobileRef.current === mobile) showToast('验证码已发送', 'success')
     } catch (e: any) {
-      if (!aliveRef.current) return
+      if (!aliveRef.current || currentMobileRef.current !== mobile) return
       if (isCaptchaChallengeError(e)) {
-        await refreshCaptcha()
-        if (!aliveRef.current) return
+        await refreshCaptcha(mobile)
+        if (!aliveRef.current || currentMobileRef.current !== mobile) return
         setErr('请输入图形验证码')
       } else {
         setErr(getAuthErrorMessage(e, '验证码发送失败,请稍后重试'))
@@ -162,7 +148,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
   }
 
   const submit = async () => {
-    if (submittingRef.current) return
+    if (submittingRef.current || sendingRef.current) return
     setErr('')
     if (!/^1\d{10}$/.test(mobile)) return setErr('请输入正确的手机号')
     if (!password.trim()) return setErr('请输入新密码')
@@ -177,8 +163,8 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
     } catch (e: any) {
       if (!aliveRef.current) return
       if (isCaptchaChallengeError(e)) {
-        await refreshCaptcha()
-        if (!aliveRef.current) return
+        await refreshCaptcha(mobile)
+        if (!aliveRef.current || currentMobileRef.current !== mobile) return
         setErr('请输入图形验证码')
       } else {
         setErr(getAuthErrorMessage(e, '修改失败,请重试'))
@@ -212,8 +198,16 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
               inputMode="numeric"
               placeholder="手机号"
               value={mobile}
+              readOnly={submitting}
               onChange={(e) => {
-                setMobile(e.target.value.replace(/\D/g, '').slice(0, 11))
+                mobileEditedRef.current = true
+                const next = e.target.value.replace(/\D/g, '').slice(0, 11)
+                if (currentMobileRef.current !== next) {
+                  setCode('')
+                  setCaptcha({ id: '', image: '', answer: '' })
+                }
+                currentMobileRef.current = next
+                setMobile(next)
                 setErr('')
               }}
             />
@@ -287,7 +281,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
             <button
               type="button"
               className="cpw-code-btn"
-              disabled={countdown > 0 || sending || !/^1\d{10}$/.test(mobile)}
+              disabled={countdown > 0 || sending || submitting || !/^1\d{10}$/.test(mobile)}
               onClick={sendCode}
             >
               {sending ? '发送中…' : countdown > 0 ? `${countdown}s后重发` : '获取验证码'}
@@ -307,7 +301,12 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
                   setErr('')
                 }}
               />
-              <button type="button" className="cpw-captcha-button" aria-label="刷新图形验证码" onClick={refreshCaptcha}>
+              <button
+                type="button"
+                className="cpw-captcha-button"
+                aria-label="刷新图形验证码"
+                onClick={() => void refreshCaptcha()}
+              >
                 <img className="cpw-captcha" src={captcha.image} alt="" />
               </button>
             </div>
@@ -316,7 +315,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
 
         {err && <span className="cpw-err">{err}</span>}
 
-        <button type="button" className="cpw-submit" disabled={submitting} onClick={submit}>
+        <button type="button" className="cpw-submit" disabled={submitting || sending} onClick={submit}>
           {submitting ? '提交中…' : '确认修改'}
         </button>
       </div>

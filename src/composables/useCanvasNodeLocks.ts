@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { requestBusinessJson } from '@/api/business'
 
 interface Holder {
@@ -19,6 +19,15 @@ interface Snapshot {
   nodes: Record<string, Holder[]>
   granted: boolean
 }
+interface LockTarget {
+  scope: string
+  key: string
+}
+interface LockReply {
+  target: LockTarget
+  state: Snapshot | null
+  requestFailed: boolean
+}
 const noHolders: Snapshot['nodes'] = {}
 export function useCanvasNodeLocks(
   workspaceId: number,
@@ -29,10 +38,14 @@ export function useCanvasNodeLocks(
   referenceSourceIds: ReadonlySet<string>,
 ) {
   const selectionKey = JSON.stringify([...new Set(selection)].sort())
-  const [reply, setReply] = useState<{ key: string; scope: string; state: Snapshot } | null>(null)
   const scope = enabled ? `${workspaceId}/${canvasId}/${userId}` : ''
-  const desired = useRef(selectionKey)
-  desired.current = selectionKey
+  // Returning to the same selection still requires a fresh grant if another selection intervened.
+  const target = useMemo<LockTarget>(() => ({ scope, key: selectionKey }), [scope, selectionKey])
+  const [reply, setReply] = useState<LockReply | null>(null)
+  const desired = useRef(target)
+  useLayoutEffect(() => {
+    desired.current = target
+  }, [target])
   const wake = useRef<() => void>()
   useEffect(() => {
     if (!scope) return
@@ -51,29 +64,36 @@ export function useCanvasNodeLocks(
       held = false
     async function refresh() {
       clearTimeout(timer)
-      if (stopped || busy) return
+      const requested = desired.current
+      if (stopped || busy || requested.scope !== scope) return
       busy = true
-      const key = desired.current
       try {
-        const data = await post(JSON.parse(key))
-        held = data.granted && key !== '[]'
-        if (!stopped && key === desired.current)
+        const data = await post(JSON.parse(requested.key))
+        if (typeof data?.granted !== 'boolean') throw new Error('Invalid canvas node lock response')
+        held = data.granted && requested.key !== '[]'
+        if (!stopped && requested === desired.current)
           setReply((old) =>
-            old?.key === key && old.scope === scope && JSON.stringify(old.state) === JSON.stringify(data)
+            old?.target === requested && !old.requestFailed && JSON.stringify(old.state) === JSON.stringify(data)
               ? old
-              : { key, scope, state: data },
+              : { target: requested, state: data, requestFailed: false },
           )
       } catch {
-        if (!stopped)
+        if (!stopped && requested === desired.current)
           setReply((old) =>
-            old && old.scope === scope ? { ...old, key: '', state: { ...old.state, granted: false } } : null,
+            old?.target === requested && old.requestFailed
+              ? old
+              : {
+                  target: requested,
+                  state: old?.target.scope === scope ? old.state : null,
+                  requestFailed: true,
+                },
           )
       } finally {
         busy = false
         if (stopped) {
           if (held) void post([]).catch(() => {})
         } else {
-          timer = setTimeout(refresh, key === desired.current ? 2500 : 0)
+          timer = setTimeout(refresh, requested === desired.current ? 2500 : 0)
         }
       }
     }
@@ -88,8 +108,13 @@ export function useCanvasNodeLocks(
   }, [scope, workspaceId, canvasId])
   useEffect(() => {
     wake.current?.()
-  }, [selectionKey])
-  const holders = reply?.scope === scope ? (reply?.state.nodes ?? noHolders) : noHolders
+  }, [target])
+  const snapshot = reply?.target.scope === scope ? reply.state : null
+  const currentReply = reply?.target === target ? reply : null
+  // Keep the last collaborator/Agent snapshot while a retry is pending, without trusting it for edits.
+  const confirmed = currentReply && !currentReply.requestFailed ? currentReply.state : null
+  const granted = !enabled || confirmed?.granted === true
+  const holders = snapshot?.nodes ?? noHolders
   const blocked = useMemo(
     () =>
       new Map(
@@ -112,13 +137,15 @@ export function useCanvasNodeLocks(
           const otherLabel = blocked.get(id)
           if (otherLabel) return [[id, otherLabel]] as const
           const own = owners.filter((holder) => holder.user_id === userId)
-          if (own.some((holder) => holder.editing)) return [[id, '你正在编辑']] as const
+          if (own.some((holder) => holder.editing)) {
+            return granted || !selection.includes(id) ? ([[id, '你正在编辑']] as const) : []
+          }
           // 协作服务返回的是持有状态。引用标签还要有画布里实际存在的素材连线。
           if (own.length && referenceSourceIds.has(id)) return [[id, '你正在引用']] as const
           return []
         }),
       ),
-    [holders, blocked, referenceSourceIds, userId],
+    [holders, blocked, granted, referenceSourceIds, selection, userId],
   )
   // Derive the color from server-owned identity, not name, viewer or response order.
   // A writer takes precedence over shared readers; ties use the lowest user ID.
@@ -132,8 +159,8 @@ export function useCanvasNodeLocks(
       ),
     [holders],
   )
-  const agentOwner = reply?.scope === scope ? reply.state.agent_owner : undefined
-  const agentLock = reply?.scope === scope ? reply.state.agent_lock : undefined
+  const agentOwner = snapshot?.agent_owner
+  const agentLock = snapshot?.agent_lock
   const agentOwnerRef = useRef(agentOwner)
   agentOwnerRef.current = agentOwner
   const unlockAgent = useCallback(
@@ -162,13 +189,8 @@ export function useCanvasNodeLocks(
     labels,
     hues,
     reason,
-    granted: !enabled || (reply?.scope === scope && reply.key === selectionKey && reply.state.granted),
-    denied: !!(
-      selection.length &&
-      scope &&
-      reply?.scope === scope &&
-      reply.key === selectionKey &&
-      !reply.state.granted
-    ),
+    granted,
+    denied: selection.length > 0 && confirmed?.granted === false,
+    requestFailed: selection.length > 0 && currentReply?.requestFailed === true,
   }
 }

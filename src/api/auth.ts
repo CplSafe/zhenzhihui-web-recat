@@ -6,7 +6,7 @@
 import { shouldRequestAuthenticatedSession } from '../utils/workflowGuards'
 import { createKeyedSingleFlight, createSingleFlight } from '../utils/singleFlight'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
-import { runSharedSessionRefresh } from './sessionRefresh'
+import { AUTH_REFRESH_LOCK_NAME, runSessionLogoutWithoutLock, runSharedSessionRefresh } from './sessionRefresh'
 
 /** 记录浏览器是否期待存在已登录会话，避免匿名页反复请求鉴权端点。 */
 const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
@@ -161,21 +161,35 @@ export async function refreshSession({ signal } = {}) {
   return payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload
 }
 
-/** 通知后端注销当前会话。 */
-export function logoutSession() {
-  return businessPost('/api/v1/auth/logout')
+/** 通知后端注销当前会话，等在途的 Cookie 续期完成后再清理。 */
+export async function logoutSession() {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+  if (!locks) return runSessionLogoutWithoutLock(() => businessPost('/api/v1/auth/logout'))
+
+  try {
+    return await withRequestTimeout((signal) =>
+      // 与 sessionRefresh.ts 共用锁，避免其他标签页的续期响应在登出后写回 Cookie。
+      locks.request(AUTH_REFRESH_LOCK_NAME, { signal }, () => businessPost('/api/v1/auth/logout', { signal })),
+    )
+  } catch (error) {
+    if (error instanceof RequestAbortError) {
+      throw new AuthApiError('退出登录请求超时，请稍后重试', { cause: error.abortCause })
+    }
+    throw error
+  }
 }
 
 /**
- * 换账号登录前容错清理旧业务会话，防止长效 cookie 让新登录读回旧账号。
- * 必须在 oauth-start 之前调用，以免销毁本次 OAuth state；未登录或旧会话失效不阻断后续流程。
+ * 换账号前清理旧业务会话。服务端确认会话已注销或不存在后，清除本地会话标记。
+ * 在 oauth-start 之前调用，避免注销时销毁本次 OAuth state。
  */
-export async function clearExistingSession() {
+export async function clearExistingSession(): Promise<void> {
   try {
     await logoutSession()
-  } catch {
-    // 未登录或会话已失效：忽略即可
+  } catch (error) {
+    if (!isUnauthorizedAuthError(error)) throw error
   }
+  resetAuthenticatedSession()
   clearAuthSessionMarker()
 }
 
@@ -238,6 +252,15 @@ export function resetAuthenticatedSession() {
   authSessionRequest.reset()
 }
 
+/** 使用与工作空间会话相同的用户标识字段，兼容数字和字符串 ID。 */
+function readAuthUserId(user) {
+  const id = user?.id ?? user?.user_id ?? user?.userId ?? user?.account_id ?? user?.uid
+  if (typeof id === 'number') return Number.isSafeInteger(id) && id > 0 ? String(id) : ''
+  if (typeof id !== 'string') return ''
+  const value = id.trim()
+  return value === '0' ? '' : value
+}
+
 /** 执行 session 校验、必要时刷新，再合并可选的用户资料和当前成员。 */
 async function fetchAuthenticatedSession() {
   // 如果正在进行 SSO 登录回调，即使没有历史 marker 也应该尝试获取 session
@@ -273,19 +296,35 @@ async function fetchAuthenticatedSession() {
     })
   }
 
+  if (Object.keys(session).length === 0) {
+    throw new AuthApiError('未获取到有效账号会话，请稍后重试', { code: 'SESSION_IDENTITY_MISSING' })
+  }
+
+  const sessionUserId = readAuthUserId(session.user)
   let profile = {}
+  let profileLoadError
 
   try {
     profile = await getCurrentUser()
   } catch (error) {
-    if (isUnauthorizedAuthError(error)) {
+    if (isUnauthorizedAuthError(error) || !sessionUserId) {
       throw error
     }
 
-    profile = { profileLoadError: error }
+    profileLoadError = error
   }
 
-  const authContext = { ...session, ...profile }
+  const profileUserId = readAuthUserId(profile?.user)
+  if (sessionUserId && profileUserId && sessionUserId !== profileUserId) {
+    throw new AuthApiError('账号会话发生变化，请稍后重试', { code: 'SESSION_IDENTITY_MISMATCH' })
+  }
+  if (!sessionUserId && !profileUserId) {
+    throw new AuthApiError('未获取到有效账号会话，请稍后重试', { code: 'SESSION_IDENTITY_MISSING' })
+  }
+
+  const authContext = profileUserId ? { ...session, ...profile } : { ...session }
+  if (profileUserId && sessionUserId) authContext.user = { ...session.user, ...profile.user }
+  if (profileLoadError) authContext.profileLoadError = profileLoadError
   authContext.currentMember = await getCurrentWorkspaceMember(authContext)
 
   return authContext
@@ -344,11 +383,15 @@ export function isCaptchaChallengeError(error) {
   return error instanceof AuthApiError && (error.code === 20007 || error.code === 20008)
 }
 
-/** 同时识别 HTTP 401 和业务层 UNAUTHORIZED 为未授权错误。 */
+/** 同时识别 HTTP 401 和业务层未授权错误。 */
 export function isUnauthorizedAuthError(error) {
   if (!(error instanceof AuthApiError)) return false
-  // HTTP 401 或业务层 code_string === 'UNAUTHORIZED'（后端可能返回 200 + 业务错误码 10101）
-  return error.status === 401 || error.code === 'UNAUTHORIZED'
+  return (
+    error.status === 401 ||
+    error.code === 'UNAUTHORIZED' ||
+    String(error.code) === '10101' ||
+    error.response?.code_string === 'UNAUTHORIZED'
+  )
 }
 
 /** 仅从 OAuth 启动结果中挑选登录接口允许的 client_id 和 return_to。 */

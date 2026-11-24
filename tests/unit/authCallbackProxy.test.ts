@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rewriteBusinessAuthCallback } from '@/build/authCallbackProxy'
+import { redirectFailedAuthCallback, rewriteBusinessAuthCallback } from '@/build/authCallbackProxy'
 
 const origins = new Set(['http://backend.test:9000', 'https://business.test'])
 describe('OAuth dev callback proxy', () => {
@@ -32,5 +32,50 @@ describe('OAuth dev callback proxy', () => {
         origins,
       ),
     ).toBeUndefined()
+  })
+
+  describe('failed OAuth callback documents', () => {
+    const documentRequest = {
+      method: 'GET',
+      url: '/auth/callback?code=opaque-code&state=opaque-state',
+      headers: { 'sec-fetch-dest': 'document' },
+    }
+
+    it.each([400, 500])('redirects an upstream %s response to login and preserves cookie headers', (status) => {
+      const cookies = ['oauth_state=; Max-Age=0; Path=/']
+      const response = {
+        statusCode: status,
+        statusMessage: 'Upstream error',
+        headers: { 'set-cookie': cookies, 'cache-control': 'max-age=100', location: 'https://business.test/error' },
+      }
+
+      expect(redirectFailedAuthCallback(documentRequest, response)).toBe(true)
+      expect(response).toEqual({
+        statusCode: 303,
+        statusMessage: 'See Other',
+        headers: { 'set-cookie': cookies, 'cache-control': 'no-store', location: '/login?oauth_callback=failed' },
+      })
+    })
+
+    it.each([
+      { headers: { 'sec-fetch-dest': 'iframe' } },
+      { headers: { 'sec-fetch-dest': 'empty' } },
+      { headers: {} },
+      { method: 'POST' },
+      { url: '/auth/callback-other?code=opaque-code' },
+      { url: '/auth/session' },
+    ])('lets other requests receive the original callback response: %j', (request) => {
+      const response = { statusCode: 400, headers: { 'content-type': 'application/json' } }
+
+      expect(redirectFailedAuthCallback({ ...documentRequest, ...request }, response)).toBe(false)
+      expect(response).toEqual({ statusCode: 400, headers: { 'content-type': 'application/json' } })
+    })
+
+    it.each([undefined, 200, 302, 600])('keeps the original response for status %s', (statusCode) => {
+      const response = { statusCode, headers: { location: '/home' } }
+
+      expect(redirectFailedAuthCallback(documentRequest, response)).toBe(false)
+      expect(response).toEqual({ statusCode, headers: { location: '/home' } })
+    })
   })
 })

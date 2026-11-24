@@ -3,7 +3,7 @@
  * 否则长时间挂后台后切回页面,两条路径并发打出两个 refresh,轮换式刷新令牌会让后到的那个被拒。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { refreshSession } from '@/api/auth'
+import { logoutSession, refreshSession } from '@/api/auth'
 import { getAiTask } from '@/api/business'
 import { resetSharedSessionRefreshForTests, runSharedSessionRefresh } from '@/api/sessionRefresh'
 
@@ -111,6 +111,37 @@ describe('shared session refresh single-flight', () => {
     await runSharedSessionRefresh()
     await runSharedSessionRefresh()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps logout between older and newer refreshes when Web Locks are unavailable', async () => {
+    vi.stubGlobal('navigator', {})
+    const refreshGate = deferred<Response>()
+    const logoutGate = deferred<Response>()
+    const events: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input)
+        events.push(path)
+        if (path === '/api/v1/auth/logout') return logoutGate.promise
+        if (events.length === 1) return refreshGate.promise
+        return jsonResponse({ data: { expires_in: 120 } })
+      }),
+    )
+
+    const previousRefresh = runSharedSessionRefresh()
+    const logout = logoutSession()
+    const nextRefresh = runSharedSessionRefresh()
+    expect(events).toEqual(['/api/v1/auth/refresh'])
+
+    refreshGate.resolve(jsonResponse({ data: {} }))
+    await previousRefresh
+    expect(events).toEqual(['/api/v1/auth/refresh', '/api/v1/auth/logout'])
+
+    logoutGate.resolve(jsonResponse({ message: '退出服务繁忙' }, 500))
+    await expect(logout).rejects.toMatchObject({ status: 500 })
+    await expect(nextRefresh).resolves.toMatchObject({ ok: true })
+    expect(events).toEqual(['/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/refresh'])
   })
 
   it('surfaces a rejected refresh as an unauthorized AuthApiError without throwing from the shared layer', async () => {

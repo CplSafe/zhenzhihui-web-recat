@@ -1,18 +1,19 @@
 import { useEffect } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
-import { createMemoryRouter, RouterProvider } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { createMemoryRouter, Navigate, RouterProvider } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   protectedApiCall: vi.fn(),
   taskCenterRender: vi.fn(),
+  isAuthenticated: false,
 }))
 
 vi.mock('@/auth/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
   useAuth: () => ({
     authCheckError: '',
-    isAuthenticated: false,
+    isAuthenticated: mocks.isAuthenticated,
     isCheckingSession: false,
     loadAuthSession: vi.fn(),
   }),
@@ -20,6 +21,7 @@ vi.mock('@/auth/AuthContext', () => ({
 
 vi.mock('@/components/AppToast', () => ({ default: () => null }))
 vi.mock('@/components/AppConfirmDialog', () => ({ default: () => null }))
+vi.mock('@/components/common/HelpCenter', () => ({ default: () => null }))
 vi.mock('@/components/task/TaskCenterCoordinator', () => ({
   default: () => {
     mocks.taskCenterRender()
@@ -52,6 +54,7 @@ vi.mock('@/stores/ui', () => ({
 vi.mock('@/utils/inviteCode', () => ({ captureInviteCode: vi.fn() }))
 
 import { AppShell } from '@/App'
+import { consumeOAuthLoginReturnTo, keepOAuthLoginReturnTo } from '@/utils/loginReturnTo'
 
 function ProtectedPage() {
   useEffect(() => {
@@ -61,6 +64,11 @@ function ProtectedPage() {
 }
 
 describe('App authentication guard', () => {
+  beforeEach(() => {
+    mocks.isAuthenticated = false
+    window.sessionStorage.clear()
+  })
+
   it('redirects before mounting a protected route or its API effects', async () => {
     const router = createMemoryRouter(
       [
@@ -72,7 +80,7 @@ describe('App authentication guard', () => {
           ],
         },
       ],
-      { initialEntries: ['/protected'] },
+      { initialEntries: ['/protected?view=mine#selected'] },
     )
 
     render(<RouterProvider router={router} />)
@@ -81,6 +89,35 @@ describe('App authentication guard', () => {
     expect(mocks.protectedApiCall).not.toHaveBeenCalled()
     expect(mocks.taskCenterRender).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.getByText('Login page')).toBeInTheDocument())
+    expect(router.state.location.state).toEqual({ returnTo: '/protected?view=mine#selected' })
     expect(mocks.protectedApiCall).not.toHaveBeenCalled()
+  })
+
+  it('restores a one-shot OAuth return to the original protected route after auth is confirmed', async () => {
+    mocks.isAuthenticated = true
+    keepOAuthLoginReturnTo('/projects/12/videos?view=mine#selected')
+    const router = createMemoryRouter(
+      [
+        {
+          element: <AppShell />,
+          children: [
+            { path: '/home', element: <Navigate to="/hot-copy" replace />, handle: { requiresAuth: false } },
+            { path: '/hot-copy', element: <div>Fallback landing</div>, handle: { requiresAuth: false } },
+            { path: '/projects/:id/videos', element: <ProtectedPage /> },
+          ],
+        },
+      ],
+      { initialEntries: ['/home'] },
+    )
+
+    render(<RouterProvider router={router} />)
+
+    expect(await screen.findByText('Protected page')).toBeInTheDocument()
+    expect(router.state.location).toMatchObject({
+      pathname: '/projects/12/videos',
+      search: '?view=mine',
+      hash: '#selected',
+    })
+    expect(consumeOAuthLoginReturnTo()).toBe('')
   })
 })

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import type { ProxyOptions } from 'vite'
 import type { IncomingMessage } from 'node:http'
 import { resolveProxyTarget } from './src/build/proxyTarget'
-import { rewriteBusinessAuthCallback } from './src/build/authCallbackProxy'
+import { redirectFailedAuthCallback, rewriteBusinessAuthCallback } from './src/build/authCallbackProxy'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -152,6 +152,7 @@ export default defineConfig(({ mode }) => {
               proxyReq.removeHeader('origin')
             })
             proxy.on('proxyRes', (proxyRes, req) => {
+              if (redirectFailedAuthCallback(req, proxyRes)) return
               const location = proxyRes.headers.location
               if (!location) return
               if (!location.startsWith('http://') && !location.startsWith('https://')) return

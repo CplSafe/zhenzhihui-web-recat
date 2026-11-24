@@ -4,15 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   cancelled: vi.fn(),
   getError: vi.fn((_error: unknown, fallback: string) => fallback),
+  hasConfiguredDevBackend: vi.fn(),
   logoutSession: vi.fn(),
   markDevLogout: vi.fn(),
-  shouldClear: vi.fn(),
   showToast: vi.fn(),
   start: vi.fn(),
   success: vi.fn(),
 }))
 
-vi.mock('@/api/auth', () => ({
+vi.mock('@/api/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/auth')>()),
   getAuthErrorMessage: mocks.getError,
   logoutSession: mocks.logoutSession,
 }))
@@ -24,9 +25,10 @@ vi.mock('@/auth/AuthContext', () => ({
   }),
 }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: mocks.showToast }) }))
-vi.mock('@/utils/workflowGuards', () => ({ shouldClearSessionAfterLogoutFailure: mocks.shouldClear }))
 vi.mock('@/utils/devAuth', () => ({ markDevLogout: mocks.markDevLogout }))
+vi.mock('@/utils/devBackend', () => ({ hasConfiguredDevBackend: mocks.hasConfiguredDevBackend }))
 
+import { AuthApiError } from '@/api/auth'
 import { useLogout } from '@/composables/useLogout'
 
 function deferred<T>() {
@@ -41,8 +43,8 @@ describe('useLogout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubEnv('DEV', false)
+    mocks.hasConfiguredDevBackend.mockReturnValue(true)
     mocks.logoutSession.mockResolvedValue(undefined)
-    mocks.shouldClear.mockReturnValue(false)
   })
 
   afterEach(() => vi.unstubAllEnvs())
@@ -82,5 +84,32 @@ describe('useLogout', () => {
     await act(async () => result.current.logout())
     expect(mocks.logoutSession).toHaveBeenCalledTimes(2)
     expect(mocks.success).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([{ status: 401 }, { code: 10101, status: 200 }, { code: 'UNAUTHORIZED', status: 200 }])(
+    'clears local state when the server confirms the session is already gone (%o)',
+    async (errorData) => {
+      mocks.logoutSession.mockRejectedValueOnce(new AuthApiError('未登录', errorData))
+      const { result } = renderHook(() => useLogout())
+
+      await act(async () => result.current.logout())
+
+      expect(mocks.success).toHaveBeenCalledOnce()
+      expect(mocks.cancelled).not.toHaveBeenCalled()
+      expect(mocks.showToast).not.toHaveBeenCalledWith(expect.anything(), 'error')
+      expect(result.current.isLoggingOut).toBe(false)
+    },
+  )
+
+  it.each([true, false])('uses the server in development only when configured (%s)', async (configured) => {
+    vi.stubEnv('DEV', true)
+    mocks.hasConfiguredDevBackend.mockReturnValue(configured)
+    const { result } = renderHook(() => useLogout())
+
+    await act(async () => result.current.logout())
+
+    expect(mocks.logoutSession).toHaveBeenCalledTimes(configured ? 1 : 0)
+    expect(mocks.markDevLogout).toHaveBeenCalledTimes(configured ? 0 : 1)
+    expect(mocks.success).toHaveBeenCalledOnce()
   })
 })

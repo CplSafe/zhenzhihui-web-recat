@@ -1759,7 +1759,8 @@ describe('GPT Image editing controls', () => {
       },
       { onGenerate },
     )
-    expect(screen.getByLabelText('上传编辑蒙版')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '替换蒙版' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('上传编辑蒙版')).not.toBeInTheDocument()
     await clickReadyGenerate(user)
     expect(onGenerate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1784,7 +1785,7 @@ describe('GPT Image editing controls', () => {
       },
       { onGenerate },
     )
-    expect(screen.queryByLabelText('上传编辑蒙版')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^(添加|替换)蒙版$/ })).not.toBeInTheDocument()
     await clickReadyGenerate(user)
     const submitted = onGenerate.mock.calls[0]![0]
     expect(submitted.inputAssets).toEqual([{ asset_id: 77, role: 'reference_image' }])

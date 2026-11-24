@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   clearInviteCode: vi.fn(),
-  ensureAuthStart: vi.fn(),
+  prepareRegistration: vi.fn(),
   getCaptcha: vi.fn(),
   getInviteCode: vi.fn(),
   getInviteType: vi.fn(),
@@ -52,7 +52,7 @@ function deferred<T>() {
 function forgotModal(overrides: Record<string, unknown> = {}) {
   return (
     <AuthActionModal
-      ensureAuthStart={mocks.ensureAuthStart}
+      prepareRegistration={mocks.prepareRegistration}
       mode="forgot"
       onClose={mocks.onClose}
       onResetDone={mocks.onResetDone}
@@ -71,7 +71,7 @@ describe('AuthActionModal behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.history.replaceState({}, '', '/login')
-    mocks.ensureAuthStart.mockResolvedValue({ state: 'auth-state' })
+    mocks.prepareRegistration.mockResolvedValue({ state: 'auth-state' })
     mocks.getCaptcha.mockResolvedValue({ id: 'captcha', image: 'data:image/png;base64,AA' })
     mocks.getInviteCode.mockReturnValue('')
     mocks.getInviteType.mockReturnValue('customer')
@@ -85,24 +85,30 @@ describe('AuthActionModal behavior', () => {
     render(
       <AuthActionModal
         mode="sms-register"
-        ensureAuthStart={mocks.ensureAuthStart}
+        prepareRegistration={mocks.prepareRegistration}
         prefill={{ mobile: '17633125265' }}
         onClose={mocks.onClose}
         onAuthed={mocks.onAuthed}
       />,
     )
-    await user.click(screen.getByRole('button', { name: '完成并登录' }))
-    expect(mocks.registerAccount).not.toHaveBeenCalled()
-    expect(screen.getByText('请输入验证码')).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: '完成并登录' })
+    const code = screen.getByRole('textbox', { name: '验证码' })
+    await user.type(code, '123456')
+    expect(submit).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
     expect(mocks.sendAuthSms).toHaveBeenCalledWith(
       expect.objectContaining({
+        authStart: null,
         mobile: '17633125265',
         purpose: 'register',
       }),
     )
-    await user.type(screen.getByRole('textbox', { name: '验证码' }), '592442')
-    await user.click(screen.getByRole('button', { name: '完成并登录' }))
+    expect(code).toHaveValue('')
+    expect(submit).toBeDisabled()
+    expect(mocks.prepareRegistration).not.toHaveBeenCalled()
+    expect(mocks.registerAccount).not.toHaveBeenCalled()
+    await user.type(code, '592442')
+    await user.click(submit)
     expect(mocks.registerAccount).toHaveBeenCalledTimes(1)
     expect(mocks.registerAccount).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -111,35 +117,32 @@ describe('AuthActionModal behavior', () => {
         termsAccepted: true,
       }),
     )
-    expect(mocks.onAuthed).toHaveBeenCalledWith({ state: 'auth-state' }, { ok: true })
+    expect(mocks.prepareRegistration).toHaveBeenCalledOnce()
+    expect(mocks.onAuthed).toHaveBeenCalledWith({ state: 'auth-state' }, { ok: true }, '17633125265')
   })
 
   it('sends registration SMS without submitting a fabricated registration', async () => {
     const user = userEvent.setup()
-    render(<AuthActionModal mode="register" ensureAuthStart={mocks.ensureAuthStart} onClose={mocks.onClose} />)
+    render(<AuthActionModal mode="register" prepareRegistration={mocks.prepareRegistration} onClose={mocks.onClose} />)
     await user.type(screen.getByRole('textbox', { name: '手机号' }), '17633125265')
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
     expect(mocks.registerAccount).not.toHaveBeenCalled()
+    expect(mocks.prepareRegistration).not.toHaveBeenCalled()
     expect(mocks.sendAuthSms).toHaveBeenCalledTimes(1)
   })
 
-  it('honors the remaining login SMS cooldown and prevents duplicate sends', async () => {
+  it('prevents duplicate registration SMS sends and starts its own cooldown', async () => {
     const user = userEvent.setup()
     const pending = deferred<void>()
     mocks.sendAuthSms.mockReturnValue(pending.promise)
-    const modal = (cooldown: number) => (
+    render(
       <AuthActionModal
         mode="sms-register"
-        ensureAuthStart={mocks.ensureAuthStart}
+        prepareRegistration={mocks.prepareRegistration}
         prefill={{ mobile: '17633125265' }}
-        smsCooldown={cooldown}
         onClose={mocks.onClose}
-      />
+      />,
     )
-    const { rerender } = render(modal(30))
-    await user.click(screen.getByRole('button', { name: '30s后重发' }))
-    expect(mocks.sendAuthSms).not.toHaveBeenCalled()
-    rerender(modal(0))
     await user.dblClick(screen.getByRole('button', { name: '获取验证码' }))
     expect(mocks.sendAuthSms).toHaveBeenCalledTimes(1)
     await act(async () => {
@@ -157,13 +160,14 @@ describe('AuthActionModal behavior', () => {
     render(
       <AuthActionModal
         mode="sms-register"
-        ensureAuthStart={mocks.ensureAuthStart}
+        prepareRegistration={mocks.prepareRegistration}
         prefill={{ mobile: '17633125265' }}
         onClose={mocks.onClose}
         onAuthed={mocks.onAuthed}
       />,
     )
     const code = screen.getByRole('textbox', { name: '验证码' })
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
     await user.type(code, '111111')
     await user.click(screen.getByRole('button', { name: '完成并登录' }))
     expect(await screen.findByText('验证码错误或已过期')).toBeInTheDocument()
@@ -182,12 +186,13 @@ describe('AuthActionModal behavior', () => {
     render(
       <AuthActionModal
         mode="sms-register"
-        ensureAuthStart={mocks.ensureAuthStart}
+        prepareRegistration={mocks.prepareRegistration}
         prefill={{ mobile: '17633125265' }}
         onClose={mocks.onClose}
         onAlreadyRegistered={onAlreadyRegistered}
       />,
     )
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
     await user.type(screen.getByRole('textbox', { name: '验证码' }), '592442')
     await user.click(screen.getByRole('button', { name: '完成并登录' }))
     await user.click(await screen.findByRole('button', { name: '直接登录' }))
@@ -214,7 +219,7 @@ describe('AuthActionModal behavior', () => {
     await user.type(screen.getByRole('textbox', { name: '手机号' }), '123')
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
     expect(screen.getByText('请输入正确的手机号')).toBeInTheDocument()
-    expect(mocks.ensureAuthStart).not.toHaveBeenCalled()
+    expect(mocks.prepareRegistration).not.toHaveBeenCalled()
     expect(mocks.sendAuthSms).not.toHaveBeenCalled()
   })
 
@@ -227,6 +232,7 @@ describe('AuthActionModal behavior', () => {
 
     await user.dblClick(screen.getByRole('button', { name: '重置密码' }))
     expect(mocks.resetPassword).toHaveBeenCalledTimes(1)
+    expect(mocks.prepareRegistration).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled()
 
     await act(async () => {
@@ -263,11 +269,72 @@ describe('AuthActionModal behavior', () => {
 
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
     await user.type(code, '654321')
+    expect(submit).toBeEnabled()
+
+    await user.clear(mobile)
+    await user.type(mobile, '13800000000')
+    expect(screen.getByRole('button', { name: /s后重发/ })).toBeDisabled()
+    expect(code).toHaveValue('')
+    expect(submit).toBeDisabled()
+    await user.type(code, '123456')
     await user.click(submit)
     expect(mocks.registerAccount).toHaveBeenCalledOnce()
     expect(mocks.registerAccount).toHaveBeenCalledWith(
-      expect.objectContaining({ mobile: '13900000000', smsCode: '654321' }),
+      expect.objectContaining({ mobile: '13800000000', smsCode: '123456' }),
     )
+  })
+
+  it('ties a late password reset SMS response to the phone that requested it', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<void>()
+    mocks.sendAuthSms.mockReturnValueOnce(pending.promise)
+    render(forgotModal())
+    const mobile = screen.getByRole('textbox', { name: '手机号' })
+    const code = screen.getByRole('textbox', { name: '验证码' })
+    await user.type(mobile, '13800000000')
+    await user.type(code, '123456')
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    await user.clear(mobile)
+    await user.type(mobile, '13900000000')
+    expect(code).toHaveValue('')
+
+    await act(async () => pending.resolve())
+    expect(mocks.showToast).not.toHaveBeenCalled()
+    const send = screen.getByRole('button', { name: '获取验证码' })
+    expect(send).toBeEnabled()
+    await user.click(send)
+    expect(mocks.sendAuthSms).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mobile: '13900000000', purpose: 'reset_password', authStart: null }),
+    )
+    expect(mocks.prepareRegistration).not.toHaveBeenCalled()
+
+    await user.clear(mobile)
+    await user.type(mobile, '13800000000')
+    expect(screen.getByRole('button', { name: /s后重发/ })).toBeDisabled()
+  })
+
+  it('keeps the registration dialog open until its result has been handled', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<{ ok: boolean }>()
+    mocks.registerAccount.mockReturnValueOnce(pending.promise)
+    render(forgotModal({ mode: 'register', onAuthed: mocks.onAuthed }))
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '13800000000')
+    await user.click(screen.getByRole('button', { name: '获取验证码' }))
+    await user.type(screen.getByLabelText('密码'), 'Test-password-1!')
+    await user.type(screen.getByRole('textbox', { name: '验证码' }), '123456')
+    await user.click(screen.getByRole('button', { name: '注册' }))
+    expect(mocks.registerAccount).toHaveBeenCalledOnce()
+
+    const close = screen.getByRole('button', { name: '关闭' })
+    expect(close).toBeDisabled()
+    await user.click(close)
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('dialog').parentElement!)
+    expect(mocks.onClose).not.toHaveBeenCalled()
+
+    await act(async () => pending.resolve({ ok: true }))
+    expect(mocks.onAuthed).toHaveBeenCalledWith({ state: 'auth-state' }, { ok: true }, '13800000000')
+    expect(mocks.onClose).toHaveBeenCalledOnce()
   })
 
   it('recovers after reset failure, preserves the mobile, and never leaks credentials to URL or logs', async () => {

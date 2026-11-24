@@ -167,28 +167,33 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
   zoom: var(--canvas-ui-scale, 1);
 }
 
-.canvas-view .canvas-panel-area > * {
+.canvas-view .canvas-panel-area > .canvas-panel-edit-content {
   zoom: var(--canvas-ui-scale, 1);
   /* 锚点至少让出左侧 128px；同时预留面板内边距与右侧操作空间。 */
-  max-width: calc(var(--canvas-node-panel-width, calc(100vw - 200px)) / var(--canvas-ui-scale, 1));
-  max-height: min(60dvh, calc((100dvh - 160px) / var(--canvas-ui-scale, 1)));
+  max-width: calc(
+    var(--canvas-node-panel-width, var(--canvas-panel-width-limit, calc(100vw - 200px))) / var(--canvas-ui-scale, 1)
+  );
+  max-height: min(var(--canvas-panel-height-limit, 60dvh), calc((100dvh - 160px) / var(--canvas-ui-scale, 1)));
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
   overscroll-behavior: contain;
 }
 
-.canvas-view .canvas-panel-area > *::-webkit-scrollbar {
+.canvas-view .canvas-panel-area > .canvas-panel-edit-content::-webkit-scrollbar {
   display: none;
 }
 
-.canvas-view.has-stacked-agent .canvas-panel-area > * {
+.canvas-view.has-stacked-agent .canvas-panel-area > .canvas-panel-edit-content {
   box-sizing: border-box;
   min-height: 0;
-  max-height: min(60dvh, calc(var(--canvas-node-panel-height, 30dvh) / var(--canvas-ui-scale, 1)));
+  max-height: min(
+    var(--canvas-panel-height-limit, 60dvh),
+    calc(var(--canvas-node-panel-height, 30dvh) / var(--canvas-ui-scale, 1))
+  );
 }
 
-.canvas-view.has-stacked-agent .canvas-panel-edit-content > * {
+.canvas-view.has-stacked-agent .canvas-panel-area:not(.is-video-editor) .canvas-panel-edit-content > * {
   box-sizing: border-box;
   min-height: 0;
   max-width: 100%;
@@ -201,14 +206,6 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
 
 .canvas-view.has-stacked-agent .canvas-director-area [aria-label='DoDo Agent'] {
   max-height: 42dvh;
-}
-
-.canvas-view .canvas-audio-panel {
-  zoom: var(--canvas-ui-scale, 1);
-  max-width: calc((100vw - 48px) / var(--canvas-ui-scale, 1));
-  max-height: calc((100dvh - 160px) / var(--canvas-ui-scale, 1));
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 /* Modal 和 Select 通过 Portal 挂在 body 下，因此显式限定画布弹层。 */
@@ -276,8 +273,11 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   user-select: none;
 }
 
-.canvas-view:not(.has-stacked-agent) .canvas-panel-area.is-anchored > * {
-  max-height: min(60dvh, calc(var(--canvas-panel-space-below, 60dvh) / var(--canvas-ui-scale, 1)));
+.canvas-view:not(.has-stacked-agent) .canvas-panel-area.is-anchored > .canvas-panel-edit-content {
+  max-height: min(
+    var(--canvas-panel-height-limit, 60dvh),
+    calc(var(--canvas-panel-available-height, 60dvh) / var(--canvas-ui-scale, 1))
+  );
 }
 
 .canvas-view:not(.has-stacked-agent) .canvas-panel-edit-content {
@@ -285,8 +285,26 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   overscroll-behavior: contain;
 }
 
+.canvas-panel-area.is-video-editor {
+  --canvas-panel-height-limit: 78dvh;
+}
+
+.canvas-panel-area:is(.is-image-editor, .is-video-editor) {
+  --canvas-panel-width-limit: calc(100vw - 48px);
+}
+
+.canvas-view .canvas-panel-area.is-video-editor .canvas-panel-edit-content {
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
 .canvas-panel-area :is(input, textarea, [contenteditable='true']) {
   user-select: text;
+}
+
+.canvas-view :is(.canvas-panel-area, .canvas-audio-panel) :is(textarea, [contenteditable='true']):focus {
+  overscroll-behavior: contain;
 }
 
 .canvas-panel-area.is-anchored {
@@ -302,6 +320,33 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 .canvas-panel-area.is-drag-hidden {
   visibility: hidden;
   pointer-events: none;
+}
+
+.canvas-panel-area.is-reduced-editor {
+  --canvas-density-panel-height: clamp(250px, 47dvh, 420px);
+}
+
+.canvas-panel-area.is-compact-editor {
+  --canvas-density-panel-height: clamp(200px, 34dvh, 310px);
+}
+
+.canvas-view .canvas-panel-area:is(.is-reduced-editor, .is-compact-editor).is-anchored > .canvas-panel-edit-content {
+  display: flex;
+  flex-direction: column;
+  width: calc(
+    min(var(--canvas-density-panel-width), 100dvw - 32px, var(--canvas-node-panel-width, 100dvw)) /
+      var(--canvas-ui-scale, 1)
+  );
+  max-width: none;
+  max-height: calc(
+    min(
+        var(--canvas-density-panel-height),
+        var(--canvas-panel-available-height),
+        var(--canvas-node-panel-height, 100dvh)
+      ) /
+      var(--canvas-ui-scale, 1)
+  );
+  overflow: visible;
 }
 
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
@@ -1927,19 +1972,21 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 /* Audio composer matches the light cards used by the other canvas nodes. */
 .canvas-default-node.is-audio .canvas-audio-panel {
+  top: var(--canvas-audio-panel-top, calc(100% + 12px));
+  bottom: var(--canvas-audio-panel-bottom, auto);
+  left: calc(50% + var(--canvas-audio-panel-x, 0px));
+  zoom: var(--canvas-audio-panel-zoom, var(--canvas-ui-scale, 1));
   width: 680px;
-  max-width: min(90vw, 680px, calc(var(--canvas-audio-editor-width, 1360px) / var(--canvas-ui-scale, 1)));
+  max-width: var(--canvas-audio-panel-max-width, 90vw);
+  max-height: var(--canvas-audio-panel-max-height, 60dvh);
   padding: 0;
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 14px;
   background: var(--canvas-surface-raised);
   color: var(--canvas-text, #e5e7eb);
   box-shadow: 0 0 30px rgb(0 0 0 / 10%);
-  overflow: visible;
-}
-.canvas-view.has-stacked-agent .canvas-default-node.is-audio .canvas-audio-panel {
-  max-height: calc(var(--canvas-audio-editor-height, 24dvh) / var(--canvas-ui-scale, 1));
-  overflow-y: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .canvas-default-node.is-audio .canvas-audio-panel > div:first-child {
   display: none;
@@ -1947,13 +1994,10 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 /* A generated clip opens a separate editor card; editing controls live on that card only. */
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] {
   width: 560px;
-  max-width: min(92vw, 560px);
-  max-height: min(78vh, 720px);
   padding: 0;
   border-color: #e5e7eb;
   background: var(--canvas-surface-raised);
   color: var(--canvas-text, #e5e7eb);
-  overflow-y: auto;
 }
 .canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > div:first-child {
   display: flex;
@@ -2836,25 +2880,25 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   touch-action: none;
 }
 
-/* 窄屏保持面板在节点下方，同时限制其宽度。 */
+/* 窄屏保持面板水平居中，同时限制其宽度。 */
 @media (max-width: 600px) {
   .canvas-panel-area.is-anchored {
     left: 50% !important;
     width: calc(100vw - 24px);
   }
-  .canvas-view .canvas-panel-area > * {
+  .canvas-view .canvas-panel-area > .canvas-panel-edit-content {
     box-sizing: border-box;
     width: 100%;
     max-width: 100%;
-    max-height: min(60dvh, 520px);
+    max-height: min(var(--canvas-panel-height-limit, 60dvh), 520px);
     scrollbar-width: thin;
     scrollbar-color: var(--canvas-text-muted, #7a8496) transparent;
   }
-  .canvas-view .canvas-panel-area > *::-webkit-scrollbar {
+  .canvas-view .canvas-panel-area > .canvas-panel-edit-content::-webkit-scrollbar {
     display: block;
     width: 6px;
   }
-  .canvas-view .canvas-panel-area > *::-webkit-scrollbar-thumb {
+  .canvas-view .canvas-panel-area > .canvas-panel-edit-content::-webkit-scrollbar-thumb {
     border-radius: 999px;
     background: var(--canvas-text-muted, #7a8496);
   }
@@ -2867,11 +2911,26 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   box-shadow: 0 0 14px hsl(var(--canvas-editor-hue, 164) 78% 60% / 38%);
 }
 .canvas-panel-lock-status {
-  padding: 8px 12px;
-  border: 1px solid #427b75;
-  border-radius: 8px 8px 0 0;
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 8px;
+  inset-inline-end: 12px;
+  max-inline-size: 45%;
+  pointer-events: none;
+}
+
+.canvas-panel-lock-status > span {
+  display: block;
+  padding: 3px 8px;
+  border: 1px solid #315e59;
+  border-radius: 6px;
   background: #163733;
   color: #cdfaf1;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .canvas-view .canvas-node-occupied :is(button, input, textarea, select, [contenteditable='true']) {
   pointer-events: none;

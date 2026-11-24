@@ -23,9 +23,10 @@ import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { releaseLogoutDraftWriteBarrier } from '@/utils/logoutBarrier'
 import { saveSmartEntryDraft, setSmartEntryDraftScope } from '@/utils/smartEntryDraft'
+import { consumeOAuthLoginReturnTo, keepOAuthLoginReturnTo } from '@/utils/loginReturnTo'
 
 function LoginProbe({ returnTo }: { returnTo?: string } = {}) {
-  const { handleLoginSuccess, isAuthenticated, loadAuthSession } = useAuth()
+  const { handleLoginSuccess, handleLogoutSuccess, isAuthenticated, loadAuthSession } = useAuth()
   const location = useLocation()
   return (
     <>
@@ -45,9 +46,12 @@ function LoginProbe({ returnTo }: { returnTo?: string } = {}) {
       >
         finish login
       </button>
-      <output aria-label="pathname">{`${location.pathname}${location.search}`}</output>
+      <output aria-label="pathname">{`${location.pathname}${location.search}${location.hash}`}</output>
       <button type="button" onClick={() => void loadAuthSession()}>
         reload session
+      </button>
+      <button type="button" onClick={handleLogoutSuccess}>
+        finish logout
       </button>
       <output aria-label="authenticated">{String(isAuthenticated)}</output>
     </>
@@ -136,6 +140,7 @@ describe('AuthProvider login refresh scheduling', () => {
     })
 
     expect(screen.getByLabelText('authenticated')).toHaveTextContent('false')
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/welcome')
     expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.9')).toBe('1')
     expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.anon')).toBe('1')
     expect(window.localStorage.getItem('smart_create_draft_v1_uanon_ws1')).toBeNull()
@@ -149,7 +154,7 @@ describe('AuthProvider login refresh scheduling', () => {
     expect(window.sessionStorage.getItem('zzh.smart-entry.draft.v2_uanon_ws1')).toBeNull()
   })
 
-  it('uses the old and anonymous write barriers when an authenticated session expires', async () => {
+  it('preserves the current deep link and applies the write barriers on automatic expiry', async () => {
     window.localStorage.setItem('smart_create_draft_v1_u9_ws1', '{"workspaceId":1}')
     window.localStorage.setItem('smart_create_draft_v1_uanon_ws1', '{"workspaceId":1}')
     window.sessionStorage.setItem('zzh.smart-entry.draft.v2_u9_ws1', '{"text":"private"}')
@@ -158,7 +163,7 @@ describe('AuthProvider login refresh scheduling', () => {
     render(
       <MemoryRouter>
         <AuthProvider>
-          <LoginProbe />
+          <LoginProbe returnTo="/projects/12/videos?x=1#active" />
         </AuthProvider>
       </MemoryRouter>,
     )
@@ -175,6 +180,7 @@ describe('AuthProvider login refresh scheduling', () => {
     })
 
     expect(screen.getByLabelText('authenticated')).toHaveTextContent('false')
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/projects/12/videos?x=1#active')
     expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.9')).toBe('1')
     expect(window.localStorage.getItem('zzh.logout-draft-write-barrier.v1.anon')).toBe('1')
     expect(window.localStorage.getItem('smart_create_draft_v1_u9_ws1')).toBeNull()
@@ -185,6 +191,26 @@ describe('AuthProvider login refresh scheduling', () => {
     setSmartEntryDraftScope('', 1)
     saveSmartEntryDraft({ text: 'must stay cleared after expiry' })
     expect(window.sessionStorage.getItem('zzh.smart-entry.draft.v2_uanon_ws1')).toBeNull()
+  })
+
+  it('clears any pending OAuth target on ordinary login or logout', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginProbe />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+
+    keepOAuthLoginReturnTo('/canvas/3')
+    fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/hot-copy')
+    expect(consumeOAuthLoginReturnTo()).toBe('')
+
+    keepOAuthLoginReturnTo('/canvas/3')
+    fireEvent.click(screen.getByRole('button', { name: 'finish logout' }))
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/welcome')
+    expect(consumeOAuthLoginReturnTo()).toBe('')
   })
 
   it.each([{ status: 500 }, { cause: 'timeout' }, new TypeError('Failed to fetch')])(
