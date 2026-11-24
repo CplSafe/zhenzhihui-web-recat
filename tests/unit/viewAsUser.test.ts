@@ -147,3 +147,38 @@ it('exchanges an explicit account handoff with cookies and stores only its noncr
   expect(localStorage.getItem('zzh.auth.account-switch.v1')).toBe(id)
   expect(sessionStorage.getItem('zzh.view-as-user.v1')).toBeNull()
 })
+
+it('revokes the cookie and stops the handoff if the browser cannot persist the switch ID', async () => {
+  const id = 'b'.repeat(64)
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      succeed({
+        ...identity,
+        mode: 'account',
+        impersonating: true,
+        impersonation_id: id,
+        access_token_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    )
+    .mockResolvedValueOnce(succeed({ ended: true }))
+  vi.stubGlobal('fetch', fetchMock)
+  const unavailable = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('Storage unavailable', 'SecurityError')
+  })
+  try {
+    await expect(loadViewAsUser({ code: 'another-code', mode: 'account' }, signal())).resolves.toMatchObject({
+      error: expect.stringContaining('无法保存切换会话'),
+    })
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/v1/auth/impersonation/end',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-ZZH-Account-Switch': id },
+      }),
+    )
+  } finally {
+    unavailable.mockRestore()
+  }
+})

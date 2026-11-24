@@ -1,5 +1,14 @@
 import { withRequestTimeout } from './requestTimeout'
-import { acceptAccountSwitchSession, isAccountSwitchSession, type AccountSwitchSession } from './accountSwitch'
+import {
+  acceptAccountSwitchSession,
+  ACCOUNT_SWITCH_HEADER,
+  getAccountSwitchId,
+  isAccountSwitchSession,
+  restoreOrdinaryAccount,
+  USER_VIEW_END_PATH,
+  USER_VIEW_EXCHANGE_PATH,
+  type AccountSwitchSession,
+} from './accountSwitch'
 
 export const VIEW_AS_USER_PATH = '/view-as-user'
 const STORAGE_KEY = 'zzh.view-as-user.v1'
@@ -150,7 +159,7 @@ export async function loadViewAsUser(
       const response = await request<
         (ViewAsUserGrant & ViewAsUserIdentity) | (AccountSwitchSession & ViewAsUserIdentity & { mode: 'account' })
       >(
-        '/api/v1/auth/impersonation/exchange',
+        USER_VIEW_EXCHANGE_PATH,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -167,7 +176,10 @@ export async function loadViewAsUser(
         response.mode === 'account' &&
         isAccountSwitchSession(response)
       ) {
-        acceptAccountSwitchSession(response)
+        if (!acceptAccountSwitchSession(response)) {
+          await revokeAccountSwitch(response.impersonation_id)
+          return { error: '无法保存切换会话。请允许网站存储后，从后台重新切换。' }
+        }
         return { mode: 'account' }
       }
       if (
@@ -204,9 +216,21 @@ export function endViewAsUser(): void {
   const token = readGrant()?.access_token
   clearGrant()
   if (!token) return
-  void request<unknown>('/api/v1/auth/impersonation/end', {
+  void request<unknown>(USER_VIEW_END_PATH, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     keepalive: true,
   }).catch(() => undefined)
+}
+
+/** Revoke the switched identity before reloading the ordinary account. */
+export async function leaveAccountSwitch(): Promise<void> {
+  const id = getAccountSwitchId()
+  if (!id) throw new ViewAsUserError('无法确认切换会话', 401)
+  await revokeAccountSwitch(id)
+  restoreOrdinaryAccount(id)
+}
+
+function revokeAccountSwitch(id: string) {
+  return request(USER_VIEW_END_PATH, { method: 'POST', headers: { [ACCOUNT_SWITCH_HEADER]: id } }, true)
 }

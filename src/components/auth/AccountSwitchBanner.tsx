@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { leaveAccountSwitch } from '@/api/accountSwitch'
+import { leaveAccountSwitch } from '@/api/viewAsUser'
 
 export default function AccountSwitchBanner({ name, expired = false }: { name?: string; expired?: boolean }) {
   const [leaving, setLeaving] = useState(false)

@@ -42,8 +42,7 @@ function scheduleObservability(): void {
 // 发布新版本后，旧页面引用的分片已被替换；在错误冒泡到路由错误边界之前先自动刷新一次，
 // 用户看不到「页面加载失败」。必须在渲染前安装，否则首个懒加载路由就会漏掉这个事件。
 installChunkFailureRecovery()
-const uninstallAccountSwitchTransport = installAccountSwitchTransport(isViewAsUserPath)
-import.meta.hot?.dispose(uninstallAccountSwitchTransport)
+installAccountSwitchTransport(isViewAsUserPath)
 
 // 全局组件只在此处挂载一次，页面内容交由 data router 按路由懒加载。
 createRoot(document.getElementById('app')!).render(

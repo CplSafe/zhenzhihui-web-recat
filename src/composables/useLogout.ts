@@ -4,7 +4,8 @@
  */
 import { useRef, useState } from 'react'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
-import { getAccountSwitchId, leaveAccountSwitch } from '@/api/accountSwitch'
+import { getAccountSwitchId } from '@/api/accountSwitch'
+import { leaveAccountSwitch } from '@/api/viewAsUser'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'

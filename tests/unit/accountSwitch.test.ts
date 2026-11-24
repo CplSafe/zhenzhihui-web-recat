@@ -13,7 +13,6 @@ const account = {
   workspaces: [{ id: 12, type: 'personal' }],
 }
 const reply = (data: unknown) => Response.json({ code: 0, data })
-let uninstall: (() => void) | undefined
 
 beforeEach(() => {
   localStorage.clear()
@@ -23,7 +22,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  uninstall?.()
   vi.unstubAllGlobals()
   localStorage.clear()
   sessionStorage.clear()
@@ -38,7 +36,7 @@ it('loads the target through the normal session and business APIs without a norm
     return reply(null)
   })
   vi.stubGlobal('fetch', fetchMock)
-  uninstall = installAccountSwitchTransport(() => false)
+  installAccountSwitchTransport(() => false)
 
   await expect(getAuthenticatedSession()).resolves.toMatchObject({
     ...account,
@@ -73,7 +71,7 @@ it('handles revocation without switching a document to the underlying account', 
     .mockResolvedValueOnce(reply({ user: { id: 999 } }))
     .mockResolvedValueOnce(revoked)
   vi.stubGlobal('fetch', fetchMock)
-  uninstall = installAccountSwitchTransport(() => false)
+  installAccountSwitchTransport(() => false)
   await expect(getAuthenticatedSession()).rejects.toMatchObject({ status: 401, code: 'IMPERSONATION_EXPIRED' })
   expect(fetchMock).toHaveBeenCalledTimes(1)
 

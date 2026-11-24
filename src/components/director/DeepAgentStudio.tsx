@@ -38,18 +38,15 @@ export interface DeepAgentStudioProps {
 export default function DeepAgentStudio(props: DeepAgentStudioProps) {
   if (!getAccountSwitchId()) return <ConnectedDeepAgentStudio {...props} />
   return (
-    <section className={`${styles.studio} ${props.className || ''}`} aria-label="DoDo Agent">
-      <div className={styles.header}>
-        <strong>DoDo Agent</strong>
-        {props.onCollapse && (
-          <button type="button" onClick={props.onCollapse} aria-label="收起 DoDo Agent">
-            <X size={18} aria-hidden="true" />
-          </button>
-        )}
-      </div>
+    <section className={styles.studio} aria-label="DoDo Agent">
       <p className={styles.emptyHint} role="status">
         身份切换期间无法连接 DoDo Agent。
       </p>
+      {props.onCollapse && (
+        <button type="button" onClick={props.onCollapse}>
+          收起 DoDo Agent
+        </button>
+      )}
     </section>
   )
 }
