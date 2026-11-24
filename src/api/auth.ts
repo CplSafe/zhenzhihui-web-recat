@@ -7,6 +7,7 @@ import { shouldRequestAuthenticatedSession } from '../utils/workflowGuards'
 import { createKeyedSingleFlight, createSingleFlight } from '../utils/singleFlight'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { runSharedSessionRefresh } from './sessionRefresh'
+import { acceptAccountSwitchSession, getAccountSwitchId, isAccountSwitchSession } from './accountSwitch'
 
 /** 记录浏览器是否期待存在已登录会话，避免匿名页反复请求鉴权端点。 */
 const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
@@ -127,7 +128,7 @@ export function getCaptcha() {
 
 /** 读取当前业务会话，未登录时由请求层转换为 AuthApiError。 */
 export function getSession() {
-  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/auth/session'))
+  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/auth/session'), { cache: 'no-store' })
 }
 
 /**
@@ -242,9 +243,10 @@ export function resetAuthenticatedSession() {
 async function fetchAuthenticatedSession() {
   // 如果正在进行 SSO 登录回调，即使没有历史 marker 也应该尝试获取 session
   const ssoPending = window.sessionStorage.getItem('zzh_sso_pending') === '1'
-  const shouldAttemptRefresh = hasAuthSessionMarker() || ssoPending
+  const accountSwitchId = getAccountSwitchId()
+  const shouldAttemptRefresh = !accountSwitchId && (hasAuthSessionMarker() || ssoPending)
 
-  if (!shouldRequestAuthenticatedSession(shouldAttemptRefresh)) {
+  if (!accountSwitchId && !shouldRequestAuthenticatedSession(shouldAttemptRefresh)) {
     throw new AuthApiError('未登录', {
       status: 401,
       code: 'UNAUTHORIZED',
@@ -272,6 +274,12 @@ async function fetchAuthenticatedSession() {
       response: session,
     })
   }
+
+  const switched = isAccountSwitchSession(session)
+  if (accountSwitchId && (!switched || session.impersonation_id !== accountSwitchId)) {
+    throw new AuthApiError('切换会话已失效', { status: 401, code: 'IMPERSONATION_EXPIRED' })
+  }
+  if (switched) acceptAccountSwitchSession(session)
 
   let profile = {}
 

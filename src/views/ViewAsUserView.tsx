@@ -313,7 +313,7 @@ function EndedView({ message }: { message: string }) {
 }
 
 export default function ViewAsUserView() {
-  const launch = useLoaderData<Awaited<ReturnType<typeof loadViewAsUser>>>()
+  const launch = useLoaderData<Exclude<Awaited<ReturnType<typeof loadViewAsUser>>, { mode: 'account' }>>()
   const session = 'session' in launch ? launch.session : null
   const [endMessage, setEndMessage] = useState('')
   const workspaces = session?.workspaces || []

@@ -5,6 +5,7 @@ export interface AuthContextValue {
   isAuthenticated: boolean
   isCheckingSession: boolean
   authCheckError: string
+  accountSwitchExpired?: boolean
   loadAuthSession: () => Promise<void>
   /** 登录成功;returnTo 为登录前被守卫拦下的站内路径(已校验),缺省落首页。 */
   handleLoginSuccess: (session?: any, returnTo?: string) => void

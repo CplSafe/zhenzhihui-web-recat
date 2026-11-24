@@ -1,4 +1,5 @@
 import { withRequestTimeout } from './requestTimeout'
+import { acceptAccountSwitchSession, isAccountSwitchSession, type AccountSwitchSession } from './accountSwitch'
 
 export const VIEW_AS_USER_PATH = '/view-as-user'
 const STORAGE_KEY = 'zzh.view-as-user.v1'
@@ -23,7 +24,11 @@ export interface ViewAsUserSession extends ViewAsUserIdentity {
   expiresAt: number
 }
 
-type ViewAsUserLaunch = { session: ViewAsUserSession } | { error: string }
+type ViewAsUserLaunch = { session: ViewAsUserSession } | { mode: 'account' } | { error: string }
+interface ViewAsUserLaunchRequest {
+  code: string
+  mode: 'account' | 'readonly'
+}
 interface ApiEnvelope<T> {
   code: number
   code_string?: string
@@ -48,12 +53,12 @@ export function isViewAsUserPath(path: string): boolean {
 let grant: ViewAsUserGrant | null = null
 
 /** Read and remove the launch code before the router and telemetry see the URL. */
-export function takeViewAsUserLaunchCode(): string | null {
+export function takeViewAsUserLaunchRequest(): ViewAsUserLaunchRequest | null {
   if (!isViewAsUserPath(window.location.pathname) || !window.location.hash) return null
-  const code = new URLSearchParams(window.location.hash.slice(1)).get('code') ?? ''
+  const params = new URLSearchParams(window.location.hash.slice(1))
   window.history.replaceState(window.history.state, '', VIEW_AS_USER_PATH)
   clearGrant()
-  return code
+  return { code: params.get('code') ?? '', mode: params.get('mode') === 'account' ? 'account' : 'readonly' }
 }
 
 function readGrant(): ViewAsUserGrant | null {
@@ -87,7 +92,7 @@ function saveGrant(newGrant: ViewAsUserGrant) {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, accountMode = false): Promise<T> {
   const url = new URL(path, window.location.origin)
   if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/v1/')) {
     throw new ViewAsUserError('查看请求地址无效', 400)
@@ -98,10 +103,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       const response = await fetch(`${url.pathname}${url.search}`, {
         ...options,
         signal,
-        credentials: 'omit',
+        credentials: accountMode ? 'include' : 'omit',
         cache: 'no-store',
         redirect: 'error',
-        referrerPolicy: 'no-referrer',
+        referrerPolicy: accountMode ? 'same-origin' : 'no-referrer',
       })
       const payload = (await response.json().catch(() => null)) as ApiEnvelope<T> | null
       if (!response.ok || payload?.code !== 0 || payload.data === undefined) {
@@ -130,21 +135,49 @@ export async function readAsUser<T>(path: string, options: { signal?: AbortSigna
   }
 }
 
-export async function loadViewAsUser(code: string | null, signal: AbortSignal): Promise<ViewAsUserLaunch> {
+export async function loadViewAsUser(
+  launch: ViewAsUserLaunchRequest | null,
+  signal: AbortSignal,
+): Promise<ViewAsUserLaunch> {
   try {
+    const code = launch?.code ?? null
+    const accountMode = launch?.mode === 'account'
     let identity: ViewAsUserIdentity
     if (code === null) {
       identity = await readAsUser<ViewAsUserIdentity>('/api/v1/auth/session', { signal })
     } else {
       if (!code) throw new ViewAsUserError('查看链接缺少凭证', 400)
-      const response = await request<ViewAsUserGrant & ViewAsUserIdentity>('/api/v1/auth/impersonation/exchange', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-        signal,
-      })
+      const response = await request<
+        (ViewAsUserGrant & ViewAsUserIdentity) | (AccountSwitchSession & ViewAsUserIdentity & { mode: 'account' })
+      >(
+        '/api/v1/auth/impersonation/exchange',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+          signal,
+        },
+        accountMode,
+      )
       if (signal.aborted) throw signal.reason
-      if (typeof response?.access_token !== 'string' || !response.access_token || !response.access_token_expires_at) {
+      if (
+        accountMode &&
+        response &&
+        'mode' in response &&
+        response.mode === 'account' &&
+        isAccountSwitchSession(response)
+      ) {
+        acceptAccountSwitchSession(response)
+        return { mode: 'account' }
+      }
+      if (
+        accountMode ||
+        !response ||
+        !('access_token' in response) ||
+        typeof response.access_token !== 'string' ||
+        !response.access_token ||
+        !response.access_token_expires_at
+      ) {
         throw new ViewAsUserError('无法确认查看身份', 401)
       }
       saveGrant({ access_token: response.access_token, access_token_expires_at: response.access_token_expires_at })

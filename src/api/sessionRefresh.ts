@@ -8,6 +8,7 @@
  * 这里把两条路径合并成一个在途请求,任何时刻最多只有一个 refresh 在飞。
  */
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
+import { getAccountSwitchId } from './accountSwitch'
 
 /** 业务后端的续期端点(同源代理)。 */
 export const AUTH_REFRESH_PATH = '/api/v1/auth/refresh'
@@ -42,10 +43,13 @@ async function readJsonResponse(response: Response): Promise<any> {
  * (AuthContext 登出)在拿到结果后自行按 signal / epoch 丢弃即可。
  */
 export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
+  if (getAccountSwitchId())
+    return Promise.resolve({ ok: false, status: 401, payload: null, error: null, abortCause: null })
   if (inFlight) return inFlight
   const request = withRequestTimeout(
     async (signal) => {
       const refresh = async (): Promise<SessionRefreshOutcome> => {
+        if (getAccountSwitchId()) return { ok: false, status: 401, payload: null, error: null, abortCause: null }
         const response = await fetch(AUTH_REFRESH_PATH, {
           method: 'POST',
           credentials: 'include',

@@ -17,6 +17,12 @@ import {
   refreshSession,
   resetAuthenticatedSession,
 } from '../api/auth'
+import {
+  clearAccountSwitchCaches,
+  getAccountSwitchId,
+  isAccountSwitchSession,
+  subscribeToAccountSwitchExpiry,
+} from '../api/accountSwitch'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
 import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
@@ -128,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isCheckingSession, setIsCheckingSession] = useState(true)
   const [authCheckError, setAuthCheckError] = useState('')
+  const [accountSwitchExpired, setAccountSwitchExpired] = useState(false)
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshEpochRef = useRef(0)
@@ -155,6 +162,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshInFlightRef.current?.controller.abort()
     refreshInFlightRef.current = null
   }, [])
+
+  const expireAccountSwitch = useCallback(() => {
+    if (!getAccountSwitchId()) return
+    const ownerScope = getCurrentDraftUserScope()
+    if (ownerScope) {
+      beginLogoutDraftWriteBarrier(ownerScope, false)
+      beginLogoutDraftWriteBarrier('anon', false)
+      detachRunningVideoGensForOwner(ownerScope)
+    }
+    stopSessionRefresh()
+    loadSeqRef.current += 1
+    resetAuthenticatedSession()
+    clearAccountSwitchCaches()
+    setSession(null)
+    setAuthSession(null)
+    setIsAuthenticated(false)
+    setIsCheckingSession(false)
+    setAuthCheckError('')
+    setAccountSwitchExpired(true)
+  }, [setAuthSession, stopSessionRefresh])
+
+  useEffect(() => subscribeToAccountSwitchExpiry(expireAccountSwitch), [expireAccountSwitch])
 
   const runSessionRefresh = useCallback((): Promise<any> => {
     const epoch = refreshEpochRef.current
@@ -210,7 +239,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // 开发模式：仅在未配置代理后端时用 mock session 跳过鉴权。
     const hasRemoteBackend = hasConfiguredDevBackend()
-    if (import.meta.env.DEV && !hasRemoteBackend) {
+    if (import.meta.env.DEV && !hasRemoteBackend && !getAccountSwitchId()) {
       const justLoggedOut = (window as any).__zzh_dev_logout__
       delete (window as any).__zzh_dev_logout__
       if (justLoggedOut) {
@@ -241,9 +270,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(true)
       setAuthSession(session)
       releaseDraftWriteBarrierForSession(session)
-      markAuthSessionExpected()
       sessionStorage.removeItem('zzh_sso_pending')
-      startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
+      if (isAccountSwitchSession(session)) {
+        stopSessionRefresh()
+        lastRefreshRef.current = Date.now()
+        refreshTimer.current = setTimeout(
+          expireAccountSwitch,
+          Math.max(0, Date.parse(session.access_token_expires_at) - Date.now()),
+        )
+      } else {
+        markAuthSessionExpected()
+        startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
+      }
     } catch (error: any) {
       if (isStale()) return
       if (!isUnauthorizedAuthError(error)) {
@@ -254,6 +292,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshTimer.current = setTimeout(() => {
           if (refreshEpochRef.current === retryEpoch) void loadAuthSessionRef.current()
         }, SESSION_CHECK_RETRY_MS)
+        return
+      }
+      if (getAccountSwitchId()) {
+        expireAccountSwitch()
         return
       }
       const existingDraftUserScope = getCurrentDraftUserScope()
@@ -282,7 +324,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       if (!isStale()) setIsCheckingSession(false)
     }
-  }, [setAuthSession, startSessionRefresh, stopSessionRefresh])
+  }, [expireAccountSwitch, setAuthSession, startSessionRefresh, stopSessionRefresh])
 
   loadAuthSessionRef.current = loadAuthSession
 
@@ -392,7 +434,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== AUTH_LOGOUT_EVENT_KEY || !event.newValue) return
+      if (event.key !== AUTH_LOGOUT_EVENT_KEY || !event.newValue || getAccountSwitchId()) return
       try {
         const payload = JSON.parse(event.newValue)
         const currentUserScope = getCurrentDraftUserScope()
@@ -420,8 +462,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const maybeRefresh = () => {
       if (document.visibilityState !== 'visible') return
       const now = Date.now()
+      if (isAccountSwitchSession(authSession) && Date.parse(authSession.access_token_expires_at) <= now) {
+        expireAccountSwitch()
+        return
+      }
       if (now - lastRefreshRef.current < VISIBILITY_REFRESH_GAP_MS) return
       lastRefreshRef.current = now
+      if (getAccountSwitchId()) {
+        void loadAuthSessionRef.current()
+        return
+      }
       const refreshEpoch = refreshEpochRef.current
       runSessionRefresh()
         .then(() => {
@@ -439,7 +489,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', maybeRefresh)
       window.removeEventListener('focus', maybeRefresh)
     }
-  }, [isAuthenticated, runSessionRefresh, stopSessionRefresh])
+  }, [authSession, expireAccountSwitch, isAuthenticated, runSessionRefresh, stopSessionRefresh])
 
   // 用 useMemo 固定 value 引用：否则每次渲染都是新对象，会让所有 useAuth() 消费者
   // （AuthProvider 包住整个路由树）连带全树重渲染。回调已是 useCallback 稳定引用。
@@ -449,6 +499,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       isCheckingSession,
       authCheckError,
+      accountSwitchExpired,
       loadAuthSession,
       handleLoginSuccess,
       handleLogoutStart,
@@ -457,6 +508,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }),
     [
       authSession,
+      accountSwitchExpired,
       isAuthenticated,
       isCheckingSession,
       authCheckError,

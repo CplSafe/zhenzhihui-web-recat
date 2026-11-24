@@ -3,6 +3,7 @@ import { Check, List, Square, X } from 'lucide-react'
 import { canvasAllowsModel } from '@/utils/canvasModelBuckets'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
 import { RequestAbortError } from '@/api/requestTimeout'
+import { getAccountSwitchId } from '@/api/accountSwitch'
 import { Approval, Dialog, Popover, DocumentEditor, Conversation, Results, TooltipLayer } from './StudioCards'
 import { defaultModel, StudioHTTPError, contextInfo, conversationCredits, isInsufficientCreditsEvent } from './studio'
 import type { Data, StudioAttachment, StudioDocument, StudioRun } from './studio'
@@ -34,7 +35,26 @@ export interface DeepAgentStudioProps {
   canvasReference?: CanvasReference
 }
 /** Embeddable Studio: the host owns placement; the service owns auth, tools, billing and execution. */
-export default function DeepAgentStudio({
+export default function DeepAgentStudio(props: DeepAgentStudioProps) {
+  if (!getAccountSwitchId()) return <ConnectedDeepAgentStudio {...props} />
+  return (
+    <section className={`${styles.studio} ${props.className || ''}`} aria-label="DoDo Agent">
+      <div className={styles.header}>
+        <strong>DoDo Agent</strong>
+        {props.onCollapse && (
+          <button type="button" onClick={props.onCollapse} aria-label="收起 DoDo Agent">
+            <X size={18} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      <p className={styles.emptyHint} role="status">
+        身份切换期间无法连接 DoDo Agent。
+      </p>
+    </section>
+  )
+}
+
+function ConnectedDeepAgentStudio({
   apiBase = '/agent-studio',
   workspaceId,
   canvasId,

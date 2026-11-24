@@ -27,9 +27,10 @@ function persistentBarrierExists(ownerScope: unknown): boolean {
 }
 
 /** 退出清理后立即建立跨标签页屏障，阻止卸载回调或在途请求重新创建草稿。 */
-export function beginLogoutDraftWriteBarrier(ownerScope: unknown = ''): void {
+export function beginLogoutDraftWriteBarrier(ownerScope: unknown = '', persist = true): void {
   const owner = normalizeOwnerScope(ownerScope)
   blockedOwners.add(owner)
+  if (!persist) return
   try {
     globalThis.localStorage?.setItem(storageKey(owner), '1')
   } catch {

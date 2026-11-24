@@ -4,6 +4,7 @@
  */
 import { useRef, useState } from 'react'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
+import { getAccountSwitchId, leaveAccountSwitch } from '@/api/accountSwitch'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
@@ -21,6 +22,17 @@ export function useLogout() {
     if (loggingOutRef.current) return
     loggingOutRef.current = true
     setIsLoggingOut(true)
+
+    if (getAccountSwitchId()) {
+      try {
+        await leaveAccountSwitch()
+      } catch {
+        showToast('暂时无法退出切换，请重试。', 'error')
+        loggingOutRef.current = false
+        setIsLoggingOut(false)
+      }
+      return
+    }
 
     if (import.meta.env.DEV) {
       loggingOutRef.current = false
