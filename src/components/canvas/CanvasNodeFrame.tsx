@@ -1,5 +1,5 @@
 import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from 'react'
-import { EighthNotes, Scissors } from 'lucide-react'
+import { EighthNotes } from 'lucide-react'
 
 type DivProps = ComponentPropsWithoutRef<'div'>
 
@@ -69,7 +69,28 @@ export function CanvasNodeImage(props: ComponentPropsWithoutRef<'img'>) {
 
 export function getTypeIcon(kind: string, size = 12) {
   if (kind === 'audio') return <EighthNotes size={size} aria-hidden="true" />
-  if (kind === 'audio-editor') return <Scissors size={size} aria-hidden="true" />
+  if (kind === 'audio-editor') {
+    return (
+      <svg
+        className="canvas-audio-edit-icon"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="5" cy="12" r="2.6" />
+        <circle cx="5" cy="20" r="2.6" />
+        <path d="m7 13.6 8 7.4M7 18.4l8-7.4" />
+        <path d="M21 8.5v-6l2 1.25" />
+        <ellipse cx="18.8" cy="8.5" rx="2.4" ry="1.8" fill="currentColor" stroke="none" />
+      </svg>
+    )
+  }
   if (kind === 'image') {
     return (
       <svg width={size} height={size} viewBox="0 0 14 14" fill="none">

@@ -34,7 +34,7 @@ test('右键菜单能建出视频剪辑节点，且按时间线尺寸落位', as
   await expect(menu).toBeVisible()
   // 音频节点与其余类型在右键菜单和左侧工具栏保持一致。
   await expect(menu.getByRole('button', { name: '音频节点' }).locator('svg.lucide-eighth-notes')).toBeVisible()
-  await expect(menu.getByRole('button', { name: '音频编辑' }).locator('svg.lucide-scissors')).toBeVisible()
+  await expect(menu.getByRole('button', { name: '音频编辑' }).locator('svg.canvas-audio-edit-icon')).toBeVisible()
   await expect(menu.getByRole('button', { name: '文本节点' })).toBeVisible()
   await expect(menu.getByRole('button', { name: '图片节点' })).toBeVisible()
   await expect(menu.getByRole('button', { name: '视频节点' })).toBeVisible()
@@ -72,7 +72,7 @@ test('左侧添加菜单可以创建音频节点', async ({ page }) => {
   const menu = page.getByRole('menu', { name: '创建或添加节点' })
   const audioEntry = menu.getByRole('menuitem', { name: /音频节点/ })
   await expect(audioEntry.locator('svg.lucide-eighth-notes')).toBeVisible()
-  await expect(menu.getByRole('menuitem', { name: /音频编辑/ }).locator('svg.lucide-scissors')).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: /音频编辑/ }).locator('svg.canvas-audio-edit-icon')).toBeVisible()
   await expect(menu.getByRole('menuitem', { name: /^文本节点/ })).toBeVisible()
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
   await audioEntry.click()
