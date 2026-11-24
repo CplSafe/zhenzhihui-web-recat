@@ -256,7 +256,7 @@ describe('downloadToDisk URL 防护', () => {
       }),
     ).resolves.toBe('done')
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/assets/42/download', { cache: 'no-store' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/assets/42/download?attachment=1', { cache: 'no-store' })
     expect(writable.write).toHaveBeenCalledWith(expect.any(Blob))
     expect(writable.close).toHaveBeenCalledOnce()
     expect(document.querySelector('iframe')).toBeNull()

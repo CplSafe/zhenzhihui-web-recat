@@ -1,5 +1,5 @@
 import { buildDownloadName, detectDownloadedMediaType } from './downloadToDisk'
-import { resolveSafeDownloadUrl } from './downloadUrlSafety'
+import { assetAttachmentUrl, resolveSafeDownloadUrl } from './downloadUrlSafety'
 
 export type CanvasDownloadItem =
   | { title: string; kind: 'text'; text: string }
@@ -28,7 +28,8 @@ async function readFile(item: CanvasDownloadItem): Promise<File> {
   }
   const address = resolveSafeDownloadUrl(item.url, window.location.origin)
   if (!address) throw new Error('无效的素材地址')
-  const response = await fetch(address.href, { credentials: 'same-origin' })
+  const url = item.kind === 'video' ? assetAttachmentUrl(address, window.location.origin) : address.href
+  const response = await fetch(url, { credentials: 'same-origin' })
   if (!response.ok) throw new Error('素材读取失败')
   const contentType = response.headers.get('content-type') || ''
   const blob = await response.blob()

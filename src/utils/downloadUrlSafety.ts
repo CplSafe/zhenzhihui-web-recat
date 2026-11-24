@@ -70,3 +70,12 @@ export function resolveSafeDownloadUrl(value: unknown, pageOriginValue: string):
     isCrossOrigin: parsed.origin !== pageOrigin,
   }
 }
+
+// Request a stamped copy only at the point of an explicit download.
+export function assetAttachmentUrl(address: SafeDownloadUrl, origin: string): string {
+  if (address.kind !== 'http' || address.isCrossOrigin) return address.href
+  const url = new URL(address.href, origin)
+  if (!/^\/api\/v1\/assets\/[1-9][0-9]*\/download$/.test(url.pathname)) return address.href
+  url.searchParams.set('attachment', '1')
+  return address.href.startsWith('/') ? url.pathname + url.search + url.hash : url.href
+}

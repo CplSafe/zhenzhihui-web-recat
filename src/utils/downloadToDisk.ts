@@ -11,7 +11,7 @@
  *     - 无句柄 → a[download] 触发下载(blob 同源,download 必生效,文件名可控)。
  *  ④ fetch 失败(跨域未放行 CORS / 网络)→ 隐藏 iframe 触发浏览器下载(靠 Content-Disposition,不跳转页面)。
  */
-import { resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
+import { assetAttachmentUrl, resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
 
 /** 下载动作的最终结果，用于区分已完成、用户取消与浏览器接管。 */
 export type DownloadResult = 'done' | 'cancelled' | 'started'
@@ -210,7 +210,7 @@ export async function downloadToDisk(opts: {
     unsafe.name = 'UnsafeDownloadUrlError'
     throw unsafe
   }
-  const url = safeUrl.href
+  const url = mime.startsWith('video/') ? assetAttachmentUrl(safeUrl, globalThis.location.origin) : safeUrl.href
 
   // 微信 WebView 对 blob: + a[download] 的支持不稳定，可能创建空文件或在异步读取前丢失 Blob。
   // HTTP(S) 资源直接交给微信/后端响应处理：支持附件下载的环境会下载，其余环境会打开原图/视频供长按保存。
