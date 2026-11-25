@@ -32,6 +32,7 @@ for (const width of [1440, 390]) {
       await page.route('**/api/v1/canvases/188**', async (route) => {
         if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
         const url = new URL(route.request().url())
+        if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
         await route.fulfill({
           json: url.pathname.endsWith('/elements')
             ? {
@@ -61,16 +62,31 @@ for (const width of [1440, 390]) {
       })
       await page.goto('/canvas/188')
       const nodes = page.locator('.react-flow__node')
+      const nodeA = nodes.and(page.locator('[data-id="A"]'))
+      const nodeB = nodes.and(page.locator('[data-id="B"]'))
       await expect(nodes).toHaveCount(2)
       if (grouped) {
-        await page.locator('.react-flow__node[data-id="A"]').click({ position: { x: 60, y: 60 } })
+        await nodeA.click({ position: { x: 60, y: 60 } })
       } else {
-        for (const id of ['A', 'B'])
-          await page
-            .locator(`.react-flow__node[data-id="${id}"]`)
-            .click({ position: { x: 40, y: 40 }, modifiers: ['Control'] })
+        // 框选同时选中两个节点，避免单选期间的编辑面板盖住另一个节点。
+        await expect(nodeA).toBeInViewport()
+        await expect(nodeB).toBeInViewport()
+        const [a, b] = await Promise.all([nodeA.boundingBox(), nodeB.boundingBox()])
+        if (!a || !b) throw new Error('待框选节点不可见')
+        const startX = Math.max(8, Math.min(a.x, b.x) - 12)
+        const startY = Math.max(8, Math.min(a.y, b.y) - 24)
+        const endX = Math.min(width - 8, Math.max(a.x + a.width, b.x + b.width) + 12)
+        const endY = Math.min(836, Math.max(a.y + a.height, b.y + b.height) + 12)
+        await page.keyboard.down('Shift')
+        await page.mouse.move(startX, startY)
+        await page.mouse.down()
+        await page.mouse.move(endX, endY, { steps: 8 })
+        await page.mouse.up()
+        await page.keyboard.up('Shift')
       }
       await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+      await expect(nodeA).toHaveClass(/(?:^|\s)selected(?:\s|$)/)
+      await expect(nodeB).toHaveClass(/(?:^|\s)selected(?:\s|$)/)
       const add = page.getByRole('button', { name: '从所选节点创建下游节点' })
       await expect(add).toBeVisible()
       const box = await add.boundingBox()
@@ -87,6 +103,8 @@ for (const width of [1440, 390]) {
       await expect(menu).toBeVisible()
       await expect(menu.getByRole('button', { name: /^视频制作/ })).toBeEnabled()
       await page.screenshot({ path: testInfo.outputPath('drag-menu.png') })
+      const viewport = page.locator('.react-flow__viewport')
+      const viewBeforeCreation = await viewport.getAttribute('style')
       await menu.getByRole('button', { name: /^视频制作/ }).click()
       await expect(nodes).toHaveCount(3)
       await expect(page.locator('.react-flow__edge')).toHaveCount(2)
@@ -95,21 +113,40 @@ for (const width of [1440, 390]) {
       await expect(page.getByText('音频 0/10')).toBeVisible()
       const panel = page.locator('.canvas-panel-area')
       await expect(panel).toBeVisible()
+      await expect.poll(() => viewport.getAttribute('style')).not.toBe(viewBeforeCreation)
       await expect
-        .poll(async () => {
-          const bounds = await panel.boundingBox()
-          return Boolean(
-            bounds &&
-            bounds.x >= 0 &&
-            bounds.x + bounds.width <= width &&
-            bounds.y >= 0 &&
-            bounds.y + bounds.height <= 844,
-          )
-        })
+        .poll(() =>
+          viewport.evaluate(
+            (element) =>
+              new Promise<boolean>((resolve) => {
+                const before = element.getAttribute('style')
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve(element.getAttribute('style') === before)),
+                )
+              }),
+          ),
+        )
         .toBe(true)
+      const newVideo = page.locator('.react-flow__node-video')
+      const [videoBox, panelBox] = await Promise.all([newVideo.boundingBox(), panel.boundingBox()])
+      if (!videoBox || !panelBox) throw new Error('新建视频节点和编辑面板应当存在')
+      expect(panelBox.x + panelBox.width / 2).toBeCloseTo(videoBox.x + videoBox.width / 2, 0)
+      expect(panelBox.y - videoBox.y - videoBox.height).toBeCloseTo(24, 0)
+
+      // 面板保留节点位置，手动平移给完整面板留出空间。
+      const dx = Math.round(width / 2 - (panelBox.x + panelBox.width / 2))
+      const dy = Math.round(Math.max(8, Math.min(panelBox.y, 844 - panelBox.height - 48)) - panelBox.y)
+      const startX = dx < 0 ? width - 24 : 24
+      const startY = 105 + Math.max(0, -dy)
+      await page.mouse.move(startX, startY)
+      await page.mouse.down({ button: 'middle' })
+      await page.mouse.move(startX + dx, startY + dy, { steps: 8 })
+      await page.mouse.up({ button: 'middle' })
+      await expect(panel).toBeInViewport({ ratio: 0.99 })
       const prompt = panel.getByRole('textbox')
-      await prompt.scrollIntoViewIfNeeded()
-      await expect(prompt).toBeVisible()
+      await prompt.click()
+      await prompt.fill('从批量选中的节点制作视频')
+      await expect(prompt).toHaveText('从批量选中的节点制作视频')
       await page.screenshot({ path: testInfo.outputPath('video-created.png') })
       expect(api.paidTaskSubmissions).toBe(0)
       expectNoUnexpectedApi(api)

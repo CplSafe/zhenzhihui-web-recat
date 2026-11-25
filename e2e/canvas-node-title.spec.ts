@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 760]) {
@@ -96,8 +96,14 @@ for (const width of [1440, 760]) {
     await page.screenshot({ path: testInfo.outputPath('node-titles-readable-at-25-percent.png') })
     await image.click()
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
-    const toolbar = page.getByRole('toolbar', { name: '节点操作', exact: true })
+    const toolbar = page.locator('[data-canvas-node-toolbar]')
     const panel = page.locator('.canvas-panel-area')
+    const renameAction = toolbar.getByRole('button', { name: '重命名节点', exact: true })
+    const centerX = (locator: Locator) =>
+      locator.evaluate((element) => {
+        const { left, width } = element.getBoundingClientRect()
+        return left + width / 2
+      })
     await expect(toolbar).toBeVisible()
     await expect(panel).toHaveCSS('visibility', 'visible')
 
@@ -122,30 +128,75 @@ for (const width of [1440, 760]) {
     await expectFullTitleSelection(originalImageTitle)
     await replaceTitle(titleAfterDoubleClick)
     expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true)
-    await toolbar.getByRole('button', { name: '重命名节点' }).click()
+    await renameAction.click()
     await expectFullTitleSelection(titleAfterDoubleClick)
     await page.screenshot({ path: testInfo.outputPath('rename-title-selected.png') })
     await replaceTitle(titleAfterToolbar)
 
-    // 平移画布，使选中节点完全离开可视区；关联工具栏和面板应随之隐藏。
-    const paneBounds = await page.locator('.react-flow').boundingBox()
-    if (!paneBounds) throw new Error('画布缺少可视区域')
-    const dragY = paneBounds.y + paneBounds.height * 0.75
-    await page.mouse.move(paneBounds.x + paneBounds.width - 24, dragY)
-    await page.mouse.down({ button: 'middle' })
-    await page.mouse.move(paneBounds.x + 8, dragY, { steps: 10 })
-    await page.mouse.up({ button: 'middle' })
-    await expect(toolbar).toHaveCount(0)
-    await expect(panel).toHaveCSS('visibility', 'hidden')
-    await page.screenshot({ path: testInfo.outputPath('selected-node-offscreen-controls-hidden.png') })
+    const [nodeBounds, toolbarBounds, panelBounds] = await Promise.all([
+      image.boundingBox(),
+      toolbar.boundingBox(),
+      panel.boundingBox(),
+    ])
+    if (!nodeBounds || !toolbarBounds || !panelBounds) throw new Error('缺少节点或浮层尺寸')
+    const initialCenter = nodeBounds.x + nodeBounds.width / 2
+    const edge = flowBox.x
+    const horizontalPan = () =>
+      viewport.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).e)
+    const panToCenter = async (target: number) => {
+      const delta = Math.round(target - (await centerX(image)))
+      const startX = delta < 0 ? edge + flowBox.width - 24 : edge + 24
+      const y = flowBox.y + flowBox.height * 0.22
+      const before = await horizontalPan()
+      await page.mouse.move(startX, y)
+      await page.mouse.down({ button: 'middle' })
+      await page.mouse.move(startX + delta, y, { steps: 10 })
+      await page.mouse.up({ button: 'middle' })
+      await expect.poll(horizontalPan).toBeCloseTo(before + delta, 0)
+    }
+    const expectAligned = async (overlay: Locator) => {
+      await expect.poll(async () => Math.abs((await centerX(overlay)) - (await centerX(image)))).toBeLessThanOrEqual(1)
+    }
 
-    // 把视口平移回来，确认两组控件可以恢复。
-    await page.mouse.move(paneBounds.x + 8, dragY)
-    await page.mouse.down({ button: 'middle' })
-    await page.mouse.move(paneBounds.x + paneBounds.width - 24, dragY, { steps: 10 })
-    await page.mouse.up({ button: 'middle' })
+    // 节点先移出左侧，两个浮层仍按自己的边界逐步裁切。
+    const justOutside = edge - nodeBounds.width / 2 - 12
+    const betweenOverlayEdges = edge - (toolbarBounds.width + panelBounds.width) / 4
+    await panToCenter(justOutside)
+    await expect(image).not.toBeInViewport()
+    await expect(image).toHaveClass(/selected/)
+    for (const overlay of [toolbar, panel]) {
+      await expect(overlay).toBeInViewport()
+      await expect(overlay).not.toBeInViewport({ ratio: 0.99 })
+      await expectAligned(overlay)
+    }
+    await page.screenshot({ path: testInfo.outputPath('selected-node-offscreen-controls-clipped.png') })
+
+    await panToCenter(betweenOverlayEdges)
+    await expect(toolbar).not.toBeInViewport()
+    await expect(toolbar).toBeHidden()
+    await expect(panel).toBeInViewport()
+    await expectAligned(panel)
+    await page.screenshot({ path: testInfo.outputPath('selected-node-offscreen-only-editor-visible.png') })
+
+    await panToCenter(edge - panelBounds.width / 2 - 12)
+    for (const overlay of [toolbar, panel]) {
+      await expect(overlay).not.toBeInViewport()
+      await expect(overlay).toBeHidden()
+    }
+
+    // 把节点平移回来，确认两个浮层重新对齐节点且重命名结果仍在。
+    await panToCenter(justOutside)
+    await expect(toolbar).toBeInViewport()
+    await expect(panel).toBeInViewport()
+    await panToCenter(initialCenter)
+    await expect(image).toBeInViewport()
     await expect(toolbar).toBeVisible()
-    await expect(panel).toHaveCSS('visibility', 'visible')
+    await expect(panel).toBeVisible()
+    await expect(panel).toBeInViewport()
+    await expectAligned(toolbar)
+    await expectAligned(panel)
+    await expect(title).toHaveText(titleAfterToolbar)
+    await page.screenshot({ path: testInfo.outputPath('selected-node-back-in-view-controls-restored.png') })
 
     await page.reload()
     await expect(title).toHaveText(titleAfterToolbar)

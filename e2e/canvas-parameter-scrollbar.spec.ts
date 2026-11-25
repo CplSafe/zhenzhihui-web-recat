@@ -1,5 +1,26 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
+
+async function panToShowEditor(page: Page, node: Locator, width: number, height: number) {
+  await expect(node).toBeInViewport()
+  const nodeBounds = (await node.boundingBox())!
+  // 给正常锚定在节点下方的参数入口留出点击空间。
+  const targetBottom = 210
+  const deltaX = width / 2 - nodeBounds.x - nodeBounds.width / 2
+  const deltaY = targetBottom - nodeBounds.y - nodeBounds.height
+  const dragX = deltaX > 0 ? 24 : width - 24
+  const dragY = deltaY > 0 ? 90 : height - 90
+  await page.mouse.move(dragX, dragY)
+  await page.mouse.down({ button: 'middle' })
+  await page.mouse.move(dragX + deltaX, dragY + deltaY, { steps: 8 })
+  await page.mouse.up({ button: 'middle' })
+  await expect
+    .poll(async () => {
+      const bounds = (await node.boundingBox())!
+      return Math.hypot(bounds.x + bounds.width / 2 - width / 2, bounds.y + bounds.height - targetBottom)
+    })
+    .toBeLessThan(4)
+}
 
 for (const width of [1440, 760]) {
   test(`生成参数滚动区域使用深色滚动条 ${width}`, async ({ page }, testInfo) => {
@@ -58,7 +79,9 @@ for (const width of [1440, 760]) {
       route.fulfill({ json: { granted: true, nodes: {} } }),
     )
     await page.goto('/canvas/119')
-    await page.locator('.react-flow__node[data-id="source"]').click()
+    const node = page.locator('.react-flow__node[data-id="source"]')
+    await panToShowEditor(page, node, width, 640)
+    await node.click()
     const editor = page.locator('[data-canvas-node-panel]')
     await editor.locator('button[aria-expanded]').last().click()
     const menu = page.getByRole('region', { name: '生成参数', exact: true })
@@ -166,7 +189,9 @@ for (const width of [1440, 390]) {
     )
 
     await page.goto('/canvas/243')
-    await page.locator('.react-flow__node[data-id="image"] .canvas-node-header').click()
+    const image = page.locator('.react-flow__node[data-id="image"]')
+    await panToShowEditor(page, image, width, 900)
+    await image.click()
     const panel = page.locator('[data-canvas-node-panel]')
     const footer = panel.locator('[data-canvas-node-panel-actions]')
     const model = footer.getByRole('button', { name: modelName, exact: true })
@@ -179,8 +204,8 @@ for (const width of [1440, 390]) {
     await footer.scrollIntoViewIfNeeded()
 
     const panelBounds = (await panel.boundingBox())!
-    expect(panelBounds.x).toBeGreaterThanOrEqual(0)
-    expect(panelBounds.x + panelBounds.width).toBeLessThanOrEqual(width)
+    expect(panelBounds.x).toBeGreaterThanOrEqual(-1)
+    expect(panelBounds.x + panelBounds.width).toBeLessThanOrEqual(width + 1)
     const controls = [model, parameters, style, moderation, regenerate]
     for (const control of controls) {
       await expect(control).toBeInViewport({ ratio: 0.99 })

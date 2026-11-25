@@ -69,7 +69,7 @@ for (const width of [1440, 760]) {
     await agentPrompt.fill('保留这段 Agent 草稿')
 
     const pane = page.locator('.react-flow__pane')
-    const blankPoint = { x: 52, y: 150 }
+    const blankPoint = { x: 52, y: 112 }
     await pane.click({ button: 'right', position: { x: Math.round(width * 0.78), y: 170 } })
     await page.locator('.canvas-context-menu').getByRole('button', { name: '视频节点', exact: true }).click()
     const node = page.locator('.react-flow__node')

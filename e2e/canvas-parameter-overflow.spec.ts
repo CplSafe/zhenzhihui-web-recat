@@ -88,20 +88,17 @@ for (const kind of ['image', 'video']) {
                 : { id: 119, title: '参数布局检查', revision: 1 },
         }),
       )
+      await page.route('**/api/v1/canvases/119/node-locks**', (route) =>
+        route.fulfill({ json: { granted: true, nodes: {} } }),
+      )
       await page.goto('/canvas/119')
       await page.locator('.react-flow__node[data-id="source"]').click()
       const editor = page.locator('[data-canvas-node-panel]')
       await expect(editor).toBeVisible()
-      // Match the screenshot: the editor itself clips overflowing children.
+      // Clip overflowing children while keeping the editor in its normal canvas layout.
       await editor.evaluate((element) => {
         element.style.overflow = 'auto'
         element.style.maxHeight = '320px'
-        element.style.position = 'fixed'
-        element.style.top = 'auto'
-        element.style.bottom = '90px'
-        element.style.left = '120px'
-        element.style.transform = 'none'
-        element.style.width = 'min(600px, calc(100vw - 144px))'
       })
       const trigger = editor.locator('button[aria-expanded]').last()
       const modelTrigger = editor.getByRole('button', { name: '布局测试模型', exact: true })

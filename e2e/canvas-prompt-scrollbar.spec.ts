@@ -1,10 +1,38 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+import { waitForCanvasViewportToSettle } from './fixtures/canvas-viewport'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 const viewports = [
   { width: 1440, height: 900 },
   { width: 390, height: 640 },
 ]
+
+async function panToShowEditor(
+  page: Page,
+  node: Locator,
+  viewport: { width: number; height: number },
+  targetBottom = 195,
+) {
+  await expect(node).toBeInViewport()
+  // 首屏适配还在移动节点时，按旧坐标计算的拖动距离会偏离目标。
+  await waitForCanvasViewportToSettle(page.locator('.react-flow__viewport'))
+  const nodeBox = (await node.boundingBox())!
+  // 保持短视口以触发面板内滚动，同时给跟随节点的底栏留出点击空间。
+  const deltaX = viewport.width / 2 - nodeBox.x - nodeBox.width / 2
+  const deltaY = targetBottom - nodeBox.y - nodeBox.height
+  const dragX = deltaX > 0 ? 30 : viewport.width - 30
+  const dragY = deltaY >= 0 ? 90 : viewport.height - 90
+  await page.mouse.move(dragX, dragY)
+  await page.mouse.down({ button: 'middle' })
+  await page.mouse.move(dragX + deltaX, dragY + deltaY, { steps: 8 })
+  await page.mouse.up({ button: 'middle' })
+  await expect
+    .poll(async () => {
+      const box = (await node.boundingBox())!
+      return Math.hypot(box.x + box.width / 2 - viewport.width / 2, box.y + box.height - targetBottom)
+    })
+    .toBeLessThan(4)
+}
 
 for (const viewport of viewports) {
   test(`长提示词滚动条 ${viewport.width}`, async ({ page }, testInfo) => {
@@ -48,6 +76,7 @@ for (const viewport of viewports) {
     )
     await page.goto('/canvas/119')
     const node = page.locator('.react-flow__node[data-id="source"]')
+    await panToShowEditor(page, node, viewport)
     await node.click()
     const panel = page.locator('[data-canvas-node-panel]')
     const editor = panel.getByRole('textbox')
@@ -150,7 +179,18 @@ for (const viewport of viewports) {
     }
     await expect(editor).toHaveText(longPrompt)
     await page.screenshot({ path: testInfo.outputPath('long-prompt-scrollbar.png') })
-    await page.locator('.react-flow__pane').hover({ position: { x: 20, y: 160 } })
+    const pane = page.locator('.react-flow__pane')
+    const openPoint = await pane.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      for (let y = 100; y < bounds.height - 90; y += 24) {
+        for (let x = 6; x < bounds.width - 6; x += 16) {
+          if (document.elementFromPoint(bounds.left + x, bounds.top + y) === element) return { x, y }
+        }
+      }
+      return null
+    })
+    if (!openPoint) throw new Error('画布可见区域没有可用于滚轮验证的空白位置')
+    await pane.hover({ position: openPoint })
     await expect(editor).toBeFocused()
     await expectCanvasWheel()
     await expect(node).toHaveClass(/selected/)
@@ -180,7 +220,9 @@ for (const viewport of viewports) {
   })
 }
 
-for (const viewport of viewports) {
+for (const { width } of viewports) {
+  // 用实际的短视口触发正文溢出，避免依赖节点靠近底部时缩短面板。
+  const viewport = { width, height: 640 }
   test(`视频参考素材和长提示词可滚动，底部制作操作完整可点 ${viewport.width}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport)
     const api = await installStrictAuthenticatedApp(page)
@@ -285,25 +327,11 @@ for (const viewport of viewports) {
 
     await page.goto('/canvas/242')
     const node = page.locator('.react-flow__node[data-id="video"]')
-    await expect(node).toBeInViewport()
-    const nodeBox = (await node.boundingBox())!
-    const targetCenter = viewport.height / 2
-    const delta = targetCenter - nodeBox.y - nodeBox.height / 2
-    const dragY = delta >= 0 ? 90 : viewport.height - 90
-    await page.mouse.move(viewport.width - 30, dragY)
-    await page.mouse.down({ button: 'middle' })
-    await page.mouse.move(viewport.width - 30, dragY + delta, { steps: 8 })
-    await page.mouse.up({ button: 'middle' })
-    await expect
-      .poll(async () => {
-        const box = (await node.boundingBox())!
-        return Math.abs(box.y + box.height / 2 - targetCenter)
-      })
-      .toBeLessThan(4)
+    await panToShowEditor(page, node, viewport, 145)
     const transform = () =>
       page.locator('.react-flow__viewport').evaluate((element) => getComputedStyle(element).transform)
     const beforeSelection = await transform()
-    await node.locator('.canvas-node-header').click()
+    await node.click()
 
     const panel = page.locator('[data-canvas-node-panel]')
     const body = panel.locator('[data-canvas-node-panel-body]')

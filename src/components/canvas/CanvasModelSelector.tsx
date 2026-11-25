@@ -45,10 +45,11 @@ function SelectorPopover({
       anchorRef.current?.parentElement?.querySelector<HTMLButtonElement>('button')?.focus()
       onClose()
     }
-    document.addEventListener('mousedown', close)
+    // React Flow 开始拖节点时会拦截冒泡，先在捕获阶段收起模型列表。
+    document.addEventListener('mousedown', close, true)
     document.addEventListener('keydown', keyboard, true)
     return () => {
-      document.removeEventListener('mousedown', close)
+      document.removeEventListener('mousedown', close, true)
       document.removeEventListener('keydown', keyboard, true)
     }
   }, [open, onClose])
