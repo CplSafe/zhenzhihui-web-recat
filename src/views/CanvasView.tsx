@@ -20,6 +20,7 @@ import { Dropdown, Tooltip } from 'antd'
 import { useWalletCredits, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import CanvasGettingStarted from '@/components/canvas/CanvasGettingStarted'
 import CanvasGlobalActions from '@/components/canvas/CanvasGlobalActions'
+import CanvasOnlineMembers from '@/components/canvas/CanvasOnlineMembers'
 import type { CanvasScriptImport as CanvasScriptImportResult } from '@/utils/canvasScriptImport'
 import { createCanvasImageMetadataResolver } from '@/api/canvasImageMetadata'
 import { imageGenerationInfo, canvasImageDetails } from '@/utils/canvasImageInfo'
@@ -3075,6 +3076,7 @@ function CanvasInner({
     selectedNode && selectedNode.kind !== 'timeline' && selectedNode.kind !== 'audio' && selectedNodeIds.length < 2,
   )
   const {
+    onlineMembers,
     agentOwner,
     agentLock,
     unlockAgent,
@@ -12429,9 +12431,15 @@ function CanvasInner({
               onBack={() => navigate('/canvas')}
             />
           </div>
-          {!agentOwner && (
+          {(!agentOwner || canManage) && (
             <CanvasGlobalActions
-              open={actionsMenuOpen}
+              open={!agentOwner && actionsMenuOpen}
+              readOnly={Boolean(agentOwner)}
+              presence={
+                canManage && canvasId > 0 && workspaceId > 0 && currentUserId > 0 ? (
+                  <CanvasOnlineMembers key={canvasBindingKey} userId={currentUserId} members={onlineMembers} />
+                ) : undefined
+              }
               credits={walletCredits}
               showExtras={CANVAS_PHASE_ONE_EXTRAS_ENABLED}
               canImportScript={cloudLoadedRef.current}

@@ -16,6 +16,8 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
 
+  const idle = pauseResponse()
+  let delayIdle = true
   const initial = pauseResponse()
   const failure = pauseResponse()
   const recovery = pauseResponse()
@@ -26,11 +28,21 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   const originalPrompt = '等待权限时仍然显示原提示词'
   const editedPrompt = '恢复后继续编辑的提示词'
   let savedPrompt = originalPrompt
-  const granted = { granted: true, nodes: { video: [{ user_id: 7, name: 'E2E 用户', editing: true }] } }
+  const onlineMembers = [
+    { user_id: 7, name: 'E2E 用户' },
+    { user_id: 8, name: '同时打开画布的成员' },
+  ]
+  const granted = {
+    granted: true,
+    nodes: { video: [{ user_id: 7, name: 'E2E 用户', editing: true }] },
+    online_members: onlineMembers,
+  }
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/ai/models**', (route) => route.fulfill({ json: [] }))
   await page.route('**/api/v1/canvases/239**', async (route) => {
     const { pathname, searchParams } = new URL(route.request().url())
+    if (pathname.endsWith('/members'))
+      return route.fulfill({ json: { can_manage: true, creator_id: 7, member_user_ids: [7, 8] } })
     if (pathname.endsWith('/events')) return route.fulfill({ status: 204 })
     if (pathname.endsWith('/node-locks')) {
       const { nodes } = route.request().postDataJSON() as { nodes: string[] }
@@ -43,7 +55,13 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
             agent_lock: { id: 'agent-lock', owner_id: 8, owner: '创作成员', running: true, can_unlock: false },
           },
         })
-      if (!nodes.includes('video')) return route.fulfill({ json: { granted: true, nodes: {} } })
+      if (!nodes.includes('video')) {
+        if (delayIdle) {
+          delayIdle = false
+          await idle.done
+        }
+        return route.fulfill({ json: { granted: true, nodes: {} } })
+      }
       if (memberLocked) {
         return route.fulfill({
           json: { granted: false, nodes: { video: [{ user_id: 8, name: '协作者', editing: true }] } },
@@ -98,7 +116,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
     request.method() === 'POST' &&
     new URL(request.url()).pathname === '/api/v1/canvases/239/node-locks' &&
     JSON.stringify((request.postDataJSON() as { nodes: string[] }).nodes) === JSON.stringify(ids)
-  const initialSync = page.waitForResponse((response) => locksWithSelection(response.request(), []))
+  const initialSync = page.waitForRequest((request) => locksWithSelection(request, []))
   await page.goto('/canvas/239')
   await initialSync
   const node = page.locator('.react-flow__node[data-id="video"]')
@@ -134,7 +152,11 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
     }
   })
   await nodeBody.click()
-  await expect.poll(() => selectionRequests).toBe(1)
+  try {
+    await expect.poll(() => selectionRequests, { timeout: 2000 }).toBe(1)
+  } finally {
+    idle.release()
+  }
   await expect(prompt).toBeVisible()
   await expect(editContent).not.toHaveAttribute('inert')
   await expect(visibleStatus).toBeHidden()
@@ -191,6 +213,20 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   await prompt.pressSequentially('。')
   await expect.poll(() => savedPrompt).toBe(`${editedPrompt}。`)
   await page.screenshot({ path: testInfo.outputPath('video-node-lock-recovered.png') })
+  const online = page.getByRole('button', { name: '2 人在线' })
+  await online.click()
+  const roster = page.getByRole('region', { name: '当前在线' })
+  await expect(roster.getByText('同时打开画布的成员')).toBeVisible()
+  await expect(roster.getByText('我', { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('canvas-online-roster.png'), animations: 'disabled' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileRoster = await roster.boundingBox()
+  expect(mobileRoster?.x).toBeGreaterThanOrEqual(0)
+  expect((mobileRoster?.x ?? 0) + (mobileRoster?.width ?? Infinity)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: testInfo.outputPath('canvas-online-roster-mobile.png'), animations: 'disabled' })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await online.press('Escape')
+  await expect(roster).toBeHidden()
 
   memberLocked = true
   await expect(editContent).toHaveAttribute('inert', '')

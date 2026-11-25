@@ -1,10 +1,12 @@
-import { useRef } from 'react'
+import { type ReactNode, useRef } from 'react'
 import TutorialButton from '@/components/common/TutorialButton'
 import { formatCredits } from '@/utils/creditsFormat'
 import { openMemberCenterTab } from '@/stores/ui'
 
 interface Props {
   open: boolean
+  readOnly?: boolean
+  presence?: ReactNode
   credits: number
   showExtras: boolean
   canImportScript: boolean
@@ -23,6 +25,8 @@ interface Props {
 /** 画布级积分、指南、导入、教程与分享入口。 */
 export default function CanvasGlobalActions({
   open,
+  readOnly,
+  presence,
   credits,
   showExtras,
   canImportScript,
@@ -58,6 +62,7 @@ export default function CanvasGlobalActions({
       }}
     >
       <button
+        hidden={readOnly}
         ref={toggleRef}
         type="button"
         className="canvas-actions-toggle"
@@ -129,6 +134,7 @@ export default function CanvasGlobalActions({
           </button>
         )}
       </div>
+      {presence}
     </div>
   )
 }

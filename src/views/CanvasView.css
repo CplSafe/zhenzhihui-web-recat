@@ -542,6 +542,76 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   outline-offset: 2px;
 }
 
+.canvas-actions-toggle[hidden] {
+  display: none;
+}
+
+.canvas-share-btn.canvas-online-trigger {
+  height: 40px;
+  background: var(--canvas-surface);
+  border-color: var(--canvas-border);
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.canvas-online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a3a3a3;
+}
+
+.canvas-online-dot[data-live='true'] {
+  background: var(--canvas-brand);
+}
+
+.canvas-online-popover .ant-popover-inner {
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 12px;
+  background: #262626;
+}
+
+.canvas-online-roster {
+  color: #e5e7eb;
+  width: min(272px, calc(100vw - 40px));
+  max-height: min(360px, 55vh);
+  overflow: auto;
+  padding: 14px;
+  font-size: 13px;
+}
+
+.canvas-online-roster h2 {
+  margin: 0 0 10px;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.canvas-online-roster p,
+.canvas-online-roster ul {
+  margin: 0;
+  padding: 0;
+}
+
+.canvas-online-roster li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  list-style: none;
+}
+
+.canvas-online-roster li > span:not(.ant-avatar) {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.canvas-online-roster small,
+.canvas-online-roster p {
+  color: #b5b5b5;
+}
+
 .canvas-global-actions .tutorial-btn--pill {
   border-color: rgb(255 255 255 / 35%);
   background: transparent;

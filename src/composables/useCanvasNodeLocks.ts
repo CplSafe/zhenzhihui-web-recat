@@ -13,7 +13,13 @@ export interface CanvasAgentLock {
   running: boolean
   can_unlock: boolean
 }
+export interface CanvasOnlineMember {
+  user_id: number
+  name: string
+  avatar_url?: string
+}
 interface Snapshot {
+  online_members?: CanvasOnlineMember[]
   agent_lock?: CanvasAgentLock
   agent_owner?: string
   nodes: Record<string, Holder[]>
@@ -42,6 +48,7 @@ export function useCanvasNodeLocks(
   // Returning to the same selection still requires a fresh grant if another selection intervened.
   const target = useMemo<LockTarget>(() => ({ scope, key: selectionKey }), [scope, selectionKey])
   const [reply, setReply] = useState<LockReply | null>(null)
+  const [presence, setPresence] = useState<{ scope: string; members?: CanvasOnlineMember[] } | null>(null)
   const desired = useRef(target)
   useLayoutEffect(() => {
     desired.current = target
@@ -51,34 +58,57 @@ export function useCanvasNodeLocks(
     if (!scope) return
     const session = crypto.randomUUID()
     const path = `/api/v1/canvases/${canvasId}/node-locks?workspace_id=${workspaceId}`
-    const post = (nodes: string[]) =>
+    const post = (nodes: string[], observe = false, heartbeat = false) =>
       requestBusinessJson<Snapshot>(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session, nodes }),
+        // Older servers interpret an empty selection as release. Give observation
+        // its own session so it cannot release a foreground lease during rollout.
+        body: JSON.stringify({ session: observe ? `${session}-observer` : session, nodes, observe, heartbeat }),
         timeoutMs: 6000,
       })
-    let stopped = false,
-      busy = false,
-      timer: ReturnType<typeof setTimeout>,
-      held = false
-    async function refresh() {
+    let stopped = false
+    let writing = false
+    let observing = false
+    let needsRelease = false
+    let timer: ReturnType<typeof setTimeout>
+    function schedule(delay: number) {
       clearTimeout(timer)
+      timer = setTimeout(() => void refresh(true), delay)
+    }
+    async function refresh(background = false) {
       const requested = desired.current
-      if (stopped || busy || requested.scope !== scope) return
-      busy = true
+      if (stopped || writing || requested.scope !== scope) return
+      const nodes: string[] = JSON.parse(requested.key)
+      const observe = nodes.length === 0 && !needsRelease
+      if (observe && observing) return
+      clearTimeout(timer)
+      if (observe) observing = true
+      else {
+        writing = true
+        if (nodes.length) needsRelease = true
+      }
+      const heartbeat = observe || background
       try {
-        const data = await post(JSON.parse(requested.key))
+        const data = await post(nodes, observe, heartbeat)
         if (typeof data?.granted !== 'boolean') throw new Error('Invalid canvas node lock response')
-        held = data.granted && requested.key !== '[]'
-        if (!stopped && requested === desired.current)
+        if (!observe && data.granted && !nodes.length) needsRelease = false
+        if (!stopped && requested === desired.current) {
+          if (heartbeat)
+            setPresence((old) =>
+              old?.scope === scope && JSON.stringify(old.members) === JSON.stringify(data.online_members)
+                ? old
+                : { scope, members: data.online_members },
+            )
           setReply((old) =>
             old?.target === requested && !old.requestFailed && JSON.stringify(old.state) === JSON.stringify(data)
               ? old
               : { target: requested, state: data, requestFailed: false },
           )
+        }
       } catch {
-        if (!stopped && requested === desired.current)
+        if (!stopped && requested === desired.current) {
+          if (heartbeat) setPresence(null)
           setReply((old) =>
             old?.target === requested && old.requestFailed
               ? old
@@ -88,12 +118,14 @@ export function useCanvasNodeLocks(
                   requestFailed: true,
                 },
           )
+        }
       } finally {
-        busy = false
+        if (observe) observing = false
+        else writing = false
         if (stopped) {
-          if (held) void post([]).catch(() => {})
-        } else {
-          timer = setTimeout(refresh, requested === desired.current ? 2500 : 0)
+          if (!observe && needsRelease) void post([]).catch(() => {})
+        } else if (!observe || (!writing && desired.current.key === '[]' && !needsRelease)) {
+          schedule(requested === desired.current ? 2500 : 0)
         }
       }
     }
@@ -103,7 +135,7 @@ export function useCanvasNodeLocks(
       stopped = true
       wake.current = undefined
       clearTimeout(timer)
-      if (held && !busy) void post([]).catch(() => {})
+      if (needsRelease && !writing) void post([]).catch(() => {})
     }
   }, [scope, workspaceId, canvasId])
   useEffect(() => {
@@ -182,6 +214,7 @@ export function useCanvasNodeLocks(
     [],
   )
   return {
+    onlineMembers: presence?.scope === scope ? presence.members : undefined,
     agentOwner,
     agentLock,
     unlockAgent,
