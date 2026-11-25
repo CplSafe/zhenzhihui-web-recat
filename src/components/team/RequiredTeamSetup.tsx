@@ -50,7 +50,8 @@ export default function RequiredTeamSetup({ userId }: { userId: number }) {
   return (
     <Modal
       open
-      aria-label="创建你的团队空间"
+      title="创建你的团队空间"
+      styles={{ header: { display: 'none' } }}
       closable={false}
       maskClosable={false}
       keyboard={false}
