@@ -728,6 +728,7 @@ function localMediaDisplayName(fileName: string): string {
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
 const NODE_PANEL_GAP = 24
 const NODE_PANEL_VIEWPORT_MARGIN = 16
+const NODE_PANEL_CONTROL_GAP = 12
 const MIN_NODE_PANEL_SPACE = 160
 const NODE_TOOLBAR_GAP = 42
 const NODE_TOOLBAR_SPACE = NODE_TOOLBAR_GAP + 48
@@ -1035,8 +1036,8 @@ function HandleIcon({ nodeId, side, visible }: { nodeId: string; side: 'left' | 
  */
 const MIN_CANVAS_ZOOM = 0.01
 const MAX_CANVAS_ZOOM = Number.POSITIVE_INFINITY
-const COMPACT_NODE_PANEL_MAX_WIDTH = 384
-const REDUCED_NODE_PANEL_MAX_WIDTH = 550
+const COMPACT_AUDIO_PANEL_MAX_WIDTH = 384
+const REDUCED_AUDIO_PANEL_MAX_WIDTH = 550
 const MAX_WHEEL_ZOOM_RATIO = 1.12
 const CANVAS_WHEEL_PAN_SPEED = 0.8
 const NODE_PANEL_SELECTOR = '.canvas-panel-area, .canvas-audio-panel'
@@ -3344,12 +3345,12 @@ function CanvasInner({
   }, [getCanvasStoreState, setViewport])
 
   const viewportZoom = transform[2]
-  const panelDensity = viewportZoom < 0.2 ? 'compact' : viewportZoom < 0.4 ? 'reduced' : 'normal'
-  const densityPanelWidth =
-    panelDensity === 'compact'
-      ? COMPACT_NODE_PANEL_MAX_WIDTH
-      : panelDensity === 'reduced'
-        ? REDUCED_NODE_PANEL_MAX_WIDTH
+  const nodeControlDensity = viewportZoom < 0.2 ? 'compact' : viewportZoom < 0.4 ? 'reduced' : 'normal'
+  const audioPanelWidthLimit =
+    nodeControlDensity === 'compact'
+      ? COMPACT_AUDIO_PANEL_MAX_WIDTH
+      : nodeControlDensity === 'reduced'
+        ? REDUCED_AUDIO_PANEL_MAX_WIDTH
         : undefined
 
   // 图片工具属于打开它的节点；切换选择时关闭，避免失去锚点后回落到左侧。
@@ -3384,24 +3385,116 @@ function CanvasInner({
   const directorLeftBoundary =
     directorOpen && !stackedNodeControls && directorBounds ? directorBounds.left - 12 : undefined
   const stackedPanelTop = 144
-  const panelRef = useRef<HTMLDivElement>(null)
-  const [measuredPanelWidth, setMeasuredPanelWidth] = useState(0)
-  useEffect(() => {
+  const [panelElement, setPanelElement] = useState<HTMLDivElement | null>(null)
+  const [foregroundToolbar, setForegroundToolbar] = useState<'bottom' | 'node' | null>(null)
+  useLayoutEffect(() => {
+    setForegroundToolbar(null)
+  }, [canvasBindingKey, selectedNodeId, panelElement])
+
+  const activateCanvasOverlay = (target: EventTarget | null) => {
+    if (!panelElement || !(target instanceof Element)) return
+    if (target.closest('.canvas-panel-area')) {
+      setForegroundToolbar(null)
+    } else if (target.closest(NODE_TOOLBAR_SELECTOR)) {
+      setForegroundToolbar('node')
+    } else if (target.closest('[data-canvas-bottom-dock]')) {
+      setForegroundToolbar('bottom')
+    }
+  }
+
+  const [panelSize, setPanelSize] = useState<{ nodeId: string; width: number; height: number }>()
+  const measuredPanel = panelSize?.nodeId === selectedNode?.id ? panelSize : undefined
+  const measuredPanelWidth = measuredPanel?.width || 0
+  const audioViewportZoom = selectedNode?.kind === 'audio' ? viewportZoom : undefined
+  useLayoutEffect(() => {
+    const nodeId = selectedNode?.id
+    if (!nodeId) return
     const el =
       selectedNode?.kind === 'audio'
         ? canvasRootRef.current?.querySelector<HTMLElement>(
-            `.react-flow__node[data-id="${CSS.escape(selectedNode.id)}"] .canvas-audio-panel`,
+            `.react-flow__node[data-id="${CSS.escape(nodeId)}"] .canvas-audio-panel`,
           )
-        : panelRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
+        : panelElement
+    if (!el) return
+    let observer: ResizeObserver | undefined
     const measure = () => {
-      setMeasuredPanelWidth(el.getBoundingClientRect().width)
+      const bounds = el.getBoundingClientRect()
+      const width = bounds.width
+      const height = bounds.height
+      setPanelSize((previous) =>
+        previous?.nodeId === nodeId && previous.width === width && previous.height === height
+          ? previous
+          : { nodeId, width, height },
+      )
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure)
+      observer.observe(el)
     }
     measure()
+    return () => observer?.disconnect()
+  }, [selectedNode?.id, selectedNode?.kind, panelElement, imageTool, canvasUiScale, audioViewportZoom])
+
+  const [bottomRegions, setBottomRegions] = useState<DOMRect[]>([])
+  const [bottomToolbarBounds, setBottomToolbarBounds] = useState<DOMRect>()
+  const [navigationBounds, setNavigationBounds] = useState<DOMRect>()
+  const hasCanvasNodes = nodes.length > 0
+  useLayoutEffect(() => {
+    const root = canvasRootRef.current
+    const dock = root?.querySelector('[data-canvas-bottom-dock]')
+    if (!dock) return
+    const navigation = root.querySelector('.canvas-navigation')
+    const bottomToolbar = dock.querySelector('[data-canvas-floating-toolbar]')
+    const regions = Array.from(dock.querySelectorAll('[data-canvas-bottom-region], [role="toolbar"]'))
+    const measure = () => {
+      const nav = navigation?.getBoundingClientRect()
+      setNavigationBounds((prior) =>
+        prior?.left === nav?.left && prior?.right === nav?.right && prior?.bottom === nav?.bottom ? prior : nav,
+      )
+      const toolbarBounds = bottomToolbar?.getBoundingClientRect()
+      setBottomToolbarBounds((prior) =>
+        prior?.left === toolbarBounds?.left &&
+        prior?.right === toolbarBounds?.right &&
+        prior?.top === toolbarBounds?.top &&
+        prior?.bottom === toolbarBounds?.bottom
+          ? prior
+          : toolbarBounds,
+      )
+      const next = regions
+        .map((region) => region.getBoundingClientRect())
+        .filter(({ width, height }) => width && height)
+      setBottomRegions((previous) =>
+        previous.length === next.length &&
+        next.every((region, index) => {
+          const prior = previous[index]
+          return prior.left === region.left && prior.right === region.right && prior.top === region.top
+        })
+          ? previous
+          : next,
+      )
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [selectedNode?.id, selectedNode?.kind, imageTool, canvasUiScale, viewportZoom])
+    observer.observe(dock)
+    if (navigation) observer.observe(navigation)
+    if (bottomToolbar) observer.observe(bottomToolbar)
+    regions.forEach((region) => observer.observe(region))
+    bottomToolbar?.addEventListener('animationend', measure)
+    return () => {
+      observer.disconnect()
+      bottomToolbar?.removeEventListener('animationend', measure)
+    }
+  }, [
+    agentOwner,
+    canvasBindingKey,
+    canvasUiScale,
+    canvasViewportWidth,
+    canvasViewportHeight,
+    drawerPanel,
+    minimapVisible,
+    hasCanvasNodes,
+  ])
 
   /**
    * 选中节点在屏幕上的矩形：由画布坐标 × 当前 transform 换算，不读节点 DOM。
@@ -3417,7 +3510,7 @@ function CanvasInner({
     const node = nodes.find((item) => item.id === selectedNode.id)
     if (!node) return null
     const [tx, ty, tz] = transform
-    const paneRect = document.querySelector('.react-flow')?.getBoundingClientRect()
+    const paneRect = canvasRootRef.current?.querySelector('.react-flow')?.getBoundingClientRect()
     const style = (node.style || {}) as Record<string, unknown>
     const width = Number(node.measured?.width ?? style.width ?? 250) || 250
     const height = Number(node.measured?.height ?? style.height ?? 250) || 250
@@ -3426,28 +3519,7 @@ function CanvasInner({
     return { left, top, width: width * tz, height: height * tz, bottom: top + height * tz }
   }, [selectedNode, nodes, transform])
 
-  const selectedNodeVisible = useMemo(() => {
-    if (!selectedNodeScreenRect) return false
-    const viewport = canvasRootRef.current?.querySelector('.react-flow')?.getBoundingClientRect()
-    if (!viewport) return false
-    const viewportRight = viewport.left + (canvasViewportWidth || viewport.width)
-    const viewportBottom = viewport.top + (canvasViewportHeight || viewport.height)
-    return (
-      selectedNodeScreenRect.left < viewportRight &&
-      selectedNodeScreenRect.left + selectedNodeScreenRect.width > viewport.left &&
-      selectedNodeScreenRect.top < viewportBottom &&
-      selectedNodeScreenRect.bottom > viewport.top
-    )
-  }, [selectedNodeScreenRect, canvasViewportWidth, canvasViewportHeight])
-
-  useLayoutEffect(() => {
-    const panel = panelRef.current
-    if (!panel) return
-    if (!selectedNodeVisible && panel.contains(document.activeElement)) {
-      canvasRootRef.current?.focus({ preventScroll: true })
-    }
-    panel.toggleAttribute('inert', !selectedNodeVisible)
-  }, [selectedNodeVisible, selectedNode?.id])
+  const connectionInProgress = useStore((state) => state.connection.inProgress)
 
   const imageToolAnchor =
     imageTool && selectedNode?.id === imageTool.source.nodeId && selectedNodeScreenRect
@@ -3487,65 +3559,83 @@ function CanvasInner({
   }, [imageTool, imageToolHeight, transform, setViewport])
 
   const panelAnchor = useMemo(() => {
-    if (!selectedNodeScreenRect || !selectedNodeVisible) return null
-    if (stackedNodeControls) return { left: (canvasViewportWidth || window.innerWidth) / 2, top: stackedPanelTop }
-    const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
-    const bottomY = selectedNodeScreenRect.bottom
-    const isVideoUpscale = selectedNode?.operationCode === 'video.upscale'
-    const panelWidth = Math.min(
-      densityPanelWidth ?? (isVideoUpscale ? 420 : measuredPanelWidth || 640),
-      (canvasViewportWidth || window.innerWidth) - (isVideoUpscale ? 32 : 24),
-    )
-    const halfWidth = panelWidth / 2
-    const below = bottomY + (isVideoUpscale ? 16 : NODE_PANEL_GAP)
-    const viewportWidth = directorLeftBoundary ?? (canvasViewportWidth || window.innerWidth)
-    // 只在面板超出视口时夹取到边界；空间足够时始终严格居中在选中节点下方。
-    const minCenterX = Math.min(halfWidth + NODE_PANEL_GAP, viewportWidth / 2)
-    const maxCenterX = Math.max(viewportWidth - halfWidth - NODE_PANEL_GAP, viewportWidth / 2)
-    const left = Math.min(Math.max(centerX, minCenterX), maxCenterX)
-    // 工具条也在节点上方，窄屏时为可能换行的第二排按钮留出空间。
-    const above = selectedNodeScreenRect.top - NODE_TOOLBAR_SPACE - (canvasViewportWidth <= 600 ? 34 : 0)
+    if (!selectedNodeScreenRect) return null
+    const canvasWidth = canvasViewportWidth || window.innerWidth
+    const availableWidth = directorLeftBoundary ?? canvasWidth
     const viewportHeight = canvasViewportHeight || window.innerHeight
-    const spaceBelow = viewportHeight - below - NODE_PANEL_VIEWPORT_MARGIN
-    const spaceAbove = above - NODE_PANEL_VIEWPORT_MARGIN
-    if (densityPanelWidth || (selectedNode?.kind === 'video' && !isVideoUpscale)) {
-      const minimumSpace = Math.min(
-        densityPanelWidth ? MIN_NODE_PANEL_SPACE : MIN_NODE_PANEL_SPACE * canvasUiScale,
-        viewportHeight - 2 * NODE_PANEL_VIEWPORT_MARGIN,
-      )
-      const minimumEdge = NODE_PANEL_VIEWPORT_MARGIN + minimumSpace
-      if (spaceBelow < minimumSpace && spaceAbove > spaceBelow) {
-        return { left, bottom: viewportHeight - Math.max(above, minimumEdge) }
-      }
-      return { left, top: Math.min(below, viewportHeight - minimumEdge) }
-    }
-    if (selectedNode?.kind === 'video' && spaceBelow < MIN_NODE_PANEL_SPACE && spaceAbove > spaceBelow) {
-      return { left, bottom: viewportHeight - above }
-    }
-    return { left, top: below }
+    const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
+    const isVideoUpscale = selectedNode?.operationCode === 'video.upscale'
+    const hasEditor = hasSelectedNodePanel || selectedNode?.kind === 'audio'
+    const panelWidth = hasEditor ? Math.min(measuredPanelWidth || (isVideoUpscale ? 420 : 640), availableWidth) : 0
+    const halfWidth = panelWidth / 2
+    const left =
+      directorLeftBoundary === undefined ? centerX : Math.min(Math.max(centerX, halfWidth), availableWidth - halfWidth)
+    const topMargin = stackedNodeControls ? stackedPanelTop : 0
+    const topLimit = Math.max(topMargin, (navigationBounds?.bottom ?? 0) + NODE_PANEL_CONTROL_GAP)
+    const stackedBottom = (directorBounds?.top ?? viewportHeight * 0.54) - NODE_PANEL_CONTROL_GAP
+    const heightBudgetBottom = stackedNodeControls
+      ? stackedBottom
+      : bottomRegions.reduce((bottom, region) => Math.min(bottom, region.top - NODE_PANEL_CONTROL_GAP), viewportHeight)
+    const availableHeight = Math.max(0, heightBudgetBottom - topLimit)
+    const panelHeight = hasEditor ? Math.min(measuredPanel?.height || 320 * canvasUiScale, availableHeight) : 0
+    const below = selectedNodeScreenRect.bottom + (isVideoUpscale ? 16 : NODE_PANEL_GAP)
+    // 普通画布保留节点锚点，平移时由视口裁切浮层。
+    const top = stackedNodeControls ? Math.min(Math.max(below, topLimit), stackedBottom - panelHeight) : below
+    // 工具栏被挡住时提供置顶入口，面板无需为它预留底边空隙。
+    const toolbarCenterX = bottomToolbarBounds && (bottomToolbarBounds.left + bottomToolbarBounds.right) / 2
+    const toolbarCenterY = bottomToolbarBounds && (bottomToolbarBounds.top + bottomToolbarBounds.bottom) / 2
+    const toolbarRevealX =
+      toolbarCenterX > left - halfWidth &&
+      toolbarCenterX < left + halfWidth &&
+      toolbarCenterY > top &&
+      toolbarCenterY < top + panelHeight
+        ? toolbarCenterX
+        : undefined
+    return { left, top, availableHeight, toolbarRevealX }
   }, [
     selectedNodeScreenRect,
-    selectedNodeVisible,
-    selectedNode?.operationCode,
-    measuredPanelWidth,
-    densityPanelWidth,
     selectedNode?.kind,
+    selectedNode?.operationCode,
+    hasSelectedNodePanel,
+    measuredPanel,
+    measuredPanelWidth,
     canvasUiScale,
     canvasViewportHeight,
     canvasViewportWidth,
     stackedNodeControls,
     directorLeftBoundary,
+    directorBounds?.top,
+    bottomRegions,
+    bottomToolbarBounds,
+    navigationBounds,
   ])
+
+  // 编辑器异步加载后才有实际尺寸，尺寸与锚点分别更新时也按当前矩形判断。
+  const panelOutsideViewport =
+    panelAnchor &&
+    measuredPanel?.width > 0 &&
+    measuredPanel.height > 0 &&
+    (panelAnchor.left + measuredPanel.width / 2 <= 0 ||
+      panelAnchor.left - measuredPanel.width / 2 >= (canvasViewportWidth || window.innerWidth) ||
+      panelAnchor.top + measuredPanel.height <= 0 ||
+      panelAnchor.top >= (canvasViewportHeight || window.innerHeight))
+  const panelHidden = !panelAnchor || connectionInProgress || panelOutsideViewport
+  const panelInactive = panelHidden || draggingNode
+  useLayoutEffect(() => {
+    if (!panelElement) return
+    if (panelInactive && panelElement.contains(document.activeElement)) {
+      canvasRootRef.current?.focus({ preventScroll: true })
+    }
+    panelElement.toggleAttribute('inert', panelInactive)
+  }, [panelInactive, panelElement])
 
   /**
    * 单选工具条的位置：贴在节点上方。
    *
-   * 编辑面板摆到上方时会预留工具条的空间。多选时不出现——
-   * 那种情况由 CanvasSelectionToolbar 接管，两条同时浮出会分不清谁作用于什么。
-   * 两端做夹取，节点被拖到视口外时工具条仍留在屏幕内。
+   * 多选时由 CanvasSelectionToolbar 接管。
    */
   const nodeToolbarAnchor = useMemo(() => {
-    if (!selectedNodeScreenRect || !selectedNodeVisible || selectedNodeIds.length > 1) return null
+    if (!selectedNodeScreenRect || selectedNodeIds.length > 1) return null
     const centerX = selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2
     const topY = selectedNodeScreenRect.top
     // 让开节点上方的标题行，否则工具条会压住刚做好的名称
@@ -3553,17 +3643,10 @@ function CanvasInner({
     const viewportHeight = canvasViewportHeight || window.innerHeight
     if (stackedNodeControls) return { centerX: viewportWidth / 2, bottom: viewportHeight - stackedPanelTop + 8 }
     return {
-      centerX: Math.min(Math.max(centerX, 150), Math.max(150, viewportWidth - 150)),
-      bottom: Math.min(Math.max(viewportHeight - topY + NODE_TOOLBAR_GAP, 16), Math.max(16, viewportHeight - 72)),
+      centerX,
+      bottom: window.innerHeight - topY + NODE_TOOLBAR_GAP,
     }
-  }, [
-    selectedNodeScreenRect,
-    selectedNodeVisible,
-    selectedNodeIds.length,
-    canvasViewportWidth,
-    canvasViewportHeight,
-    stackedNodeControls,
-  ])
+  }, [selectedNodeScreenRect, selectedNodeIds.length, canvasViewportWidth, canvasViewportHeight, stackedNodeControls])
 
   // 详情面板与工具条按选中节点当前屏幕位置定位，画布平移或节点移动后持续跟随。
 
@@ -3588,7 +3671,7 @@ function CanvasInner({
     const margin = NODE_PANEL_VIEWPORT_MARGIN
     const right = directorLeftBoundary ?? (canvasViewportWidth || window.innerWidth)
     const viewportBottom = (stackedNodeControls ? directorBounds?.top : undefined) ?? window.innerHeight
-    const maxWidth = Math.min(densityPanelWidth ?? Infinity, Math.max(0, right - 2 * margin))
+    const maxWidth = Math.min(audioPanelWidthLimit ?? Infinity, Math.max(0, right - 2 * margin))
     const halfWidth = Math.min(measuredPanelWidth || 680 * scale, maxWidth) / 2
     const center = left + width / 2
     const safeCenter = Math.min(Math.max(center, margin + halfWidth), right - margin - halfWidth)
@@ -3601,9 +3684,9 @@ function CanvasInner({
     const space = placeAbove ? spaceAbove : spaceBelow
     const availableHeight = Math.max(minimumHeight, space)
     const heightLimit =
-      panelDensity === 'compact'
+      nodeControlDensity === 'compact'
         ? Math.max(200, Math.min(window.innerHeight * 0.34, 310))
-        : panelDensity === 'reduced'
+        : nodeControlDensity === 'reduced'
           ? Math.max(250, Math.min(window.innerHeight * 0.47, 420))
           : Infinity
     // 面板位于缩放层内，将屏幕距离换回它的 CSS 坐标，画布位置保持不动。
@@ -3621,8 +3704,8 @@ function CanvasInner({
     selectedNodeScreenRect,
     viewportZoom,
     canvasUiScale,
-    densityPanelWidth,
-    panelDensity,
+    audioPanelWidthLimit,
+    nodeControlDensity,
     directorLeftBoundary,
     canvasViewportWidth,
     stackedNodeControls,
@@ -3638,9 +3721,6 @@ function CanvasInner({
   const connectSourceId = useStore((s) =>
     s.connection.inProgress && s.connection.fromHandle?.type === 'source' ? s.connection.fromNode.id : null,
   )
-  const connectionInProgress = useStore((s) => s.connection.inProgress)
-  const hidePanelDuringDrag = Boolean(draggingNode || connectionInProgress)
-
   // 供画布外的调试与集成读取当前图。必须写在 effect 里：渲染期间赋值是渲染副作用，
   // React 18 并发渲染会丢弃部分渲染批次，外部因此可能读到一份从未提交过的中间状态。
   useEffect(() => {
@@ -12080,7 +12160,6 @@ function CanvasInner({
   })
 
   const showSelectedNodeToolbar =
-    selectedNodeVisible &&
     canUseSelectedNodePanel &&
     !imageTool &&
     !subjectEdit &&
@@ -12250,6 +12329,7 @@ function CanvasInner({
           onPointerDownCapture={(event) => {
             if (agentOwner) return guardCanvasReadOnlyInteraction(event)
             const target = event.target as HTMLElement
+            if (event.button === 0) activateCanvasOverlay(event.target)
             pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
             const nodeId = target.closest?.('.react-flow__node')?.getAttribute('data-id')
             // Production frames organize outputs; clicking a member inspects that shot.
@@ -12289,12 +12369,14 @@ function CanvasInner({
               showToast(lock, 'error')
             }
           }}
-          onFocusCapture={(event) =>
+          onFocusCapture={(event) => {
+            activateCanvasOverlay(event.target)
             setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.target))
-          }
+          }}
           onBlurCapture={(event) =>
             setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.relatedTarget))
           }
+          data-canvas-foreground-toolbar={foregroundToolbar ?? undefined}
           className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${selectionIsGroup ? ' has-group-selection' : ''}${canvasModalOpen ? ' has-modal' : ''}${spacePanning || panModeEnabled ? ' is-space-panning' : ''}${stackedNodeControls ? ' has-stacked-agent' : ''}`}
           onDragEnterCapture={trackFileDrag}
           onDragOverCapture={trackFileDrag}
@@ -12531,6 +12613,29 @@ function CanvasInner({
             )}
           </CanvasBottomBar>
 
+          {panelElement &&
+            !panelInactive &&
+            !canvasModalOpen &&
+            !drawerPanel &&
+            !toolbarLeaving &&
+            !agentOwner &&
+            foregroundToolbar !== 'bottom' &&
+            panelAnchor?.toolbarRevealX !== undefined && (
+              <button
+                type="button"
+                className="canvas-toolbar-reveal"
+                aria-label="置顶画布工具栏"
+                title="置顶画布工具栏"
+                style={{ left: panelAnchor.toolbarRevealX }}
+                onClick={() => {
+                  setForegroundToolbar('bottom')
+                  canvasRootRef.current
+                    ?.querySelector<HTMLButtonElement>('[data-canvas-floating-toolbar] button')
+                    ?.focus({ preventScroll: true })
+                }}
+              />
+            )}
+
           {/* 剪辑时间线编辑器：节点上的「精修」或双击打开，用于逐帧裁剪与分割；
           加片段/删片段/合成在节点卡片上就能做，不必进这里 */}
           {timelineEditorNode && (
@@ -12678,11 +12783,11 @@ function CanvasInner({
                 }
               }}
               /* 拖动开始前记录历史：撤销可还原节点位置 */
-              onNodeDragStart={(event, node) => {
+              onNodeDragStart={(event, node, draggedNodes) => {
                 setDraggingNode(true)
+                const snapshot = nodePointerSelectionRef.current
                 // Alt 拖动在松手时一次性落副本，避免拖动中断留下半成品；撤销一步回到拖动前。
                 if (event.altKey && dragEnabled) {
-                  const snapshot = nodePointerSelectionRef.current
                   const selectedBefore = snapshot?.id === node.id ? snapshot.selectedIds : selectedNodeIds
                   const ids = selectedBefore.length > 1 && selectedBefore.includes(node.id) ? selectedBefore : [node.id]
                   const positions = new Map(
@@ -12707,9 +12812,31 @@ function CanvasInner({
                   altCloneDragRef.current = null
                   commitHistory()
                 }
-                // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
-                // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
-                handleSelectNodeOnDown(node as unknown as Node)
+                // 只移动当前编辑器的参考节点时，保留编辑目标和画布的单选状态。
+                const movingReference =
+                  hasSelectedNodePanel &&
+                  snapshot?.id === node.id &&
+                  snapshot.selectedIds.length <= 1 &&
+                  (snapshot.selectedIds.length === 0 || snapshot.selectedIds[0] === selectedNodeId) &&
+                  draggedNodes.length === 1 &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.shiftKey &&
+                  selectedNodeForPanel?.sourceRefs.some((ref) => ref.sourceId === node.id)
+                if (movingReference) {
+                  setAddMenu(null)
+                  // React Flow 已确定此次拖动的节点，可恢复选中标记而不带动编辑目标。
+                  setNodes((items) =>
+                    items.map((item) => {
+                      const selected = item.id === selectedNodeId
+                      return Boolean(item.selected) === selected ? item : { ...item, selected }
+                    }),
+                  )
+                } else {
+                  // 拖过阈值后不会触发 onNodeClick，仍需在这里打开新选中节点的编辑器。
+                  handleSelectNodeOnDown(node as unknown as Node)
+                }
                 // 记下起点：拖到时间线上时要把节点弹回原位，不能让它压在时间线底下
                 dragOriginRef.current = { id: node.id, position: { ...node.position } }
               }}
@@ -12721,7 +12848,7 @@ function CanvasInner({
                 setTimelineDropTargetId(nextTarget)
               }}
               onNodeDragStop={(_e, node) => {
-                // 放在最前面：下面「没命中时间线」会提前 return，写在后面面板就再也不出来了
+                // 提前恢复面板交互，下面的时间线及复制流程可能提前返回。
                 setDraggingNode(false)
                 setAlignmentGuides((prev) => (prev.length ? [] : prev))
                 timelineDropTargetRef.current = ''
@@ -12838,6 +12965,7 @@ function CanvasInner({
                 // 选中节点即关掉添加节点菜单（理由见 handleSelectNodeOnDown）
                 setAddMenu(null)
                 // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
+                setForegroundToolbar(null)
                 setSelectedNode({
                   id: node.id,
                   kind: (node.data?.kind as string) || 'text',
@@ -13091,7 +13219,7 @@ function CanvasInner({
           {showSelectedNodeToolbar && nodeToolbarAnchor && selectedNode && (
             <CanvasNodeToolbar
               anchor={nodeToolbarAnchor}
-              density={panelDensity}
+              density={nodeControlDensity}
               rightBoundary={directorLeftBoundary}
               kind={selectedNodeToolbarState.kind}
               hasContent={selectedNodeToolbarState.hasContent}
@@ -13859,9 +13987,9 @@ function CanvasInner({
             !hdRequest &&
             !hdModalOpen && (
               <div
-                ref={panelRef}
-                aria-hidden={!selectedNodeVisible || hidePanelDuringDrag}
-                className={`canvas-panel-area nowheel${selectedNode.kind === 'image' ? ' is-image-editor' : ''}${selectedNode.kind === 'video' && selectedNodeForPanel?.operationCode !== 'video.upscale' ? ' is-video-editor' : ''}${panelDensity === 'normal' ? '' : ` is-${panelDensity}-editor`}${panelAnchor ? ' is-anchored' : ''}${hidePanelDuringDrag ? ' is-drag-hidden' : ''}${!selectedNodeVisible ? ' is-out-of-view' : ''}`}
+                ref={setPanelElement}
+                aria-hidden={panelHidden}
+                className={`canvas-panel-area nowheel${selectedNodeForPanel?.operationCode !== 'video.upscale' ? ' is-node-editor' : ''}${selectedNode.kind === 'video' && selectedNodeForPanel?.operationCode !== 'video.upscale' ? ' is-video-editor' : ''}${panelAnchor ? ' is-anchored' : ''}${panelHidden ? ' is-hidden' : ''}`}
                 onPointerDown={(event) => {
                   const target = event.target
                   if (
@@ -13899,18 +14027,8 @@ function CanvasInner({
                     ? ({
                         left: panelAnchor.left,
                         top: panelAnchor.top,
-                        bottom: panelAnchor.bottom,
-                        '--canvas-density-panel-width': densityPanelWidth ? `${densityPanelWidth}px` : undefined,
-                        '--canvas-panel-available-height': `${Math.max(
-                          80,
-                          window.innerHeight - (panelAnchor.top ?? panelAnchor.bottom) - NODE_PANEL_VIEWPORT_MARGIN,
-                        )}px`,
-                        '--canvas-node-panel-width': directorLeftBoundary
-                          ? `${directorLeftBoundary - 2 * NODE_PANEL_GAP}px`
-                          : undefined,
-                        '--canvas-node-panel-height': stackedNodeControls
-                          ? `${Math.max(0, (directorBounds?.top ?? window.innerHeight * 0.54) - stackedPanelTop - 12)}px`
-                          : undefined,
+                        '--canvas-panel-available-height': `${panelAnchor.availableHeight}px`,
+                        '--canvas-node-panel-width': directorLeftBoundary ? `${directorLeftBoundary}px` : undefined,
                       } as CSSProperties)
                     : undefined
                 }
@@ -13928,12 +14046,7 @@ function CanvasInner({
                 />
                 <div
                   className="canvas-panel-edit-content"
-                  tabIndex={
-                    selectedNodeForPanel?.operationCode === 'video.upscale' ||
-                    (selectedNode.kind !== 'video' && panelDensity === 'normal')
-                      ? 0
-                      : undefined
-                  }
+                  tabIndex={selectedNodeForPanel?.operationCode === 'video.upscale' ? 0 : undefined}
                   ref={(element) => {
                     element?.toggleAttribute('inert', !canUseSelectedNodePanel)
                   }}
@@ -13961,7 +14074,6 @@ function CanvasInner({
                       <Suspense fallback={null}>
                         <CanvasNodePanel
                           node={selectedNodeForPanel}
-                          density={panelDensity}
                           mediaConnectionCounts={
                             selectedNode
                               ? {
@@ -13979,7 +14091,11 @@ function CanvasInner({
                             openDrawerPanel('assets')
                           }}
                           promptEditorSuspended={Boolean(
-                            !canUseSelectedNodePanel || isPickingRef || drawerPanel || imagePreviewNodeId,
+                            panelHidden ||
+                            !canUseSelectedNodePanel ||
+                            isPickingRef ||
+                            drawerPanel ||
+                            imagePreviewNodeId,
                           )}
                           onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
                           onPickRefFromLibrary={(slotIndex) => {

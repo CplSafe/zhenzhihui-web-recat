@@ -11,6 +11,7 @@ async function installCanvasAndUploadMocks(page: Page) {
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
   await page.route(`**/api/v1/canvases/${CANVAS_ID}**`, async (route) => {
     const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
     if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
     await route.fulfill({
       json: url.pathname.endsWith('/elements')
@@ -109,8 +110,10 @@ test('本地视频上传完成后可连续拖动节点并撤销', async ({ page 
   await expect
     .poll(() => node.locator('video').evaluate((element: HTMLVideoElement) => element.videoWidth))
     .toBeGreaterThan(0)
+  await expect(page.locator('.canvas-panel-edit-content')).toHaveJSProperty('inert', false)
   const prompt = page.getByPlaceholder(/描述你想要生成的视频内容/)
   await prompt.fill('拖动前填写的内容')
+  await expect(prompt).toHaveText('拖动前填写的内容')
   const before = await node.evaluate((element: HTMLElement) => element.style.transform)
   const box = await node.locator('.canvas-node-body').boundingBox()
   if (!box) throw new Error('视频节点不可见')

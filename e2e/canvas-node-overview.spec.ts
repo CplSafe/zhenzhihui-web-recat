@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
-test('低倍率显示紧凑节点面板并可编辑，放大恢复正常尺寸', async ({ page }, testInfo) => {
+test('画布缩放时编辑面板保持屏幕尺寸，节点工具栏继续适配', async ({ page }, testInfo) => {
   test.setTimeout(60_000)
-  const viewportSize = { width: 1440, height: 680 }
+  const viewportSize = { width: 1440, height: 900 }
   await page.setViewportSize(viewportSize)
   const api = await installStrictAuthenticatedApp(page)
   const originalPrompt = [
@@ -99,6 +99,8 @@ test('低倍率显示紧凑节点面板并可编辑，放大恢复正常尺寸',
   const panelArea = page.locator('.canvas-panel-area')
   const panel = panelArea.locator('[data-canvas-node-panel]')
   const editor = panel.getByRole('textbox')
+  const model = panel.getByRole('button', { name: modelName, exact: true })
+  const make = panel.locator('[data-canvas-generate]')
   const editAtOverview = page.getByRole('button', { name: '放大编辑', exact: true })
   const menu = page.getByRole('listbox', { name: '生成模型列表' })
   const readZoom = () => viewport.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a)
@@ -131,38 +133,55 @@ test('低倍率显示紧凑节点面板并可编辑，放大恢复正常尺寸',
     await expect(toolbar).toBeVisible()
     await expect(editor).toHaveAttribute('data-value', prompt)
     await expect(editor).toBeVisible()
+    await expect(panelArea).toBeInViewport({ ratio: 0.99 })
+    await expect(model).toBeInViewport({ ratio: 0.99 })
+    await expect(make).toBeInViewport({ ratio: 0.99 })
+    await expect(make).toBeEnabled()
     await expect(editAtOverview).toHaveCount(0)
   }
-  const expectCompactEditor = async (prompt: string) => {
-    await expectEditor(prompt)
-    await expect(toolbar).toHaveAttribute('data-toolbar-density', 'compact')
-    await expect(panelArea).toHaveClass(/is-compact-editor/)
-    await expect(panelArea).toBeInViewport({ ratio: 0.99 })
-    const bounds = (await panelArea.boundingBox())!
-    expect(bounds.width).toBeLessThanOrEqual(400)
-    expect(bounds.height).toBeLessThanOrEqual(viewportSize.height * 0.34 + 1)
+  const editorSizes = async () =>
+    Promise.all(
+      [panel, editor, model, make].map(async (item) => {
+        const { width, height } = (await item.boundingBox())!
+        return [width, height]
+      }),
+    )
+  const expectEditorSizes = async (baseline: number[][]) => {
+    await expect
+      .poll(async () => {
+        const current = await editorSizes()
+        return Math.max(
+          ...current.flatMap((size, index) => size.map((value, dim) => Math.abs(value - baseline[index][dim]))),
+        )
+      })
+      .toBeLessThanOrEqual(1)
   }
 
   await expect(node).toBeInViewport()
-  await zoomTo(0.08)
+  await zoomTo(1)
+  const nodeBox = (await node.boundingBox())!
+  // Leave room underneath the node at each zoom so only the editor's scale is being compared.
+  const panX = viewportSize.width - 30
+  const panY = viewportSize.height / 2
+  const offsetY = 235 - nodeBox.y - nodeBox.height / 2
+  await page.mouse.move(panX, panY)
+  await page.mouse.down({ button: 'middle' })
+  await page.mouse.move(panX, panY + offsetY, { steps: 8 })
+  await page.mouse.up({ button: 'middle' })
   const beforeSelection = await viewportStyle()
   await node.locator('.canvas-node-body').click()
-  await expectCompactEditor(originalPrompt)
+  await expectEditor(originalPrompt)
   expect(await viewportStyle()).toBe(beforeSelection)
-  const compactPanelWidth = (await panelArea.boundingBox())!.width
-  const compactToolbarWidth = (await toolbar.boundingBox())!.width
-  const body = panel.locator('[data-canvas-node-panel-body]')
-  await expect(body).toHaveCSS('scrollbar-width', 'none')
-  await page.screenshot({ path: testInfo.outputPath('node-overview-8-percent.png') })
+  const originalSizes = await editorSizes()
+  const fullToolbarWidth = (await toolbar.boundingBox())!.width
 
-  await expect.poll(() => body.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0)
-  await body.focus()
-  await expect(body).toBeFocused()
-  const bodyBounds = (await body.boundingBox())!
-  await page.mouse.move(bodyBounds.x + bodyBounds.width - 4, bodyBounds.y + 8)
-  await page.mouse.wheel(0, 120)
-  await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
-  expect(await viewportStyle()).toBe(beforeSelection)
+  await zoomTo(0.08)
+  await expectEditor(originalPrompt)
+  await expectEditorSizes(originalSizes)
+  await expect(toolbar).toHaveAttribute('data-toolbar-density', 'compact')
+  expect((await toolbar.boundingBox())!.width).toBeLessThan(fullToolbarWidth)
+  const compactViewport = await viewportStyle()
+  await page.screenshot({ path: testInfo.outputPath('node-overview-8-percent.png') })
 
   const moreActions = toolbar.getByRole('button', { name: '更多', exact: true })
   const actionMenu = page.getByRole('menu', { name: '更多节点操作', exact: true })
@@ -177,31 +196,31 @@ test('低倍率显示紧凑节点面板并可编辑，放大恢复正常尺寸',
   await editor.fill(editedPrompt)
   await expect(editor).toHaveAttribute('data-value', editedPrompt)
   await expect.poll(() => savedPrompt).toBe(editedPrompt)
-  await panel.getByRole('button', { name: modelName, exact: true }).click()
+  await model.click()
   await expect(menu).toBeInViewport()
   await menu.getByRole('option', { name: new RegExp(modelName) }).click()
   await expect(menu).toBeHidden()
-  expect(await viewportStyle()).toBe(beforeSelection)
+  expect(await viewportStyle()).toBe(compactViewport)
+  const editedSizes = await editorSizes()
 
   await zoomTo(0.25)
   await expectEditor(editedPrompt)
-  await expect(toolbar).not.toHaveAttribute('data-toolbar-density', 'compact')
+  await expectEditorSizes(editedSizes)
+  await expect(toolbar).toHaveAttribute('data-toolbar-density', 'reduced')
   await page.screenshot({ path: testInfo.outputPath('node-overview-25-percent.png') })
 
-  await zoomTo(0.65)
+  await zoomTo(1)
   await expectEditor(editedPrompt)
-  await expect(panelArea).not.toHaveClass(/is-compact-editor/)
-  expect((await panelArea.boundingBox())!.width).toBeGreaterThan(compactPanelWidth)
-  expect((await toolbar.boundingBox())!.width).toBeGreaterThan(compactToolbarWidth)
-  await page.screenshot({ path: testInfo.outputPath('node-overview-normal-editor.png') })
+  await expectEditorSizes(editedSizes)
+  await expect(toolbar).toHaveAttribute('data-toolbar-density', 'normal')
+  await page.screenshot({ path: testInfo.outputPath('node-overview-100-percent.png') })
 
-  await zoomTo(0.08)
-  await expectCompactEditor(editedPrompt)
   const beforeDeselect = await viewportStyle()
   await flow.locator('.react-flow__pane').click({ position: { x: 130, y: 180 } })
   await expect(node).not.toHaveClass(/selected/)
   await expect(toolbar).toBeHidden()
   await expect(panelArea).toBeHidden()
   expect(await viewportStyle()).toBe(beforeDeselect)
+  expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })

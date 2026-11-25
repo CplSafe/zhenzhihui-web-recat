@@ -1,8 +1,8 @@
 .panel {
   position: relative;
   width: 630px;
-  max-width: 90vw;
-  min-height: 206px;
+  max-width: min(90vw, calc(100% - 34px));
+  min-height: 0;
   background: var(--canvas-surface, #262626);
   border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
   border-radius: 14px;
@@ -26,11 +26,6 @@
 
 .videoPanel {
   width: 680px;
-  min-height: 0;
-}
-
-.panelBodyInline {
-  display: contents;
 }
 
 .panelBody {
@@ -46,8 +41,19 @@
 }
 
 .panelBody > *,
-.videoPanel > .actions {
+.actions {
   flex-shrink: 0;
+}
+
+.panel:not(.videoPanel) > .panelBody {
+  /* 保留参考素材删除按钮超出缩略图的点击区域。 */
+  padding-inline: 6px;
+  margin-inline: -6px;
+  scrollbar-width: none;
+}
+
+.panel:not(.videoPanel) > .panelBody::-webkit-scrollbar {
+  display: none;
 }
 
 .tags {
@@ -1052,11 +1058,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-}
-
-:is(.imagePanel, .videoPanel) > .actions {
   flex-wrap: wrap;
+  gap: 12px;
 }
 
 .selectors {
@@ -1780,15 +1783,12 @@
 .generateActions {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-}
-
-:is(.imagePanel, .videoPanel) .generateActions {
-  max-width: 100%;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 10px;
+  max-width: 100%;
+  margin-left: auto;
 }
 
 .moderationBtn {
@@ -1955,139 +1955,6 @@
   color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
   line-height: 1.5;
-}
-
-/* 画布缩小时收紧编辑面板间距，正文可滚动，底部操作区始终留在面板内。 */
-:global(.canvas-panel-area.is-reduced-editor) .panel {
-  --dense-panel-width: 550px;
-  --dense-panel-padding: 10px 12px;
-  --dense-panel-gap: 7px;
-  --dense-panel-control-height: 30px;
-  --dense-panel-control-padding: 9px;
-  --dense-panel-reference-size: 42px;
-  --dense-panel-prompt-height: 49px;
-}
-
-:global(.canvas-panel-area.is-compact-editor) .panel {
-  --dense-panel-width: 384px;
-  --dense-panel-padding: 8px 10px;
-  --dense-panel-gap: 6px;
-  --dense-panel-control-height: 28px;
-  --dense-panel-control-padding: 7px;
-  --dense-panel-reference-size: 36px;
-  --dense-panel-prompt-height: 40px;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel {
-  flex: 0 1 auto;
-  box-sizing: border-box;
-  width: var(--dense-panel-width);
-  max-width: 100%;
-  min-height: 0;
-  max-height: inherit;
-  padding: var(--dense-panel-padding);
-  gap: var(--dense-panel-gap);
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panelBody {
-  flex: 1 1 auto;
-  gap: var(--dense-panel-gap);
-  scrollbar-width: none;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panelBody::-webkit-scrollbar {
-  display: none;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .actions {
-  flex: none;
-  flex-wrap: wrap;
-  gap: var(--dense-panel-gap);
-  padding-top: var(--dense-panel-gap);
-  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors {
-  flex-basis: min(100%, 240px);
-  flex-wrap: nowrap;
-  gap: var(--dense-panel-gap);
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors > .selectorWrap {
-  display: flex;
-  flex: 0 1 110px;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors > .selectorWrap:first-child {
-  flex: 1 1 140px;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectorWrap > .selector {
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .selectors > .selector {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 34%;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor))
-  .panel
-  :is(.selector, .expandBtn, .micBtn, .polishBtn, .moderationBtn, .generateBtn) {
-  box-sizing: border-box;
-  height: var(--dense-panel-control-height);
-  padding: 0 var(--dense-panel-control-padding);
-  font-size: 12px;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .micBtn {
-  width: var(--dense-panel-control-height);
-  padding: 0;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .generateBtn {
-  min-width: 68px;
-  font-weight: 600;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor))
-  .panel
-  :is(.tags, .refImages, .referenceLimits, .textPromptActions, .generateActions) {
-  gap: var(--dense-panel-gap);
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel :is(.refThumb, .refAddBtn, .historyItem) {
-  width: var(--dense-panel-reference-size);
-  height: var(--dense-panel-reference-size);
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .textarea:not(.textareaExpanded) {
-  min-height: var(--dense-panel-prompt-height);
-  max-height: 108px;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor))
-  .panel
-  :is(.textarea:not(.textareaExpanded), .promptHl) {
-  font-size: 13px;
-  line-height: 19px;
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .textPromptTools {
-  flex-wrap: wrap;
-  gap: var(--dense-panel-gap);
-  padding-top: var(--dense-panel-gap);
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel :is(.textPromptHint, .inputLimitHint) {
-  color: var(--canvas-text-muted, #9ca3af);
-}
-
-:global(.canvas-panel-area:is(.is-reduced-editor, .is-compact-editor)) .panel .textPromptError {
-  color: #d95757;
 }
 
 .promptModalBackdrop {

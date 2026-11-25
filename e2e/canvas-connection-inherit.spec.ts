@@ -151,6 +151,17 @@ test('图片和视频节点连线继承模型与参数并保存', async ({ page 
   await page.screenshot({ path: testInfo.outputPath('inherited-config.png') })
 
   const target = page.locator('.react-flow__node[data-id="video-target"]')
+  const targetY = (await target.boundingBox())!.y
+  const panVertically = async (distance: number) => {
+    await page.mouse.move(20, 420)
+    await page.mouse.down({ button: 'middle' })
+    await page.mouse.move(20, 420 + distance, { steps: 8 })
+    await page.mouse.up({ button: 'middle' })
+  }
+  // 完整面板在下沿会覆盖节点的一部分。先把节点平移到可操作的位置。
+  await panVertically(-190)
+  await expect.poll(async () => (await target.boundingBox())?.y).toBeCloseTo(targetY - 190, 0)
+  await expect(page.getByText('来源视频模型', { exact: true }).first()).toBeVisible()
   await target.click({ button: 'right' })
   await page.getByRole('button', { name: '创建副本' }).hover()
   await expect(page.getByRole('menuitem')).toHaveText([
@@ -185,6 +196,8 @@ test('图片和视频节点连线继承模型与参数并保存', async ({ page 
     )
   await page.screenshot({ path: testInfo.outputPath('duplicate-with-original-inputs.png') })
 
+  await panVertically(190)
+  await expect.poll(async () => (await target.boundingBox())?.y).toBeCloseTo(targetY, 0)
   await imageSource.click()
   const panel = page.locator('.canvas-panel-area')
   await expect(panel).toBeVisible()

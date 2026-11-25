@@ -169,10 +169,7 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
 
 .canvas-view .canvas-panel-area > .canvas-panel-edit-content {
   zoom: var(--canvas-ui-scale, 1);
-  /* 锚点至少让出左侧 128px；同时预留面板内边距与右侧操作空间。 */
-  max-width: calc(
-    var(--canvas-node-panel-width, var(--canvas-panel-width-limit, calc(100vw - 200px))) / var(--canvas-ui-scale, 1)
-  );
+  max-width: calc(var(--canvas-node-panel-width, 100vw) / var(--canvas-ui-scale, 1));
   max-height: min(var(--canvas-panel-height-limit, 60dvh), calc((100dvh - 160px) / var(--canvas-ui-scale, 1)));
   overflow-x: hidden;
   overflow-y: auto;
@@ -189,11 +186,11 @@ body[data-canvas-ui='true'] .confirm-btn-submit:not(.is-danger):hover {
   min-height: 0;
   max-height: min(
     var(--canvas-panel-height-limit, 60dvh),
-    calc(var(--canvas-node-panel-height, 30dvh) / var(--canvas-ui-scale, 1))
+    calc(var(--canvas-panel-available-height, 30dvh) / var(--canvas-ui-scale, 1))
   );
 }
 
-.canvas-view.has-stacked-agent .canvas-panel-area:not(.is-video-editor) .canvas-panel-edit-content > * {
+.canvas-view.has-stacked-agent .canvas-panel-area:not(.is-node-editor) .canvas-panel-edit-content > * {
   box-sizing: border-box;
   min-height: 0;
   max-width: 100%;
@@ -269,8 +266,44 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   transform: translateX(-50%);
   /* 同批量工具条：选中节点会被 React Flow 抬到 1000 以上，面板正是跟着选中节点走的，
      停在 50 就会被自己所锚定的那个节点压住 */
-  z-index: 1200;
+  z-index: 1210;
   user-select: none;
+}
+
+.canvas-view[data-canvas-foreground-toolbar='bottom'] [data-canvas-bottom-dock],
+.canvas-view[data-canvas-foreground-toolbar='node'] [data-canvas-node-toolbar] {
+  z-index: 1250;
+}
+
+.canvas-toolbar-reveal {
+  position: fixed;
+  z-index: 1220;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 8px 8px 0 0;
+  background: var(--canvas-surface-raised, #303030);
+  color: var(--canvas-text, #e5e7eb);
+  cursor: pointer;
+}
+
+.canvas-toolbar-reveal::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  transform: translateY(2px) rotate(45deg);
+}
+
+.canvas-toolbar-reveal:focus-visible {
+  outline: 2px solid var(--canvas-brand, #00e5be);
+  outline-offset: -2px;
 }
 
 .canvas-view:not(.has-stacked-agent) .canvas-panel-area.is-anchored > .canvas-panel-edit-content {
@@ -289,11 +322,7 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
   --canvas-panel-height-limit: 78dvh;
 }
 
-.canvas-panel-area:is(.is-image-editor, .is-video-editor) {
-  --canvas-panel-width-limit: calc(100vw - 48px);
-}
-
-.canvas-view .canvas-panel-area.is-video-editor .canvas-panel-edit-content {
+.canvas-view .canvas-panel-area.is-node-editor > .canvas-panel-edit-content {
   display: flex;
   flex-direction: column;
   overflow: visible;
@@ -309,44 +338,15 @@ body[data-canvas-ui='true'] .canvas-ui-dialog {
 
 .canvas-panel-area.is-anchored {
   bottom: auto;
+  /* 宽度由内容和视口决定，节点靠近右侧时不会重新收窄。 */
+  width: max-content;
+  max-width: var(--canvas-node-panel-width, 100vw);
 }
 
-.canvas-panel-area.is-out-of-view {
+/* 完全离屏或拖线时隐藏面板，保持挂载以保留编辑状态。 */
+.canvas-panel-area.is-hidden {
   visibility: hidden;
   pointer-events: none;
-}
-
-/* 移动节点或拖线时隐藏面板，保持挂载以保留输入内容与估价。 */
-.canvas-panel-area.is-drag-hidden {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.canvas-panel-area.is-reduced-editor {
-  --canvas-density-panel-height: clamp(250px, 47dvh, 420px);
-}
-
-.canvas-panel-area.is-compact-editor {
-  --canvas-density-panel-height: clamp(200px, 34dvh, 310px);
-}
-
-.canvas-view .canvas-panel-area:is(.is-reduced-editor, .is-compact-editor).is-anchored > .canvas-panel-edit-content {
-  display: flex;
-  flex-direction: column;
-  width: calc(
-    min(var(--canvas-density-panel-width), 100dvw - 32px, var(--canvas-node-panel-width, 100dvw)) /
-      var(--canvas-ui-scale, 1)
-  );
-  max-width: none;
-  max-height: calc(
-    min(
-        var(--canvas-density-panel-height),
-        var(--canvas-panel-available-height),
-        var(--canvas-node-panel-height, 100dvh)
-      ) /
-      var(--canvas-ui-scale, 1)
-  );
-  overflow: visible;
 }
 
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
@@ -2880,16 +2880,10 @@ body[data-canvas-ui='true'] :is(.ant-modal-header, .ant-modal-footer) {
   touch-action: none;
 }
 
-/* 窄屏保持面板水平居中，同时限制其宽度。 */
+/* 窄屏保持编辑区内的滚动反馈。 */
 @media (max-width: 600px) {
-  .canvas-panel-area.is-anchored {
-    left: 50% !important;
-    width: calc(100vw - 24px);
-  }
   .canvas-view .canvas-panel-area > .canvas-panel-edit-content {
     box-sizing: border-box;
-    width: 100%;
-    max-width: 100%;
     max-height: min(var(--canvas-panel-height-limit, 60dvh), 520px);
     scrollbar-width: thin;
     scrollbar-color: var(--canvas-text-muted, #7a8496) transparent;

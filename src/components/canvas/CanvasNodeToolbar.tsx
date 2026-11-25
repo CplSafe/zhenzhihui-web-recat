@@ -101,19 +101,41 @@ export default function CanvasNodeToolbar({
   const captureWrapRef = useRef<HTMLSpanElement | null>(null)
   const overflowTriggerRef = useRef<HTMLButtonElement>(null)
   const overflowMenuRef = useRef<HTMLDivElement>(null)
-  const barRef = useRef<HTMLDivElement>(null)
+  const [barElement, setBarElement] = useState<HTMLDivElement | null>(null)
+  const [barIntersectsViewport, setBarIntersectsViewport] = useState(true)
   const [barWidth, setBarWidth] = useState(0)
+  const hasRightBoundary = rightBoundary !== undefined
   useLayoutEffect(() => {
-    const bar = barRef.current
-    if (!bar) return
-    const update = () => setBarWidth(bar.getBoundingClientRect().width)
+    if (!barElement || !hasRightBoundary) return
+    const update = () => setBarWidth(barElement.getBoundingClientRect().width)
     update()
     const observer = new ResizeObserver(update)
-    observer.observe(bar)
+    observer.observe(barElement)
     return () => observer.disconnect()
-  }, [])
+  }, [barElement, hasRightBoundary])
+  useLayoutEffect(() => {
+    if (!barElement || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(([entry]) => setBarIntersectsViewport(entry.isIntersecting))
+    observer.observe(barElement)
+    return () => observer.disconnect()
+  }, [barElement])
+  useLayoutEffect(() => {
+    if (!barElement) return
+    if (!barIntersectsViewport) {
+      const focused = document.activeElement
+      if (barElement.contains(focused) || overflowMenuRef.current?.contains(focused)) {
+        barElement.closest<HTMLElement>('.canvas-view')?.focus({ preventScroll: true })
+      }
+      setCaptureMenuOpen(false)
+      setOverflowOpen(false)
+    }
+    barElement.toggleAttribute('inert', !barIntersectsViewport)
+  }, [barElement, barIntersectsViewport])
   const right = rightBoundary ?? window.innerWidth
-  const centerX = Math.max(12 + barWidth / 2, Math.min(anchor.centerX, right - 12 - barWidth / 2))
+  const centerX =
+    rightBoundary === undefined
+      ? anchor.centerX
+      : Math.max(12 + barWidth / 2, Math.min(anchor.centerX, right - 12 - barWidth / 2))
 
   // 点到别处收起菜单，避免它一直盖在画面上
   useEffect(() => {
@@ -244,15 +266,17 @@ export default function CanvasNodeToolbar({
 
   return (
     <div
-      ref={barRef}
+      ref={setBarElement}
       className={`${styles.bar} ${isMedia ? styles.mediaBar : ''} ${density === 'normal' ? '' : styles[density]} nodrag nopan`}
       style={{
         left: centerX,
         bottom: anchor.bottom,
         maxWidth: density === 'compact' ? compactWidth : rightBoundary ? rightBoundary - 24 : undefined,
+        visibility: barIntersectsViewport ? undefined : 'hidden',
       }}
       role="toolbar"
       aria-label="节点操作"
+      aria-hidden={!barIntersectsViewport}
       data-canvas-node-toolbar
       data-toolbar-density={density}
       // 画布在捕获阶段处理指针事件，不拦住会连带触发框选与取消选中

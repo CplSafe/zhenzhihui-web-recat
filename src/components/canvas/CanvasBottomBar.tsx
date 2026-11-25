@@ -12,13 +12,15 @@ export default function CanvasBottomBar({
   children: ReactNode
 }) {
   return (
-    <div className={styles.dock}>
+    <div className={styles.dock} data-canvas-bottom-dock>
       <div className={styles.row}>
         <div className={styles.controls}>
           {overview && <div className={styles.overview}>{overview}</div>}
           {controls}
         </div>
-        <div className={styles.creation}>{children}</div>
+        <div className={styles.creation} data-canvas-bottom-region>
+          {children}
+        </div>
       </div>
     </div>
   )

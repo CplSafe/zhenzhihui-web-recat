@@ -576,7 +576,6 @@ interface CanvasNodePanelProps {
   onStartPickRef?: (slotIndex?: number) => void
   /** 画布点选或其他素材弹窗打开时暂时让出提示词遮罩。 */
   promptEditorSuspended?: boolean
-  density?: 'normal' | 'reduced' | 'compact'
   /**
    * 从素材库挑一条素材作为参考：会先落成新节点再连到本节点。
    *
@@ -818,7 +817,6 @@ export default function CanvasNodePanel({
   currentUserId,
   onStartPickRef,
   promptEditorSuspended = false,
-  density = 'normal',
   onPickRefFromLibrary,
   onPickRealPerson,
   onRemoveRef,
@@ -2949,15 +2947,9 @@ export default function CanvasNodePanel({
     .filter(Boolean)
     .join(' ')
 
-  const hasScrollableBody = kind === 'video' || density !== 'normal'
-
   return (
     <div className={panelClass} data-canvas-node-panel>
-      <div
-        className={hasScrollableBody ? styles.panelBody : styles.panelBodyInline}
-        tabIndex={hasScrollableBody ? 0 : undefined}
-        data-canvas-node-panel-body={hasScrollableBody || undefined}
-      >
+      <div className={styles.panelBody} tabIndex={0} data-canvas-node-panel-body>
         {panelBody}
       </div>
       <div className={styles.actions} data-canvas-node-panel-actions>
