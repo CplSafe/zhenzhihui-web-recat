@@ -44,6 +44,7 @@ export function useCanvasNodeLocks(
   enabled: boolean,
   selection: string[],
   referenceSourceIds: ReadonlySet<string>,
+  onRevision?: (revision: number) => void,
 ) {
   const selectionKey = JSON.stringify([...new Set(selection)].sort())
   const scope = enabled ? `${workspaceId}/${canvasId}/${userId}` : ''
@@ -63,11 +64,15 @@ export function useCanvasNodeLocks(
     const query = `workspace_id=${workspaceId}`
     const lockSocket = getAccountSwitchId()
       ? undefined
-      : connectCanvasLockSocket<Snapshot>(`${base}/socket?${query}&user_id=${userId}`, () => {
-          if (stopped || desired.current.scope !== scope) return
-          if (writing || (observing && desired.current.key === '[]')) changedWhileBusy = true
-          else void refresh(true)
-        })
+      : connectCanvasLockSocket<Snapshot>(
+          `${base}/socket?${query}&user_id=${userId}`,
+          () => {
+            if (stopped || desired.current.scope !== scope) return
+            if (writing || (observing && desired.current.key === '[]')) changedWhileBusy = true
+            else void refresh(true)
+          },
+          onRevision,
+        )
     const post = (nodes: string[], observe = false, heartbeat = false) => {
       // Older servers interpret an empty selection as release. Observation
       // uses a different session and stays independent of socket writes.
@@ -158,7 +163,7 @@ export function useCanvasNodeLocks(
       clearTimeout(timer)
       if (needsRelease && !writing) void post([]).catch(() => {})
     }
-  }, [scope, workspaceId, canvasId, userId])
+  }, [scope, workspaceId, canvasId, userId, onRevision])
   useEffect(() => {
     wake.current?.()
   }, [target])

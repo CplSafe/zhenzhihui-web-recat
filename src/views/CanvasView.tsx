@@ -2773,7 +2773,11 @@ function CanvasInner({
   const [openDirectorBinding, setOpenDirectorBinding] = useState<string | null>(null)
   const directorOpen = directorAvailable && openDirectorBinding === canvasBindingKey
   const [directorReference, setDirectorReference] = useState<{ binding: string; reference: CanvasReference }>()
+  const [remotePanelRevision, setRemotePanelRevision] = useState(0)
   const requestDirectorSyncRef = useRef<() => void>(() => {})
+  const onSocketRevision = useCallback((revision: number) => {
+    if (revision > syncRevisionRef.current) requestDirectorSyncRef.current()
+  }, [])
   const onDirectorCanvasChange = useCallback(
     (snapshot: Record<string, any>) => {
       if (snapshot.id === canvasId && Number.isSafeInteger(snapshot.revision)) requestDirectorSyncRef.current()
@@ -3094,6 +3098,7 @@ function CanvasInner({
     !!(workspaceId && canvasId && currentUserId),
     lockSelection,
     referenceSourceIds,
+    onSocketRevision,
   )
   const currentBusyReason = useLatestCallback(busyReason)
   const canUseSelectedNodePanel = canEditSelection && !agentOwner
@@ -5958,8 +5963,9 @@ function CanvasInner({
     }
   }, [setNodes, setEdges, setSelectedNode, fitView, routeProjectId, navigate, workspaceId, draftScope])
 
-  // 增量保存调度：防抖 1 秒后统一执行（本地草稿 + 云端），支持立即 flush
+  // 团队画布缩短保存防抖，并限制持续输入时的最长等待。
   const saveTimerRef = useRef<number | null>(null)
+  const pendingSaveSinceRef = useRef<number | null>(null)
   const scheduleSyncRef = useRef<(immediate?: boolean) => void>(() => undefined)
   const flushCanvasSyncRef = useRef<() => Promise<void>>(async () => undefined)
   scheduleSyncRef.current = (immediate?: boolean) => {
@@ -5969,6 +5975,7 @@ function CanvasInner({
     // 未取得云端基线时，卸载或异步操作不能用空画布覆盖已存在的本机草稿。
     if (!cloudLoadedRef.current) return
     if (immediate) {
+      pendingSaveSinceRef.current = null
       const latest = latestRef.current
       localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
         pendingSync: true,
@@ -5978,7 +5985,11 @@ function CanvasInner({
       pushCanvasMutations()
       return
     }
+    const now = performance.now()
+    pendingSaveSinceRef.current ??= now
+    const delay = teamCanvas ? Math.max(0, Math.min(250, 750 - (now - pendingSaveSinceRef.current))) : 1000
     saveTimerRef.current = window.setTimeout(() => {
+      pendingSaveSinceRef.current = null
       const latest = latestRef.current
       // 本地草稿同步落盘兜底（云端失败时仍可恢复）
       localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
@@ -5987,7 +5998,7 @@ function CanvasInner({
         pendingState: pendingCanvasStateRef.current,
       })
       pushCanvasMutations()
-    }, 1000)
+    }, delay)
   }
   flushCanvasSyncRef.current = async () => {
     scheduleSyncRef.current(true)
@@ -6282,6 +6293,7 @@ function CanvasInner({
           )
           restoreTextContents(texts)
           clearRemoteUndoHistory()
+          setRemotePanelRevision(page.sync_revision)
           setNodes(graph.nodes)
           setEdges(graph.edges)
           latestRef.current = graph
@@ -14082,6 +14094,7 @@ function CanvasInner({
                       <Suspense fallback={null}>
                         <CanvasNodePanel
                           node={selectedNodeForPanel}
+                          remoteRevision={remotePanelRevision}
                           mediaConnectionCounts={
                             selectedNode
                               ? {

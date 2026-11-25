@@ -567,6 +567,7 @@ export interface CanvasNodeInfo {
 
 interface CanvasNodePanelProps {
   node: CanvasNodeInfo | null
+  remoteRevision?: number
   modelDefaults?: CanvasModelDefaults
   /** Number of direct incoming media wires. Unlike sourceRefs, this deliberately counts repeated asset IDs. */
   mediaConnectionCounts?: { images: number; videos: number }
@@ -811,6 +812,7 @@ const readPromptHistory = (nodeId?: string): string[] => (nodeId && promptHistor
 
 export default function CanvasNodePanel({
   node,
+  remoteRevision,
   modelDefaults,
   mediaConnectionCounts,
   workspaceId,
@@ -908,30 +910,6 @@ export default function CanvasNodePanel({
   }, [promptExpanded, promptEditorSuspended])
   const [checkingAssets, setCheckingAssets] = useState(false)
 
-  // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
-  // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
-  const restoredNodeIdRef = useRef<string | undefined>(node?.id)
-  useEffect(() => {
-    const switchedNode = restoredNodeIdRef.current !== node?.id
-    if (switchedNode) {
-      const end = String(node?.prompt ?? (kind === 'text' ? node?.text : '') ?? '').length
-      caretRef.current = end
-      selectionEndRef.current = end
-    }
-    if (kind === 'text') {
-      if (switchedNode) setPromptHistory(readPromptHistory(node?.id))
-      if (switchedNode) setPrompt(String(node?.prompt ?? node?.text ?? ''))
-      setPolishError('')
-      restoredNodeIdRef.current = node?.id
-      return
-    }
-    // 同一节点内不跟随 node.prompt 回灌，否则用户正在输入时会被持久化回来的值打断。
-    if (!switchedNode) return
-    setPromptHistory(readPromptHistory(node?.id))
-    restoredNodeIdRef.current = node?.id
-    setPrompt(String(node?.prompt || ''))
-    setPolishError('')
-  }, [kind, node?.id, node?.text, node?.prompt])
   // 受控回显：优先取节点数据中的比例/模式（存储值为英文 auto）
   const ratio = node?.ratio || (kind === 'video' ? AUTO_RATIO : '1:1')
   const videoMode = (node?.videoMode as VideoMode) || 'auto'
@@ -1027,6 +1005,23 @@ export default function CanvasNodePanel({
   useEffect(() => {
     return () => flushPromptWriteBack()
   }, [node?.id, flushPromptWriteBack])
+
+  const restoredPromptRef = useRef({ nodeId: node?.id, remoteRevision })
+  useEffect(() => {
+    const previous = restoredPromptRef.current
+    const switchedNode = previous.nodeId !== node?.id
+    const receivedRemoteUpdate = previous.remoteRevision !== remoteRevision
+    restoredPromptRef.current = { nodeId: node?.id, remoteRevision }
+    if (!switchedNode && (!receivedRemoteUpdate || pendingWriteBackRef.current)) return
+
+    const next = String(node?.prompt ?? (kind === 'text' ? node?.text : '') ?? '')
+    if (!switchedNode && promptRef.current === next) return
+    caretRef.current = next.length
+    selectionEndRef.current = next.length
+    if (switchedNode) setPromptHistory(readPromptHistory(node?.id))
+    setPrompt(next)
+    setPolishError('')
+  }, [kind, node?.id, node?.text, node?.prompt, remoteRevision])
 
   // 把新文本落到提示词并持久化：图片/视频节点边输入边写回 prompt，切节点/刷新后仍在。
   // immediate=true 用于点选/润色/语音这类一次性改动，直接写回不防抖。

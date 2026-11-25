@@ -268,10 +268,13 @@ test('WebSocket 通知节点释放后立即重新申请编辑', async ({ page })
   const api = await installStrictAuthenticatedApp(page)
   let allowEdit = false
   let socketRequests = 0
+  let cloudRevision = 1
   const socketOpened = pauseResponse()
   let notifyRelease = () => {}
+  let notifyRevision = () => {}
   await page.routeWebSocket('**/api/v1/canvases/241/node-locks/socket?**', (socket) => {
     notifyRelease = () => socket.send(JSON.stringify({ type: 'changed' }))
+    notifyRevision = () => socket.send(JSON.stringify({ type: 'revision', revision: cloudRevision }))
     socket.onMessage((raw) => {
       const { nodes } = JSON.parse(String(raw)) as { nodes: string[] }
       if (nodes.includes('video')) socketRequests++
@@ -303,7 +306,7 @@ test('WebSocket 通知节点释放后立即重新申请编辑', async ({ page })
     if (pathname.endsWith('/elements'))
       return route.fulfill({
         json: {
-          sync_revision: 1,
+          sync_revision: cloudRevision,
           has_more: false,
           elements: [
             {
@@ -314,7 +317,7 @@ test('WebSocket 通知节点释放后立即重新申请编辑', async ({ page })
                 id: 'video',
                 type: 'video',
                 position: { x: 440, y: 140 },
-                data: { kind: 'video' },
+                data: { kind: 'video', prompt: cloudRevision === 1 ? '旧提示词' : '其他成员提交的新提示词' },
               },
             },
           ],
@@ -334,6 +337,13 @@ test('WebSocket 通知节点释放后立即重新申请编辑', async ({ page })
   notifyRelease()
   await expect(editor).not.toHaveAttribute('inert', { timeout: 1500 })
   expect(socketRequests).toBe(2)
+  cloudRevision = 2
+  notifyRevision()
+  await expect(page.locator('[data-canvas-node-panel]').getByPlaceholder(/描述你想要生成/)).toHaveAttribute(
+    'data-value',
+    '其他成员提交的新提示词',
+    { timeout: 1500 },
+  )
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })

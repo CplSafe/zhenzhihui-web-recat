@@ -1,6 +1,10 @@
 // One outstanding command per socket. Notifications can arrive independently
 // from the command reply and never grant permission by themselves.
-export function connectCanvasLockSocket<T>(path: string, onChanged: () => void) {
+export function connectCanvasLockSocket<T>(
+  path: string,
+  onChanged: () => void,
+  onRevision?: (revision: number) => void,
+) {
   let socket: WebSocket | undefined
   let pending: { resolve: (state: T) => void; reject: (error: Error) => void; timeout: number } | undefined
   let reconnect: number | undefined
@@ -35,7 +39,9 @@ export function connectCanvasLockSocket<T>(path: string, onChanged: () => void) 
       try {
         const message = JSON.parse(data)
         if (message.type === 'changed') onChanged()
-        else if (message.type === 'state') takePending()?.resolve(message.data)
+        else if (message.type === 'revision') {
+          if (Number.isSafeInteger(message.revision) && message.revision >= 0) onRevision?.(message.revision)
+        } else if (message.type === 'state') takePending()?.resolve(message.data)
         else takePending()?.reject(new Error('Canvas lock request rejected'))
       } catch {
         connection.close()
