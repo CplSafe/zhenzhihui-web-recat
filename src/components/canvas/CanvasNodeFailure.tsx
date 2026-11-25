@@ -10,9 +10,9 @@ export default function CanvasNodeFailure({
   children,
   zoom,
   requestId,
-  title = '生成失败',
-  failedAt,
   detailsData,
+  title = detailsData?.taskStatus === 'submission_unknown' ? '提交状态待确认' : '生成失败',
+  failedAt,
 }: {
   reason?: string
   children?: ReactNode
@@ -53,8 +53,8 @@ export default function CanvasNodeFailure({
                 taskFailure: {
                   ...detailsData.taskFailure,
                   message: reason,
-                  requestId: requestId || detailsData.taskFailure?.requestId,
-                  failedAt: failedAt || detailsData.taskFailure?.failedAt,
+                  ...(requestId ? { requestId } : {}),
+                  ...(failedAt ? { failedAt } : {}),
                 },
               }}
             />

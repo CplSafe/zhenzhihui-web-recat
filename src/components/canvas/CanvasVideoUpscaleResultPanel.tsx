@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
+import { getCanvasTaskPresentation, isCanvasSubmissionUnresolved } from '@/utils/canvasTaskState'
 import CanvasFailureDetails from './CanvasFailureDetails'
 import { useToast } from '@/composables/useToast'
 import styles from './CanvasNodePanel.module.css'
@@ -8,9 +8,11 @@ import upscaleStyles from './CanvasVideoUpscaleResultPanel.module.css'
 export default function CanvasVideoUpscaleResultPanel({
   data,
   onRetry,
+  onRetryResultSync,
 }: {
   data: Record<string, any>
   onRetry: () => Promise<void>
+  onRetryResultSync?: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
@@ -38,6 +40,8 @@ export default function CanvasVideoUpscaleResultPanel({
     'result_sync_failed',
   ].includes(String(data.taskStatus))
   const params = request?.params || data.params || {}
+  const unknown = data.taskStatus !== 'submitting' && isCanvasSubmissionUnresolved(data)
+  const resultDelayed = data.taskStatus === 'result_sync_delayed'
   const concurrencyRejected = Number(data.taskFailure?.httpStatus) === 409 && String(data.taskFailure?.code) === '10401'
   return (
     <section className={`${styles.panel} ${upscaleStyles.panel}`} aria-label="视频超分任务">
@@ -60,19 +64,28 @@ export default function CanvasVideoUpscaleResultPanel({
         ))}
       </dl>
       <p role="status">
-        {state.running
-          ? '超分任务处理中，请等待结果。'
-          : failed
-            ? concurrencyRejected
-              ? '本次请求因模型并发限制被拒绝，未创建超分任务。请等待已有任务完成后重试；若没有正在执行的任务，请提供 RequestID 联系支持核查占用状态。'
-              : '上次超分未完成，可查看失败详情。'
-            : data.assetId || data.resultUrl
-              ? '超分已完成。'
-              : '超分任务等待提交。'}
+        {unknown
+          ? '提交待确认，请按提交编号核对任务记录。'
+          : resultDelayed
+            ? '超分已完成，等待同步结果。'
+            : state.running
+              ? '超分任务处理中，请等待结果。'
+              : failed
+                ? concurrencyRejected
+                  ? '本次请求因模型并发限制被拒绝，未创建超分任务。请等待已有任务完成后重试；若没有正在执行的任务，请提供 RequestID 联系支持核查占用状态。'
+                  : '上次超分未完成，可查看失败详情。'
+                : data.assetId || data.resultUrl
+                  ? '超分已完成。'
+                  : '超分任务等待提交。'}
       </p>
-      {failed && <CanvasFailureDetails data={data} />}
-      {!validRequest && <p role="alert">缺少原始超分请求，请从原视频重新打开超分。</p>}
-      {failed && (
+      {(failed || unknown) && <CanvasFailureDetails data={data} />}
+      {resultDelayed && (
+        <button className={upscaleStyles.retry} type="button" onClick={onRetryResultSync}>
+          重新同步结果
+        </button>
+      )}
+      {!validRequest && failed && !unknown && <p role="alert">缺少原始超分请求，请从原视频重新打开超分。</p>}
+      {failed && !unknown && (
         <button
           className={upscaleStyles.retry}
           type="button"

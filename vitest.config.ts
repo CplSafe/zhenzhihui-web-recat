@@ -44,6 +44,7 @@ export default defineConfig({
         'src/components/canvas/CanvasStoryboardModal.tsx',
         'src/utils/canvasLayout.ts',
         'src/utils/canvasDraft.ts',
+        'src/utils/canvasTaskState.ts',
         'src/components/hotcopy/HotCopyEntry/HotCopyEntry.tsx',
         'src/utils/canvasTools.ts',
         'src/utils/canvasUpscale.ts',

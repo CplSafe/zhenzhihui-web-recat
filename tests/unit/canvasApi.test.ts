@@ -24,6 +24,7 @@ import {
   duplicateCanvas,
   fetchAllCanvasElements,
   listCanvases,
+  saveCanvasElements,
   saveCanvasElementsBatched,
 } from '@/api/canvasApi'
 
@@ -242,5 +243,26 @@ describe('画布保存请求大小', () => {
       saveCanvasElementsBatched({ workspaceId: 7, canvasId: 9, baseRevision: 0, mutations }),
     ).rejects.toMatchObject({ code: 'CANVAS_LOCAL_PAYLOAD_TOO_LARGE', message: expect.stringContaining('large') })
     expect(mocks.requestBusinessJson).not.toHaveBeenCalled()
+  })
+})
+
+describe('saveCanvasElements acknowledgement', () => {
+  beforeEach(() => mocks.requestBusinessJson.mockReset())
+
+  it.each([undefined, null, 0, -1, 3, 4.5, '4.5', 'invalid', true])(
+    'requires reconciliation for an unusable write revision %s',
+    async (revision) => {
+      mocks.requestBusinessJson.mockResolvedValue({ data: { sync_revision: revision } })
+      await expect(
+        saveCanvasElements({ workspaceId: 7, canvasId: 9, baseRevision: 4, mutations: [], state: { zoom: 1 } }),
+      ).rejects.toMatchObject({ code: 'CANVAS_SAVE_ACK_UNKNOWN' })
+    },
+  )
+
+  it('accepts the compatible revision field without moving the base backwards', async () => {
+    mocks.requestBusinessJson.mockResolvedValue({ data: { revision: '4' } })
+    await expect(
+      saveCanvasElements({ workspaceId: 7, canvasId: 9, baseRevision: 4, mutations: [], state: { zoom: 1 } }),
+    ).resolves.toEqual({ sync_revision: 4 })
   })
 })

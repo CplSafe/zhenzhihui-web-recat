@@ -5,11 +5,20 @@ import type { Node } from '@xyflow/react'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
 import { EmptyModelNotice } from '@/components/common/ModelAvailabilityNotice'
 import { Alert, Button, Modal, Radio, Select, Spin } from 'antd'
-import { createAiTask, estimateAiTaskCost, getAiTaskId, getAiTask, listAiModels, waitForAiTask } from '@/api/business'
+import {
+  createAiTask,
+  estimateAiTaskCost,
+  getAiTaskId,
+  getAiTask,
+  listAiModels,
+  normalizeAiTaskStatus,
+  waitForAiTask,
+} from '@/api/business'
 import type { ToolField } from '@/api/canvasTools'
 import type { HdTask, HdSource } from '@/api/canvasHd'
 import type { HdRequest } from './CanvasHdWorkspace'
-import { hdSources } from '@/utils/canvasHd'
+import { hdSources, type CanvasHdResultTask } from '@/utils/canvasHd'
+import { CANVAS_SUBMISSION_UNKNOWN_MESSAGE, isCanvasSubmissionUnresolved } from '@/utils/canvasTaskState'
 import { creditsLabel } from '@/utils/creditsFormat'
 import { activeToolParams, fieldOptions, fieldVisible, schemaDefaults, validateToolFields } from '@/utils/canvasTools'
 import CanvasToolFields from './CanvasToolFields'
@@ -19,6 +28,13 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 import { upscaleDisplayFields, upscaleImageSize } from '@/utils/canvasUpscale'
 import { uploadAssetFile } from '@/api/business'
 import { fitUpscaleInput, createUpscaleInputFile } from '@/utils/upscaleInput'
+import {
+  buildGenerationFailure,
+  generationSubmissionFingerprint,
+  isDefiniteCanvasSubmissionRejection,
+} from '@/utils/generationFailure'
+import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import styles from './CanvasUpscale.module.css'
 
 interface Model {
@@ -67,7 +83,7 @@ export default function CanvasUpscale(props: {
   request: HdRequest | null
   onCloseRequest: () => void
   onSubmitted: () => void
-  onTasks: (tasks: HdTask[]) => void
+  onTasks: (tasks: CanvasHdResultTask[]) => void
   onModalChange: (open: boolean) => void
   onVideoGenerate?: (submission: VideoUpscaleSubmission) => Promise<void>
 }) {
@@ -75,6 +91,7 @@ export default function CanvasUpscale(props: {
   const submissionBlockedReason = reservation?.blockedReason
   const source = hdSources(props.nodes.filter((node) => props.request?.ids.includes(node.id)))[0]
   const operation = source ? `${source.kind}.upscale` : ''
+  const userId = useWorkspaceSessionStore((state) => resolveUserId(state.authSession?.user))
   const [catalogRetry, setCatalogRetry] = useState(0)
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight })
   const [panelHeight, setPanelHeight] = useState(350)
@@ -94,9 +111,19 @@ export default function CanvasUpscale(props: {
   const prepareController = useRef<AbortController | null>(null)
   const lock = useRef(false)
   const submittingKeys = useRef(new Set<string>())
-  const tasks = useRef<HdTask[]>([])
   const key = useRef('')
   const controller = useRef(new AbortController())
+  const unresolvedSource =
+    source?.kind === 'image' &&
+    props.nodes.some(({ data }) => {
+      const hd = data.hd as { sourceNodeId?: string; sourceAssetId?: number } | undefined
+      return (
+        hd?.sourceNodeId === source.node_id &&
+        hd.sourceAssetId === source.asset_id &&
+        isCanvasSubmissionUnresolved(data) &&
+        !(data.taskStatus === 'submitting' && submittingKeys.current.has(String(data.taskIdempotencyKey)))
+      )
+    })
   useEffect(() => {
     const active = new AbortController()
     controller.current = active
@@ -313,7 +340,15 @@ export default function CanvasUpscale(props: {
   const currentQuote = quote?.key === fingerprint ? quote : null
   async function run() {
     const submissionKey = key.current
-    if (submissionBlockedReason || lock.current || submittingKeys.current.has(submissionKey) || !source || !body) return
+    if (
+      submissionBlockedReason ||
+      unresolvedSource ||
+      lock.current ||
+      submittingKeys.current.has(submissionKey) ||
+      !source ||
+      !body
+    )
+      return
     if (!currentQuote || !currentQuote.can_afford || currentQuote.balance < currentQuote.estimated_cost) return
     const validation = validateToolFields(fields, values)
     if (validation) {
@@ -323,6 +358,7 @@ export default function CanvasUpscale(props: {
     submittingKeys.current.add(submissionKey)
     setBusy(true)
     setError('')
+    let stopTracking: (() => void) | undefined
     try {
       if (source.kind === 'video' && props.onVideoGenerate) {
         await props.onVideoGenerate({
@@ -340,10 +376,13 @@ export default function CanvasUpscale(props: {
         })
         return
       }
+      const startedAt = new Date().toISOString()
+      const taskFingerprint = await generationSubmissionFingerprint(body)
+      if (controller.current.signal.aborted) return
       const base: HdTask = {
         id: `submission-${submissionKey}`,
         ...(source.kind === 'image'
-          ? { image_info: imageGenerationInfo(body, model.display_name || model.name || '', new Date().toISOString()) }
+          ? { image_info: imageGenerationInfo(body, model.display_name || model.name || '', startedAt) }
           : {}),
         workspace_id: props.workspaceId,
         canvas_id: props.canvasId,
@@ -352,59 +391,90 @@ export default function CanvasUpscale(props: {
         source_spec: '',
         target: { resolution: '', fps: 0 },
         status: 'queued',
-        submitted_at: new Date().toISOString(),
-        credits: quote.estimated_cost,
+        submitted_at: startedAt,
+        credits: currentQuote.estimated_cost,
         refund_status: 'none',
         refunded_credits: 0,
       }
-      const publish = (current: any) => {
-        if (controller.current.signal.aborted) return
-        const output = current.outputs?.find((item: any) => Number(item.asset_id || item.asset?.id) > 0)
-        const status = ['succeeded', 'completed', 'success'].includes(current.status)
-          ? 'completed'
-          : ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(current.status)
-            ? 'failed'
-            : 'processing'
-        const row: HdTask = {
-          ...base,
-          status,
-          task_id: getAiTaskId(current) || undefined,
-          error: current.error_message || current.error?.message || '',
-          result: output
-            ? {
-                asset_id: Number(output.asset_id || output.asset?.id),
-                name: `${source.name}超分`,
-                spec: '',
-                width: Number(output.width || 0),
-                height: Number(output.height || 0),
-                review_policy: '',
-              }
-            : undefined,
-        }
-        tasks.current = [...tasks.current.filter((item) => item.id !== row.id), row]
-        props.onTasks(tasks.current)
+      const resultNodeId = `hd-result-${base.id}`
+      const attempt = {
+        modelVersionId: body.modelVersionId,
+        operationCode: body.operationCode,
+        taskId: 0,
+        taskStatus: 'submitting',
+        taskProgress: 0,
+        taskRunId: submissionKey,
+        taskSubmitterId: userId,
+        taskIdempotencyKey: submissionKey,
+        taskSubmissionFingerprint: taskFingerprint,
+        taskStartedAt: startedAt,
+        taskUpdatedAt: startedAt,
+        ...(base.image_info ? { imageGeneration: { submissionKey, info: base.image_info } } : {}),
       }
-      publish({ status: 'queued' })
+      const publish = (status: HdTask['status'], patch: Record<string, unknown>, result?: HdTask['result']) => {
+        if (controller.current.signal.aborted) return
+        props.onTasks([
+          {
+            ...base,
+            status,
+            taskData: { taskRunId: submissionKey, ...patch },
+            result,
+          },
+        ])
+      }
+      stopTracking = reservation?.trackSubmission?.(resultNodeId, submissionKey)
+      publish('queued', attempt)
       props.onCloseRequest()
       props.onSubmitted()
-      let task: any
+      const failureContext = {
+        submissionId: submissionKey,
+        operationCode: body.operationCode,
+        modelVersionId: body.modelVersionId,
+        workspaceId: props.workspaceId,
+        canvasId: props.canvasId,
+      }
+      let submitted = false
+      let taskId = 0
       try {
         if (!reservation) throw new Error('画布尚未就绪，请稍后重试')
-        await reservation.persist(`hd-result-${base.id}`, submissionKey)
+        await reservation.persist(resultNodeId, submissionKey)
         if (controller.current.signal.aborted) return
-        task = await createAiTask({
+        submitted = true
+        const task = await createAiTask({
           ...body,
           modelVersion: model,
           capability: source.kind,
           idempotencyKey: submissionKey,
+          signal: controller.current.signal,
         })
+        taskId = getAiTaskId(task)
+        if (!taskId) throw new Error('超分接口未返回有效任务 ID')
       } catch (err) {
-        publish({ status: 'failed', error_message: err instanceof Error ? err.message : '超分请求失败' })
-        showToast(err instanceof Error ? err.message : '超分请求失败', 'error')
-        return
+        if (controller.current.signal.aborted) return
+        const failure = buildGenerationFailure(err, { ...failureContext, submitted })
+        taskId = submitted ? getAiTaskId({ id: failure.taskId }) : 0
+        if (!taskId) {
+          const unknown = submitted && !isDefiniteCanvasSubmissionRejection(err)
+          const message = unknown
+            ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE
+            : err instanceof Error
+              ? err.message
+              : '超分请求失败'
+          publish('failed', {
+            taskStatus: unknown ? 'submission_unknown' : 'submit_failed',
+            taskError: message,
+            taskFailure: unknown ? { ...failure, stage: 'unknown' } : failure,
+            taskUpdatedAt: failure.failedAt,
+          })
+          showToast(message, 'error')
+          return
+        }
       }
-      publish(task)
-      void getAiTask({ workspaceId: props.workspaceId, taskId: getAiTaskId(task) })
+      if (controller.current.signal.aborted) return
+      const accepted = { taskId, taskStatus: 'processing', taskError: '', taskFailure: undefined }
+      publish('processing', accepted)
+      void reservation.persist(resultNodeId, submissionKey, accepted).catch(() => {})
+      void getAiTask({ workspaceId: props.workspaceId, taskId, signal: controller.current.signal })
         .then((detail) =>
           waitForAiTask({
             workspaceId: props.workspaceId,
@@ -412,27 +482,46 @@ export default function CanvasUpscale(props: {
             intervalMs: 3000,
             timeoutMs: 3600000,
             signal: controller.current.signal,
-            onPoll: publish,
           }),
         )
         .then(async (completed) => {
           const assetId =
-            extractOutputAssetId(completed) ||
-            (await findAssetIdByTaskId(props.workspaceId, getAiTaskId(task), source.kind))
+            extractOutputAssetId(completed) || (await findAssetIdByTaskId(props.workspaceId, taskId, source.kind))
           if (controller.current.signal.aborted) return
           if (!assetId) throw new Error('超分已完成，但结果素材尚未入库，请在素材库中查看')
-          publish({ ...completed, outputs: [{ asset_id: assetId }], status: 'completed' })
+          const output = completed.outputs?.find((item: any) => Number(item.asset_id || item.asset?.id) === assetId)
+          publish(
+            'completed',
+            { taskId, taskProgress: 100 },
+            {
+              asset_id: assetId,
+              name: `${source.name}超分`,
+              spec: '',
+              width: Number(output?.width || 0),
+              height: Number(output?.height || 0),
+              review_policy: '',
+            },
+          )
           showToast('超分完成，已添加到画布', 'success')
         })
         .catch((err) => {
           if (!controller.current.signal.aborted) {
-            publish({ status: 'failed', id: getAiTaskId(task), error_message: err.message || '超分任务查询失败' })
-            showToast(err.message || '超分任务查询失败', 'error')
+            const status = normalizeAiTaskStatus(err?.response?.status)
+            const terminal = ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(status)
+            const message = err?.message || '超分任务查询失败'
+            publish('failed', {
+              taskId,
+              taskStatus: terminal ? status : 'result_pending',
+              taskError: message,
+              taskFailure: buildGenerationFailure(err, { ...failureContext, submitted, taskId }),
+            })
+            showToast(message, 'error')
           }
         })
     } catch (err) {
       if (key.current === submissionKey) setError(err instanceof Error ? err.message : '超分请求失败')
     } finally {
+      stopTracking?.()
       submittingKeys.current.delete(submissionKey)
       if (key.current === submissionKey) setBusy(false)
     }
@@ -631,6 +720,7 @@ export default function CanvasUpscale(props: {
             />
           )}
           {submissionBlockedReason && <Alert type="info" message={submissionBlockedReason} />}
+          {unresolvedSource && <Alert type="warning" message={CANVAS_SUBMISSION_UNKNOWN_MESSAGE} />}
           <div className={styles.footer}>
             <span className={styles.cost} aria-live="polite">
               {currentQuote
@@ -644,6 +734,7 @@ export default function CanvasUpscale(props: {
               loading={busy}
               disabled={
                 Boolean(submissionBlockedReason) ||
+                unresolvedSource ||
                 !currentQuote ||
                 !currentQuote.can_afford ||
                 currentQuote.balance < currentQuote.estimated_cost

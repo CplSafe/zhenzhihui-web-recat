@@ -1,4 +1,6 @@
+import type { Node } from '@xyflow/react'
 import { normalizeAiTaskStatus } from '@/api/business'
+import type { CanvasResultHistoryEntry } from '@/utils/canvasElements'
 
 interface CanvasTaskIdentity {
   taskId?: unknown
@@ -18,51 +20,48 @@ const failedTaskStatuses = new Set([
 /**
  * 提交中（submitting、还没拿到 task_id）的节点最多能合理地停留多久。
  *
- * 节点在发出「创建任务」请求之前就被标成 submitting 并同步到云端，之后只有发起请求的那个页面
- * 能把它推进到下一状态。页面在请求途中被刷新 / 关闭 / 切走，这个状态就成了孤儿：轮询只认 task_id，
- * 界面也没有超时，于是永远显示「生成中」，而且「生成中」的节点不允许再次提交——用户连重试都点不动。
- * 创建任务请求自身最长 10 分钟超时（图片同步出图），再留 1 分钟余量：超过它还在 submitting，
- * 就一定不是哪个页面还在等响应了。
+ * 超过此时间可以提示核对原提交。客户端耗时无法证明服务端没有受理。
  */
 export const CANVAS_SUBMIT_STALE_MS = 11 * 60_000
 
-/** 提交中断后写给用户的说明 */
-export const CANVAS_SUBMIT_INTERRUPTED_MESSAGE = '上次提交没有完成（页面在提交过程中被关闭或网络中断），请重新生成'
+export const CANVAS_SUBMISSION_UNKNOWN_MESSAGE = '尚未确认本次提交。请按提交编号核对任务记录，避免重复生成'
+
+export const CANVAS_RESULT_SYNC_DELAYED_MESSAGE = '任务已完成，结果暂未同步，可重新同步原任务'
+
+function isLegacySubmissionReservation(data: Record<string, unknown>, status: string): boolean {
+  return Boolean(data.taskIdempotencyKey) && (status === 'queued' || (status === 'preparing' && data.kind === 'audio'))
+}
 
 /**
  * 判断一个 submitting 节点该怎么善后：
- * - none：不是孤儿提交（不在 submitting、已有 task_id，或本页正在提交）；
- * - resume：还在合理窗口内且存了幂等键 → 用同一个幂等键重发，后端去重保证只建一个任务、只扣一次费；
- * - interrupted：超出窗口，或旧数据没存幂等键 → 结束「生成中」，标成提交中断，让用户自己决定是否重来。
+ * 短窗口内只提示原提交者。超过窗口后协作者也可提示核对，均不重新发送生成请求。
  */
 export function classifyOrphanSubmission(
   data: Record<string, unknown> = {},
   options: { now: number; submittingInThisPage: boolean; currentUserId?: number },
-): 'none' | 'resume' | 'interrupted' {
+): 'none' | 'unknown' {
   if (options.submittingInThisPage) return 'none'
-  if (normalizeAiTaskStatus(data.taskStatus) !== 'submitting') return 'none'
+  const status = normalizeAiTaskStatus(data.taskStatus)
+  if (status !== 'submitting' && !isLegacySubmissionReservation(data, status)) return 'none'
   if (Number(data.taskId || 0) > 0) return 'none'
   const startedAt = Date.parse(String(data.taskStartedAt || ''))
   const age = Number.isFinite(startedAt) ? options.now - startedAt : Number.POSITIVE_INFINITY
-  const key = String(data.taskIdempotencyKey || '').trim()
-  const request = data.generationRequest || data.videoUpscaleRequest
-  const hasRequest = Boolean(request && typeof request === 'object')
-  if (age >= CANVAS_SUBMIT_STALE_MS) return 'interrupted'
-  // 协作者看到 submitting 时，原发起人可能仍在等待生成请求返回。
+  if (age >= CANVAS_SUBMIT_STALE_MS) return 'unknown'
   if (options.currentUserId !== undefined && Number(data.taskSubmitterId) !== options.currentUserId) return 'none'
-  return key && hasRequest ? 'resume' : 'interrupted'
+  return 'unknown'
 }
 
-/** 重新生成时能否沿用上次中断那一次的幂等键：只有上次确实是提交中断、且请求内容原样未变才行 */
-export function reusableInterruptedIdempotencyKey(data: Record<string, unknown> = {}, nextRequest: unknown): string {
-  if (data.taskSubmitInterrupted !== true) return ''
-  const key = String(data.taskIdempotencyKey || '').trim()
-  if (!key) return ''
-  try {
-    return JSON.stringify(data.generationRequest || data.videoUpscaleRequest) === JSON.stringify(nextRequest) ? key : ''
-  } catch {
-    return ''
-  }
+export function isCanvasSubmissionUnresolved(data: Record<string, unknown> = {}): boolean {
+  if (Number(data.taskId || 0) > 0) return false
+  const status = normalizeAiTaskStatus(data.taskStatus)
+  return (
+    status === 'submission_unknown' ||
+    status === 'submitting' ||
+    isLegacySubmissionReservation(data, status) ||
+    (status === 'submit_failed' &&
+      (data.taskSubmitInterrupted === true ||
+        (data.taskFailure as { stage?: string } | undefined)?.stage === 'unknown'))
+  )
 }
 
 /** Saved failures are historical snapshots; verify their task before displaying them. */
@@ -72,16 +71,27 @@ export function restoreCanvasTaskState(data: Record<string, unknown> = {}): Reco
     return data
   const taskId = Number(data.taskId)
   const hasTaskId = Number.isSafeInteger(taskId) && taskId > 0
-  if ((status === 'reconnecting' || status === 'status_query_failed') && !hasTaskId) {
+  if (
+    !hasTaskId &&
+    (status === 'reconnecting' ||
+      status === 'status_query_failed' ||
+      (status === 'submit_failed' && isCanvasSubmissionUnresolved(data)))
+  ) {
     return {
       ...data,
-      taskStatus: 'submit_failed',
-      taskError: '缺少任务编号，无法恢复上次任务。请先核对任务记录，再重新生成',
+      taskStatus: 'submission_unknown',
+      taskError: CANVAS_SUBMISSION_UNKNOWN_MESSAGE,
       taskErrorHistorical: true,
       taskSubmitInterrupted: true,
       taskProgress: 0,
       taskStatusQueryFailures: 0,
     }
+  }
+  if (hasTaskId && (status === 'submission_unknown' || status === 'submitting' || status === 'submit_failed')) {
+    return { ...data, taskStatus: 'reconnecting', taskError: '', taskErrorHistorical: true }
+  }
+  if (hasTaskId && status === 'failed' && String(data.taskError || '').includes('结果同步超时')) {
+    return { ...data, taskStatus: 'result_sync_delayed', taskError: CANVAS_RESULT_SYNC_DELAYED_MESSAGE }
   }
   if (status === 'status_query_failed') return { ...data, taskErrorHistorical: true }
   if (!failedTaskStatuses.has(status) && status !== 'reconnecting') return data
@@ -102,6 +112,98 @@ export function restoreCanvasTaskState(data: Record<string, unknown> = {}): Reco
 export function isSameCanvasTask(current: CanvasTaskIdentity, snapshot: CanvasTaskIdentity): boolean {
   const taskId = Number(snapshot.taskId || 0)
   return taskId > 0 && Number(current.taskId || 0) === taskId && current.taskRunId === snapshot.taskRunId
+}
+
+const unsettledTaskStatuses = new Set([
+  'submitting',
+  'submission_unknown',
+  'created',
+  'queued',
+  'pending',
+  'preparing',
+  'running',
+  'processing',
+  'reconnecting',
+  'status_query_failed',
+  'result_pending',
+  'result_sync_delayed',
+])
+
+function verifiedCanvasResult(data: Record<string, unknown>) {
+  if (data.kind !== 'image' && data.kind !== 'video') return
+  if (!['succeeded', 'completed', 'success'].includes(normalizeAiTaskStatus(data.taskStatus))) return
+  const taskId = Number(data.taskId)
+  const assetId = Number(data.assetId)
+  if (!Number.isSafeInteger(taskId) || taskId <= 0 || !Number.isSafeInteger(assetId) || assetId <= 0) return
+  const history: CanvasResultHistoryEntry[] = Array.isArray(data.resultHistory) ? data.resultHistory : []
+  if (history.some((entry) => Number(entry?.taskId) === taskId && Number(entry?.assetId) === assetId))
+    return { taskId, assetId, history }
+}
+
+/** Repair only an older phase of the same submission. The incoming graph still owns its layout and edits. */
+export function preserveCompletedCanvasResults(known: readonly Node[], incoming: Node[]): Node[] {
+  const byNodeId = new Map(known.map((node) => [node.id, node.data]))
+  let changed = false
+  const nodes = incoming.map((node) => {
+    const data = node.data
+    const status = normalizeAiTaskStatus(data.taskStatus)
+    if (!unsettledTaskStatuses.has(status) && !isCanvasSubmissionUnresolved(data)) return node
+    const completed = byNodeId.get(node.id)
+    if (!completed || completed.kind !== data.kind) return node
+    const result = verifiedCanvasResult(completed)
+    if (!result) return node
+
+    const { taskId, assetId, history } = result
+    const remoteTaskId = Number(data.taskId || 0)
+    const runMatches = Boolean(completed.taskRunId) && completed.taskRunId === data.taskRunId
+    const keyMatches = Boolean(completed.taskIdempotencyKey) && completed.taskIdempotencyKey === data.taskIdempotencyKey
+    if (completed.taskRunId && data.taskRunId && !runMatches) return node
+    if (completed.taskIdempotencyKey && data.taskIdempotencyKey && !keyMatches) return node
+    if (remoteTaskId !== taskId && !(remoteTaskId === 0 && runMatches && keyMatches)) return node
+
+    // During a retry the old generated asset may still be displayed. Leave independent material replacements alone.
+    const remoteAssetId = Number(data.assetId || 0)
+    if (
+      remoteAssetId !== 0 &&
+      remoteAssetId !== assetId &&
+      !history.some(
+        (entry) =>
+          Number(entry?.assetId) === remoteAssetId && Number(entry?.taskId) > 0 && Number(entry.taskId) !== taskId,
+      )
+    )
+      return node
+    if (!remoteAssetId && data.resultUrl && data.resultUrl !== completed.resultUrl) return node
+
+    changed = true
+    return {
+      ...node,
+      data: {
+        ...data,
+        taskId,
+        taskRunId: data.taskRunId ?? completed.taskRunId,
+        taskIdempotencyKey: data.taskIdempotencyKey ?? completed.taskIdempotencyKey,
+        taskStatus: completed.taskStatus,
+        taskProgress: 100,
+        taskUpdatedAt: completed.taskUpdatedAt,
+        taskError: '',
+        taskFailure: undefined,
+        taskErrorHistorical: false,
+        taskSubmitInterrupted: false,
+        taskStatusQueryFailures: 0,
+        resultSyncAttempts: 0,
+        assetId,
+        resultUrl: completed.resultUrl,
+        assetWorkspaceId: completed.assetWorkspaceId,
+        assetSource: completed.assetSource,
+        resultHistory: history,
+        poster: completed.poster,
+        posterAssetId: completed.posterAssetId,
+        imageResultAssetIds: completed.imageResultAssetIds,
+        videoAudioComposition: completed.videoAudioComposition,
+      },
+    }
+  })
+  return changed ? nodes : incoming
 }
 
 /** 生成耗时读数：「12 秒」「1 分 05 秒」「1 小时 02 分」。非法值返回空串。 */
@@ -180,6 +282,12 @@ export function getCanvasTaskPresentation(args: {
 
   if (failed) {
     return { running: false, failed: true, title: '生成失败', detail: String(args.error || '请检查设置后重试') }
+  }
+  if (status === 'submission_unknown') {
+    return { running: false, failed: false, title: '提交待确认', detail: CANVAS_SUBMISSION_UNKNOWN_MESSAGE }
+  }
+  if (status === 'result_sync_delayed') {
+    return { running: false, failed: false, title: '结果待同步', detail: CANVAS_RESULT_SYNC_DELAYED_MESSAGE }
   }
   if (!status || (succeeded && args.hasResult)) {
     return { running: false, failed: false, title: '', detail: '', progress }

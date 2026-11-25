@@ -8,10 +8,12 @@ for (const scenario of [
   { provider: 'volcengine', version: 'doubao-seedream-5-0-260128', edit: true },
   { provider: 'google', version: 'gemini-2.5-flash-image', edit: true, immediateFailure: true },
   { provider: 'google', version: 'gemini-2.5-flash-image', edit: true, submitError: true },
+  { provider: 'google', version: 'gemini-2.5-flash-image', edit: false, missingReceipt: true },
 ]) {
-  test(`canvas ${scenario.version} edit=${scenario.edit} immediateFailure=${Boolean(scenario.immediateFailure)} submitError=${Boolean(scenario.submitError)} sends correct inputs and isolates the previous failure`, async ({
-    page,
-  }, testInfo) => {
+  const title = scenario.missingReceipt
+    ? '画布收到缺少任务编号的创建回执后，刷新保留原提交且不重复创建'
+    : `canvas ${scenario.version} edit=${scenario.edit} immediateFailure=${Boolean(scenario.immediateFailure)} submitError=${Boolean(scenario.submitError)} sends correct inputs and isolates the previous failure`
+  test(title, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     const api = await installStrictAuthenticatedApp(page)
     await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: [] }))
@@ -23,6 +25,7 @@ for (const scenario of [
     let oldTaskQueries = 0
     let submissions = 0
     let estimates = 0
+    let submissionKey: string | undefined
     let releaseSubmission: (() => void) | undefined
     const pendingSubmission = new Promise<void>((resolve) => {
       releaseSubmission = resolve
@@ -47,11 +50,19 @@ for (const scenario of [
         },
       },
     }
+    let storedNode: typeof node & {
+      payload: { data: { taskIdempotencyKey?: string; taskFailure?: { requestId?: string } } }
+    } = node
     await page.route('**/api/v1/canvases/108**', async (route) => {
       const url = new URL(route.request().url())
       expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
+      if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
       if (url.pathname.endsWith('/elements')) {
         if (route.request().method() === 'PATCH') {
+          if (scenario.missingReceipt) {
+            const { mutations = [] }: { mutations?: Array<typeof storedNode> } = route.request().postDataJSON()
+            storedNode = mutations.find((item) => item.element_id === node.element_id) || storedNode
+          }
           revision += 1
           await route.fulfill({ json: { revision } })
         } else {
@@ -61,7 +72,7 @@ for (const scenario of [
                 Number(url.searchParams.get('after_revision')) > 0
                   ? []
                   : [
-                      node,
+                      storedNode,
                       ...(scenario.edit
                         ? [
                             {
@@ -130,14 +141,28 @@ for (const scenario of [
       await route.fulfill({ json: { estimated_cost: 15, balance: 1000, can_afford: true } })
     })
     await page.route('**/api/v1/ai/tasks', async (route) => {
-      if (scenario.edit) {
+      if (scenario.edit || scenario.missingReceipt) {
         const body = route.request().postDataJSON()
         expect(body.operation_code).toBe(scenario.edit ? 'image.image_to_image' : 'image.text_to_image')
         expect(body.input_assets || []).toEqual(scenario.edit ? [{ asset_id: 12391, role: 'reference_image' }] : [])
+        if (scenario.missingReceipt) {
+          expect(storedNode.payload.data.taskStatus).toBe('submitting')
+          expect(body.idempotency_key).toBeTruthy()
+          expect(body.idempotency_key).toBe(storedNode.payload.data.taskIdempotencyKey)
+          submissionKey = body.idempotency_key
+        }
       }
       submissions += 1
       if (scenario.submitError) {
-        await route.fulfill({ status: 400, json: { message: currentError } })
+        await route.fulfill({ status: 400, json: { code_string: 'INVALID_MODEL_PARAMS', message: currentError } })
+        return
+      }
+      if (scenario.missingReceipt) {
+        await route.fulfill({
+          status: 202,
+          headers: { 'x-request-id': 'missing-task-id-receipt' },
+          json: { data: { status: 'pending' } },
+        })
         return
       }
       await pendingSubmission
@@ -164,18 +189,51 @@ for (const scenario of [
     )
     await page.clock.install()
     await page.goto('/canvas/108')
-    await expect(page.getByRole('alert', { name: `上次生成失败：${oldError}` })).toBeVisible()
+    await expect(page.getByRole('alert', { name: `生成失败：${oldError}` })).toBeVisible()
     expect(oldTaskQueries).toBe(1)
-    await page.getByRole('combobox', { name: '画布缩放' }).selectOption('100')
-    await page.locator('.react-flow__node[data-id="image-retry"] .canvas-node-header').click()
-    const send = page.getByRole('button', { name: '生成', exact: true })
+    const image = page.locator('.react-flow__node[data-id="image-retry"]')
+    await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
+    await image.locator('.canvas-node-header').click()
+    const editor = page.locator('[data-canvas-node-panel]')
+    const send = editor.locator('[data-canvas-generate]')
     await expect(send).toBeEnabled()
     await send.click()
     await expect.poll(() => submissions).toBe(1)
+    if (scenario.missingReceipt) {
+      const unknown = image.getByRole('status', { name: '提交待确认', exact: true })
+      await expect(unknown).toBeVisible()
+      await expect(send).toBeDisabled()
+      await expect(send).toHaveText('提交待确认')
+      await page.clock.runFor(3000)
+      await expect.poll(() => storedNode.payload.data.taskStatus).toBe('submission_unknown')
+      expect(storedNode.payload.data).toMatchObject({
+        taskIdempotencyKey: submissionKey,
+        prompt: node.payload.data.prompt,
+        taskFailure: { requestId: 'missing-task-id-receipt' },
+      })
+
+      await page.reload()
+      await expect(unknown).toBeVisible()
+      await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
+      await image.locator('.canvas-node-header').click()
+      await expect(editor.getByRole('textbox')).toHaveText(node.payload.data.prompt)
+      await expect(send).toBeDisabled()
+      await image.getByRole('button', { name: '查看详情' }).click()
+      const details = page.getByRole('dialog', { name: '提交状态详情' })
+      await expect(details.getByText('missing-task-id-receipt', { exact: true })).toBeVisible()
+      await expect(details.getByText('未取得任务编号', { exact: true })).toBeVisible()
+      await expect(details.getByRole('definition').filter({ hasText: submissionKey! })).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath('image-submission-awaiting-receipt-after-reload.png') })
+      await page.clock.fastForward(31_000)
+      expect(oldTaskQueries).toBe(1)
+      expect(submissions).toBe(1)
+      expectNoUnexpectedApi(api)
+      return
+    }
     if (scenario.submitError) {
       await expect(page.locator('.toast-text')).toHaveText('图生图最多支持 3 张参考图片，请减少图片数量后重试')
       await expect(
-        page.getByRole('alert', { name: '上次生成失败：图生图最多支持 3 张参考图片，请减少图片数量后重试' }),
+        page.getByRole('alert', { name: '生成失败：图生图最多支持 3 张参考图片，请减少图片数量后重试' }),
       ).toBeVisible()
       await page.screenshot({ path: testInfo.outputPath('image-reference-limit-toast.png') })
       expectNoUnexpectedApi(api)
@@ -187,7 +245,7 @@ for (const scenario of [
     try {
       await page.clock.runFor(7000)
       expect(oldTaskQueries).toBe(1)
-      await expect(page.getByRole('alert', { name: `上次生成失败：${oldError}` })).toHaveCount(0)
+      await expect(page.getByRole('alert', { name: `生成失败：${oldError}` })).toHaveCount(0)
       await expect(page.getByRole('status', { name: '提交中', exact: true })).toBeVisible()
       await expect(page.getByTitle('生成过程中不能修改，请添加新的节点使用其他模型')).toBeDisabled()
       expect(submissions).toBe(1)
@@ -198,7 +256,7 @@ for (const scenario of [
     await submitted
     await expect(page.getByRole('status', { name: '提交中', exact: true })).toHaveCount(0)
     await page.clock.runFor(7000)
-    await expect(page.getByRole('alert', { name: `上次生成失败：${currentError}` })).toBeVisible()
+    await expect(page.getByRole('alert', { name: `生成失败：${currentError}` })).toBeVisible()
     expect(oldTaskQueries).toBe(1)
     expect(submissions).toBe(1)
     expectNoUnexpectedApi(api)

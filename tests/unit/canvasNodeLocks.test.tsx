@@ -3,6 +3,9 @@ import { expect, it, vi } from 'vitest'
 import { useCanvasNodeLocks } from '@/composables/useCanvasNodeLocks'
 import { requestBusinessJson } from '@/api/business'
 vi.mock('@/api/business', () => ({ requestBusinessJson: vi.fn() }))
+vi.mock('@/composables/canvasLockSocket', () => ({
+  connectCanvasLockSocket: () => ({ send: () => undefined, close: () => {} }),
+}))
 const noReferences = new Set<string>()
 
 it('uses the decoded lock response, distinguishes an editor from a shared reference, and releases the tab', async () => {

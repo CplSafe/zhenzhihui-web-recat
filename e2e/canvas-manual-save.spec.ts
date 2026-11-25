@@ -3,7 +3,7 @@ import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-a
 
 const base = { id: 'one', type: 'text', position: { x: 120, y: 120 }, data: { text: '原始内容', kind: 'text' } }
 
-async function setup(page: import('@playwright/test').Page, canvasId: number) {
+async function seedPendingDraft(page: import('@playwright/test').Page, canvasId: number) {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   await page.addInitScript(
     ({ base, canvasId }) => {
@@ -22,6 +22,10 @@ async function setup(page: import('@playwright/test').Page, canvasId: number) {
     },
     { base, canvasId },
   )
+}
+
+async function setup(page: import('@playwright/test').Page, canvasId: number) {
+  await seedPendingDraft(page, canvasId)
   let succeed = false
   let saves = 0
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
@@ -91,4 +95,66 @@ test('离开前保存失败时可留在画布，成功后才能自动离开', as
   await page.getByRole('alertdialog', { name: '画布尚未保存' }).getByRole('button', { name: '保存并离开' }).click()
   await expect(page).toHaveURL(/\/canvas$/)
   expect(server.saves()).toBe(3)
+})
+
+test('保存回执缺少版本时以云端读回为准', async ({ page }, testInfo) => {
+  const canvasId = 163
+  const draftKey = `zzh_canvas_draft_u7_w21_p${canvasId}`
+  await seedPendingDraft(page, canvasId)
+  let writes = 0
+  let checkingCloud = false
+  let savedElements: unknown[] = []
+  let releaseCloudRead: () => void = () => undefined
+  const cloudRead = new Promise<void>((resolve) => {
+    releaseCloudRead = resolve
+  })
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  await page.route(`**/api/v1/canvases/${canvasId}**`, async (route) => {
+    if (!new URL(route.request().url()).pathname.endsWith('/elements')) {
+      return route.fulfill({ json: { id: canvasId, title: '确认云端保存', revision: 1 } })
+    }
+    if (route.request().method() === 'PATCH') {
+      writes++
+      savedElements = route.request().postDataJSON().mutations
+      return route.fulfill({ json: {} })
+    }
+    if (writes) {
+      checkingCloud = true
+      await cloudRead
+      return route.fulfill({ json: { elements: savedElements, sync_revision: 2, has_more: false } })
+    }
+    return route.fulfill({
+      json: {
+        elements: [{ element_id: 'one', kind: 'node', op: 'upsert', payload: base }],
+        sync_revision: 1,
+        has_more: false,
+      },
+    })
+  })
+  const savedStatus = page.getByText('已保存到云端')
+  try {
+    await page.goto(`/canvas/${canvasId}`)
+    await expect.poll(() => checkingCloud).toBe(true)
+    await expect(savedStatus).toHaveCount(0)
+    await expect
+      .poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) || '{}').pendingSync, draftKey))
+      .toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('save-awaiting-cloud-confirmation.png') })
+  } finally {
+    releaseCloudRead()
+  }
+  await expect(savedStatus).toBeVisible()
+  expect(writes).toBe(1)
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) =>
+          Object.keys(localStorage)
+            .filter((storageKey) => storageKey === key || storageKey.startsWith(`${key}:pending:`))
+            .map((storageKey) => JSON.parse(localStorage.getItem(storageKey) || '{}').pendingSync),
+        draftKey,
+      ),
+    )
+    .toEqual([false])
+  await page.screenshot({ path: testInfo.outputPath('save-confirmed-by-cloud-read.png') })
 })

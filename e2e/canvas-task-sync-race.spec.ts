@@ -152,6 +152,184 @@ for (const compacted of [false, true]) {
   })
 }
 
+for (const mode of ['增量同步', '压缩后全量同步', '刷新时读取草稿']) {
+  test(`更高画布版本中的旧提交不能覆盖已保存的图片结果（${mode}）`, async ({ page }, testInfo) => {
+    const compacted = mode === '压缩后全量同步'
+    const coldReload = mode === '刷新时读取草稿'
+    const api = await installStrictAuthenticatedApp(page, { preserveStorage: coldReload })
+    await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+    const taskId = 15336
+    const assetId = 701
+    const taskRunId = 'same-image-run'
+    const taskIdempotencyKey = 'same-image-submission'
+    const remoteTitle = '协作者改过的结果名称'
+    const siblingTitle = '协作者改过的另一个节点'
+    const makeNode = (id: string, x: number, data: Record<string, unknown>) => {
+      const nodeData: Record<string, unknown> = { kind: 'image', ...data }
+      return {
+        element_id: id,
+        kind: 'node',
+        op: 'upsert',
+        payload: {
+          id,
+          type: 'image',
+          position: { x, y: 150 },
+          style: { width: 250, height: 250 },
+          data: nodeData,
+        },
+      }
+    }
+    const original = makeNode('generated-image', 200, {
+      title: '生成中的图片',
+      prompt: '生成这张图片',
+      taskId,
+      taskRunId,
+      taskIdempotencyKey,
+      taskStatus: 'processing',
+    })
+    const sibling = makeNode('sibling', 600, { title: '旧的节点名称' })
+    let savedTask = original
+    let savedSibling = sibling
+    let revision = 1
+    let originalSuccessRevision = 0
+    let staleRevision = 0
+    let repairBaseRevision = 0
+    let sawCompaction = false
+    let staleDelivery: 'incremental' | 'full' | undefined
+    let taskFinished = false
+    let taskCreates = 0
+
+    await page.route('**/api/v1/canvases/113**', async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
+      if (!url.pathname.endsWith('/elements')) {
+        return route.fulfill({ json: { id: 113, title: '协作任务状态', status: 'active', revision } })
+      }
+      if (request.method() === 'PATCH') {
+        const {
+          base_revision: baseRevision,
+          mutations = [],
+        }: {
+          base_revision: number
+          mutations?: (typeof savedTask)[]
+        } = request.postDataJSON()
+        expect(baseRevision).toBe(revision)
+        revision += 1
+        for (const mutation of mutations) {
+          if (mutation.element_id === sibling.element_id) savedSibling = mutation
+          if (mutation.element_id !== original.element_id) continue
+          savedTask = mutation
+          const { taskStatus, taskId: savedTaskId, assetId: savedAssetId } = mutation.payload.data
+          if (taskStatus !== 'succeeded' || savedTaskId !== taskId || savedAssetId !== assetId) continue
+          if (!staleRevision) originalSuccessRevision = revision
+          else repairBaseRevision = baseRevision
+        }
+        return route.fulfill({ json: { sync_revision: revision } })
+      }
+
+      const after = Number(url.searchParams.get('after_revision'))
+      const pageData = { sync_revision: revision, history_floor_revision: 0, has_more: false }
+      if (staleRevision && after > 0 && after < staleRevision && compacted) {
+        sawCompaction = true
+        return route.fulfill({ json: { ...pageData, elements: [], history_floor_revision: staleRevision } })
+      }
+      if (staleRevision && !repairBaseRevision && (after < staleRevision || sawCompaction)) {
+        staleDelivery ??= after > 0 ? 'incremental' : 'full'
+        return route.fulfill({ json: { ...pageData, elements: [savedTask, savedSibling] } })
+      }
+      return route.fulfill({ json: { ...pageData, elements: after > 0 ? [] : [savedTask, savedSibling] } })
+    })
+
+    await page.route(`**/api/v1/ai/tasks/${taskId}?**`, (route) =>
+      route.fulfill({
+        json: {
+          id: taskId,
+          status: taskFinished ? 'succeeded' : 'processing',
+          outputs: taskFinished ? [{ asset_id: assetId, type: 'image', mime_type: 'image/png' }] : [],
+        },
+      }),
+    )
+    await page.route(`**/api/v1/assets/${assetId}?**`, (route) =>
+      route.fulfill({ json: { id: assetId, workspace_id: WORKSPACE_ID, type: 'image', status: 'active' } }),
+    )
+    await page.route(`**/api/v1/assets/${assetId}/download?**`, (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="250" height="250"><rect width="250" height="250" fill="#eedbc1"/><circle cx="125" cy="125" r="61" fill="#385ad3"/></svg>',
+      }),
+    )
+    await page.route('**/api/v1/ai/tasks', (route) => {
+      taskCreates += 1
+      return route.fulfill({ status: 409, json: { code_string: 'E2E_PAID_TASK_BLOCKED' } })
+    })
+
+    await page.clock.install()
+    await page.goto('/canvas/113')
+    const node = page.locator('.react-flow__node[data-id="generated-image"]')
+    const result = node.getByRole('img', { name: 'image', exact: true })
+    await expect(node.getByRole('status', { name: '生成中', exact: true })).toBeVisible()
+    taskFinished = true
+    await expect(result).toBeVisible()
+    await expect.poll(() => originalSuccessRevision).toBeGreaterThan(1)
+    await expect(page.getByText('已保存到云端', { exact: true })).toBeVisible()
+    if (coldReload) {
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ workspaceId, taskId, assetId }) => {
+              const draft = JSON.parse(localStorage.getItem(`zzh_canvas_draft_u7_w${workspaceId}_p113`) || '{}')
+              const data = draft.nodes?.find((node: { id: string }) => node.id === 'generated-image')?.data
+              return draft.pendingSync === false && data?.taskId === taskId && data?.assetId === assetId
+            },
+            { workspaceId: WORKSPACE_ID, taskId, assetId },
+          ),
+        )
+        .toBe(true)
+    }
+
+    // The server persists an older task state in a newer collaboration revision.
+    savedTask = makeNode(original.element_id, 200, {
+      title: remoteTitle,
+      prompt: original.payload.data.prompt,
+      taskRunId,
+      taskIdempotencyKey,
+      taskStatus: 'submitting',
+    })
+    savedSibling = makeNode(sibling.element_id, 600, { title: siblingTitle })
+    staleRevision = ++revision
+    expect(staleRevision).toBeGreaterThan(originalSuccessRevision)
+    if (coldReload) await page.reload()
+    else await page.clock.runFor(12_000)
+    await expect(page.getByRole('button', { name: siblingTitle, exact: true })).toBeVisible()
+    await expect(node.getByRole('button', { name: remoteTitle, exact: true })).toBeVisible()
+    expect(staleDelivery).toBe(compacted || coldReload ? 'full' : 'incremental')
+    await expect(result).toBeVisible()
+    await expect(result).toHaveAttribute('src', /\/assets\/701\/download/)
+    await expect(node.getByRole('status', { name: /提交中|提交待确认/ })).toHaveCount(0)
+    await expect.poll(() => repairBaseRevision).toBeGreaterThanOrEqual(staleRevision)
+    expect(savedTask.payload.data).toMatchObject({
+      title: remoteTitle,
+      taskId,
+      taskRunId,
+      taskIdempotencyKey,
+      taskStatus: 'succeeded',
+      assetId,
+    })
+
+    await page.reload()
+    await expect(page.getByText('已保存到云端', { exact: true })).toBeVisible()
+    await expect(result).toBeVisible()
+    await expect(result).toHaveAttribute('src', /\/assets\/701\/download/)
+    await expect.poll(() => result.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(250)
+    await expect(node.getByRole('status', { name: /提交中|提交待确认/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: siblingTitle, exact: true })).toBeVisible()
+    expect(taskCreates).toBe(0)
+    expectNoUnexpectedApi(api)
+    await page.screenshot({ path: testInfo.outputPath('retained-image-after-refresh.png'), animations: 'disabled' })
+  })
+}
+
 test('unchanged generation polls do not dirty or sync the canvas', async ({ page }) => {
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))

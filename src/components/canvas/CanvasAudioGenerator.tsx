@@ -10,6 +10,7 @@ import {
   estimateAiTaskCost,
   getAiTaskId,
   listAiModels,
+  normalizeAiTaskStatus,
   waitForAiTask,
   uploadAssetFile,
 } from '@/api/business'
@@ -27,10 +28,15 @@ import { getCopiedCanvasAudioReference } from '@/utils/canvasClipboard'
 import { creditsLabel } from '@/utils/creditsFormat'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import {
+  CANVAS_SUBMISSION_UNKNOWN_MESSAGE,
+  isCanvasSubmissionUnresolved,
+  isSameCanvasTask,
+} from '@/utils/canvasTaskState'
+import {
   archiveGenerationFailure,
   buildGenerationFailure,
   generationSubmissionFingerprint,
-  unknownSubmissionKey,
+  isDefiniteCanvasSubmissionRejection,
 } from '@/utils/generationFailure'
 import CanvasFailureDetails from './CanvasFailureDetails'
 import {
@@ -216,6 +222,7 @@ export default function CanvasAudioGenerator({
   })
   const [authorized, setAuthorized] = useState(false)
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
   const [quote, setQuote] = useState<number | null>(null)
   const [quoteError, setQuoteError] = useState('')
   const [quoting, setQuoting] = useState(false)
@@ -496,10 +503,20 @@ export default function CanvasAudioGenerator({
     .map((node) => String(node?.data?.text || ''))
     .filter(Boolean)
     .join('\n')
-  const recoverableTask = ['processing', 'pending', 'queued', 'running', 'result_pending', 'reconnecting'].includes(
-    data.taskStatus,
-  )
-  const running = busy || recoverableTask || voiceSwitchLoading
+  const recoverableTask =
+    Number(data.taskId) > 0 &&
+    ['submitting', 'processing', 'pending', 'queued', 'running', 'result_pending', 'reconnecting'].includes(
+      data.taskStatus,
+    )
+  const submissionUnresolved = isCanvasSubmissionUnresolved(data)
+  const submissionUnknown = submissionUnresolved && data.taskStatus !== 'submitting'
+  const resultNeedsRetry =
+    Number(data.taskId) > 0 &&
+    ['result_pending', 'result_sync_delayed', 'status_query_failed'].includes(data.taskStatus)
+  const generationError = submissionUnknown
+    ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE
+    : error || (data.taskStatus === 'submit_failed' || resultNeedsRetry ? data.taskError : '')
+  const running = busy || recoverableTask || voiceSwitchLoading || data.taskStatus === 'submitting'
   useEffect(() => {
     setDefaultVoiceError('')
     setDefaultVoiceLoading(false)
@@ -571,19 +588,31 @@ export default function CanvasAudioGenerator({
     requiresVoiceSelection,
     sampleLibraryOpen,
   ])
-  const receive = async (task: any, signal: AbortSignal) => {
+  const receive = async (
+    task: { id: number; status: string },
+    taskIdentity: { taskId: number; taskRunId?: unknown },
+    signal: AbortSignal,
+  ) => {
+    const isCurrent = () => {
+      const node = getNode(nodeId)
+      return !signal.aborted && alive.current && node && isSameCanvasTask(node.data, taskIdentity)
+    }
     const result = await waitForAiTask({
       workspaceId,
       task,
       signal,
       timeoutMs: 30 * 60_000,
       onPoll: (current: any) => {
-        if (signal.aborted || !alive.current) return
+        if (!isCurrent()) return
         const progress = Number(current.progress)
-        if (Number.isFinite(progress)) updateNodeData(nodeId, { taskProgress: Math.max(0, Math.min(100, progress)) })
+        if (Number.isFinite(progress)) {
+          updateNodeData(nodeId, (node) =>
+            isSameCanvasTask(node.data, taskIdentity) ? { taskProgress: Math.max(0, Math.min(100, progress)) } : {},
+          )
+        }
       },
     })
-    if (signal.aborted || !alive.current) return
+    if (!isCurrent()) return
     const assetId = await resolveVerifiedResultAssetId({
       workspaceId,
       task: result,
@@ -591,11 +620,11 @@ export default function CanvasAudioGenerator({
       fallbackTaskId: task.id,
     })
     if (!assetId) throw new Error('任务已完成，但音频素材尚未入库，请稍后再查看')
-    if (signal.aborted || !alive.current) return
+    if (!isCurrent()) return
     // 元数据暂不可读不应把已经入库的成功结果变回“生成失败”。播放器加载后补全时长。
     let resultAssetId = assetId
     let durationSec = await readAudioDuration(assetStreamUrl(assetId, workspaceId)).catch(() => 0)
-    if (signal.aborted || !alive.current) return
+    if (!isCurrent()) return
     if (durationSec > 0 && durationSec < MINIMUM_GENERATED_AUDIO_DURATION_SEC) {
       const { audioBufferToWav, renderAudioMix } = await import('@/utils/audioMix')
       const paddedAudio = await renderAudioMix(
@@ -623,7 +652,7 @@ export default function CanvasAudioGenerator({
         1,
         { signal },
       )
-      if (signal.aborted || !alive.current) return
+      if (!isCurrent()) return
       const file = new File([audioBufferToWav(paddedAudio)], '生成音频-补足3秒.wav', { type: 'audio/wav' })
       const uploaded: any = await uploadAssetFile({
         workspaceId,
@@ -635,12 +664,12 @@ export default function CanvasAudioGenerator({
       if (!(resultAssetId > 0)) throw new Error('短音频补足静音后未能保存素材，请重试')
       durationSec = MINIMUM_GENERATED_AUDIO_DURATION_SEC
     }
-    if (signal.aborted || !alive.current) return
+    if (!isCurrent()) return
     // The task may finish after the user has edited this node or another canvas update has landed.
     // Merge against the current node, not the props captured when polling started.
     const latestData = (getNode(nodeId)?.data as Record<string, any> | undefined) || data
     const history = Array.isArray(latestData.resultHistory) ? latestData.resultHistory : []
-    updateNodeData(nodeId, {
+    const resultPatch = {
       assetId: resultAssetId,
       assetWorkspaceId: workspaceId,
       assetSource: 'generated',
@@ -664,26 +693,30 @@ export default function CanvasAudioGenerator({
           prompt: String(latestData.prompt || ''),
         },
       ].slice(-20),
-    })
+    }
+    updateNodeData(nodeId, (node) => (isSameCanvasTask(node.data, taskIdentity) ? resultPatch : {}))
     onGenerated?.(nodeId, resultAssetId, durationSec)
   }
   // 在途任务刷新后继续等同一个任务，不重新提交或重复扣费。
   useEffect(() => {
     // 历史失败在画布加载时会变成 reconnecting，必须继续查询原任务。
-    if (!(Number(data.taskId) > 0) || !recoverableTask) return
+    if (!recoverableTask) return
     const abort = new AbortController()
+    const taskIdentity = { taskId: Number(data.taskId), taskRunId: data.taskRunId }
     setBusy(true)
-    void receive({ id: data.taskId, status: data.taskStatus }, abort.signal)
+    void receive({ id: taskIdentity.taskId, status: data.taskStatus }, taskIdentity, abort.signal)
       .catch((e) => {
-        if (!abort.signal.aborted) {
+        if (!abort.signal.aborted && isSameCanvasTask(getNode(nodeId)?.data || {}, taskIdentity)) {
           setError(e?.message || '读取音频任务失败')
-          updateNodeData(nodeId, {
-            taskStatus: ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(e?.response?.status)
-              ? 'failed'
+          const status = normalizeAiTaskStatus(e?.response?.status)
+          const failurePatch = {
+            taskStatus: ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(status)
+              ? status
               : 'result_pending',
             taskError: e?.message || '读取音频任务失败',
-            taskFailure: buildGenerationFailure(e, { taskId: data.taskId, submitted: true }),
-          })
+            taskFailure: buildGenerationFailure(e, { taskId: taskIdentity.taskId, submitted: true }),
+          }
+          updateNodeData(nodeId, (node) => (isSameCanvasTask(node.data, taskIdentity) ? failurePatch : {}))
         }
       })
       .finally(() => {
@@ -692,7 +725,7 @@ export default function CanvasAudioGenerator({
     return () => abort.abort()
     // 任务身份或可恢复性改变时接管/停止轮询，进度回写不重复启动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.taskId, workspaceId, nodeId, retry, recoverableTask])
+  }, [data.taskId, data.taskRunId, workspaceId, nodeId, retry, recoverableTask])
   const audioReferenceIds = (current: any[]) =>
     new Set([
       ...current.map((item) => Number(item.assetId)).filter((id) => id > 0),
@@ -1001,6 +1034,10 @@ export default function CanvasAudioGenerator({
   const generate = async () => {
     if (
       submissionBlockedReason ||
+      submissionUnresolved ||
+      resultNeedsRetry ||
+      submitting.current ||
+      isCanvasSubmissionUnresolved(getNode(nodeId)?.data) ||
       !selected ||
       running ||
       defaultVoiceLoading ||
@@ -1014,16 +1051,31 @@ export default function CanvasAudioGenerator({
       showToast(voiceValidationError, 'error')
       return
     }
+    submitting.current = true
     setBusy(true)
     setError('')
     const abort = new AbortController()
     controller.current = abort
-    let submitted = false
     let submissionId = ''
-    let finalStatus = String(data.taskStatus || '')
-    updateNodeData(nodeId, { taskStatus: 'preparing' })
+    let stopTracking: (() => void) | undefined
+    let submitted = false
+    const operationCode = selected.operationCode
+    const modelVersionId = getBackendGenerationModelVersionId(selected.model)
+    const updateAttempt = (patch: Record<string, unknown>) => {
+      updateNodeData(nodeId, (node) =>
+        node.data.taskRunId === submissionId && !(Number(node.data.taskId) > 0) ? patch : {},
+      )
+    }
+    const accept = (taskId: number) => {
+      const patch = { taskId, taskStatus: 'processing', taskError: '', taskFailure: undefined }
+      updateAttempt(patch)
+      if (canvasId && reservation && getNode(nodeId)?.data.taskRunId === submissionId) {
+        // A local save failure must never turn an accepted task back into a new submission.
+        void reservation.persist(nodeId, submissionId, patch).catch(() => {})
+      }
+    }
     try {
-      const { text, inputAssets, modelVersionId, cost } = await prepare(abort.signal)
+      const { text, inputAssets, cost } = await prepare(abort.signal)
       if (cost >= 500) {
         const confirm = await requestConfirm(`预计消耗 ${creditsLabel(cost)}，用于生成音频，是否继续？`, {
           title: '生成音频',
@@ -1033,31 +1085,55 @@ export default function CanvasAudioGenerator({
       const fingerprint = await generationSubmissionFingerprint({
         workspaceId,
         modelVersionId,
-        operationCode: selected.operationCode,
+        operationCode,
         prompt: text,
         params,
         inputAssets,
       })
-      if (abort.signal.aborted || !alive.current) return
-      submissionId = unknownSubmissionKey(data, fingerprint) || crypto.randomUUID()
-      updateNodeData(nodeId, {
+      if (abort.signal.aborted || !alive.current || isCanvasSubmissionUnresolved(getNode(nodeId)?.data)) return
+      const currentData = getNode(nodeId)?.data
+      if (!currentData) return
+      submissionId = crypto.randomUUID()
+      const startedAt = new Date().toISOString()
+      const attempt = {
+        prompt,
+        params,
+        modelVersionId,
+        operationCode,
+        taskId: 0,
+        taskStatus: 'submitting',
+        taskProgress: 0,
+        taskError: '',
         taskFailure: undefined,
-        taskFailureHistory: archiveGenerationFailure(data),
+        taskFailureHistory: archiveGenerationFailure(currentData),
+        taskErrorHistorical: false,
+        taskSubmitInterrupted: false,
+        taskStatusQueryFailures: 0,
         taskSubmissionFingerprint: fingerprint,
         taskIdempotencyKey: submissionId,
-      })
+        taskRunId: submissionId,
+        taskSubmitterId: Number(userId) || undefined,
+        taskStartedAt: startedAt,
+        taskUpdatedAt: startedAt,
+      }
       if (canvasId) {
         if (!reservation) throw new Error('画布尚未就绪，请稍后重试')
-        await reservation.persist(nodeId, submissionId)
+        stopTracking = reservation.trackSubmission?.(nodeId, submissionId)
+        await reservation.persist(nodeId, submissionId, attempt)
+      } else {
+        updateNodeData(nodeId, attempt)
       }
-      if (abort.signal.aborted || !alive.current) return
+      if (abort.signal.aborted || !alive.current) {
+        updateAttempt({ taskStatus: 'submit_failed', taskError: '本次请求尚未发出，请重新提交' })
+        return
+      }
       submitted = true
       const task = await createAiTask({
         canvasId,
         workspaceId,
         modelVersionId,
         modelVersion: selected.model,
-        operationCode: selected.operationCode,
+        operationCode,
         prompt: text,
         params,
         inputAssets,
@@ -1066,33 +1142,41 @@ export default function CanvasAudioGenerator({
         modelPlanCandidates: [],
       })
       if (abort.signal.aborted || !alive.current) return
-      if (!(getAiTaskId(task) > 0)) throw new Error('生成接口未返回有效任务 ID')
-      updateNodeData(nodeId, {
-        prompt,
-        params,
-        modelVersionId,
-        operationCode: selected.operationCode,
-        taskId: getAiTaskId(task),
-        taskStatus: 'processing',
-        taskProgress: 0,
-      })
-      finalStatus = 'processing'
+      const taskId = getAiTaskId(task)
+      if (!taskId) throw new Error('生成接口未返回有效任务 ID')
+      accept(taskId)
       // taskId 写回后由恢复 effect 接管轮询，提交链路不再启动第二个等待。
     } catch (e: any) {
       if (!abort.signal.aborted) {
-        finalStatus = 'submit_failed'
-        updateNodeData(nodeId, {
-          taskStatus: 'submit_failed',
-          taskId: 0,
-          taskError: e?.message || '音频生成失败',
-          taskFailureHistory: archiveGenerationFailure(data),
-          taskFailure: buildGenerationFailure(e, { submitted, submissionId: submitted ? submissionId : undefined }),
+        const failure = buildGenerationFailure(e, {
+          submitted,
+          submissionId,
+          operationCode,
+          modelVersionId,
+          workspaceId,
+          canvasId,
         })
-        setError(e?.message || '音频生成失败')
-        showToast(e?.message || '音频生成失败', 'error')
+        const taskId = submitted ? getAiTaskId({ id: failure.taskId }) : 0
+        if (taskId) {
+          accept(taskId)
+          return
+        }
+        const unknown = submitted && !isDefiniteCanvasSubmissionRejection(e)
+        const message = unknown ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE : e?.message || '音频生成失败'
+        if (submissionId) {
+          updateAttempt({
+            taskStatus: unknown ? 'submission_unknown' : 'submit_failed',
+            taskError: message,
+            taskUpdatedAt: failure.failedAt,
+            taskFailure: unknown ? { ...failure, stage: 'unknown' } : failure,
+          })
+        }
+        setError(message)
+        showToast(message, 'error')
       }
     } finally {
-      updateNodeData(nodeId, { taskStatus: finalStatus })
+      stopTracking?.()
+      submitting.current = false
       if (alive.current && !abort.signal.aborted) setBusy(false)
     }
   }
@@ -1534,6 +1618,8 @@ export default function CanvasAudioGenerator({
         type="button"
         disabled={
           Boolean(submissionBlockedReason) ||
+          submissionUnresolved ||
+          resultNeedsRetry ||
           loadingModels ||
           !selected ||
           running ||
@@ -1544,6 +1630,7 @@ export default function CanvasAudioGenerator({
         }
         title={
           submissionBlockedReason ||
+          (submissionUnknown ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE : undefined) ||
           (loadingModels ? '正在加载音频模型' : !selected ? '请先选择配音 / 音乐模型' : undefined)
         }
         onClick={() => void generate()}
@@ -1560,13 +1647,21 @@ export default function CanvasAudioGenerator({
           ，可关闭面板，任务会继续处理。
         </p>
       )}
-      {error && (
+      {generationError && (
         <p role="alert">
-          {error} <CanvasFailureDetails data={data.taskFailure ? data : { ...data, taskId: 0, taskError: error }} />
+          {generationError}{' '}
+          <CanvasFailureDetails data={data.taskFailure ? data : { ...data, taskError: generationError }} />
         </p>
       )}
-      {data.taskStatus === 'result_pending' && !busy && (
-        <button type="button" onClick={() => setRetry((value) => value + 1)}>
+      {resultNeedsRetry && !busy && (
+        <button
+          type="button"
+          onClick={() => {
+            setError('')
+            if (data.taskStatus === 'result_pending') setRetry((value) => value + 1)
+            else updateNodeData(nodeId, { taskStatus: 'result_pending', taskError: '' })
+          }}
+        >
           重新获取已有任务结果
         </button>
       )}

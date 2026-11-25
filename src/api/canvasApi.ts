@@ -428,6 +428,7 @@ export async function fetchAllCanvasElements(
 
 /** 临时占用、限流和登录续期均允许原草稿稍后重试。 */
 export function isPermanentCanvasSaveError(status: number, code: string, revisionConflict = false): boolean {
+  if (code === 'CANVAS_SAVE_ACK_UNKNOWN') return false
   if (code === 'CANVAS_INVALID_INPUT' || code === '10001' || code === 'CANVAS_LOCAL_PAYLOAD_TOO_LARGE') return true
   if (revisionConflict || (status === 423 && code === 'CANVAS_AGENT_LOCKED')) return false
   return status >= 400 && status < 500 && status !== 401 && status !== 429
@@ -476,8 +477,13 @@ export async function saveCanvasElements({
       ...(schemaVersion !== undefined ? { schema_version: schemaVersion } : {}),
     }),
   })
-  const data = unwrap<{ sync_revision?: number; revision?: number }>(payload) || {}
-  return { sync_revision: Number(data.sync_revision ?? data.revision) || 0 }
+  const data = unwrap<{ sync_revision?: number | string; revision?: number | string }>(payload)
+  const value = data?.sync_revision ?? data?.revision
+  const revision = typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)) ? Number(value) : NaN
+  if (!Number.isSafeInteger(revision) || revision <= 0 || revision < Math.floor(baseRev)) {
+    throw new BusinessApiError('云端保存结果待确认，正在重新读取画布', { code: 'CANVAS_SAVE_ACK_UNKNOWN' })
+  }
+  return { sync_revision: revision }
 }
 
 /**

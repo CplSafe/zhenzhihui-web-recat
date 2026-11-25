@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
+import { waitForCanvasViewportToSettle } from './fixtures/canvas-viewport'
 import { installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
-test('本机预览可见时等待云端画布，再保存超分结果节点后提交', async ({ page }) => {
+test('先保存超分提交，响应缺少任务编号时刷新仍阻止重复提交', async ({ page }) => {
   await installStrictAuthenticatedApp(page, { preserveStorage: true })
   const sourceNode = {
     id: 'source',
@@ -27,6 +28,15 @@ test('本机预览可见时等待云端画布，再保存超分结果节点后�
   let keySaved = ''
   let keyAcknowledged = ''
   const submittedKeys: string[] = []
+  let revision = 1
+  const elements = new Map<string, unknown>([
+    [sourceNode.id, { element_id: sourceNode.id, kind: 'node', op: 'upsert', payload: sourceNode }],
+  ])
+  let savedStatus = ''
+  await page.route('**/api/v1/canvases/120?**', (route) =>
+    route.fulfill({ json: { id: 120, title: '图片超分恢复', status: 'active', revision } }),
+  )
+  await page.route('**/api/v1/canvases/120/events?**', (route) => route.fulfill({ status: 204 }))
   await page.route('**/api/v1/canvases/120/node-locks?**', (route) =>
     route.fulfill({ json: { granted: true, nodes: {} } }),
   )
@@ -38,20 +48,27 @@ test('本机预览可见时等待云端画布，再保存超分结果节点后�
       )
       if (result && !keySaved) {
         keySaved = result.payload.data.taskIdempotencyKey
+        expect(result.payload.data).toMatchObject({
+          taskStatus: 'submitting',
+          taskId: 0,
+          taskRunId: keySaved,
+          operationCode: 'image.upscale',
+          taskSubmissionFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        })
         await saveGate
         keyAcknowledged = keySaved
       }
-      return route.fulfill({ json: { sync_revision: 2 } })
+      for (const mutation of mutations) elements.set(mutation.element_id, mutation)
+      if (result) savedStatus = result.payload.data.taskStatus
+      revision += 1
+      return route.fulfill({ json: { sync_revision: revision } })
     }
     const query = new URL(route.request().url()).searchParams
     if (query.get('limit') !== '1') await cloudGate
     return route.fulfill({
       json: {
-        elements:
-          Number(query.get('after_revision')) > 0
-            ? []
-            : [{ element_id: sourceNode.id, kind: 'node', op: 'upsert', payload: sourceNode }],
-        sync_revision: 1,
+        elements: Number(query.get('after_revision')) > 0 ? [] : [...elements.values()],
+        sync_revision: revision,
         has_more: false,
       },
     })
@@ -66,7 +83,7 @@ test('本机预览可见时等待云端画布，再保存超分结果节点后�
     const { idempotency_key } = route.request().postDataJSON()
     expect(idempotency_key).toBe(keyAcknowledged)
     submittedKeys.push(idempotency_key)
-    await route.fulfill({ status: 503, json: { message: '模拟停止计费请求' } })
+    await route.fulfill({ json: { data: { status: 'queued' } } })
   })
 
   await page.goto('/canvas/120')
@@ -89,6 +106,15 @@ test('本机预览可见时等待云端画布，再保存超分结果节点后�
   releaseSave()
   await expect.poll(() => submittedKeys).toEqual([keySaved])
   await expect(page.getByText('节点尚未同步到画布，请稍后重试')).toHaveCount(0)
+  await expect.poll(() => savedStatus).toBe('submission_unknown')
+  await page.reload()
+  const source = page.locator('.react-flow__node[data-id="source"] .canvas-node-header')
+  await expect(source).toBeInViewport()
+  await source.click()
+  await page.getByRole('button', { name: '超分', exact: true }).click()
+  await expect(modal.getByText(/尚未确认本次提交/)).toBeVisible()
+  await expect(confirm).toBeDisabled()
+  expect(submittedKeys).toEqual([keySaved])
 })
 
 for (const dimensions of [
@@ -260,6 +286,37 @@ for (const dimensions of [
     if (dimensions.height === 5000) await page.setViewportSize({ width: 760, height: 900 })
     await page.goto('/canvas/120')
     const source = page.locator('.react-flow__node[data-id="source"]')
+    if (dimensions.height === 5000) {
+      // 等竖图完成解码并撑开节点，再给随节点定位的工具栏和编辑面板留出空间。
+      await expect.poll(() => source.evaluate((node: HTMLElement) => node.offsetHeight)).toBeGreaterThan(240)
+      const viewport = page.locator('.react-flow__viewport')
+      await waitForCanvasViewportToSettle(viewport)
+      const original = (await source.boundingBox())!
+      const readZoom = () => viewport.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).a)
+      for (let step = 0; step < 16; step++) {
+        const zoom = await readZoom()
+        if (zoom <= 0.47) break
+        await page.locator('.react-flow').dispatchEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          deltaY: 100,
+          clientX: original.x + original.width / 2,
+          clientY: original.y + original.height / 2,
+        })
+        await expect.poll(readZoom).toBeLessThan(zoom)
+      }
+      await expect.poll(readZoom).toBeLessThanOrEqual(0.47)
+      await waitForCanvasViewportToSettle(viewport)
+      const bounds = (await source.boundingBox())!
+      const deltaX = 380 - bounds.x - bounds.width / 2
+      const deltaY = 455 - bounds.y - bounds.height
+      await page.mouse.move(565, 770)
+      await page.mouse.down({ button: 'middle' })
+      await page.mouse.move(565 + deltaX, 770 + deltaY, { steps: 8 })
+      await page.mouse.up({ button: 'middle' })
+      await waitForCanvasViewportToSettle(viewport)
+    }
     const imagePrompt = page.locator('.canvas-panel-area').getByRole('textbox', { name: /描述你想要生成的内容/ })
     await source.locator('.canvas-node-header').click()
     await expect(page.locator('.canvas-panel-area')).toBeVisible()

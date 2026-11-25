@@ -6,7 +6,7 @@ export interface GenerationFailure {
   httpStatus?: number
   submissionId?: string
   failedAt: string
-  stage: 'task' | 'rejected' | 'unknown' | 'local'
+  stage: 'task' | 'result' | 'rejected' | 'unknown' | 'local'
   operationCode?: string
   modelVersionId?: number
   workspaceId?: number
@@ -19,18 +19,57 @@ function identifier(value: unknown): string | undefined {
   return undefined
 }
 
+function taskIdentifier(value: unknown): string | undefined {
+  const id = identifier(value)
+  return id && /^0*[1-9]\d*$/.test(id) ? id : undefined
+}
+
 /** 只提取明确的诊断字段，不复制请求正文、签名 URL 或鉴权信息。 */
 export function failureIdentifiers(error: any = {}): { taskId?: string; requestId?: string } {
   const payload = error?.response
-  const sources = [error, payload, payload?.data, payload?.error, payload?.data?.task, payload?.task]
+  const sources = [
+    error,
+    payload,
+    payload?.data,
+    payload?.error,
+    payload?.data?.error,
+    payload?.data?.task,
+    payload?.task,
+  ]
   let taskId: string | undefined
   let requestId: string | undefined
   for (const source of sources) {
-    taskId ||= identifier(source?.task_id ?? source?.taskId)
-    if (source?.status && typeof source.status === 'string') taskId ||= identifier(source?.id)
+    taskId ||= taskIdentifier(source?.task_id) || taskIdentifier(source?.taskId)
+    if (source?.status && typeof source.status === 'string') taskId ||= taskIdentifier(source?.id)
     requestId ||= identifier(source?.request_id ?? source?.requestId ?? source?.trace_id ?? source?.traceId)
   }
   return { taskId, requestId }
+}
+
+const definiteRejectionCodes = new Set([
+  'INVALID_MODEL_PARAMS',
+  '10001',
+  'MODEL_NOT_FOUND',
+  'INSUFFICIENT_CREDITS',
+  '10402',
+  'WORKSPACE_CONCURRENCY_LIMIT',
+  '10401',
+])
+
+/** Only known preflight rejections prove a task was not accepted. */
+export function isDefiniteCanvasSubmissionRejection(error: unknown): boolean {
+  const failure = error as { status?: unknown; code?: unknown; response?: any } | null | undefined
+  const status = Number(failure?.status) || 0
+  if (status >= 500 || failureIdentifiers(failure).taskId) return false
+  if (status === 401 || status === 403) return true
+  const payload = failure?.response
+  return [failure?.code, payload?.code, payload?.code_string, payload?.error?.code, payload?.data?.code].some((value) =>
+    definiteRejectionCodes.has(
+      String(value ?? '')
+        .trim()
+        .toUpperCase(),
+    ),
+  )
 }
 
 export function buildGenerationFailure(
@@ -47,7 +86,7 @@ export function buildGenerationFailure(
   } = {},
 ): GenerationFailure {
   const ids = failureIdentifiers(error)
-  const taskId = ids.taskId || identifier(context.taskId)
+  const taskId = ids.taskId || taskIdentifier(context.taskId)
   const httpStatus = Number(error?.status) || undefined
   return {
     message: String(error?.message || '生成失败，请稍后重试'),
@@ -57,7 +96,13 @@ export function buildGenerationFailure(
     httpStatus,
     submissionId: identifier(context.submissionId),
     failedAt: String(context.failedAt || new Date().toISOString()),
-    stage: taskId ? 'task' : !context.submitted ? 'local' : httpStatus && httpStatus < 500 ? 'rejected' : 'unknown',
+    stage: taskId
+      ? 'task'
+      : !context.submitted
+        ? 'local'
+        : isDefiniteCanvasSubmissionRejection(error)
+          ? 'rejected'
+          : 'unknown',
     operationCode: context.operationCode,
     modelVersionId: context.modelVersionId,
     workspaceId: context.workspaceId,
@@ -66,20 +111,25 @@ export function buildGenerationFailure(
 }
 
 export function nodeGenerationFailure(data: Record<string, any>): GenerationFailure {
-  const failure: GenerationFailure =
-    data.taskFailure ||
-    buildGenerationFailure(
-      { message: data.taskError },
+  const savedFailure = data.taskFailure
+  const failure: GenerationFailure = {
+    ...buildGenerationFailure(
+      { message: data.taskError, requestId: data.taskRequestId },
       {
         taskId: data.taskId,
         submissionId: data.taskIdempotencyKey,
         failedAt: data.taskUpdatedAt || data.taskStartedAt,
-        submitted: Boolean(data.taskId || data.taskIdempotencyKey),
+        submitted: Boolean(
+          data.taskId || data.taskIdempotencyKey || savedFailure || data.taskStatus === 'submission_unknown',
+        ),
       },
-    )
+    ),
+    ...savedFailure,
+  }
   return {
     ...failure,
-    failedAt: data.taskFailure ? failure.failedAt : String(data.taskUpdatedAt || data.taskStartedAt || ''),
+    stage: failureStage(failure, data.taskStatus === 'submission_unknown'),
+    failedAt: String(savedFailure?.failedAt || data.taskUpdatedAt || data.taskStartedAt || ''),
     operationCode:
       failure.operationCode ||
       (data.generationRequest || data.videoUpscaleRequest)?.operationCode ||
@@ -95,7 +145,9 @@ export function archiveGenerationFailure(data: Record<string, any>): GenerationF
   const history: GenerationFailure[] = Array.isArray(data.taskFailureHistory) ? data.taskFailureHistory : []
   if (
     !data.taskFailure &&
-    !['failed', 'error', 'payment_failed', 'submit_failed', 'result_sync_failed'].includes(data.taskStatus)
+    !['failed', 'error', 'payment_failed', 'submit_failed', 'submission_unknown', 'result_sync_failed'].includes(
+      data.taskStatus,
+    )
   )
     return history.slice(-5)
   const current = nodeGenerationFailure(data)
@@ -104,15 +156,26 @@ export function archiveGenerationFailure(data: Record<string, any>): GenerationF
 
 export const FAILURE_STAGE_LABELS = {
   task: '任务已创建',
+  result: '已收到生成结果',
   rejected: '请求被服务拒绝，未取得任务编号',
   unknown: '任务状态待确认，请勿反复新建任务',
   local: '任务未提交',
 }
 
+function failureStage(details: GenerationFailure, uncertain = false): GenerationFailure['stage'] {
+  if (taskIdentifier(details.taskId)) return 'task'
+  if (uncertain || !['local', 'rejected', 'unknown', 'result'].includes(details.stage)) return 'unknown'
+  return details.stage
+}
+
+export function generationFailureStageLabel(details: GenerationFailure): string {
+  return FAILURE_STAGE_LABELS[failureStage(details)]
+}
+
 export function formatGenerationFailure(details: GenerationFailure): string {
   return [
     `失败原因：${details.message}`,
-    `状态：${FAILURE_STAGE_LABELS[details.stage]}`,
+    `状态：${generationFailureStageLabel(details)}`,
     details.taskId && `TaskID：${details.taskId}`,
     details.requestId && `RequestID：${details.requestId}`,
     details.submissionId && `提交编号（幂等键）：${details.submissionId}`,

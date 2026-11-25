@@ -1,5 +1,10 @@
 import { useCanvasBillingScope } from '@/composables/useCanvasBillingScope'
 import { useCanvasReservation } from '@/composables/useCanvasReservation'
+import {
+  CANVAS_RESULT_SYNC_DELAYED_MESSAGE,
+  CANVAS_SUBMISSION_UNKNOWN_MESSAGE,
+  isCanvasSubmissionUnresolved,
+} from '@/utils/canvasTaskState'
 import { useLatestCallback } from '@/composables/useLatestCallback'
 import type { CanvasModelDefaults } from '@/api/canvasApi'
 /**
@@ -848,6 +853,9 @@ export default function CanvasNodePanel({
 }: CanvasNodePanelProps) {
   const submissionBlockedReason = useCanvasReservation()?.blockedReason
   const kind = node?.kind || 'text'
+  const submissionUnknown =
+    node?.taskStatus !== 'submitting' && isCanvasSubmissionUnresolved(node ? { ...node } : undefined)
+  const resultDelayed = node?.taskStatus === 'result_sync_delayed'
   const taskRunning = [
     'submitting',
     'queued',
@@ -855,6 +863,7 @@ export default function CanvasNodePanel({
     'processing',
     'running',
     'reconnecting',
+    'status_query_failed',
     'result_pending',
   ].includes(String(node?.taskStatus || '').toLowerCase())
   // 「重新生成」只给真生成过的节点：有素材不等于生成过——上传/拖入/截帧的图也带 resultUrl、assetId，
@@ -1845,11 +1854,13 @@ export default function CanvasNodePanel({
   // 未声明参考视频输入时长上限的模型不在前端臆造 15 秒限制。
   const maxVideoRefSec = useMemo(() => resolveRefVideoLimits(selectedModel?.source).maxDurationSec, [selectedModel])
 
+  const generationPrompt = buildFullPrompt(prompt)
+  const requiredPromptHint = validateCanvasGenerationPrompt(kind, '')
   const inputValidationError = useMemo(() => {
     if (kind === 'image' && sourceRefs.some((ref) => ref.source === 'real_person')) {
       return '真人素材图片节点仅用于素材展示/中转，不能直接生成图片；请连接到视频节点生成视频'
     }
-    const promptError = validateCanvasGenerationPrompt(kind, buildFullPrompt(prompt))
+    const promptError = validateCanvasGenerationPrompt(kind, generationPrompt)
     if (promptError) return promptError
     if (kind === 'image') {
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
@@ -1921,7 +1932,7 @@ export default function CanvasNodePanel({
     refLabelByEdge,
     maxVideoRefSec,
     videoRefTotalSec,
-    buildFullPrompt,
+    generationPrompt,
     prompt,
   ])
 
@@ -1946,7 +1957,7 @@ export default function CanvasNodePanel({
           workspaceId,
           modelVersionId: selectedModel.modelVersionId,
           operationCode,
-          prompt: buildFullPrompt(prompt),
+          prompt: generationPrompt,
           params: schemaParams,
           inputAssets,
         })
@@ -2009,7 +2020,7 @@ export default function CanvasNodePanel({
       onInsufficientCredits?.()
       return
     }
-    if (taskRunning || checkingAssets || maskUploading) return
+    if (taskRunning || submissionUnknown || resultDelayed || checkingAssets || maskUploading) return
     if (kind === 'video' && costEstimate.estimated_cost === undefined) {
       if (costEstimate.error) setCostRetry((value) => value + 1)
       return
@@ -2201,7 +2212,7 @@ export default function CanvasNodePanel({
       <CanvasMentionInput
         key={node?.id}
         ref={taRef}
-        className={`${styles.textarea}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
+        className={`${styles.textarea}${promptExpanded ? ` ${styles.textareaExpanded}` : kind === 'text' ? ` ${styles.storyboardPrompt}` : ''}`}
         mentions={promptMentions}
         disabled={taskRunning}
         onPreview={(label) => {
@@ -2388,6 +2399,23 @@ export default function CanvasNodePanel({
       )}
     </div>
   )
+
+  const promptRequired = Boolean(requiredPromptHint && inputValidationError === requiredPromptHint)
+  const showRequiredPrompt = promptRequired && !submissionUnknown && !resultDelayed && !taskRunning
+  const promptHelper = submissionUnknown
+    ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE
+    : resultDelayed
+      ? CANVAS_RESULT_SYNC_DELAYED_MESSAGE
+      : taskRunning
+        ? '当前节点正在生成，模型、提示词和素材已锁定；如需更换模型，请添加新的节点。'
+        : polishError ||
+          (kind === 'text'
+            ? '生成分镜后可编辑节点内容，再连接视频节点调整提示词并生成视频'
+            : kind === 'video'
+              ? minRefs > 0
+                ? `${selectedModel?.displayName || '当前模型'} 是参考生视频模型，至少需要 ${minRefs} 张参考图片`
+                : '参考图片为可选项；不添加图片时将直接按文案生成视频'
+              : '润色后只更新图片描述，不会自动开始生成')
 
   const panelBody = (
     <>
@@ -2863,7 +2891,7 @@ export default function CanvasNodePanel({
           )
         : promptEditor}
 
-      {inputValidationError && inputValidationError !== referenceLimitError && (
+      {inputValidationError && !promptRequired && inputValidationError !== referenceLimitError && (
         <div className={styles.inputError} role="alert">
           {inputValidationError}
         </div>
@@ -2875,17 +2903,15 @@ export default function CanvasNodePanel({
       )}
 
       <div className={styles.textPromptTools}>
-        <div className={`${styles.textPromptHint} ${polishError ? styles.textPromptError : ''}`}>
-          {taskRunning
-            ? '当前节点正在生成，模型、提示词和素材已锁定；如需更换模型，请添加新的节点。'
-            : polishError ||
-              (kind === 'text'
-                ? '生成分镜后可编辑节点内容，再连接视频节点调整提示词并生成视频'
-                : kind === 'video'
-                  ? minRefs > 0
-                    ? `${selectedModel?.displayName || '当前模型'} 是参考生视频模型，至少需要 ${minRefs} 张参考图片`
-                    : '参考图片为可选项；不添加图片时将直接按文案生成视频'
-                  : '润色后只更新图片描述，不会自动开始生成')}
+        <div className={styles.textPromptHint}>
+          <span className={polishError ? styles.textPromptError : undefined} aria-hidden={showRequiredPrompt}>
+            {promptHelper}
+          </span>
+          {requiredPromptHint && (
+            <span className={styles.textPromptError} role="alert" aria-hidden={!showRequiredPrompt}>
+              {requiredPromptHint}
+            </span>
+          )}
         </div>
         <div className={styles.textPromptActions}>
           {/* 长提示词在遮罩窗口中编辑 */}
@@ -2938,7 +2964,12 @@ export default function CanvasNodePanel({
     </>
   )
 
-  const panelClass = [styles.panel, kind === 'image' && styles.imagePanel, kind === 'video' && styles.videoPanel]
+  const panelClass = [
+    styles.panel,
+    kind === 'text' && styles.storyboardPanel,
+    kind === 'image' && styles.imagePanel,
+    kind === 'video' && styles.videoPanel,
+  ]
     .filter(Boolean)
     .join(' ')
 
@@ -3065,6 +3096,8 @@ export default function CanvasNodePanel({
             onClick={handleGenerate}
             disabled={
               Boolean(submissionBlockedReason) ||
+              submissionUnknown ||
+              resultDelayed ||
               taskRunning ||
               checkingAssets ||
               maskUploading ||
@@ -3076,6 +3109,8 @@ export default function CanvasNodePanel({
             // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事。
             title={
               submissionBlockedReason ||
+              (submissionUnknown ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE : undefined) ||
+              (resultDelayed ? CANVAS_RESULT_SYNC_DELAYED_MESSAGE : undefined) ||
               (checkingAssets
                 ? '正在检查参考素材…'
                 : inputValidationError || referenceLimitError
@@ -3095,7 +3130,15 @@ export default function CanvasNodePanel({
                             : '开始制作')
             }
           >
-            {checkingAssets ? '检查素材中…' : kind === 'text' ? '生成分镜' : generateActionLabel}
+            {submissionUnknown
+              ? '提交待确认'
+              : resultDelayed
+                ? '结果待同步'
+                : checkingAssets
+                  ? '检查素材中…'
+                  : kind === 'text'
+                    ? '生成分镜'
+                    : generateActionLabel}
           </button>
         </div>
       </div>

@@ -100,7 +100,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
                         type: 'video',
                         position: { x: 460, y: 135 },
                         style: { width: 320, height: 180 },
-                        data: { kind: 'video', prompt: originalPrompt },
+                        data: { kind: 'video', prompt: savedPrompt },
                       },
                     },
                   ],
@@ -173,7 +173,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   await expect(status).toHaveText(pending)
   await expect(editContent).toHaveAttribute('inert', '')
   await expect(prompt).toBeVisible()
-  await expect(prompt).toHaveAttribute('data-value', originalPrompt)
+  await expect(prompt).toHaveText(originalPrompt)
   // The browser itself must reject focus while reading the still-visible panel.
   await prompt.evaluate((element) => (element as HTMLElement).focus())
   await expect(prompt).not.toBeFocused()
@@ -197,7 +197,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   await expect(editContent).toHaveAttribute('inert', '')
   await expect(node).not.toHaveAttribute('data-editor-label', '你正在编辑')
   await expect(prompt).toBeVisible()
-  await expect(prompt).toHaveAttribute('data-value', editedPrompt)
+  await expect(prompt).toHaveText(editedPrompt)
   await expect.poll(() => panel.boundingBox()).toEqual(editingBounds)
   await page.screenshot({ path: testInfo.outputPath('video-node-lock-transient-error.png') })
 
@@ -233,7 +233,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   await expect(node.getByText('协作者 正在编辑', { exact: true })).toBeVisible()
   await expect(visibleStatus).toBeVisible()
   await expect(status).toHaveText('协作者 正在编辑')
-  await expect(prompt).toHaveAttribute('data-value', `${editedPrompt}。`)
+  await expect(prompt).toHaveText(`${editedPrompt}。`)
   await page.screenshot({ path: testInfo.outputPath('video-node-lock-occupied.png') })
   memberLocked = false
   await expect(editContent).not.toHaveAttribute('inert')
@@ -241,7 +241,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
 
   await panel.getByTitle('放大输入框').click()
   const expandedPrompt = page.getByRole('dialog', { name: '编辑提示词' })
-  await expect(expandedPrompt.getByPlaceholder(/描述你想要生成/)).toHaveAttribute('data-value', `${editedPrompt}。`)
+  await expect(expandedPrompt.getByPlaceholder(/描述你想要生成/)).toHaveText(`${editedPrompt}。`)
   agentLocked = true
   const readOnly = page.getByText('创作成员 已锁定画布 · 当前只读，可平移、缩放查看', { exact: true })
   await expect(readOnly).toBeVisible()
@@ -256,7 +256,7 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   await expect(readOnly).toBeHidden()
   await nodeBody.click()
   await expect(editContent).not.toHaveAttribute('inert')
-  await expect(prompt).toHaveAttribute('data-value', `${editedPrompt}。`)
+  await expect(prompt).toHaveText(`${editedPrompt}。`)
   await prompt.click()
   await expect(prompt).toBeFocused()
   expect(errors).toEqual([])
@@ -339,8 +339,7 @@ test('WebSocket 通知节点释放后立即重新申请编辑', async ({ page })
   expect(socketRequests).toBe(2)
   cloudRevision = 2
   notifyRevision()
-  await expect(page.locator('[data-canvas-node-panel]').getByPlaceholder(/描述你想要生成/)).toHaveAttribute(
-    'data-value',
+  await expect(page.locator('[data-canvas-node-panel]').getByPlaceholder(/描述你想要生成/)).toHaveText(
     '其他成员提交的新提示词',
     { timeout: 1500 },
   )

@@ -102,7 +102,9 @@ for (const source of ['cloud', 'draft']) {
         release?.()
       }
       if (status === 'missing') {
-        await expect(page.getByRole('alert', { name: /任务记录已不存在，请重新生成/ })).toBeVisible()
+        await expect(page.getByRole('status', { name: '任务状态查询异常' })).toBeVisible()
+        await expect(page.getByText(/任务编号 15318/)).toBeVisible()
+        await expect.poll(() => taskQueries).toBeGreaterThan(1)
         await expect(page.getByRole('status', { name: '正在恢复任务' })).toHaveCount(0)
       } else if (status === 'failed') {
         await expect(page.getByRole('alert', { name: `生成失败：${latestError}` })).toBeVisible()
@@ -123,17 +125,39 @@ for (const source of ['cloud', 'draft']) {
   }
 }
 
-test('打开数小时前的恢复节点时，没有任务编号则明确提示且不自动提交', async ({ page }) => {
+test('打开没有任务编号的旧节点，保留原提交和提示词且不自动提交', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
   const api = await installStrictAuthenticatedApp(page)
   await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
+  await page.route('**/api/v1/ai/models**', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 27,
+            enabled: true,
+            capability: 'image',
+            display_name: 'Test image model',
+            operation_codes: ['image.text_to_image'],
+          },
+        ],
+      },
+    }),
+  )
+  const prompt = '需要保留的原图提示词'
   await page.route('**/api/v1/canvases/111**', (route) => {
     const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/node-locks')) return route.fulfill({ json: { granted: true, nodes: {} } })
     if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
     const data = {
       kind: 'image',
       title: '旧图片任务',
+      prompt,
+      modelVersionId: 27,
+      operationCode: 'image.text_to_image',
       taskStatus: 'reconnecting',
       taskStartedAt: '2026-11-01T00:00:00Z',
+      taskIdempotencyKey: 'old-image-submission',
     }
     return route.fulfill({
       json: url.pathname.endsWith('/elements')
@@ -158,14 +182,24 @@ test('打开数小时前的恢复节点时，没有任务编号则明确提示�
             sync_revision: 1,
             has_more: false,
           }
-        : { id: 111, title: '旧任务恢复', revision: 1 },
+        : { id: 111, title: '旧任务恢复', status: 'active', revision: 1 },
     })
   })
 
   await page.goto('/canvas/111')
   const node = page.locator('.react-flow__node[data-id="old-image"]')
-  await expect(node.getByRole('alert', { name: /缺少任务编号/ })).toBeVisible()
+  await expect(node.getByRole('status', { name: '提交待确认', exact: true })).toBeVisible()
   await expect(node.getByRole('status', { name: '正在恢复任务' })).toHaveCount(0)
+  await page.getByRole('button', { name: /当前缩放.*点击回到 100%/ }).click()
+  await node.locator('.canvas-node-header').click()
+  const editor = page.locator('[data-canvas-node-panel]')
+  await expect(editor.getByRole('textbox')).toHaveText(prompt)
+  const generate = editor.getByRole('button', { name: '提交待确认', exact: true })
+  await expect(generate).toBeDisabled()
+  await node.getByRole('button', { name: '查看详情' }).click()
+  const details = page.getByRole('dialog', { name: '提交状态详情' })
+  await expect(details.getByRole('definition').filter({ hasText: 'old-image-submission' })).toBeVisible()
+  await expect(details.getByText('未取得任务编号', { exact: true })).toBeVisible()
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })

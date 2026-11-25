@@ -581,6 +581,11 @@
   }
 }
 
+/* 分镜输入区保持三行的编辑空间，长文本在输入区内滚动。 */
+.storyboardPrompt {
+  height: 80px;
+}
+
 /* 放大态：长提示词（多提示词短剧）需要更大的编辑区 */
 .textareaExpanded {
   min-height: min(45vh, 380px);
@@ -1015,10 +1020,22 @@
 }
 
 .textPromptHint {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   color: #7a8496;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.textPromptHint > span {
+  /* 校验提示与操作说明共用一格，换行时仍按较高文案计算。 */
+  grid-area: 1 / 1;
+  overflow-wrap: anywhere;
+}
+
+.textPromptHint > span[aria-hidden='true'] {
+  visibility: hidden;
 }
 
 .textPromptError {
@@ -1817,6 +1834,12 @@
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.storyboardPanel .costText {
+  /* 积分从省略号更新成完整文案时，底栏按同一宽度换行。 */
+  min-inline-size: 9em;
+  text-align: end;
 }
 
 /* 预估中：数字淡出 */

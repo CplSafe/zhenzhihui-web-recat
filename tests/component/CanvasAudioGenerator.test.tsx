@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import CanvasAudioGenerator from '@/components/canvas/CanvasAudioGenerator'
+import AudioGenerator from '@/components/canvas/CanvasAudioGenerator'
 import { setCopiedCanvasAudioReference } from '@/utils/canvasClipboard'
+import type { ComponentProps } from 'react'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   edges: vi.fn(),
   nodes: vi.fn(),
   node: vi.fn(),
+  mountedNode: vi.fn(),
   upload: vi.fn(),
   renderAudioMix: vi.fn(),
   audioBufferToWav: vi.fn(),
@@ -28,12 +30,24 @@ vi.mock('@/stores/workspaceSession', () => ({
 }))
 vi.mock('@xyflow/react', () => ({
   useStore: (selector: any) => selector({ edges: mocks.edges(), nodes: mocks.nodes() }),
-  useReactFlow: () => ({
-    updateNodeData: mocks.update,
-    getEdges: mocks.edges,
-    getNode: mocks.node,
-    getNodes: mocks.nodes,
-  }),
+  useReactFlow: () => {
+    const getNode = (id: string) => {
+      const current = mocks.mountedNode()
+      const supplied = mocks.node(id)
+      return id === current?.id ? { ...current, data: { ...current.data, ...supplied?.data } } : supplied
+    }
+    return {
+      updateNodeData: (id: string, patch: Record<string, unknown> | ((node: any) => Record<string, unknown>)) => {
+        const node = getNode(id)
+        const data = typeof patch === 'function' ? patch(node) : patch
+        if (id === mocks.mountedNode()?.id) mocks.mountedNode.mockReturnValue({ id, data: { ...node.data, ...data } })
+        mocks.update(id, data)
+      },
+      getEdges: mocks.edges,
+      getNode,
+      getNodes: mocks.nodes,
+    }
+  },
 }))
 vi.mock('@/utils/taskMedia', () => ({
   resolveVerifiedResultAssetId: mocks.result,
@@ -43,12 +57,12 @@ vi.mock('@/utils/canvasAudio', async (original) => ({
   ...(await original<typeof import('@/utils/canvasAudio')>()),
   readAudioDuration: mocks.duration,
 }))
-vi.mock('@/api/business', () => ({
+vi.mock('@/api/business', async (original) => ({
+  ...(await original<typeof import('@/api/business')>()),
   getSubscription: vi.fn().mockResolvedValue(undefined),
   listAiModels: mocks.list,
   estimateAiTaskCost: mocks.estimate,
   createAiTask: mocks.submit,
-  getAiTaskId: (task: any) => task.id,
   waitForAiTask: mocks.wait,
   uploadAssetFile: mocks.upload,
 }))
@@ -66,6 +80,11 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
   useConfirmDialog: () => ({ requestConfirm: mocks.confirm }),
 }))
+
+function CanvasAudioGenerator(props: ComponentProps<typeof AudioGenerator>) {
+  mocks.mountedNode.mockReturnValue({ id: props.nodeId, data: props.data })
+  return <AudioGenerator {...props} />
+}
 
 const model = {
   id: 91,

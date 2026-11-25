@@ -2,7 +2,8 @@ import { createContext, useContext } from 'react'
 
 interface CanvasReservation {
   blockedReason: string | undefined
-  persist: (nodeId: string, key: string) => Promise<void>
+  persist: (nodeId: string, key: string, patch?: Record<string, unknown>) => Promise<void>
+  trackSubmission?: (nodeId: string, key: string) => () => void
 }
 export const CanvasReservationContext = createContext<CanvasReservation | undefined>(undefined)
 export function useCanvasReservation() {
