@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { waitForCanvasViewportToSettle } from './fixtures/canvas-viewport'
 import { installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
 
 for (const kind of ['image', 'video']) {
@@ -92,7 +93,28 @@ for (const kind of ['image', 'video']) {
         route.fulfill({ json: { granted: true, nodes: {} } }),
       )
       await page.goto('/canvas/119')
-      await page.locator('.react-flow__node[data-id="source"]').click()
+      const node = page.locator('.react-flow__node[data-id="source"]')
+      if (viewport.width === 760) {
+        // Move the node up so its anchored editor keeps the trigger buttons within reach.
+        await expect(node).toBeInViewport()
+        await waitForCanvasViewportToSettle(page.locator('.react-flow__viewport'))
+        const bounds = (await node.boundingBox())!
+        const targetBottom = 230
+        const deltaY = Math.round(targetBottom - bounds.y - bounds.height)
+        const dragX = viewport.width - 24
+        const dragY = deltaY < 0 ? viewport.height - 90 : 90
+        await page.mouse.move(dragX, dragY)
+        await page.mouse.down({ button: 'middle' })
+        await page.mouse.move(dragX, dragY + deltaY, { steps: 8 })
+        await page.mouse.up({ button: 'middle' })
+        await expect
+          .poll(async () => {
+            const current = (await node.boundingBox())!
+            return Math.abs(current.y + current.height - targetBottom)
+          })
+          .toBeLessThan(4)
+      }
+      await node.click()
       const editor = page.locator('[data-canvas-node-panel]')
       await expect(editor).toBeVisible()
       // Clip overflowing children while keeping the editor in its normal canvas layout.
