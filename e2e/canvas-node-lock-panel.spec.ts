@@ -263,3 +263,77 @@ test('视频节点等候编辑许可或暂时断线时保留面板，恢复后�
   expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })
+
+test('WebSocket 通知节点释放后立即重新申请编辑', async ({ page }) => {
+  const api = await installStrictAuthenticatedApp(page)
+  let allowEdit = false
+  let socketRequests = 0
+  const socketOpened = pauseResponse()
+  let notifyRelease = () => {}
+  await page.routeWebSocket('**/api/v1/canvases/241/node-locks/socket?**', (socket) => {
+    notifyRelease = () => socket.send(JSON.stringify({ type: 'changed' }))
+    socket.onMessage((raw) => {
+      const { nodes } = JSON.parse(String(raw)) as { nodes: string[] }
+      if (nodes.includes('video')) socketRequests++
+      socket.send(
+        JSON.stringify({
+          type: 'state',
+          data: {
+            granted: allowEdit,
+            nodes: {
+              video: [{ user_id: allowEdit ? 7 : 8, name: allowEdit ? '我' : '协作者', editing: true }],
+            },
+          },
+        }),
+      )
+    })
+    socketOpened.release()
+  })
+  await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/v1/ai/models**', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/v1/canvases/241**', (route) => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/events')) return route.fulfill({ status: 204 })
+    if (pathname.endsWith('/node-locks')) {
+      const { nodes } = route.request().postDataJSON() as { nodes: string[] }
+      expect(nodes).toEqual([])
+      return route.fulfill({ json: { granted: true, nodes: {} } })
+    }
+    if (pathname.endsWith('/members')) return route.fulfill({ json: { can_manage: false } })
+    if (pathname.endsWith('/elements'))
+      return route.fulfill({
+        json: {
+          sync_revision: 1,
+          has_more: false,
+          elements: [
+            {
+              element_id: 'video',
+              kind: 'node',
+              op: 'upsert',
+              payload: {
+                id: 'video',
+                type: 'video',
+                position: { x: 440, y: 140 },
+                data: { kind: 'video' },
+              },
+            },
+          ],
+        },
+      })
+    return route.fulfill({ json: { id: 241, title: 'WebSocket 协作画布', status: 'active', revision: 1 } })
+  })
+  await page.goto('/canvas/241')
+  await socketOpened.done
+  await page.locator('.react-flow__node[data-id="video"] .canvas-node-body').click()
+  const editor = page.locator('.canvas-panel-edit-content')
+  await expect(editor).toHaveAttribute('inert', '')
+  await expect(page.getByRole('status').filter({ hasText: '协作者 正在编辑' })).toBeVisible()
+  expect(socketRequests).toBe(1)
+
+  allowEdit = true
+  notifyRelease()
+  await expect(editor).not.toHaveAttribute('inert', { timeout: 1500 })
+  expect(socketRequests).toBe(2)
+  expect(api.paidTaskSubmissions).toBe(0)
+  expectNoUnexpectedApi(api)
+})

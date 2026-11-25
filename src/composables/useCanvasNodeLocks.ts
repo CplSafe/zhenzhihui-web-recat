@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { getAccountSwitchId } from '@/api/accountSwitch'
 import { requestBusinessJson } from '@/api/business'
+import { connectCanvasLockSocket } from './canvasLockSocket'
 
 interface Holder {
   user_id: number
@@ -57,20 +59,36 @@ export function useCanvasNodeLocks(
   useEffect(() => {
     if (!scope) return
     const session = crypto.randomUUID()
-    const path = `/api/v1/canvases/${canvasId}/node-locks?workspace_id=${workspaceId}`
-    const post = (nodes: string[], observe = false, heartbeat = false) =>
-      requestBusinessJson<Snapshot>(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // Older servers interpret an empty selection as release. Give observation
-        // its own session so it cannot release a foreground lease during rollout.
-        body: JSON.stringify({ session: observe ? `${session}-observer` : session, nodes, observe, heartbeat }),
-        timeoutMs: 6000,
-      })
+    const base = `/api/v1/canvases/${canvasId}/node-locks`
+    const query = `workspace_id=${workspaceId}`
+    const lockSocket = getAccountSwitchId()
+      ? undefined
+      : connectCanvasLockSocket<Snapshot>(`${base}/socket?${query}&user_id=${userId}`, () => {
+          if (stopped || desired.current.scope !== scope) return
+          if (writing || (observing && desired.current.key === '[]')) changedWhileBusy = true
+          else void refresh(true)
+        })
+    const post = (nodes: string[], observe = false, heartbeat = false) => {
+      // Older servers interpret an empty selection as release. Observation
+      // uses a different session and stays independent of socket writes.
+      const body = JSON.stringify({ session: observe ? `${session}-observer` : session, nodes, observe, heartbeat })
+      const overSocket = !observe && !stopped ? lockSocket?.send(body) : undefined
+      return (
+        overSocket ??
+        requestBusinessJson<Snapshot>(`${base}?${query}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          timeoutMs: 6000,
+        })
+      )
+    }
     let stopped = false
     let writing = false
     let observing = false
     let needsRelease = false
+    let changedWhileBusy = false
+    let lastHeartbeat = 0
     let timer: ReturnType<typeof setTimeout>
     function schedule(delay: number) {
       clearTimeout(timer)
@@ -88,7 +106,9 @@ export function useCanvasNodeLocks(
         writing = true
         if (nodes.length) needsRelease = true
       }
-      const heartbeat = observe || background
+      changedWhileBusy = false
+      const heartbeat = observe || (background && Date.now() - lastHeartbeat >= 2000)
+      if (heartbeat) lastHeartbeat = Date.now()
       try {
         const data = await post(nodes, observe, heartbeat)
         if (typeof data?.granted !== 'boolean') throw new Error('Invalid canvas node lock response')
@@ -125,7 +145,7 @@ export function useCanvasNodeLocks(
         if (stopped) {
           if (!observe && needsRelease) void post([]).catch(() => {})
         } else if (!observe || (!writing && desired.current.key === '[]' && !needsRelease)) {
-          schedule(requested === desired.current ? 2500 : 0)
+          schedule(requested === desired.current && !changedWhileBusy ? 2500 : 0)
         }
       }
     }
@@ -133,11 +153,12 @@ export function useCanvasNodeLocks(
     void refresh()
     return () => {
       stopped = true
+      lockSocket?.close()
       wake.current = undefined
       clearTimeout(timer)
       if (needsRelease && !writing) void post([]).catch(() => {})
     }
-  }, [scope, workspaceId, canvasId])
+  }, [scope, workspaceId, canvasId, userId])
   useEffect(() => {
     wake.current?.()
   }, [target])
