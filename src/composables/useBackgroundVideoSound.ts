@@ -20,10 +20,11 @@ function writeMutedPreference(muted: boolean) {
 
 /**
  * 统一管理开屏页与登录页背景视频声音。
- * 用户主动选择会持久化；浏览器拦截有声自动播放时只做本次页面的临时静音降级。
+ * 默认持久化用户选择；关闭记忆时每次进入都静音，仅本页手动切换。
+ * 浏览器拦截有声自动播放时只做本次页面的临时静音降级。
  */
-export function useBackgroundVideoSound() {
-  const [preferenceMuted, setPreferenceMuted] = useState(readMutedPreference)
+export function useBackgroundVideoSound({ rememberPreference = true }: { rememberPreference?: boolean } = {}) {
+  const [preferenceMuted, setPreferenceMuted] = useState(() => (rememberPreference ? readMutedPreference() : true))
   const [autoplayBlocked, setAutoplayBlocked] = useState(false)
   const muted = preferenceMuted || autoplayBlocked
   // 记住当前正在播放的背景视频，供组件卸载时停掉它。
@@ -35,6 +36,7 @@ export function useBackgroundVideoSound() {
   const autoplayBlockedRef = useRef(false)
 
   useEffect(() => {
+    if (!rememberPreference) return
     const syncPreference = (event: StorageEvent) => {
       if (event.key !== BACKGROUND_VIDEO_MUTED_KEY) return
       const nextMuted = event.newValue === 'true'
@@ -54,7 +56,7 @@ export function useBackgroundVideoSound() {
     }
     window.addEventListener('storage', syncPreference)
     return () => window.removeEventListener('storage', syncPreference)
-  }, [])
+  }, [rememberPreference])
 
   // 页面卸载时显式停掉背景视频：从 DOM 移除 <video> 并不会停止播放——只要还有 JS 引用（ref/闭包）
   // 指着它，被摘掉的元素会继续放声，直到被 GC。于是登录页/开屏页卸载后，声音会漏到导航后的页面
@@ -124,7 +126,7 @@ export function useBackgroundVideoSound() {
       autoplayBlockedRef.current = false
       setAutoplayBlocked(false)
       setPreferenceMuted(nextMuted)
-      writeMutedPreference(nextMuted)
+      if (rememberPreference) writeMutedPreference(nextMuted)
 
       if (!video) return
       activeVideoRef.current = video
@@ -142,7 +144,7 @@ export function useBackgroundVideoSound() {
         }
       }
     },
-    [muted],
+    [muted, rememberPreference],
   )
 
   return {

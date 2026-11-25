@@ -108,3 +108,31 @@ describe('useBackgroundVideoSound 卸载时停掉背景视频', () => {
     expect(video.muted).toBe(true)
   })
 })
+
+it('login-style playback starts muted on every mount and ignores stored/cross-tab sound preferences', async () => {
+  localStorage.setItem('zzh-background-video-muted', 'true')
+  const video = fakeVideo()
+  const first = renderHook(() => useBackgroundVideoSound({ rememberPreference: false }))
+  await act(async () => {
+    await first.result.current.playVideo(video)
+  })
+  expect(first.result.current.muted).toBe(true)
+  expect(video.muted).toBe(true)
+  act(() => {
+    first.result.current.toggleVideoSound(video)
+  })
+  expect(video.muted).toBe(false)
+  expect(localStorage.getItem('zzh-background-video-muted')).toBe('true')
+  first.unmount()
+  localStorage.setItem('zzh-background-video-muted', 'false')
+  const second = renderHook(() => useBackgroundVideoSound({ rememberPreference: false }))
+  const nextVideo = fakeVideo()
+  await act(async () => {
+    await second.result.current.playVideo(nextVideo)
+  })
+  act(() => {
+    window.dispatchEvent(new StorageEvent('storage', { key: 'zzh-background-video-muted', newValue: 'false' }))
+  })
+  expect(second.result.current.muted).toBe(true)
+  expect(nextVideo.muted).toBe(true)
+})

@@ -611,7 +611,9 @@ export default function LoginView() {
   const heroVideoRefs = useRef(new Map<string, HTMLVideoElement>())
   const targetMediaUrlRef = useRef('')
   const mediaTransitionTimerRef = useRef<number | null>(null)
-  const { muted, needsInteraction, playVideo, toggleVideoSound } = useBackgroundVideoSound()
+  const { muted, needsInteraction, playVideo, toggleVideoSound } = useBackgroundVideoSound({
+    rememberPreference: false,
+  })
 
   /**
    * 窄屏是否隐藏了整块大图区（与 LoginView.css 的 max-width:768px 断点一致）。

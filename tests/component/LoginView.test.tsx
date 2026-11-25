@@ -219,6 +219,19 @@ describe('LoginView behavior', () => {
     }
   })
 
+  it('starts login videos muted even when sound was previously enabled', async () => {
+    localStorage.setItem('zzh-background-video-muted', 'false')
+    mocks.banners = [{ id: 1, title: '视频', mediaType: 'video', mediaUrl: '/login.mp4' }]
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    const { container } = render(<LoginView />)
+    const video = container.querySelector('video')!
+    fireEvent.canPlay(video)
+    expect(video.muted).toBe(true)
+    await userEvent.click(screen.getByRole('button', { name: '开启背景声音' }))
+    expect(video.muted).toBe(false)
+    expect(screen.getByRole('button', { name: '关闭背景声音' })).toBeInTheDocument()
+  })
+
   it('keeps the current banner visible until the selected video has decoded its first frame', async () => {
     const user = userEvent.setup()
     mocks.banners = [
