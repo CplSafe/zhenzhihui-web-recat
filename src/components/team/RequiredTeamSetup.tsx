@@ -50,7 +50,7 @@ export default function RequiredTeamSetup({ userId }: { userId: number }) {
   return (
     <Modal
       open
-      title="创建你的团队空间"
+      aria-label="创建你的团队空间"
       closable={false}
       maskClosable={false}
       keyboard={false}
@@ -58,10 +58,6 @@ export default function RequiredTeamSetup({ userId }: { userId: number }) {
       centered
       zIndex={10000}
     >
-      <p>请先填写团队名称，创建完成后即可继续使用。刷新页面也会保留此步骤。</p>
-      <p style={{ color: 'var(--text-secondary, #666)' }}>
-        团队将开通 7 天团队试用套餐，不赠送套餐积分，初始积分为 0。
-      </p>
       <form
         onSubmit={(event) => {
           event.preventDefault()
