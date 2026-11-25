@@ -88,10 +88,14 @@ export function validateHdQuote(quote: HdQuote, items: HdItem[], target: HdTarge
 }
 
 /** 固定 ID + 去重确保重复轮询不会重复建节点。只追加新产物，不改源件/剪辑引用。 */
+export interface CanvasHdResultTask extends HdTask {
+  taskData?: Record<string, unknown>
+}
+
 export function materializeHdResults(
   nodes: Node[],
   edges: Edge[],
-  tasks: HdTask[],
+  tasks: CanvasHdResultTask[],
   workspaceId: number,
   canvasId: number,
   delivered: ReadonlySet<string> = new Set(),
@@ -116,6 +120,7 @@ export function materializeHdResults(
       taskStatus: task.status === 'completed' ? 'succeeded' : task.status,
       taskId: task.task_id || 0,
       taskError: task.status === 'failed' ? task.error || '超分失败，请重新选择原图重试' : '',
+      ...task.taskData,
       ...(task.result
         ? {
             title: task.result.name,
@@ -136,6 +141,10 @@ export function materializeHdResults(
     }
     if (existing >= 0) {
       const node = nextNodes[existing]
+      // A late modal callback must never replace a newer generation or downgrade a visible result.
+      const run = task.taskData?.taskRunId
+      if (run && node.data.taskRunId !== run) continue
+      if (run && node.data.taskStatus === 'succeeded' && task.status !== 'completed') continue
       if (
         Object.entries(resultData).some(([key, value]) =>
           key === 'imageOrigin' ? JSON.stringify(node.data[key]) !== JSON.stringify(value) : node.data[key] !== value,

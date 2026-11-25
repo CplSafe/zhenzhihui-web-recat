@@ -7,13 +7,14 @@ import {
   getCanvasGenerationDuration,
   getCanvasTaskPresentation,
   isCanvasGeneratedResult,
+  isCanvasSubmissionUnresolved,
   isSameCanvasTask,
+  preserveCompletedCanvasResults,
   restoreCanvasTaskState,
-  reusableInterruptedIdempotencyKey,
 } from '@/utils/canvasTaskState'
 
 describe('canvas task restoration', () => {
-  it('刷新后用超分请求快照恢复孤儿提交，重试仍沿用原幂等键', () => {
+  it('刷新后保留原超分提交身份，等待核对 TaskID', () => {
     const request = { kind: 'video', operationCode: 'video.upscale', modelVersionId: 8, params: { scale: 2 } }
     const data = {
       taskStatus: 'submitting',
@@ -21,13 +22,9 @@ describe('canvas task restoration', () => {
       taskIdempotencyKey: 'upscale-original',
       videoUpscaleRequest: request,
     }
-    expect(classifyOrphanSubmission(data, { now: Date.now(), submittingInThisPage: false })).toBe('resume')
-    expect(reusableInterruptedIdempotencyKey({ ...data, taskSubmitInterrupted: true }, request)).toBe(
-      'upscale-original',
-    )
-    expect(
-      reusableInterruptedIdempotencyKey({ ...data, taskSubmitInterrupted: true }, { ...request, modelVersionId: 9 }),
-    ).toBe('')
+    expect(classifyOrphanSubmission(data, { now: Date.now(), submittingInThisPage: false })).toBe('unknown')
+    expect(isCanvasSubmissionUnresolved(data)).toBe(true)
+    expect(data.taskIdempotencyKey).toBe('upscale-original')
   })
   it.each(['failed', 'error', 'cancelled', 'expired', 'result_sync_failed', 'reconnecting'])(
     'rechecks a saved %s task without showing its cached error',
@@ -63,13 +60,24 @@ describe('canvas task restoration', () => {
     (taskStatus) => {
       const saved = { taskId: 0, taskStatus, taskIdempotencyKey: 'existing-key' }
       expect(restoreCanvasTaskState(saved)).toMatchObject({
-        taskStatus: 'submit_failed',
-        taskError: expect.stringContaining('缺少任务编号'),
+        taskStatus: 'submission_unknown',
+        taskError: expect.stringContaining('核对任务记录'),
         taskSubmitInterrupted: true,
         taskIdempotencyKey: 'existing-key',
       })
     },
   )
+
+  it('restores an interrupted submission without losing its ID or previous visible result', () => {
+    const saved = { taskId: 15318, taskStatus: 'submission_unknown', assetId: 42, taskIdempotencyKey: 'same' }
+    expect(restoreCanvasTaskState(saved)).toMatchObject({ ...saved, taskStatus: 'reconnecting' })
+  })
+
+  it('keeps a completed task with a delayed asset out of the generation-failure state', () => {
+    const saved = { taskId: 15318, taskStatus: 'failed', taskError: '任务已完成，但结果同步超时，请重试' }
+    expect(restoreCanvasTaskState(saved)).toMatchObject({ taskId: 15318, taskStatus: 'result_sync_delayed' })
+    expect(getCanvasTaskPresentation({ status: 'result_sync_delayed' })).toMatchObject({ failed: false })
+  })
 
   it('does not trigger payment settlement just by restoring a canvas', () => {
     const saved = { taskId: 15318, taskStatus: 'payment_failed', taskError: 'insufficient credits' }
@@ -100,6 +108,88 @@ describe('canvas task response ownership', () => {
     expect(isSameCanvasTask({ taskId: 15320, taskRunId: 'new' }, { taskId: 15320, taskRunId: 'new' })).toBe(true)
     expect(isSameCanvasTask({ taskId: 15318 }, { taskId: 15318 })).toBe(true)
     expect(isSameCanvasTask({}, {})).toBe(false)
+  })
+})
+
+describe('merging a completed canvas generation', () => {
+  const node = {
+    id: 'image',
+    position: { x: 0, y: 0 },
+    data: { kind: 'image', taskRunId: 'run', taskIdempotencyKey: 'submission' },
+  }
+  const completed = {
+    ...node,
+    data: {
+      ...node.data,
+      title: 'original name',
+      taskId: 42,
+      taskStatus: 'succeeded',
+      assetId: 203,
+      resultHistory: [
+        { assetId: 172, taskId: 35 },
+        { assetId: 203, taskId: 42 },
+      ],
+      imageResultAssetIds: [203],
+    },
+  }
+  const stale = {
+    ...node,
+    position: { x: 90, y: 50 },
+    data: {
+      ...node.data,
+      title: 'collaborator name',
+      prompt: 'new edit',
+      taskStatus: 'submission_unknown',
+      taskFailure: { stage: 'unknown' },
+      taskError: 'pending',
+      taskId: 0,
+    },
+  }
+
+  it('restores the same submission result without reverting collaborative edits', () => {
+    const [merged] = preserveCompletedCanvasResults([completed], [stale])
+    expect(merged.position).toEqual(stale.position)
+    expect(merged.data).toMatchObject({
+      title: stale.data.title,
+      prompt: stale.data.prompt,
+      taskId: 42,
+      taskStatus: 'succeeded',
+      taskProgress: 100,
+      taskError: '',
+      assetId: 203,
+      resultHistory: completed.data.resultHistory,
+      imageResultAssetIds: [203],
+    })
+    expect(merged.data.taskFailure).toBeUndefined()
+  })
+
+  it('can restore from a matching TaskID over a stale snapshot showing the previous generation', () => {
+    const [merged] = preserveCompletedCanvasResults(
+      [completed],
+      [{ ...stale, data: { kind: 'image', taskId: 42, taskStatus: 'processing', assetId: 172 } }],
+    )
+    expect(merged.data).toMatchObject({ taskId: 42, taskStatus: 'succeeded', assetId: 203 })
+  })
+
+  it.each([
+    { taskRunId: 'new run' },
+    { taskIdempotencyKey: 'new submission' },
+    { taskId: 99 },
+    { taskIdempotencyKey: undefined },
+    { assetId: 999 },
+    { resultUrl: 'blob:new-upload' },
+    { taskStatus: 'failed', taskId: 42 },
+    { taskStatus: '' },
+  ])('leaves unrelated edits and definitive states intact (%o)', (change) => {
+    const incoming = [{ ...stale, data: { ...stale.data, ...change } }]
+    expect(preserveCompletedCanvasResults([completed], incoming)).toBe(incoming)
+  })
+
+  it('does not restore a missing node or an output with no matching task history', () => {
+    expect(preserveCompletedCanvasResults([completed], [])).toEqual([])
+    const incoming = [stale]
+    const unverified = { ...completed, data: { ...completed.data, taskId: 99 } }
+    expect(preserveCompletedCanvasResults([unverified], incoming)).toBe(incoming)
   })
 })
 
@@ -230,33 +320,33 @@ describe('orphan canvas submissions (stuck in submitting without a task id)', ()
     ...extra,
   })
 
-  it('resumes a recent interrupted submission with its stored idempotency key', () => {
-    expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: false })).toBe('resume')
+  it('classifies a recent unconfirmed submission as unknown', () => {
+    expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: false })).toBe('unknown')
   })
 
-  it('only lets the submitting member resume a paid request on a shared canvas', () => {
+  it('lets the original submitter check sooner than a collaborator', () => {
     const own = { now, currentUserId: 7, submittingInThisPage: false }
-    expect(classifyOrphanSubmission(orphan(2, { taskSubmitterId: 7 }), own)).toBe('resume')
+    expect(classifyOrphanSubmission(orphan(2, { taskSubmitterId: 7 }), own)).toBe('unknown')
     expect(classifyOrphanSubmission(orphan(2, { taskSubmitterId: 8 }), own)).toBe('none')
     expect(classifyOrphanSubmission(orphan(2), own)).toBe('none')
-    expect(classifyOrphanSubmission(orphan(20, { taskSubmitterId: 8 }), own)).toBe('interrupted')
+    expect(classifyOrphanSubmission(orphan(20, { taskSubmitterId: 8 }), own)).toBe('unknown')
   })
 
   it('leaves submissions this page is still sending alone', () => {
     expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: true })).toBe('none')
   })
 
-  it('marks submissions past the request timeout window as interrupted', () => {
+  it('keeps long-unconfirmed submissions unresolved', () => {
     const minutes = CANVAS_SUBMIT_STALE_MS / 60_000 + 1
-    expect(classifyOrphanSubmission(orphan(minutes), { now, submittingInThisPage: false })).toBe('interrupted')
+    expect(classifyOrphanSubmission(orphan(minutes), { now, submittingInThisPage: false })).toBe('unknown')
     // 线上那条卡了 20 多小时的节点
-    expect(classifyOrphanSubmission(orphan(20 * 60), { now, submittingInThisPage: false })).toBe('interrupted')
+    expect(classifyOrphanSubmission(orphan(20 * 60), { now, submittingInThisPage: false })).toBe('unknown')
   })
 
   it('cannot resume legacy nodes saved before idempotency keys were stored', () => {
     expect(
       classifyOrphanSubmission(orphan(1, { taskIdempotencyKey: undefined }), { now, submittingInThisPage: false }),
-    ).toBe('interrupted')
+    ).toBe('unknown')
   })
 
   it('ignores nodes that already have a task id or are not submitting', () => {
@@ -266,10 +356,12 @@ describe('orphan canvas submissions (stuck in submitting without a task id)', ()
     )
   })
 
-  it('reuses the interrupted key only for an unchanged retry', () => {
-    const interrupted = { taskSubmitInterrupted: true, taskIdempotencyKey: 'k1', generationRequest: request }
-    expect(reusableInterruptedIdempotencyKey(interrupted, { ...request })).toBe('k1')
-    expect(reusableInterruptedIdempotencyKey(interrupted, { ...request, prompt: '一只猫' })).toBe('')
-    expect(reusableInterruptedIdempotencyKey({ ...interrupted, taskSubmitInterrupted: false }, request)).toBe('')
+  it('blocks another creation for legacy unknown and no-ID upscale reservations', () => {
+    expect(isCanvasSubmissionUnresolved({ taskStatus: 'submit_failed', taskSubmitInterrupted: true })).toBe(true)
+    expect(isCanvasSubmissionUnresolved({ taskStatus: 'queued', taskIdempotencyKey: 'old-hd' })).toBe(true)
+    expect(isCanvasSubmissionUnresolved({ taskStatus: 'submit_failed', taskFailure: { stage: 'rejected' } })).toBe(
+      false,
+    )
+    expect(isCanvasSubmissionUnresolved({ taskStatus: 'submission_unknown', taskId: 42 })).toBe(false)
   })
 })

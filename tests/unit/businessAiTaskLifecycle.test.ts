@@ -25,6 +25,27 @@ afterEach(() => {
 })
 
 describe('AI task identifier boundaries', () => {
+  it('keeps receipt diagnostics when successful creation lacks a usable task ID', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { task_id: true } }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'missing-task-receipt' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      createAiTask({
+        workspaceId: 7,
+        capability: 'image',
+        operationCode: 'image.text_to_image',
+        modelVersionId: 92,
+        modelVersion: { id: 92 },
+        prompt: 'draw',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK_ID', status: 202, requestId: 'missing-task-receipt', taskId: '' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['image', 'video', 'image-saved'])(
     'keeps %s upscale estimation and submission valid with an empty saved prompt',
     async (scenario) => {
@@ -998,10 +1019,75 @@ describe('image generation streaming', () => {
     })
   })
 
+  it.each(['completed', 'connection closed', 'error event'])('accepts the streamed task before %s', async (ending) => {
+    const encoder = new TextEncoder()
+    let streamController: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller
+        controller.enqueue(
+          encoder.encode('event: response.created\ndata: {"task":{"task_id":"321","status":"pending"}}\n\n'),
+        )
+      },
+    })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'X-Trace-ID': 'image-stream-trace' } }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const onTaskAccepted = vi.fn()
+    const request = createAiTask({
+      workspaceId: 7,
+      capability: 'image',
+      operationCode: 'image.text_to_image',
+      modelVersionId: 92,
+      modelVersion: { id: 92 },
+      prompt: 'draw',
+      params: { stream: true },
+      onTaskAccepted,
+    })
+    await vi.waitFor(() =>
+      expect(onTaskAccepted).toHaveBeenCalledWith({
+        id: 321,
+        task_id: '321',
+        status: 'pending',
+        requestId: 'image-stream-trace',
+      }),
+    )
+
+    if (ending === 'completed') {
+      streamController.enqueue(
+        encoder.encode(
+          'event: response.created\ndata: {"task_id":321}\n\n' +
+            'event: image.completed\ndata: {"task":{"status":"succeeded","outputs":[{"asset_id":700}]}}\n\n',
+        ),
+      )
+      streamController.close()
+      await expect(request).resolves.toMatchObject({ id: 321, status: 'succeeded', outputs: [{ asset_id: 700 }] })
+    } else {
+      const error = expect(request).rejects.toMatchObject({
+        name: 'BusinessApiError',
+        message: '流式连接中断',
+        requestId: 'image-stream-trace',
+        taskId: '321',
+      })
+      if (ending === 'connection closed') streamController.error(new Error('流式连接中断'))
+      else {
+        streamController.enqueue(encoder.encode('event: image.error\ndata: {"message":"流式连接中断"}\n\n'))
+        streamController.close()
+      }
+      await error
+    }
+    expect(onTaskAccepted).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
     'event: image.partial\ndata: {"b64_json":"preview"}\n\n',
     'event: image.error\ndata: {"message":"生成失败","code_string":"INVALID_PARAMS"}\n\n',
   ])('rejects failed or truncated image streams', async (events) => {
+    const onTaskAccepted = vi.fn()
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(events, { headers: { 'Content-Type': 'text/event-stream' } })),
@@ -1014,7 +1100,9 @@ describe('image generation streaming', () => {
         modelVersionId: 92,
         prompt: 'draw',
         params: { stream: true },
+        onTaskAccepted,
       }),
     ).rejects.toThrow()
+    expect(onTaskAccepted).not.toHaveBeenCalled()
   })
 })

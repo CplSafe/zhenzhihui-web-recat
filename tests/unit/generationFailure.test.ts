@@ -6,6 +6,7 @@ import {
   failureIdentifiers,
   formatGenerationFailure,
   generationSubmissionFingerprint,
+  isDefiniteCanvasSubmissionRejection,
   unknownSubmissionKey,
   nodeGenerationFailure,
 } from '@/utils/generationFailure'
@@ -46,7 +47,7 @@ describe('generation failure diagnostics', () => {
   })
   it('并发拒绝记录保留真实请求上下文，旧错误不伪造当前失败时间', () => {
     const failure = buildGenerationFailure(
-      { message: '当前模型有任务正在生成中', status: 429, requestId: 'req-busy' },
+      { message: '当前模型有任务正在生成中', status: 429, code: 'WORKSPACE_CONCURRENCY_LIMIT', requestId: 'req-busy' },
       { submitted: true, operationCode: 'video.upscale', modelVersionId: 8, workspaceId: 21, canvasId: 7 },
     )
     const restored = nodeGenerationFailure({
@@ -108,6 +109,40 @@ describe('generation failure diagnostics', () => {
     expect(
       buildGenerationFailure({ message: '网络超时' }, { submitted: true, submissionId: 'submission-1' }),
     ).toMatchObject({ stage: 'unknown', submissionId: 'submission-1' })
+  })
+
+  it('requires a known rejection instead of guessing from ambiguous HTTP statuses', () => {
+    for (const error of [
+      { status: 200, code: 'INVALID_TASK_ID' },
+      { status: 400 },
+      { status: 408 },
+      { status: 409 },
+      { status: 429 },
+      { status: 500, code: 'INVALID_MODEL_PARAMS' },
+    ]) {
+      expect(isDefiniteCanvasSubmissionRejection(error)).toBe(false)
+      expect(buildGenerationFailure(error, { submitted: true }).stage).toBe('unknown')
+    }
+    expect(
+      isDefiniteCanvasSubmissionRejection({ status: 200, response: { code_string: 'INVALID_MODEL_PARAMS' } }),
+    ).toBe(true)
+    expect(isDefiniteCanvasSubmissionRejection({ status: 400, code: 'INVALID_MODEL_PARAMS', taskId: '42' })).toBe(false)
+  })
+
+  it('marks a saved submission with no stage as unknown, retaining its trace and last update', () => {
+    const failure = nodeGenerationFailure({
+      taskFailure: { message: '等待回执' },
+      taskStatus: 'submission_unknown',
+      taskIdempotencyKey: 'saved-submission',
+      taskRequestId: 'saved-request',
+      taskUpdatedAt: '2026-10-09T08:01:00Z',
+    })
+    expect(failure).toMatchObject({
+      stage: 'unknown',
+      submissionId: 'saved-submission',
+      requestId: 'saved-request',
+      failedAt: '2026-10-09T08:01:00Z',
+    })
   })
 
   it('extracts the server request header on an error response', async () => {

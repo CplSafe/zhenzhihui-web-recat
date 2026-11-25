@@ -1,6 +1,7 @@
 /**
  * HelpCenter — 全局 AI 助手(可拖拽悬浮球 + 弹出面板)。
- * - 悬浮球可自由拖动,位置记忆到 localStorage;点击(未拖动)弹出/收起面板。
+ * - 悬浮球可自由拖动，位置记忆到 localStorage。调整窗口尺寸后回到右下角。
+ * - 点击悬浮球弹出或收起面板。
  * - 面板首屏(home)按 Figma「AI 助手悬浮球」:问候 + 搜索 + 帮助/学习 + 反馈/客服。
  * - 入口复用既有子视图:帮助中心(FAQ)/ 学习中心(教程)/ 意见反馈 / 智能客服。
  * - 内容暂为前端占位,后端就绪后替换;搜索为占位。
@@ -81,6 +82,7 @@ const BALL = 56
 
 /** 悬浮球与视口边缘的最小距离。 */
 const MARGIN = 8
+const DEFAULT_BALL_MARGIN = 24
 const COMPACT_HOT_COPY_BREAKPOINT = 900
 const COMPACT_HOT_COPY_MARGIN = 16
 /** 创作页底部有固定主操作区，悬浮球至少让出这段空间，避免遮住生成/去制作按钮。 */
@@ -151,12 +153,23 @@ function creativeSafeBallPos(pathname: string): Pos | null {
   const isSmart = pathname.startsWith('/smart')
   const isCanvasEditor = /^\/canvas\/[^/]+$/.test(pathname) && !pathname.startsWith('/canvas/share/')
   if (!isHotCopy && !isSmart && !isCanvasEditor) return null
-  const compactMargin = isHotCopy && window.innerWidth <= COMPACT_HOT_COPY_BREAKPOINT ? COMPACT_HOT_COPY_MARGIN : 24
+  const rightMargin =
+    isHotCopy && window.innerWidth <= COMPACT_HOT_COPY_BREAKPOINT ? COMPACT_HOT_COPY_MARGIN : DEFAULT_BALL_MARGIN
   const bottomSafeArea = isCanvasEditor ? 112 : CREATIVE_BOTTOM_SAFE_AREA
-  return clampPos({
-    x: window.innerWidth - BALL - compactMargin,
+  return {
+    x: window.innerWidth - BALL - rightMargin,
     y: window.innerHeight - BALL - bottomSafeArea,
-  })
+  }
+}
+
+function resolveBallPos(pathname: string, rememberedPos: Pos | null = null): Pos {
+  return (
+    creativeSafeBallPos(pathname) ??
+    rememberedPos ?? {
+      x: window.innerWidth - BALL - DEFAULT_BALL_MARGIN,
+      y: window.innerHeight - BALL - DEFAULT_BALL_MARGIN,
+    }
+  )
 }
 
 // ── 面板图标(内联,描边色 currentColor)──
@@ -323,16 +336,23 @@ export default function HelpCenter() {
     } catch {
       init = null
     }
-    init = creativeSafeBallPos(location.pathname) || init
-    if (!init) init = { x: window.innerWidth - BALL - 24, y: window.innerHeight - BALL - 24 }
-    setPosBoth(init)
+    setPosBoth(resolveBallPos(location.pathname, init))
   }, [location.pathname, setPosBoth])
 
   useEffect(() => {
+    let width = window.innerWidth
+    let height = window.innerHeight
     function onResize() {
-      const safeCreativePosition = creativeSafeBallPos(location.pathname)
-      if (safeCreativePosition) setPosBoth(safeCreativePosition)
-      else if (posRef.current) setPosBoth(posRef.current)
+      if (width === window.innerWidth && height === window.innerHeight) return
+      width = window.innerWidth
+      height = window.innerHeight
+      drag.current.dragging = false
+      try {
+        localStorage.removeItem(POS_KEY)
+      } catch {
+        /* 隐私模式下也继续重置当前页的位置。 */
+      }
+      setPosBoth(resolveBallPos(location.pathname))
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -532,10 +552,15 @@ export default function HelpCenter() {
   const fbDetail = FB_DETAILS[fbSelectedName] || { q: '', opts: [], hint: '' }
   const openLeft = pos.x + BALL / 2 > window.innerWidth / 2
   const openUp = pos.y + BALL / 2 > window.innerHeight / 2
+  const cardWidth = Math.min(CARD_W, Math.max(0, window.innerWidth - MARGIN * 2))
+  const horizontalInset = openLeft ? window.innerWidth - (pos.x + BALL) : pos.x
+  const verticalInset = openUp ? window.innerHeight - pos.y + GAP : pos.y + BALL + GAP
+  const cardAvailableHeight = Math.max(0, window.innerHeight - verticalInset - MARGIN)
   const cardStyle: React.CSSProperties = {
-    width: CARD_W,
-    [openLeft ? 'right' : 'left']: openLeft ? window.innerWidth - (pos.x + BALL) : pos.x,
-    [openUp ? 'bottom' : 'top']: openUp ? window.innerHeight - pos.y + GAP : pos.y + BALL + GAP,
+    width: cardWidth,
+    maxHeight: `min(70vh, 560px, ${cardAvailableHeight}px)`,
+    [openLeft ? 'right' : 'left']: Math.max(MARGIN, Math.min(horizontalInset, window.innerWidth - cardWidth - MARGIN)),
+    [openUp ? 'bottom' : 'top']: verticalInset,
   }
 
   const subTitle =

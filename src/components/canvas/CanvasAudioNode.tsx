@@ -7,6 +7,7 @@ import { useToast } from '@/composables/useToast'
 import styles from './CanvasAudioNode.module.css'
 import CanvasAudioGenerator from './CanvasAudioGenerator'
 import { loadAudioWaveform } from '@/utils/audioWaveform'
+import { isCanvasSubmissionUnresolved } from '@/utils/canvasTaskState'
 
 function formatAudioTime(value: number): string {
   const seconds = Math.max(0, Number.isFinite(value) ? Math.floor(value) : 0)
@@ -140,9 +141,17 @@ export default function CanvasAudioNode({
   const activeBars = useMemo(() => Math.round(progress * peaks.length), [progress, peaks.length])
   const isGenerating =
     !readOnly &&
-    ['preparing', 'processing', 'pending', 'queued', 'running', 'result_pending'].includes(
-      String(data.taskStatus || ''),
-    )
+    [
+      'preparing',
+      'submitting',
+      'processing',
+      'pending',
+      'queued',
+      'running',
+      'result_pending',
+      'reconnecting',
+    ].includes(String(data.taskStatus || ''))
+  const submissionUnknown = data.taskStatus !== 'submitting' && isCanvasSubmissionUnresolved(data)
   const saveEditedAudio = async () => {
     if (savingEdited || !(Number(data.assetId) > 0) || visibleDuration <= 0) return
     setSavingEdited(true)
@@ -243,7 +252,7 @@ export default function CanvasAudioNode({
   }
   return (
     <div ref={nodeElement} className={`${styles.node} nopan`}>
-      {isGenerating ? (
+      {isGenerating && !src ? (
         <div
           className={`${styles.emptyCard} ${styles.generatingCard}`}
           role="status"
@@ -257,7 +266,11 @@ export default function CanvasAudioNode({
           </span>
           <div className={styles.emptyCopy}>
             <strong>音频生成中</strong>
-            <span>{data.taskStatus === 'preparing' ? '正在准备并提交任务' : '正在生成声音，完成后即可试听'}</span>
+            <span>
+              {data.taskStatus === 'preparing' || data.taskStatus === 'submitting'
+                ? '正在准备并提交任务'
+                : '正在生成声音，完成后即可试听'}
+            </span>
           </div>
         </div>
       ) : !src ? (
@@ -266,9 +279,17 @@ export default function CanvasAudioNode({
             ♫
           </span>
           <div className={styles.emptyCopy}>
-            <strong>{readOnly ? '暂无音频' : isEditor ? '编辑音频' : '创建音频'}</strong>
+            <strong>
+              {submissionUnknown ? '提交状态待确认' : readOnly ? '暂无音频' : isEditor ? '编辑音频' : '创建音频'}
+            </strong>
             <span>
-              {readOnly ? '此节点暂无可播放的音频' : isEditor ? '连接音频节点或上传音频' : '输入描述，选择模型生成声音'}
+              {submissionUnknown
+                ? '请核对任务记录'
+                : readOnly
+                  ? '此节点暂无可播放的音频'
+                  : isEditor
+                    ? '连接音频节点或上传音频'
+                    : '输入描述，选择模型生成声音'}
             </span>
           </div>
           {!readOnly && (

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Modal } from 'antd'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
 import { useToast } from '@/composables/useToast'
-import { FAILURE_STAGE_LABELS, formatGenerationFailure, nodeGenerationFailure } from '@/utils/generationFailure'
+import { formatGenerationFailure, generationFailureStageLabel, nodeGenerationFailure } from '@/utils/generationFailure'
 import type { GenerationFailure } from '@/utils/generationFailure'
 import styles from './CanvasFailureDetails.module.css'
 
@@ -10,6 +10,7 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
   const [open, setOpen] = useState(false)
   const { showToast } = useToast()
   const current = nodeGenerationFailure(data)
+  const submissionUnknown = data.taskStatus === 'submission_unknown'
   const history: GenerationFailure[] = Array.isArray(data.taskFailureHistory) ? data.taskFailureHistory : []
   const copy = async (text: string) => {
     try {
@@ -51,7 +52,7 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
           </>
         )}
         <dt>任务状态</dt>
-        <dd>{FAILURE_STAGE_LABELS[details.stage]}</dd>
+        <dd>{generationFailureStageLabel(details)}</dd>
         <dt>TaskID</dt>
         <dd>
           {details.taskId || '未取得任务编号'}
@@ -88,7 +89,7 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
             <dd>{details.httpStatus}</dd>
           </>
         )}
-        <dt>失败时间</dt>
+        <dt>{submissionUnknown && details === current ? '状态更新时间' : '失败时间'}</dt>
         <dd>
           {Number.isFinite(Date.parse(details.failedAt)) ? new Date(details.failedAt).toLocaleString() : '未记录'}
         </dd>
@@ -108,7 +109,7 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
         查看详情
       </button>
       <Modal
-        title="生成失败详情"
+        title={submissionUnknown ? '提交状态详情' : '生成失败详情'}
         open={open}
         onCancel={() => setOpen(false)}
         footer={null}

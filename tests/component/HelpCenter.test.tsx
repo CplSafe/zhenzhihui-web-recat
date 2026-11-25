@@ -124,6 +124,32 @@ describe('HelpCenter interactions', () => {
     expect(second.ball).toHaveStyle({ left: '8px', top: '536px' })
   })
 
+  it('clears the remembered position and cancels an active drag when the viewport size changes', async () => {
+    window.localStorage.setItem(POSITION_KEY, JSON.stringify({ x: 100, y: 140 }))
+    const first = await renderHelpCenter()
+
+    fireEvent(window, new Event('resize'))
+    expect(first.ball).toHaveStyle({ left: '100px', top: '140px' })
+    expect(window.localStorage.getItem(POSITION_KEY)).not.toBeNull()
+
+    fireEvent.pointerDown(first.ball, { clientX: 120, clientY: 160, pointerId: 1 })
+    fireEvent.pointerMove(first.ball, { clientX: 155, clientY: 195, pointerId: 1 })
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 540, writable: true })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 460, writable: true })
+    fireEvent(window, new Event('resize'))
+    expect(first.ball).toHaveStyle({ left: '460px', top: '380px' })
+
+    fireEvent.pointerMove(first.ball, { clientX: 180, clientY: 220, pointerId: 1 })
+    fireEvent.pointerUp(first.ball, { clientX: 180, clientY: 220, pointerId: 1 })
+    expect(first.ball).toHaveStyle({ left: '460px', top: '380px' })
+    expect(window.localStorage.getItem(POSITION_KEY)).toBeNull()
+    expect(first.ball).toHaveAttribute('aria-expanded', 'false')
+
+    first.unmount()
+    const second = await renderHelpCenter()
+    expect(second.ball).toHaveStyle({ left: '460px', top: '380px' })
+  })
+
   it('moves a remembered position above the fixed action area on creative screens', async () => {
     window.localStorage.setItem(POSITION_KEY, JSON.stringify({ x: 400, y: 300 }))
 

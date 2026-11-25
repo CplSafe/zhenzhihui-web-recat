@@ -172,11 +172,16 @@ import { formatExactVideoDurationLabel, formatVideoTimeLabel } from '@/utils/vid
 import {
   saveCanvasDraft,
   loadCanvasDraft,
-  readDraftBoundCanvasId,
+  loadPendingCanvasDrafts,
+  clearRecoveredCanvasDrafts,
+  createCanvasDraftWriterId,
+  hasOwnPendingCanvasDraft,
+  mergePendingCanvasDrafts,
+  type PendingCanvasDraft,
   saveCanvasScriptCreationHandled,
   clearCanvasScriptCreationPending,
 } from '@/utils/canvasDraft'
-import { humanizeCanvasTaskError, isCanvasProviderServiceError } from '@/utils/canvasTaskError'
+import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
 import {
   loadLastSelectedNodeId,
   loadMinimapVisible,
@@ -241,11 +246,7 @@ import {
   primeVideoFirstFrame,
   type VideoFramePosition,
 } from '@/utils/videoFrameCapture'
-import {
-  resolveGeneratedMediaUrls,
-  resolveVerifiedResultAssetId,
-  resolveVerifiedImageResultAssetIds,
-} from '@/utils/taskMedia'
+import { resolveVerifiedResultAssetId, resolveVerifiedImageResultAssetIds } from '@/utils/taskMedia'
 import CanvasGeneratedImageGroup from '@/components/canvas/CanvasGeneratedImageGroup'
 import {
   canvasImageResultIds,
@@ -257,8 +258,9 @@ import {
 import {
   archiveGenerationFailure,
   buildGenerationFailure,
+  failureIdentifiers,
   generationSubmissionFingerprint,
-  unknownSubmissionKey,
+  isDefiniteCanvasSubmissionRejection,
 } from '@/utils/generationFailure'
 import { planMultiResultPositions } from '@/utils/canvasMultiResult'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
@@ -288,14 +290,16 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import {
-  CANVAS_SUBMIT_INTERRUPTED_MESSAGE,
+  CANVAS_SUBMISSION_UNKNOWN_MESSAGE,
+  CANVAS_RESULT_SYNC_DELAYED_MESSAGE,
   classifyOrphanSubmission,
   formatCanvasElapsed,
   getCanvasEstimatedVideoProgress,
   getCanvasTaskPresentation,
+  isCanvasSubmissionUnresolved,
   isSameCanvasTask,
+  preserveCompletedCanvasResults,
   restoreCanvasTaskState,
-  reusableInterruptedIdempotencyKey,
 } from '@/utils/canvasTaskState'
 import {
   CANVAS_IMAGE_DEFAULT_RATIO,
@@ -594,6 +598,7 @@ async function mapWithConcurrency<T, R>(
 interface CanvasNodeActions {
   readOnly?: boolean
   onRetryAudioComposition?: (nodeId: string) => void
+  onRetryResultSync?: (nodeId: string) => void
   onNodeWheel?: (event: React.WheelEvent<HTMLDivElement>) => void
   onAudioGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
   onToggleImageResults?: (nodeId: string) => void
@@ -910,7 +915,7 @@ const ACTIVE_TASK_STATUSES = new Set([
   'result_pending',
 ])
 
-/** 画布生成任务的幂等键：在发请求前就存进节点，提交中断后用它重发不会重复建任务、重复扣费 */
+/** 画布生成任务的幂等键，在发请求之前随本次提交保存。 */
 function createCanvasTaskIdempotencyKey(): string {
   const random =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -1634,6 +1639,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     onSplitImageResults,
     onRenameNode,
     onRetryAudioComposition,
+    onRetryResultSync,
     registerFrameCapture,
     registerNodeDownload,
     registerNodePreview,
@@ -2391,6 +2397,21 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </CanvasNodeBody>
 
+      {taskStatus === 'submission_unknown' && (
+        <div className="canvas-video-previous-failure nodrag nopan" role="status" aria-label="提交待确认">
+          <span>提交待确认</span>
+          <CanvasFailureDetails data={data} />
+        </div>
+      )}
+      {taskStatus === 'result_sync_delayed' && (
+        <div className="canvas-video-previous-failure nodrag nopan" role="status" aria-label="已生成，等待同步">
+          <span>已生成，等待同步</span>
+          <button type="button" onClick={() => onRetryResultSync?.(id)}>
+            重新同步结果
+          </button>
+        </div>
+      )}
+
       {taskFailed && kind === 'video' && mediaUrl && !connectionError ? (
         <div className="canvas-video-previous-failure nodrag nopan" role="alert">
           <span>上次任务失败，视频已保留</span>
@@ -2741,9 +2762,10 @@ function CanvasInner({
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
+  const [draftWriterId] = useState(createCanvasDraftWriterId)
   const draftScope = useMemo(
-    () => ({ userId: currentUserId, workspaceId: Number(workspaceId) }),
-    [currentUserId, workspaceId],
+    () => ({ userId: currentUserId, workspaceId: Number(workspaceId), writerId: draftWriterId }),
+    [currentUserId, workspaceId, draftWriterId],
   )
   const canvasBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
   const [subjectEditTarget, setSubjectEditTarget] = useState<{
@@ -4288,6 +4310,10 @@ function CanvasInner({
         return false
       }
       const generatingVideos = nodesToDelete.filter(isGeneratingVideoNode)
+      if (nodesToDelete.some((node) => isCanvasSubmissionUnresolved(node.data))) {
+        showToast('有节点的提交状态待确认，请先核对原任务', 'info')
+        return false
+      }
       if (!generatingVideos.length) return true
 
       const confirmed = await requestConfirm('当前视频正在生成，是否删除？删除后将停止本次生成。', {
@@ -5401,6 +5427,7 @@ function CanvasInner({
   const syncRetryBlockedRef = useRef(false)
   const syncRejectedSignatureRef = useRef('')
   const localDraftStoredRef = useRef(true)
+  const recoveringDraftsRef = useRef<PendingCanvasDraft[]>([])
 
   // Undo entries are whole-graph snapshots. Invalidate stale entries once a collaborator changes the graph.
   const clearRemoteUndoHistory = useCallback(() => {
@@ -5426,6 +5453,10 @@ function CanvasInner({
     // 若已有请求在途，标记待补即可，避免重复入队
     if (syncInFlightRef.current) return
     syncInFlightRef.current = true
+    const clearConfirmedRecoveries = () => {
+      clearRecoveredCanvasDrafts(recoveringDraftsRef.current)
+      recoveringDraftsRef.current = []
+    }
     syncQueueRef.current = syncQueueRef.current.then(async () => {
       // 循环处理：执行期间若有新变化（syncPendingRef），继续以最新状态补存
       while (syncPendingRef.current) {
@@ -5447,6 +5478,7 @@ function CanvasInner({
           setSaveStatus((current) => (current === 'dirty' ? 'saved' : current))
           setCloudStatus('online')
           setCloudMessage('已保存')
+          clearConfirmedRecoveries()
           localDraftStoredRef.current = saveCanvasDraft(
             latest.nodes,
             latest.edges,
@@ -5485,6 +5517,7 @@ function CanvasInner({
           const remaining = diffCanvasMutations(syncRef.current, currentGraph, currentText)
           const hasPending = remaining.length > 0 || Object.keys(pendingCanvasStateRef.current).length > 0
           if (hasPending) syncPendingRef.current = true
+          else clearConfirmedRecoveries()
           setSaveStatus(hasPending ? 'dirty' : 'saved')
           setCloudStatus('online')
           setCloudMessage(hasPending ? '还有修改等待保存' : '已保存')
@@ -5515,12 +5548,14 @@ function CanvasInner({
           )
           const isConflict =
             errorStatus === 409 && (!error?.response?.code_string || errorCode === 'CANVAS_REVISION_CONFLICT')
+          const unknownAck = errorCode === 'CANVAS_SAVE_ACK_UNKNOWN'
           const isDeterministicReject = isPermanentCanvasSaveError(errorStatus, errorCode, isConflict)
-          // 只有乐观锁冲突才拉远端合并。网络/服务异常直接进入退避重试，避免制造额外请求。
+          // 版本冲突、节点锁和未确认的保存回执都需要读取云端。网络/服务异常进入退避重试。
           try {
-            if (!isConflict && !lockedElements.size) throw error
+            if (!unknownAck && !isConflict && !lockedElements.size) throw error
             const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
             if (!canvasMountedRef.current) return // local draft already contains the pending edits
+            if (page.sync_revision < syncRevisionRef.current) throw error
             const remote = elementsToGraph(page.elements)
             remote.nodes = remote.nodes.map((node) => normalizeNodeMedia(node, workspaceId))
             const remoteBaseline = {
@@ -5528,13 +5563,42 @@ function CanvasInner({
               edges: remote.edges.map(comparableEdge),
             }
             const remoteChanges = diffCanvasMutations(syncRef.current, remote)
-            const localChanges = () =>
-              diffCanvasMutations(syncRef.current, latestRef.current, (window as any).__canvasTextContents).filter(
-                (change) => !lockedElements.has(change.element_id),
+            const confirmedElementIds = new Set<string>()
+            if (unknownAck) {
+              const changedElementIds = new Set(remoteChanges.map((change) => change.element_id))
+              const differentElements = conflictingCanvasElementIds(mutations, remoteChanges)
+              for (const { element_id } of mutations) {
+                if (changedElementIds.has(element_id) && !differentElements.has(element_id)) {
+                  confirmedElementIds.add(element_id)
+                }
+              }
+            }
+            const localChanges = () => {
+              const currentText = (window as any).__canvasTextContents as Map<string, string> | undefined
+              const pending = diffCanvasMutations(syncRef.current, latestRef.current, currentText).filter(
+                ({ element_id }) => !lockedElements.has(element_id) && !confirmedElementIds.has(element_id),
               )
+              // A read can confirm part of a batched write. Compare those elements to the request snapshot so that a
+              // newer edit or an undo made during that request remains pending.
+              if (confirmedElementIds.size) {
+                const submittedBaseline = {
+                  nodes: latest.nodes.map((node) => comparableNode(node, textMap)),
+                  edges: latest.edges.map(comparableEdge),
+                }
+                pending.push(
+                  ...diffCanvasMutations(submittedBaseline, latestRef.current, currentText).filter(({ element_id }) =>
+                    confirmedElementIds.has(element_id),
+                  ),
+                )
+              }
+              return pending
+            }
             if (lockedElements.size) showToast(error.message || '节点已被占用，已保留其他修改', 'error')
             let pending = localChanges()
-            const conflicts = conflictingCanvasElementIds(pending, remoteChanges)
+            const conflicts = conflictingCanvasElementIds(
+              pending,
+              remoteChanges.filter(({ element_id }) => !confirmedElementIds.has(element_id)),
+            )
             if (conflicts.size) {
               const keepLocal = await requestConfirm(
                 `有 ${conflicts.size} 个节点或连线被同时修改。请选择保留的版本，其他修改会自动合并。`,
@@ -5545,6 +5609,11 @@ function CanvasInner({
               pending = localChanges().filter((change) => keepLocal || !conflicts.has(change.element_id))
             }
             const displayed = applyCanvasElementMutations(remote, pending)
+            const unlocked = (node: Node) => !lockedElements.has(node.id)
+            displayed.nodes = preserveCompletedCanvasResults(
+              latestRef.current.nodes.filter(unlocked),
+              preserveCompletedCanvasResults(remote.nodes.filter(unlocked), displayed.nodes),
+            )
             restoreTextContents(
               Object.fromEntries(
                 displayed.nodes.flatMap((node) =>
@@ -5560,11 +5629,24 @@ function CanvasInner({
             syncRef.current = remoteBaseline
             syncRevisionRef.current = page.sync_revision
             savedCanvasStateRef.current = page.state || {}
-            const hasPending = pending.length > 0 || Object.keys(pendingCanvasStateRef.current).length > 0
-            syncPendingRef.current = hasPending
+            for (const [key, value] of Object.entries(submittedState)) {
+              if (
+                pendingCanvasStateRef.current[key] === value &&
+                JSON.stringify(savedCanvasStateRef.current[key]) === JSON.stringify(value)
+              ) {
+                delete pendingCanvasStateRef.current[key]
+              }
+            }
+            const hasPending =
+              diffCanvasMutations(remoteBaseline, displayed).length > 0 ||
+              Object.keys(pendingCanvasStateRef.current).length > 0
+            // Rejected locked edits remain in recovered journals; do not retire them as confirmed.
+            if (lockedElements.size) recoveringDraftsRef.current = []
+            else if (!hasPending) clearConfirmedRecoveries()
+            syncPendingRef.current = hasPending && !unknownAck
             setSaveStatus(hasPending ? 'dirty' : 'saved')
             setCloudStatus('online')
-            setCloudMessage(hasPending ? '正在合并并保存修改' : '已同步其他成员的修改')
+            setCloudMessage(hasPending ? '正在合并并保存修改' : unknownAck ? '已保存' : '已同步其他成员的修改')
             localDraftStoredRef.current = saveCanvasDraft(
               displayed.nodes,
               displayed.edges,
@@ -5573,6 +5655,7 @@ function CanvasInner({
               draftScope,
               { pendingSync: hasPending, syncBaseline: remoteBaseline, pendingState: pendingCanvasStateRef.current },
             )
+            if (unknownAck && hasPending) throw error // A read that did not confirm the write uses the normal backoff.
             syncRetryAttemptRef.current = 0
             syncRetryBlockedRef.current = false
             syncRejectedSignatureRef.current = ''
@@ -5645,8 +5728,7 @@ function CanvasInner({
     const applyLocalDraft = () => {
       // 云端失败回退本地草稿：同样校验草稿绑定当前画布，防止展示/上传其他画布的内容
       const draft = loadCanvasDraft(routeProjectId, draftScope)
-      const draftBoundId = readDraftBoundCanvasId(routeProjectId, draftScope)
-      if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
+      if (draft && draft.nodes.length > 0 && Number(draft.boundCanvasId) === canvasId) {
         // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
         const restoredNodes = (draft.nodes as Node[]).map((n) => {
           const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
@@ -5686,11 +5768,7 @@ function CanvasInner({
      */
     let paintedDraft = false
     const draftForPaint = loadCanvasDraft(routeProjectId, draftScope)
-    if (
-      draftForPaint &&
-      draftForPaint.nodes.length > 0 &&
-      readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId
-    ) {
+    if (draftForPaint && draftForPaint.nodes.length > 0 && Number(draftForPaint.boundCanvasId) === canvasId) {
       const draftNodes = (draftForPaint.nodes as Node[]).map((n) => {
         const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
         return normalizeNodeMedia({ ...cleaned, data: restoreCanvasTaskState(cleaned.data) }, workspaceId)
@@ -5723,34 +5801,29 @@ function CanvasInner({
         savedCanvasStateRef.current = page.state || {}
         const { nodes: rawCloudNodes, edges: cloudEdges } = elementsToGraph(page.elements)
         // 旧数据可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址，避免刷新后破图
-        const cloudNodes = rawCloudNodes.map((n) =>
-          normalizeNodeMedia({ ...n, data: restoreCanvasTaskState(n.data) }, workspaceId),
+        const restoreNode = (n: Node) => normalizeNodeMedia({ ...n, data: restoreCanvasTaskState(n.data) }, workspaceId)
+        const cloudNodes = rawCloudNodes.map(restoreNode)
+        const cachedNodes = paintedDraft ? (draftForPaint.nodes as Node[]) : []
+        const repairedRawNodes = preserveCompletedCanvasResults(cachedNodes, rawCloudNodes)
+        const displayedCloudNodes = repairedRawNodes === rawCloudNodes ? cloudNodes : repairedRawNodes.map(restoreNode)
+        const recoveries = loadPendingCanvasDrafts(routeProjectId, draftScope).filter(
+          (record) => Number(record.draft.boundCanvasId) === canvasId,
         )
-        if (draftForPaint?.pendingSync && readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId) {
-          const baseline = draftForPaint.syncBaseline
-          if (!baseline || !Array.isArray(baseline.nodes) || !Array.isArray(baseline.edges)) {
+        if (recoveries.length) {
+          const recovered = mergePendingCanvasDrafts({ nodes: cloudNodes, edges: cloudEdges }, recoveries)
+          if (!recovered) {
             setCloudStatus('error')
             setCloudMessage('检测到未同步的本机草稿，无法安全合并；请保留此页面并联系支持')
             return
           }
-          const localNodes = (draftForPaint.nodes as Node[]).map((node) =>
-            normalizeNodeMedia({ ...node, data: restoreCanvasTaskState(node.data) }, workspaceId),
-          )
-          const localEdges = draftForPaint.edges as Edge[]
-          const localChanges = diffCanvasMutations(
-            baseline,
-            { nodes: localNodes, edges: localEdges },
-            draftForPaint.textContents,
-          )
           const cloudText = new Map(
             cloudNodes
               .map((node) => [node.id, String((node.data as any)?.text || '')] as const)
               .filter(([, value]) => Boolean(value)),
           )
-          const remoteChanges = diffCanvasMutations(baseline, { nodes: cloudNodes, edges: cloudEdges }, cloudText)
-          if (conflictingCanvasElementIds(localChanges, remoteChanges).size) {
+          if (recovered.hasConflicts) {
             const confirmed = await requestConfirm(
-              '本机未同步修改与云端修改了相同节点或连线。恢复本机修改可能覆盖这些云端内容，是否继续？',
+              '本机草稿和云端或其他标签页修改了同一内容。继续恢复时，较新的本机修改会覆盖冲突内容，是否继续？',
               { title: '恢复本机修改', confirmLabel: '恢复本机修改', cancelLabel: '暂不恢复' },
             )
             if (cancelled) return
@@ -5760,17 +5833,20 @@ function CanvasInner({
               return
             }
           }
-          const merged = applyCanvasElementMutations({ nodes: cloudNodes, edges: cloudEdges }, localChanges)
-          const restoredNodeIds = new Set(
-            localChanges
-              .filter((mutation) => mutation.kind === 'node' && mutation.op === 'upsert')
-              .map((mutation) => mutation.element_id),
-          )
+          const merged = recovered.graph
           // 本机节点经过同步序列化后，需恢复用于判定历史任务不存在的运行态标记。
-          merged.nodes = merged.nodes.map((node) =>
-            restoredNodeIds.has(node.id) ? { ...node, data: restoreCanvasTaskState(node.data) } : node,
+          const restoredNodes = preserveCompletedCanvasResults(
+            rawCloudNodes,
+            preserveCompletedCanvasResults(
+              cachedNodes,
+              merged.nodes.filter((n) => recovered.restoredNodeIds.has(n.id)),
+            ),
           )
-          pendingCanvasStateRef.current = { ...(draftForPaint.pendingState || {}) }
+          const restoredById = new Map(restoredNodes.map((node) => [node.id, restoreNode(node)]))
+          const displayedById = new Map(displayedCloudNodes.map((node) => [node.id, node]))
+          merged.nodes = merged.nodes.map((node) => restoredById.get(node.id) ?? displayedById.get(node.id) ?? node)
+          recoveringDraftsRef.current = recoveries
+          pendingCanvasStateRef.current = recovered.pendingState
           syncRef.current = {
             nodes: cloudNodes.map((node) => comparableNode(node, cloudText)),
             edges: cloudEdges.map(comparableEdge),
@@ -5804,11 +5880,9 @@ function CanvasInner({
             paintedDraft &&
             draftForPaint &&
             draftForPaint.nodes.length > 0 &&
-            readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId
+            Number(draftForPaint.boundCanvasId) === canvasId
           ) {
-            const draftNodes = (draftForPaint.nodes as Node[]).map((node) =>
-              normalizeNodeMedia({ ...node, data: restoreCanvasTaskState(node.data) }, workspaceId),
-            )
+            const draftNodes = preserveCompletedCanvasResults(rawCloudNodes, cachedNodes).map(restoreNode)
             const draftEdges = draftForPaint.edges as Edge[]
             const draftTextMap = new Map(Object.entries(draftForPaint.textContents || {}))
             const cloudTextMap = new Map(
@@ -5859,8 +5933,8 @@ function CanvasInner({
               console.info('[Canvas] 本地草稿与已保存内容不同，已恢复最近保存的版本')
             }
           }
-          latestRef.current = { nodes: cloudNodes, edges: cloudEdges }
-          setNodes(cloudNodes)
+          latestRef.current = { nodes: displayedCloudNodes, edges: cloudEdges }
+          setNodes(displayedCloudNodes)
           setEdges(cloudEdges)
           // 还原文本内容：云端节点 data 中的 text 字段写回全局 Map（渲染期由节点组件读取）
           restoreTextContents(
@@ -5878,15 +5952,20 @@ function CanvasInner({
           }
           cloudLoadedRef.current = true
           setCloudStatus('online')
-          setCloudMessage('已保存')
-          // 把恢复出的已保存版本写回本机，后续启动即可直接使用，无须反复比较旧草稿。
-          saveCanvasDraft(cloudNodes, cloudEdges, routeProjectId, canvasId, draftScope)
+          if (displayedCloudNodes !== cloudNodes) {
+            setSaveStatus('dirty')
+            setCloudMessage('正在保存已恢复的生成结果')
+            scheduleSyncRef.current(true)
+          } else {
+            setCloudMessage('已保存')
+            // 把恢复出的已保存版本写回本机，后续启动即可直接使用，无须反复比较旧草稿。
+            saveCanvasDraft(cloudNodes, cloudEdges, routeProjectId, canvasId, draftScope, { pendingSync: false })
+          }
           fitCanvasView()
         } else {
           // 云端空画布：仅当本地草稿绑定当前画布时才恢复并上传（保证画布唯一，防止把其他画布内容复制进来）
           const draft = loadCanvasDraft(routeProjectId, draftScope)
-          const draftBoundId = readDraftBoundCanvasId(routeProjectId, draftScope)
-          if (page.sync_revision === 0 && draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
+          if (page.sync_revision === 0 && draft && draft.nodes.length > 0 && Number(draft.boundCanvasId) === canvasId) {
             const restoredNodes = (draft.nodes as Node[]).map((n) => {
               const cleaned = String(n.className || '').includes('is-node-entering')
                 ? { ...n, className: undefined }
@@ -5921,6 +6000,8 @@ function CanvasInner({
             setCloudStatus('online')
             setCloudMessage('已保存')
             syncRef.current = { nodes: [], edges: [] }
+            restoreTextContents({})
+            saveCanvasDraft([], [], routeProjectId, canvasId, draftScope, { pendingSync: false })
           }
           fitCanvasView()
         }
@@ -5935,16 +6016,12 @@ function CanvasInner({
           setCloudMessage('画布不存在或当前账号无权访问，请返回画布列表')
           return
         }
-        const hasDraft = Boolean(
-          draftForPaint?.nodes.length && readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId,
-        )
+        const hasDraft = Boolean(draftForPaint?.nodes.length && Number(draftForPaint.boundCanvasId) === canvasId)
         setCloudMessage(
           hasDraft ? '暂时无法读取云端，显示本机草稿；修改不会保存，请返回后重试' : '暂时无法读取画布，请返回后重试',
         )
         const draftHandled = loadCanvasDraft(routeProjectId, draftScope)
-        const handled = Boolean(
-          draftHandled?.scriptCreationHandled && readDraftBoundCanvasId(routeProjectId, draftScope) === canvasId,
-        )
+        const handled = Boolean(draftHandled?.scriptCreationHandled && Number(draftHandled.boundCanvasId) === canvasId)
         scriptCreationHandledRef.current = handled
         setScriptCreationHandled(handled)
         // 首屏已经画过同一份草稿就不必重画，否则会白白再触发一次 fitView 抖动
@@ -5966,26 +6043,32 @@ function CanvasInner({
     const boundId = canvasIdRef.current ?? 0
     // 未取得云端基线时，卸载或异步操作不能用空画布覆盖已存在的本机草稿。
     if (!cloudLoadedRef.current) return
-    if (immediate) {
+    const flush = () => {
       const latest = latestRef.current
+      const text = (window as any).__canvasTextContents as Map<string, string> | undefined
+      if (
+        diffCanvasMutations(syncRef.current, latest, text).length === 0 &&
+        Object.keys(pendingCanvasStateRef.current).length === 0
+      ) {
+        if (
+          syncInFlightRef.current ||
+          saveStatusRef.current !== 'saved' ||
+          recoveringDraftsRef.current.length ||
+          hasOwnPendingCanvasDraft(routeProjectId, draftScope)
+        ) {
+          pushCanvasMutations()
+        }
+        return
+      }
       localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
         pendingSync: true,
         syncBaseline: syncRef.current,
         pendingState: pendingCanvasStateRef.current,
       })
       pushCanvasMutations()
-      return
     }
-    saveTimerRef.current = window.setTimeout(() => {
-      const latest = latestRef.current
-      // 本地草稿同步落盘兜底（云端失败时仍可恢复）
-      localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
-        pendingSync: true,
-        syncBaseline: syncRef.current,
-        pendingState: pendingCanvasStateRef.current,
-      })
-      pushCanvasMutations()
-    }, 1000)
+    if (immediate) flush()
+    else saveTimerRef.current = window.setTimeout(flush, 1000)
   }
   flushCanvasSyncRef.current = async () => {
     scheduleSyncRef.current(true)
@@ -5998,7 +6081,7 @@ function CanvasInner({
   })
   const submissionBlockedReason = getSubmissionBlockedReason()
 
-  const persistReservation = useLatestCallback(async (nodeId: string, key: string) => {
+  const persistReservation = useLatestCallback(async (nodeId: string, key: string, patch?: Record<string, unknown>) => {
     const requireTargetNode = () => {
       const blockedReason = getSubmissionBlockedReason()
       if (blockedReason) throw new Error(blockedReason)
@@ -6008,7 +6091,7 @@ function CanvasInner({
     }
     requireTargetNode()
     const withKey = (node: Node) =>
-      node.id === nodeId ? { ...node, data: { ...node.data, taskIdempotencyKey: key } } : node
+      node.id === nodeId ? { ...node, data: { ...node.data, ...patch, taskIdempotencyKey: key } } : node
     latestRef.current = { ...latestRef.current, nodes: latestRef.current.nodes.map(withKey) }
     setNodes((current) => current.map(withKey))
     await verifySavedReservation(
@@ -6021,9 +6104,16 @@ function CanvasInner({
     }
   })
 
+  const externallySubmittingRef = useRef(new Map<string, string>())
+  const trackSubmission = useCallback((nodeId: string, key: string) => {
+    externallySubmittingRef.current.set(nodeId, key)
+    return () => {
+      if (externallySubmittingRef.current.get(nodeId) === key) externallySubmittingRef.current.delete(nodeId)
+    }
+  }, [])
   const reservation = useMemo(
-    () => ({ blockedReason: submissionBlockedReason, persist: persistReservation }),
-    [submissionBlockedReason, persistReservation],
+    () => ({ blockedReason: submissionBlockedReason, persist: persistReservation, trackSubmission }),
+    [submissionBlockedReason, persistReservation, trackSubmission],
   )
 
   // 手动重试同样走串行保存与冲突合并；先等在途请求，避免重复提交。
@@ -6061,14 +6151,13 @@ function CanvasInner({
     }
   }
   const hasUnsavedCanvas = () => {
-    const draftPending = Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync)
-    if (!cloudLoadedRef.current) return draftPending
+    if (!cloudLoadedRef.current) return Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync)
     const text = (window as any).__canvasTextContents as Map<string, string> | undefined
     return (
       manualSavingRef.current ||
       syncInFlightRef.current ||
       syncPendingRef.current ||
-      draftPending ||
+      hasOwnPendingCanvasDraft(routeProjectId, draftScope) ||
       diffCanvasMutations(syncRef.current, latestRef.current, text).length > 0 ||
       Object.keys(pendingCanvasStateRef.current).length > 0
     )
@@ -6151,7 +6240,8 @@ function CanvasInner({
         saveStatusRef.current !== 'saved' ||
         syncInFlightRef.current ||
         syncPendingRef.current ||
-        Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync)
+        hasOwnPendingCanvasDraft(routeProjectId, draftScope) ||
+        (!cloudLoadedRef.current && Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync))
       flushOnUnload()
       if (unsaved) {
         event.preventDefault()
@@ -6248,6 +6338,9 @@ function CanvasInner({
           if (localStateChanged()) return schedule(1500)
           fullReload = true
         }
+        if (page.sync_revision < knownRevision) return schedule(1500)
+        let receivedGraph = false
+        let repairedTaskResult = false
         if (fullReload || page.elements.length > 0) {
           // A graph edit may not yet have run its debounced save. Only install a remote update on a clean baseline.
           const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
@@ -6280,20 +6373,37 @@ function CanvasInner({
           )
           restoreTextContents(texts)
           clearRemoteUndoHistory()
-          setNodes(graph.nodes)
-          setEdges(graph.edges)
-          latestRef.current = graph
+          const displayedNodes = preserveCompletedCanvasResults(current.nodes, graph.nodes)
+          repairedTaskResult = displayedNodes !== graph.nodes
           syncRef.current = {
             nodes: graph.nodes.map((node) => comparableNode(node, texts)),
             edges: graph.edges.map(comparableEdge),
           }
+          latestRef.current = { nodes: displayedNodes, edges: graph.edges }
+          setNodes(displayedNodes)
+          setEdges(graph.edges)
+          receivedGraph = true
         } else {
           idleRounds += 1
         }
         syncRevisionRef.current = page.sync_revision
         if (page.state) savedCanvasStateRef.current = page.state
         setCloudStatus('online')
-        setCloudMessage('已保存')
+        if (repairedTaskResult) {
+          setSaveStatus('dirty')
+          setCloudMessage('正在保存已恢复的生成结果')
+          // 云端确实保存了旧状态，补写时仍使用刚收到的版本作为基线。
+          scheduleSyncRef.current(true)
+        } else {
+          setCloudMessage('已保存')
+          if (receivedGraph) {
+            const { nodes, edges } = latestRef.current
+            localDraftStoredRef.current = saveCanvasDraft(nodes, edges, routeProjectId, canvasId, draftScope, {
+              pendingSync: false,
+              syncBaseline: syncRef.current,
+            })
+          }
+        }
       } catch (error: any) {
         if (!disposed && [403, 404].includes(Number(error?.status))) {
           leaveUnavailableCanvas()
@@ -6356,7 +6466,18 @@ function CanvasInner({
     }
     // 不依赖 saveStatus：它每次编辑都会三态翻转，进依赖数组会让整个循环反复重建、
     // 每次都从最短间隔重新起步（编辑越频繁轮询越密）。循环内改用 saveStatusRef 读取。
-  }, [pushCanvasMutations, setEdges, setNodes, workspaceId, canvasId, teamCanvas, navigate, clearRemoteUndoHistory])
+  }, [
+    pushCanvasMutations,
+    setEdges,
+    setNodes,
+    workspaceId,
+    canvasId,
+    teamCanvas,
+    navigate,
+    clearRemoteUndoHistory,
+    routeProjectId,
+    draftScope,
+  ])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -7397,12 +7518,7 @@ function CanvasInner({
   const submissionClaimsRef = useRef(new Set<string>())
   const pendingVideoUpscaleModelsRef = useRef(new Set<number>())
   const submitNodeGeneration = useCallback(
-    async (
-      targetNodeId: string,
-      generate: CanvasGenerationRequest,
-      /** 续提一次被中断的提交：沿用它当时的幂等键，并放行仍停在 submitting 的节点 */
-      resume?: { idempotencyKey: string },
-    ) => {
+    async (targetNodeId: string, generate: CanvasGenerationRequest) => {
       if (!generate || !latestRef.current.nodes.some((node) => node.id === targetNodeId)) return
       const blockedReason = getSubmissionBlockedReason()
       if (blockedReason) {
@@ -7454,16 +7570,17 @@ function CanvasInner({
           showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
           return
         }
-        // 续提时节点本来就停在 submitting（被算作「运行中」），不能被下面的防重复提交拦掉
-        const isResumableOrphan = (data: Record<string, unknown> | undefined) =>
-          Boolean(resume) && normalizeAiTaskStatus(data?.taskStatus) === 'submitting' && Number(data?.taskId || 0) <= 0
+        if (isCanvasSubmissionUnresolved(currentData)) {
+          showToast(CANVAS_SUBMISSION_UNKNOWN_MESSAGE, 'info')
+          return
+        }
         if (
           pendingNodeSubmissionsRef.current.has(targetNodeId) ||
-          (!isResumableOrphan(currentData) &&
-            getCanvasTaskPresentation({
-              status: currentData?.taskStatus,
-              hasResult: Boolean(currentData?.resultUrl || currentData?.assetId),
-            }).running)
+          currentData?.taskStatus === 'result_sync_delayed' ||
+          getCanvasTaskPresentation({
+            status: currentData?.taskStatus,
+            hasResult: Boolean(currentData?.resultUrl || currentData?.assetId),
+          }).running
         )
           return
         const selectedSubmitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
@@ -7678,15 +7795,15 @@ function CanvasInner({
         if (
           !latestNode ||
           pendingNodeSubmissionsRef.current.has(targetNodeId) ||
-          (!isResumableOrphan(latestNode.data) &&
-            getCanvasTaskPresentation({
-              status: latestNode.data?.taskStatus,
-              hasResult: Boolean(latestNode.data?.resultUrl || latestNode.data?.assetId),
-            }).running)
+          isCanvasSubmissionUnresolved(latestNode.data) ||
+          latestNode.data?.taskStatus === 'result_sync_delayed' ||
+          getCanvasTaskPresentation({
+            status: latestNode.data?.taskStatus,
+            hasResult: Boolean(latestNode.data?.resultUrl || latestNode.data?.assetId),
+          }).running
         )
           return
-        // 幂等键：续提用原来那把；上次提交中断、这次原样重来也沿用（后端若其实收到了，直接拿回那个任务，不重复扣费）；
-        // 其余情况新建。必须在发请求前写进节点——请求途中页面没了，下次打开才有据可查。
+        // 指纹与提交编号一起保存，用于回执缺失时核对原提交。
         const taskSubmissionFingerprint = await generationSubmissionFingerprint({
           workspaceId,
           modelVersionId: generate.modelVersionId,
@@ -7701,11 +7818,13 @@ function CanvasInner({
         if (
           pendingNodeSubmissionsRef.current.has(targetNodeId) ||
           !latestRef.current.nodes.some(
-            (node) => node.id === targetNodeId && node.data.taskRunId === latestNode.data.taskRunId,
+            (node) =>
+              node.id === targetNodeId &&
+              node.data.taskRunId === latestNode.data.taskRunId &&
+              !isCanvasSubmissionUnresolved(node.data),
           )
         )
           return
-        const uncertainSubmissionKey = unknownSubmissionKey(latestNode.data, taskSubmissionFingerprint)
         const previousComposition = latestNode.data.videoAudioComposition as VideoAudioComposition | undefined
         if (
           previousComposition?.failed &&
@@ -7724,11 +7843,7 @@ function CanvasInner({
           setSaveStatus('dirty')
           return
         }
-        const taskIdempotencyKey =
-          resume?.idempotencyKey ||
-          uncertainSubmissionKey ||
-          reusableInterruptedIdempotencyKey((latestNode.data || {}) as Record<string, unknown>, generate) ||
-          createCanvasTaskIdempotencyKey()
+        const taskIdempotencyKey = createCanvasTaskIdempotencyKey()
         if (
           generate.operationCode === 'video.upscale' &&
           hasActiveVideoUpscale(
@@ -7744,6 +7859,39 @@ function CanvasInner({
         pendingNodeSubmissionsRef.current.add(targetNodeId)
         submissionClaimsRef.current.delete(targetNodeId)
         let submitted = false
+        const readAttempt = () =>
+          latestRef.current.nodes.find((node) => node.id === targetNodeId && node.data.taskRunId === taskRunId)?.data
+        const writeAttempt = (patch: Record<string, unknown>, sync = false) => {
+          if (!readAttempt()) return false
+          const update = (node: Node) =>
+            node.id === targetNodeId && node.data.taskRunId === taskRunId
+              ? { ...node, data: { ...node.data, ...patch } }
+              : node
+          latestRef.current = { ...latestRef.current, nodes: latestRef.current.nodes.map(update) }
+          setNodes((nodes) => nodes.map(update))
+          setSelectedNode((prev) =>
+            prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...patch } : prev,
+          )
+          setSaveStatus('dirty')
+          if (sync) scheduleSyncRef.current(true)
+          return true
+        }
+        const acceptTask = (task: unknown) => {
+          const taskId = getAiTaskId(task)
+          const attempt = readAttempt()
+          if (!taskId || !attempt || Number(attempt.taskId || 0) > 0) return
+          writeAttempt(
+            {
+              taskId,
+              taskStatus: 'reconnecting',
+              taskError: '',
+              taskFailure: undefined,
+              taskSubmitInterrupted: false,
+              taskUpdatedAt: new Date().toISOString(),
+            },
+            true,
+          )
+        }
         try {
           const taskStartedAt = new Date().toISOString()
           // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
@@ -7808,6 +7956,7 @@ function CanvasInner({
           setSaveStatus('dirty')
           // 保存节点提示词和提交凭证后再发起请求，刷新页面时可恢复真实提交现场。
           await persistReservation(targetNodeId, taskIdempotencyKey)
+          if (!readAttempt()) return
           submitted = true
           // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
           const task =
@@ -7832,7 +7981,9 @@ function CanvasInner({
                   params: generate.params,
                   inputAssets,
                   modelVersionId: generate.modelVersionId,
+                  onTaskAccepted: acceptTask,
                   onImagePartial: (event: Record<string, unknown>) => {
+                    if (!readAttempt()) return
                     const b64 = event.b64_json || event.partial_image_b64
                     if (typeof b64 !== 'string' || !b64) return
                     const format = ['png', 'jpeg', 'webp'].includes(String(event.output_format))
@@ -7847,8 +7998,20 @@ function CanvasInner({
               ? String(extractTaskText(task) || '').trim()
               : ''
           if (immediateText) {
+            if (!readAttempt()) return
             if (!isCanvasStoryboardText(immediateText)) {
-              throw new Error('模型返回内容无法解析为有效分镜，原结果已保留，请调整需求后重试')
+              const message = '模型返回内容无法解析为有效分镜，原结果已保留，请调整需求后重试'
+              writeAttempt({
+                taskStatus: 'failed',
+                taskError: message,
+                taskFailure: {
+                  ...buildGenerationFailure({ message }, { submissionId: taskIdempotencyKey }),
+                  stage: 'result',
+                },
+                taskUpdatedAt: new Date().toISOString(),
+              })
+              showToast(message, 'error')
+              return
             }
             const completedAt = new Date().toISOString()
             const resultData = {
@@ -7867,7 +8030,7 @@ function CanvasInner({
             bumpTextRevisionRef.current()
             setNodes((items) =>
               items.map((item) =>
-                item.id === targetNodeId
+                item.id === targetNodeId && item.data.taskRunId === taskRunId
                   ? {
                       ...item,
                       data: { ...item.data, ...resultData },
@@ -7876,7 +8039,9 @@ function CanvasInner({
                   : item,
               ),
             )
-            setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, ...resultData } : current))
+            setSelectedNode((current) =>
+              current?.id === targetNodeId && current.taskRunId === taskRunId ? { ...current, ...resultData } : current,
+            )
             rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
             setSaveStatus('dirty')
             scheduleSyncRef.current(true)
@@ -7889,6 +8054,8 @@ function CanvasInner({
           void useWorkspaceSessionStore.getState().refreshWallet(workspaceId)
           // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
           rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
+          // 流式回执已写入时，查询可能已经拿到了更新的状态。
+          if (Number(readAttempt()?.taskId || 0) > 0) return
           // 3) 回写 task_id/task_status 到节点
           const createdStatus = normalizeAiTaskStatus(task?.status) || 'pending'
           const immediateTaskError =
@@ -7922,56 +8089,22 @@ function CanvasInner({
               : createdStatus,
             taskUpdatedAt: new Date().toISOString(),
           }
-          // 提交锁释放前同步任务身份，避免同一事件批次内再次提交绕过检查。
-          latestRef.current = {
-            ...latestRef.current,
-            nodes: latestRef.current.nodes.map((n) =>
-              n.id === targetNodeId && n.data?.taskRunId === taskRunId ? { ...n, data: { ...n.data, ...taskData } } : n,
-            ),
-          }
-          setNodes((nds) =>
-            nds.map((n) =>
-              n.id === targetNodeId && (n.data as any)?.taskRunId === taskRunId
-                ? { ...n, data: { ...n.data, ...taskData } }
-                : n,
-            ),
-          )
-          setSelectedNode((prev) =>
-            prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
-          )
-          setSaveStatus('dirty')
-          scheduleSyncRef.current(true)
+          writeAttempt(taskData, true)
         } catch (error: any) {
-          if (isInsufficientCreditsError(error)) {
-            const taskData = {
-              taskStatus: 'submit_failed',
-              taskFailure: buildGenerationFailure(error, {
-                submissionId: taskIdempotencyKey,
-                submitted: true,
-                operationCode: generate.operationCode,
-                modelVersionId: generate.modelVersionId,
-                workspaceId: Number(workspaceId),
-                canvasId: Number(canvasId),
-              }),
-              taskProgress: 0,
-              taskError: '积分不足',
-              taskUpdatedAt: new Date().toISOString(),
-            }
-            setNodes((nds) =>
-              nds.map((node) =>
-                node.id === targetNodeId && (node.data as any)?.taskRunId === taskRunId
-                  ? { ...node, data: { ...node.data, ...taskData } }
-                  : node,
-              ),
-            )
-            setSelectedNode((prev) =>
-              prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
-            )
-            setSaveStatus('dirty')
-            await handleInsufficientCredits()
+          const attempt = readAttempt()
+          if (!attempt || Number(attempt.taskId || 0) > 0) return
+          const acceptedId = submitted ? getAiTaskId({ id: failureIdentifiers(error).taskId }) : 0
+          if (acceptedId) {
+            acceptTask({ id: acceptedId })
             return
           }
-          const friendlyError = humanizeCanvasTaskError(error?.message, generate) || '任务创建失败，请稍后重试'
+          const insufficientCredits = isInsufficientCreditsError(error)
+          const unknown = submitted && !insufficientCredits && !isDefiniteCanvasSubmissionRejection(error)
+          const friendlyError = unknown
+            ? CANVAS_SUBMISSION_UNKNOWN_MESSAGE
+            : insufficientCredits
+              ? '积分不足'
+              : humanizeCanvasTaskError(error?.message, generate) || '任务创建失败，请稍后重试'
           const taskFailure = {
             ...buildGenerationFailure(error, {
               submissionId: submitted ? taskIdempotencyKey : undefined,
@@ -7983,27 +8116,19 @@ function CanvasInner({
             }),
             message: friendlyError,
           }
-          const taskData = {
-            taskStatus: 'submit_failed',
-            taskFailure,
-            taskSubmitInterrupted: taskFailure.stage === 'unknown',
-            taskProgress: 0,
-            taskError: friendlyError,
-            taskUpdatedAt: new Date().toISOString(),
-          }
-          setNodes((nds) =>
-            nds.map((n) =>
-              n.id === targetNodeId && (n.data as any)?.taskRunId === taskRunId
-                ? { ...n, data: { ...n.data, ...taskData } }
-                : n,
-            ),
+          writeAttempt(
+            {
+              taskStatus: unknown ? 'submission_unknown' : 'submit_failed',
+              taskFailure,
+              taskSubmitInterrupted: unknown,
+              taskProgress: 0,
+              taskError: friendlyError,
+              taskUpdatedAt: new Date().toISOString(),
+            },
+            true,
           )
-          setSelectedNode((prev) =>
-            prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
-          )
-          setSaveStatus('dirty')
-          // 顶部提示与节点上的错误必须是同一句：两处说法不一致时，用户会以为是两个问题
-          showToast(friendlyError, 'error')
+          if (insufficientCredits) await handleInsufficientCredits()
+          else showToast(friendlyError, unknown ? 'info' : 'error')
         } finally {
           pendingNodeSubmissionsRef.current.delete(targetNodeId)
           setImagePreviews((prev) => {
@@ -8034,86 +8159,49 @@ function CanvasInner({
     void submitNodeGeneration(nodeId, request)
   }
 
-  /**
-   * 善后「孤儿提交」：节点停在 submitting、没有 task_id、本页也没在提交它。
-   *
-   * 这是「生成中一直转、后端却查不到任何请求」的根因：submitting 在发请求前就写进了节点并同步上云，
-   * 发请求的页面在途中被刷新 / 关闭 / 切走后，再没有谁会把它推进下去——轮询只认 task_id，界面没有超时，
-   * 「生成中」的节点又不允许再次提交。画布打开时和之后每 30 秒检查一次：
-   * - 窗口内且存了幂等键：用同一把幂等键续提，补完用户原本的那次提交（后端按幂等键去重，不会双建双扣）；
-   * - 超出窗口或旧数据：标成提交中断，结束「生成中」，用户可直接重新生成。
-   */
-  const submitNodeGenerationRef = useRef(submitNodeGeneration)
-  submitNodeGenerationRef.current = submitNodeGeneration
-  const resumedOrphanKeysRef = useRef<Set<string>>(new Set())
-  const markSubmitInterrupted = useCallback(
-    (nodeId: string) => {
-      const patch = {
-        taskStatus: 'submit_failed',
-        taskProgress: 0,
-        taskError: CANVAS_SUBMIT_INTERRUPTED_MESSAGE,
-        taskSubmitInterrupted: true,
-        taskUpdatedAt: new Date().toISOString(),
-      }
-      setNodes((nds) =>
-        nds.map((node) => {
-          if (node.id !== nodeId) return node
-          const data = (node.data || {}) as Record<string, unknown>
-          // 只改仍是孤儿的那一刻：期间若已拿到 task_id 或被重新提交，就不碰它
-          if (normalizeAiTaskStatus(data.taskStatus) !== 'submitting' || Number(data.taskId || 0) > 0) return node
-          return { ...node, data: { ...data, ...patch } }
-        }),
-      )
-      setSelectedNode((prev) =>
-        prev?.id === nodeId &&
-        normalizeAiTaskStatus((prev as any).taskStatus) === 'submitting' &&
-        Number(prev.taskId || 0) <= 0
-          ? { ...prev, ...patch }
-          : prev,
-      )
-      // updater 不一定同步执行，拿不到「是否真改了」；标脏无副作用，没改就是一次空保存
-      setSaveStatus('dirty')
-    },
-    [setNodes, setSaveStatus],
-  )
+  // 前一个页面可能已经发出付费请求。恢复时保留原提交凭证，等原回执或画布同步找到任务。
   useEffect(() => {
     if (!workspaceId) return
     const sweep = () => {
       if (!cloudLoadedRef.current) return
       const now = Date.now()
-      for (const node of latestRef.current.nodes) {
-        const data = (node.data || {}) as Record<string, unknown>
-        const verdict = classifyOrphanSubmission(data, {
+      const shouldMarkUnknown = (node: Node) =>
+        classifyOrphanSubmission(node.data, {
           currentUserId,
           now,
           submittingInThisPage:
-            pendingNodeSubmissionsRef.current.has(node.id) || submissionClaimsRef.current.has(node.id),
-        })
-        if (verdict === 'none') continue
-        const key = String(data.taskIdempotencyKey || '')
-        const resumeToken = `${node.id}:${key}`
-        if (verdict === 'resume' && !resumedOrphanKeysRef.current.has(resumeToken)) {
-          resumedOrphanKeysRef.current.add(resumeToken)
-          const request = (data.generationRequest || data.videoUpscaleRequest) as CanvasGenerationRequest
-          void submitNodeGenerationRef.current(node.id, request, { idempotencyKey: key }).finally(() => {
-            // 续提在校验阶段就退出（素材失效、授权过期等）时节点仍会停在 submitting，这里兜底结束它
-            const after = latestRef.current.nodes.find((item) => item.id === node.id)
-            const afterData = (after?.data || {}) as Record<string, unknown>
-            if (
-              after &&
-              !pendingNodeSubmissionsRef.current.has(node.id) &&
-              !submissionClaimsRef.current.has(node.id) &&
-              normalizeAiTaskStatus(afterData.taskStatus) === 'submitting' &&
-              Number(afterData.taskId || 0) <= 0
-            ) {
-              markSubmitInterrupted(node.id)
-            }
-          })
-          continue
-        }
-        // 已续提过一次仍是孤儿、或本就超窗 / 无幂等键：结束「生成中」
-        if (verdict === 'interrupted' || resumedOrphanKeysRef.current.has(resumeToken)) markSubmitInterrupted(node.id)
+            pendingNodeSubmissionsRef.current.has(node.id) ||
+            submissionClaimsRef.current.has(node.id) ||
+            (Boolean(node.data.taskIdempotencyKey) &&
+              externallySubmittingRef.current.get(node.id) === node.data.taskIdempotencyKey),
+        }) === 'unknown'
+      const attempts = new Map(latestRef.current.nodes.filter(shouldMarkUnknown).map((node) => [node.id, node.data]))
+      if (attempts.size === 0) return
+
+      const patch = {
+        taskStatus: 'submission_unknown',
+        taskError: CANVAS_SUBMISSION_UNKNOWN_MESSAGE,
+        taskSubmitInterrupted: true,
+        taskProgress: 0,
+        taskUpdatedAt: new Date(now).toISOString(),
       }
+      const matches = (id: string, data: Record<string, unknown>) => {
+        const original = attempts.get(id)
+        return (
+          original &&
+          data.taskRunId === original.taskRunId &&
+          data.taskIdempotencyKey === original.taskIdempotencyKey &&
+          data.taskStartedAt === original.taskStartedAt &&
+          data.taskStatus === original.taskStatus &&
+          Number(data.taskId || 0) <= 0
+        )
+      }
+      setNodes((nodes) =>
+        nodes.map((node) =>
+          matches(node.id, node.data) && shouldMarkUnknown(node) ? { ...node, data: { ...node.data, ...patch } } : node,
+        ),
+      )
+      setSaveStatus('dirty')
     }
     // 画布数据加载需要一点时间，首轮稍等再扫；之后每 30 秒一轮，让窗口内的孤儿到点后被收尾
     const first = window.setTimeout(sweep, 3000)
@@ -8122,7 +8210,7 @@ function CanvasInner({
       window.clearTimeout(first)
       window.clearInterval(timer)
     }
-  }, [workspaceId, currentUserId, markSubmitInterrupted, submissionBlockedReason])
+  }, [workspaceId, currentUserId, setNodes, setSaveStatus])
 
   const handleNodeGenerate = useCallback(
     async (generate: CanvasGenerationRequest) => {
@@ -8450,7 +8538,7 @@ function CanvasInner({
     const key = `${sourceNodeId}:${taskId}`
     if (!assetIds.length || spawnedMultiResultRef.current.has(key)) return
     const source = latestRef.current.nodes.find((item) => item.id === sourceNodeId)
-    if (!source) return
+    if (!source || Number(source.data.taskId || 0) !== taskId) return
     spawnedMultiResultRef.current.add(key)
     const style = (source.style || {}) as Record<string, unknown>
     const width = Number(source.measured?.width ?? style.width ?? 250) || 250
@@ -8480,7 +8568,7 @@ function CanvasInner({
     }
     const createdAt = new Date().toISOString()
     const created: Node[] = assetIds.map((assetId, index) => ({
-      id: createNodeId('image'),
+      id: `image-result-${sourceNodeId}-${taskId}-${assetId}`,
       type: source.type,
       position: positions[index],
       data: {
@@ -8492,6 +8580,7 @@ function CanvasInner({
         resultHistory: [
           {
             assetId,
+            taskId,
             kind: 'image',
             createdAt,
             prompt: String((source.data as any)?.prompt || '') || undefined,
@@ -8508,10 +8597,32 @@ function CanvasInner({
     const createdEdges: Edge[] = created.flatMap((node) =>
       incoming.map((edge) => ({ ...edge, id: `${edge.id}-${node.id}`, target: node.id, selected: false })),
     )
-    setNodes((items) => [...items, ...created])
-    if (createdEdges.length) setEdges((items) => [...items, ...createdEdges])
+    setNodes((items) => {
+      const ids = new Set(items.map((item) => item.id))
+      return [...items, ...created.filter((item) => !ids.has(item.id))]
+    })
+    if (createdEdges.length)
+      setEdges((items) => {
+        const ids = new Set(items.map((item) => item.id))
+        return [...items, ...createdEdges.filter((item) => !ids.has(item.id))]
+      })
     setSaveStatus('dirty')
   }
+
+  const requestTaskPollRef = useRef<() => void>(() => undefined)
+  const retryCanvasResultSync = useLatestCallback((nodeId: string) => {
+    const current = latestRef.current.nodes.find((node) => node.id === nodeId)
+    if (!current || current.data.taskStatus !== 'result_sync_delayed' || !Number(current.data.taskId)) return
+    const patch = { taskStatus: 'result_pending', taskError: '', resultSyncAttempts: 0 }
+    const update = (node: Node) =>
+      node.id === nodeId && isSameCanvasTask(node.data, current.data)
+        ? { ...node, data: { ...node.data, ...patch } }
+        : node
+    latestRef.current = { ...latestRef.current, nodes: latestRef.current.nodes.map(update) }
+    setNodes((nodes) => nodes.map(update))
+    setSaveStatus('dirty')
+    requestTaskPollRef.current()
+  })
 
   // 恢复并轮询画布中的在途任务：刷新页面后仍能继续读取真实状态，成功后把文本/图片/视频结果回填节点。
   useEffect(() => {
@@ -8603,11 +8714,14 @@ function CanvasInner({
           const taskId = Number((node.data as any)?.taskId || 0)
           if (!taskId || polling.has(taskId)) return
           polling.add(taskId)
-          let taskFetched = false
           try {
             const task = await getAiTask({ workspaceId, taskId, signal: compositionAbort.signal })
-            taskFetched = true
-            if (disposed) return
+            const isCurrent = () =>
+              !disposed &&
+              isSameCanvasTask(latestRef.current.nodes.find((item) => item.id === node.id)?.data || {}, node.data)
+            if (!isCurrent()) return
+            const responseTaskId = getAiTaskId(task)
+            if (responseTaskId && responseTaskId !== taskId) throw new Error('任务详情返回的编号与当前任务不一致')
             const status = normalizeAiTaskStatus(task?.status) || 'pending'
             if ((successStatuses.has(status) || failedStatuses.has(status)) && !walletRefreshedTasks.has(taskId)) {
               walletRefreshedTasks.add(taskId)
@@ -8627,29 +8741,26 @@ function CanvasInner({
               taskStatusQueryFailures: 0,
               taskUpdatedAt: updatedAt,
             }
+            const waitForResult = () => {
+              const attempts = Math.min(24, Number(node.data.resultSyncAttempts || 0) + 1)
+              const delayed = attempts === 24 || node.data.taskStatus === 'result_sync_delayed'
+              nextData.resultSyncAttempts = attempts
+              nextData.taskStatus = delayed ? 'result_sync_delayed' : 'result_pending'
+              nextData.taskError = delayed ? CANVAS_RESULT_SYNC_DELAYED_MESSAGE : '任务已完成，正在同步生成结果…'
+            }
+            const kind = String(node.data?.kind || node.type || 'text')
             if (successStatuses.has(status)) {
-              const kind = String((node.data as any)?.kind || node.type || 'text')
+              nextData.taskFailure = undefined
               if (kind === 'text') {
                 const text = String(extractTaskText(task) || '')
                 if (text && (node.data.textGenerationMode !== 'storyboard' || isCanvasStoryboardText(text))) {
                   nextData.text = text
                   nextData.resultSyncAttempts = 0
-                  if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
-                  ;(window as any).__canvasTextContents.set(node.id, text)
-                  bumpTextRevisionRef.current()
                 } else if (text) {
                   nextData.taskStatus = 'failed'
                   nextData.taskError = '模型未返回有效分镜，已保留原内容，请调整需求后重新生成'
                 } else {
-                  const resultSyncAttempts = Number((node.data as any)?.resultSyncAttempts || 0) + 1
-                  nextData.resultSyncAttempts = resultSyncAttempts
-                  if (resultSyncAttempts < 24) {
-                    nextData.taskStatus = 'result_pending'
-                    nextData.taskError = '任务已完成，正在同步生成结果…'
-                  } else {
-                    nextData.taskStatus = 'failed'
-                    nextData.taskError = '任务已完成，但结果同步超时，请重试'
-                  }
+                  waitForResult()
                 }
               } else {
                 // 只把「验证过确实存在」的资产写进节点：这个 assetId 会被下一次生成当作
@@ -8667,6 +8778,7 @@ function CanvasInner({
                       ? Number(node.data.assetId)
                       : imageIds[0] || 0
                     : await resolveVerifiedResultAssetId({ workspaceId, task, type: 'video', fallbackTaskId: taskId })
+                if (!isCurrent()) return
                 const composition = node.data.videoAudioComposition as VideoAudioComposition | undefined
                 if (kind === 'video' && assetId > 0 && composition?.clips.length) {
                   if (composition.submissionKey !== node.data.taskIdempotencyKey)
@@ -8690,32 +8802,18 @@ function CanvasInner({
                     return
                   nextData.videoAudioComposition = { ...composition, failed: false, result: { sourceAssetId, assetId } }
                 }
-                const urls = kind === 'image' ? [] : await resolveGeneratedMediaUrls({ workspaceId, task, type: kind })
                 if (kind === 'image' && (imageIds.length || restoringImageBatch)) {
                   nextData.imageResultAssetIds = imageIds
                   nextData.imageResultsExpanded = false
                 }
-                if (assetId > 0) nextData.assetId = assetId
-                if (assetId > 0 || urls[0])
-                  nextData.resultUrl = assetId > 0 ? assetStreamUrl(assetId, workspaceId) : urls[0]
-                if (!nextData.resultUrl) {
-                  const resultSyncAttempts = Number((node.data as any)?.resultSyncAttempts || 0) + 1
-                  nextData.resultSyncAttempts = resultSyncAttempts
-                  if (resultSyncAttempts < 24) {
-                    nextData.taskStatus = 'result_pending'
-                    nextData.taskError = '任务已完成，正在同步生成结果…'
-                  } else {
-                    nextData.taskStatus = 'failed'
-                    nextData.taskError = '任务已完成，但结果同步超时，请重试'
-                  }
+                if (assetId <= 0) {
+                  waitForResult()
                 } else {
+                  nextData.assetId = assetId
+                  nextData.resultUrl = assetStreamUrl(assetId, workspaceId)
                   nextData.resultSyncAttempts = 0
                   nextData.generationIntent = 'edit'
-                  const changedVideo =
-                    kind === 'video' &&
-                    (assetId > 0
-                      ? assetId !== Number(node.data.assetId || 0)
-                      : nextData.resultUrl !== resolveNodeMediaUrl(node.data, Number(workspaceId)))
+                  const changedVideo = kind === 'video' && assetId !== Number(node.data.assetId || 0)
                   if (changedVideo) {
                     nextData.poster = ''
                     nextData.posterAssetId = 0
@@ -8754,34 +8852,9 @@ function CanvasInner({
                   }
                 }
               }
-              if (nextData.taskStatus !== 'result_pending') nextData.taskProgress = 100
-              // 结果真正落到节点上才算完成（result_pending 还在等素材），通知只发这一次
-              const settled =
-                nextData.taskStatus !== 'result_pending' &&
-                nextData.taskStatus !== 'failed' &&
-                (kind === 'text' ? Boolean(nextData.text) : Boolean(nextData.resultUrl))
-              if (settled && !successStatuses.has(normalizeAiTaskStatus(node.data.taskStatus))) {
-                announceOutcome(
-                  node,
-                  'success',
-                  kind === 'text'
-                    ? '分镜已生成，可编辑后连接视频节点'
-                    : extraResultAssetIds.length
-                      ? `已生成 ${extraResultAssetIds.length + 1} 张图片，已在旁边排好`
-                      : `${KIND_LABELS[kind] || '素材'}已生成，点击查看`,
-                )
-                if (extraResultAssetIds.length) {
-                  spawnExtraResultNodesRef.current(node.id, taskId, extraResultAssetIds)
-                }
-              } else if (nextData.taskStatus === 'failed') {
-                announceOutcome(node, 'failure', String(nextData.taskError || ''))
-              }
+              if (successStatuses.has(String(nextData.taskStatus))) nextData.taskProgress = 100
             } else if (failedStatuses.has(status)) {
               nextData.taskError = taskErrorOf(task, node)
-              // 上一轮已经是失败态的话不再重复叫（可恢复的结果同步失败会反复进来）
-              if (normalizeAiTaskStatus((node.data as any)?.taskStatus) !== 'failed') {
-                announceOutcome(node, 'failure', String(nextData.taskError))
-              }
             }
             if (failedStatuses.has(String(nextData.taskStatus))) {
               nextData.taskFailure = buildGenerationFailure(
@@ -8806,6 +8879,11 @@ function CanvasInner({
               return !areCanvasTaskPatchValuesEqual((latestTaskNode.data as Record<string, unknown>)[key], value)
             })
             if (!hasTaskDataChanged) return
+            if (typeof nextData.text === 'string') {
+              if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+              ;(window as any).__canvasTextContents.set(node.id, nextData.text)
+              bumpTextRevisionRef.current()
+            }
             setNodes((items) =>
               items.map((item) =>
                 item.id === node.id && isSameCanvasTask(item.data, node.data)
@@ -8830,6 +8908,21 @@ function CanvasInner({
               current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
             )
             setSaveStatus('dirty')
+            const priorStatus = normalizeAiTaskStatus(latestTaskNode.data.taskStatus)
+            if (successStatuses.has(String(nextData.taskStatus)) && !successStatuses.has(priorStatus)) {
+              if (extraResultAssetIds.length) spawnExtraResultNodesRef.current(node.id, taskId, extraResultAssetIds)
+              announceOutcome(
+                latestTaskNode,
+                'success',
+                kind === 'text'
+                  ? '分镜已生成，可编辑后连接视频节点'
+                  : extraResultAssetIds.length
+                    ? `已生成 ${extraResultAssetIds.length + 1} 张图片，已在旁边排好`
+                    : `${KIND_LABELS[kind] || '素材'}已生成，点击查看`,
+              )
+            } else if (failedStatuses.has(String(nextData.taskStatus)) && !failedStatuses.has(priorStatus)) {
+              announceOutcome(latestTaskNode, 'failure', String(nextData.taskError || ''))
+            }
           } catch (error: any) {
             if (error instanceof VideoAudioCompositionError && !disposed) {
               const patch = {
@@ -8850,29 +8943,7 @@ function CanvasInner({
               setSaveStatus('dirty')
               return
             }
-            if (!disposed && !taskFetched && node.data.taskErrorHistorical && Number(error?.status) === 404) {
-              const nextData = {
-                taskStatus: 'failed',
-                taskError: '任务记录已不存在，请重新生成',
-                taskProgress: 0,
-                taskStatusQueryFailures: 0,
-              }
-              setNodes((items) =>
-                items.map((item) =>
-                  item.id === node.id && isSameCanvasTask(item.data, node.data)
-                    ? { ...item, data: { ...item.data, ...nextData } }
-                    : item,
-                ),
-              )
-              setSelectedNode((current) =>
-                current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
-              )
-              setSaveStatus('dirty')
-              return
-            }
-            // 供应商服务级失败（PROVIDER_FAILED / 计费 / 接入 / 限流等）后端以业务错误码信封返回、
-            // requestJson 直接 throw 到这里。这是对任务的确定答复，不是网络抖动：落终态失败 + 友好文案，
-            // 别再按下面「查询失败，将继续自动重试」误导用户对着一个坏掉的模型干等。
+            // 查询响应里的明确任务终态才允许结束恢复，HTTP 状态或错误文案本身无法确认任务结论。
             const providerErrorText = [
               error?.message,
               error?.code,
@@ -8881,13 +8952,17 @@ function CanvasInner({
             ]
               .filter(Boolean)
               .join(' ')
-            if (!disposed && isCanvasProviderServiceError(providerErrorText)) {
+            const confirmedFailure = failedStatuses.has(
+              normalizeAiTaskStatus(error?.response?.data?.status ?? error?.response?.status),
+            )
+            if (!disposed && confirmedFailure) {
+              const current = latestRef.current.nodes.find((item) => item.id === node.id)
+              if (!current || !isSameCanvasTask(current.data, node.data)) return
               const friendly =
                 humanizeCanvasTaskError(providerErrorText, {
                   kind: String(node.data?.kind || node.type || ''),
                   operationCode: String(node.data?.operationCode || ''),
                 }) || '生成失败，请重试'
-              announceOutcome(node, 'failure', friendly)
               setNodes((items) =>
                 items.map((item) =>
                   item.id === node.id && isSameCanvasTask(item.data, node.data)
@@ -8910,6 +8985,8 @@ function CanvasInner({
                   : current,
               )
               setSaveStatus('dirty')
+              if (!failedStatuses.has(normalizeAiTaskStatus(current.data.taskStatus)))
+                announceOutcome(current, 'failure', friendly)
               return
             }
             // 短暂网络错误不把任务误判为失败，保留任务 ID 供下一轮继续恢复。
@@ -8928,9 +9005,12 @@ function CanvasInner({
                     data: {
                       ...item.data,
                       taskStatusQueryFailures: failures,
-                      ...(checkingSavedTask || failures >= 6
+                      ...(checkingSavedTask || Number(error?.status) === 404 || failures >= 6
                         ? {
-                            taskStatus: 'status_query_failed',
+                            taskStatus:
+                              item.data.taskStatus === 'result_sync_delayed'
+                                ? 'result_sync_delayed'
+                                : 'status_query_failed',
                             taskError: `任务状态暂时无法查询，将继续自动重试（任务编号 ${taskId}）${error?.message ? `：${error.message}` : ''}`,
                           }
                         : {}),
@@ -8944,15 +9024,19 @@ function CanvasInner({
           }
         }),
       )
-      if (!disposed) timer = window.setTimeout(tick, candidates.length > 0 ? 2500 : 6000)
+      if (!disposed) {
+        const active = candidates.some((node) => node.data.taskStatus !== 'result_sync_delayed')
+        timer = window.setTimeout(tick, active ? 2500 : candidates.length > 0 ? 12000 : 6000)
+      }
     }
     timer = window.setTimeout(tick, 800)
     // 切回本页立即补一次：后台期间没拉状态，不该让用户再等一个周期才看到结果
     const onVisible = () => {
-      if (document.hidden || disposed) return
+      if (document.hidden || disposed || polling.size > 0) return
       window.clearTimeout(timer)
       timer = window.setTimeout(tick, 0)
     }
+    requestTaskPollRef.current = onVisible
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       disposed = true
@@ -8960,6 +9044,7 @@ function CanvasInner({
       walletSettlementTimers.forEach((id) => window.clearTimeout(id))
       window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisible)
+      if (requestTaskPollRef.current === onVisible) requestTaskPollRef.current = () => undefined
     }
   }, [setNodes, workspaceId, canvasId, fitView])
 
@@ -11573,6 +11658,7 @@ function CanvasInner({
       onSplitImageResults: handleSplitImageResults,
       capturingNodeId,
       onRetryAudioComposition: retryVideoAudioComposition,
+      onRetryResultSync: retryCanvasResultSync,
       onRenameNode: renameNode,
       registerFrameCapture,
       registerNodeDownload,
@@ -11605,6 +11691,7 @@ function CanvasInner({
       capturingNodeId,
       renameNode,
       retryVideoAudioComposition,
+      retryCanvasResultSync,
       registerFrameCapture,
       registerNodeDownload,
       registerNodePreview,
@@ -14058,6 +14145,7 @@ function CanvasInner({
                     {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
                       <CanvasVideoUpscaleResultPanel
                         data={nodes.find((node) => node.id === selectedNode.id)?.data || {}}
+                        onRetryResultSync={() => retryCanvasResultSync(selectedNode.id)}
                         onRetry={async () => {
                           const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
                           const request = (node?.data.generationRequest || node?.data.videoUpscaleRequest) as

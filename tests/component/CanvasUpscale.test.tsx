@@ -86,7 +86,7 @@ it('云端未就绪时不可提交，恢复后保存结果节点凭证再创建�
 
   rerender(view())
   await userEvent.click(confirm)
-  expect(persist).toHaveBeenCalledOnce()
+  await waitFor(() => expect(persist).toHaveBeenCalledOnce())
   const [nodeId, key] = persist.mock.calls[0]
   expect(nodeId).toBe(`hd-result-submission-${key}`)
   expect(mocks.create).not.toHaveBeenCalled()
@@ -185,6 +185,7 @@ it.each(['image', 'video'])('%s 超分估价与确认使用相同参数和源素
     modelVersion: model,
     capability: kind,
     idempotencyKey: expect.any(String),
+    signal: expect.any(AbortSignal),
   })
   await waitFor(() => expect(close).toHaveBeenCalledOnce())
   expect(tasks).toHaveBeenCalled()
@@ -196,7 +197,7 @@ it.each(['image', 'video'])('%s 超分估价与确认使用相同参数和源素
     })
 })
 
-it('创建失败通过全局提示反馈，结果节点保留源素材与失败状态', async () => {
+it('无法确认创建状态时提示核对，结果节点保留提交编号与源素材', async () => {
   mocks.models.mockResolvedValue([{ id: 8, name: '超分模型', operation_codes: ['image.upscale'] }])
   mocks.create.mockRejectedValue(new Error('模型服务暂不可用'))
   const close = vi.fn()
@@ -215,12 +216,21 @@ it('创建失败通过全局提示反馈，结果节点保留源素材与失败�
   )
   await waitFor(() => expect(screen.getByRole('button', { name: '确认超分' })).toBeEnabled())
   await userEvent.click(await screen.findByRole('button', { name: /确认超分/ }))
-  await waitFor(() => expect(useUiStore.getState().toast).toMatchObject({ message: '模型服务暂不可用', type: 'error' }))
+  await waitFor(() =>
+    expect(useUiStore.getState().toast).toMatchObject({
+      message: expect.stringContaining('尚未确认本次提交'),
+      type: 'error',
+    }),
+  )
   expect(close).toHaveBeenCalledOnce()
   expect(tasks.mock.lastCall![0][0]).toMatchObject({
     status: 'failed',
     source: { asset_id: 99, node_id: 'source' },
     image_info: { modelName: '超分模型', operationCode: 'image.upscale' },
+    taskData: {
+      taskStatus: 'submission_unknown',
+      taskFailure: { stage: 'unknown', message: '模型服务暂不可用', submissionId: expect.any(String) },
+    },
   })
 })
 

@@ -50,14 +50,14 @@ const resumableAssetUploads = new WeakMap()
 
 /** 携带 HTTP 状态、业务码、原始响应和中断原因的统一业务异常。 */
 export class BusinessApiError extends Error {
-  constructor(message, { status = 0, code = null, response = null, cause = null, requestId = '' }: any = {}) {
+  constructor(message, { status = 0, code = null, response = null, cause = null, requestId = '', taskId }: any = {}) {
     super(message)
     this.name = 'BusinessApiError'
     this.status = status
     this.code = code
     this.response = response
     this.cause = cause
-    const ids = failureIdentifiers({ response })
+    const ids = failureIdentifiers({ taskId, response })
     this.requestId = requestId || ids.requestId || ''
     this.taskId = ids.taskId || ''
   }
@@ -677,6 +677,7 @@ async function openAiResponseStream({
   params,
   onDelta,
   onImagePartial,
+  onTaskAccepted,
   imageTask = false,
   signal,
 }: any) {
@@ -715,13 +716,16 @@ async function openAiResponseStream({
     })
   }
 
+  const responseMetadata = {
+    status: response.status,
+    requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
+  }
   if (!response.ok || !response.body) {
     const payload = await readJsonResponse(response).catch(() => null)
     throw new BusinessApiError(payload?.message || `请求失败 (${response.status})`, {
-      status: response.status,
+      ...responseMetadata,
       code: payload?.code ?? payload?.code_string ?? null,
       response: payload,
-      requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
     })
   }
 
@@ -730,6 +734,25 @@ async function openAiResponseStream({
   let buffer = ''
   let aggregated = ''
   let finalTask = null
+  let acceptedImageTaskId = 0
+  const recordImageTask = (payload) => {
+    const task = normalizeAiTask(payload)
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return
+    const id = getAiTaskId(task)
+    if (acceptedImageTaskId && id && id !== acceptedImageTaskId) return
+    const requestId =
+      failureIdentifiers({ response: payload }).requestId || finalTask?.requestId || responseMetadata.requestId
+    finalTask = {
+      ...finalTask,
+      ...task,
+      ...(acceptedImageTaskId ? { id: acceptedImageTaskId } : {}),
+      ...(requestId ? { requestId } : {}),
+    }
+    if (!acceptedImageTaskId && id) {
+      acceptedImageTaskId = id
+      onTaskAccepted?.(finalTask)
+    }
+  }
 
   const replaceAggregated = (fullText) => {
     if (typeof fullText !== 'string' || !fullText) {
@@ -790,9 +813,13 @@ async function openAiResponseStream({
       return
     }
     if (eventName === 'image.error' || eventName === 'response.error' || eventName === 'error' || payload?.error) {
+      if (imageTask) {
+        const { taskId, requestId } = failureIdentifiers({ response: payload })
+        if (getAiTaskId({ taskId })) recordImageTask({ taskId, requestId })
+      }
       throw new BusinessApiError(payload?.error?.message || payload?.message || 'AI 流式响应失败', {
         response: payload,
-        code: payload?.code_string || payload?.code,
+        code: payload?.code_string || payload?.code || payload?.error?.code_string || payload?.error?.code,
       })
     }
 
@@ -803,7 +830,9 @@ async function openAiResponseStream({
         replaceAggregated(completedText)
       }
 
-      if (payload?.task) {
+      if (imageTask) {
+        recordImageTask(payload)
+      } else if (payload?.task) {
         finalTask = payload.task
       } else if (payload?.id) {
         finalTask = payload
@@ -837,6 +866,10 @@ async function openAiResponseStream({
     }
 
     if (eventName === 'response.created') {
+      if (imageTask) {
+        recordImageTask(payload)
+        return
+      }
       const taskId = getAiTaskId(payload)
       if (taskId) {
         finalTask = {
@@ -857,7 +890,9 @@ async function openAiResponseStream({
       }
     }
 
-    if (payload?.task) {
+    if (imageTask && (payload?.task || (getAiTaskId(payload) && payload?.status))) {
+      recordImageTask(payload)
+    } else if (payload?.task) {
       finalTask = payload.task
     } else if (getAiTaskId(payload) && payload?.status) {
       finalTask = payload
@@ -893,11 +928,23 @@ async function openAiResponseStream({
     } catch {
       /* swallow reader cancel */
     }
-    throw streamError
+    if (!imageTask) throw streamError
+    throw new BusinessApiError(streamError?.message || 'AI 流式响应失败', {
+      status: streamError?.status || responseMetadata.status,
+      code: streamError?.code,
+      response: streamError?.response,
+      cause: streamError?.cause || streamError,
+      requestId: streamError?.requestId || finalTask?.requestId || responseMetadata.requestId,
+      taskId: acceptedImageTaskId || undefined,
+    })
   }
 
   if (imageTask && !getAiTaskId(finalTask)) {
-    throw new BusinessApiError('图片流中断，未收到最终任务，请从任务记录查看结果')
+    throw new BusinessApiError('图片流中断，未收到任务回执', {
+      ...responseMetadata,
+      code: 'INVALID_TASK_ID',
+      requestId: finalTask?.requestId || responseMetadata.requestId,
+    })
   }
   if (!aggregated) {
     aggregated = extractTaskText(finalTask) || ''
@@ -1009,6 +1056,7 @@ export async function createAiTask({
   idempotencyKey: providedIdempotencyKey,
   signal,
   onImagePartial,
+  onTaskAccepted,
 }: any) {
   const submitTask = ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) =>
     submitAiTask({
@@ -1022,6 +1070,7 @@ export async function createAiTask({
       inputAssets: resolvedInputAssets,
       signal,
       onImagePartial,
+      onTaskAccepted,
     })
 
   // 幂等键:同一次 createAiTask 操作全程复用一个 key。后端按 (workspace, idempotency_key) 去重——
@@ -1387,6 +1436,7 @@ async function submitAiTask({
   inputAssets,
   signal,
   onImagePartial,
+  onTaskAccepted,
 }) {
   prompt = normalizeCanvasToolPrompt(prompt, params)
   if (operationCode === 'video.upscale' && !String(prompt || '').trim()) {
@@ -1410,6 +1460,7 @@ async function submitAiTask({
       inputAssets,
       signal,
       onImagePartial,
+      onTaskAccepted,
       imageTask: true,
     })
     return normalizeAiTask(result.task)
@@ -1434,11 +1485,15 @@ async function submitAiTask({
   // dropping input_assets during empty-field cleanup.
   requestBody.input_assets = Array.isArray(inputAssets) ? inputAssets : []
 
+  let responseMetadata
   const payload = await requestJsonWithRetry(
     '/api/v1/ai/tasks',
     {
       method: 'POST',
       signal,
+      onResponseMetadata: (metadata) => {
+        responseMetadata = metadata
+      },
       headers: {
         'Content-Type': 'application/json',
       },
@@ -1454,6 +1509,7 @@ async function submitAiTask({
   const task = normalizeAiTask(payload)
   if (!getAiTaskId(task)) {
     throw new BusinessApiError('AI 任务创建后未返回有效任务 ID', {
+      ...responseMetadata,
       code: 'INVALID_TASK_ID',
       response: payload,
     })
@@ -1509,7 +1565,7 @@ export function listAiTasks({
 export function getAiTaskId(task) {
   if (!task || typeof task !== 'object') return 0
   for (const value of [task.id, task.task_id, task.taskId]) {
-    const parsed = Number(value || 0)
+    const parsed = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value
     if (Number.isSafeInteger(parsed) && parsed > 0) return parsed
   }
   return 0
@@ -3238,7 +3294,7 @@ async function requestJson(path, options: any = {}, _retried = false) {
   let response
   let payload
   const hasTimeoutOverride = Object.prototype.hasOwnProperty.call(options || {}, 'timeoutMs')
-  const { timeoutMs: _timeoutMs, signal: externalSignal, ...fetchOptions } = options || {}
+  const { timeoutMs: _timeoutMs, signal: externalSignal, onResponseMetadata, ...fetchOptions } = options || {}
 
   try {
     const result = await withRequestTimeout(
@@ -3279,16 +3335,20 @@ async function requestJson(path, options: any = {}, _retried = false) {
     if (ok) return requestJson(path, options, true)
   }
 
+  const responseMetadata = {
+    status: response.status,
+    requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
+  }
   if (!response.ok || isBusinessError(payload)) {
     throw new BusinessApiError(payload?.message || `请求失败 (${response.status})`, {
-      status: response.status,
+      ...responseMetadata,
       code: payload?.code ?? payload?.code_string ?? null,
       response: payload,
-      requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
     })
   }
 
   // 用字段存在性判断而非 ?? ：避免把合法的 data:null（成功但无数据）回退成整个包裹对象。
+  onResponseMetadata?.(responseMetadata)
   return payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload
 }
 

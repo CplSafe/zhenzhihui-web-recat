@@ -4,7 +4,14 @@
  * 草稿键按项目 id 隔离，避免不同画布项目互相覆盖
  */
 import type { Node, Edge } from '@xyflow/react'
-import { pickPersistedNodeData, type ComparableNode, type ComparableEdge } from '@/utils/canvasElements'
+import {
+  applyCanvasElementMutations,
+  conflictingCanvasElementIds,
+  diffCanvasMutations,
+  pickPersistedNodeData,
+  type ComparableNode,
+  type ComparableEdge,
+} from '@/utils/canvasElements'
 
 const DRAFT_KEY_PREFIX = 'zzh_canvas_draft'
 const SCRIPT_CREATION_PENDING_PREFIX = 'zzh_canvas_script_creation_pending'
@@ -42,6 +49,7 @@ export function clearCanvasScriptCreationPending(canvasId: string | number) {
 export interface CanvasDraftScope {
   userId: number
   workspaceId: number
+  writerId?: string
 }
 
 function draftKey(projectId?: string | number, scope?: CanvasDraftScope): string {
@@ -49,6 +57,18 @@ function draftKey(projectId?: string | number, scope?: CanvasDraftScope): string
   if (scope) return `${DRAFT_KEY_PREFIX}_u${scope.userId}_w${scope.workspaceId}_p${encodeURIComponent(id)}`
   return id ? `${DRAFT_KEY_PREFIX}_p${encodeURIComponent(id)}` : DRAFT_KEY_PREFIX
 }
+
+// Unique to this document, including when a tab is duplicated or opened with an opener.
+export function createCanvasDraftWriterId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+const documentWriterId = createCanvasDraftWriterId()
+const pendingDraftPrefix = (key: string) => `${key}:pending:`
+const draftWriterKey = (key: string, scope?: CanvasDraftScope) =>
+  `${pendingDraftPrefix(key)}${scope?.writerId || documentWriterId}`
+const ownedDraftKeys = new Map<string, string>()
+let draftWriteSequence = 0
 
 interface CanvasDraft {
   nodes: Array<{
@@ -82,16 +102,109 @@ interface CanvasDraft {
   pendingState?: Record<string, unknown>
 }
 
+export interface PendingCanvasDraft {
+  key: string
+  snapshot: string
+  draft: CanvasDraft
+  superseded?: PendingCanvasDraft[]
+}
+
+function readDraftRecord(key: string): PendingCanvasDraft | null {
+  try {
+    const snapshot = localStorage.getItem(key)
+    if (!snapshot) return null
+    const draft = JSON.parse(snapshot) as CanvasDraft
+    return draft && Array.isArray(draft.nodes) && Array.isArray(draft.edges) ? { key, snapshot, draft } : null
+  } catch {
+    return null
+  }
+}
+
+/** Review each independent draft against its own cloud baseline. The legacy pending snapshot is retained. */
+export function loadPendingCanvasDrafts(projectId: string | number, scope: CanvasDraftScope): PendingCanvasDraft[] {
+  const key = draftKey(projectId, scope)
+  const prefix = pendingDraftPrefix(key)
+  try {
+    const keys = [key]
+    for (let index = 0; index < localStorage.length; index++) {
+      const candidate = localStorage.key(index)
+      if (candidate?.startsWith(prefix)) keys.push(candidate)
+    }
+    const pending = keys
+      .map(readDraftRecord)
+      .filter((record): record is PendingCanvasDraft => Boolean(record?.draft.pendingSync))
+      .sort((a, b) => a.key.localeCompare(b.key))
+    const latestByWriter = new Map<string, PendingCanvasDraft>()
+    for (const record of pending) {
+      const writer = record.key === key ? key : record.key.slice(0, record.key.lastIndexOf(':'))
+      const previous = latestByWriter.get(writer)
+      if (previous) {
+        const { superseded, ...oldSnapshot } = previous
+        record.superseded = [...(superseded || []), oldSnapshot]
+      }
+      latestByWriter.set(writer, record)
+    }
+    return [...latestByWriter.values()].sort(compareDraftRecords)
+  } catch {
+    return []
+  }
+}
+
+function compareDraftRecords(a: PendingCanvasDraft, b: PendingCanvasDraft): number {
+  return (a.draft.updatedAt || 0) - (b.draft.updatedAt || 0) || a.key.localeCompare(b.key)
+}
+
+export function hasOwnPendingCanvasDraft(projectId?: string | number, scope?: CanvasDraftScope): boolean {
+  const journal = ownedDraftKeys.get(draftWriterKey(draftKey(projectId, scope), scope))
+  return Boolean(journal && readDraftRecord(journal)?.draft.pendingSync)
+}
+
+/** Retire only the recovered versions actually confirmed by the cloud. A newer write in another tab survives. */
+export function clearRecoveredCanvasDrafts(records: PendingCanvasDraft[]) {
+  for (const record of records.flatMap((item) => [...(item.superseded || []), item])) {
+    try {
+      if (localStorage.getItem(record.key) === record.snapshot) localStorage.removeItem(record.key)
+    } catch {
+      // Keeping a confirmed snapshot is safe. The next recovery compares it with the cloud.
+    }
+  }
+}
+
+/** Merge older journals first. Keep conflicting snapshots intact until recovery is confirmed and saved. */
+export function mergePendingCanvasDrafts(cloud: { nodes: Node[]; edges: Edge[] }, records: PendingCanvasDraft[]) {
+  let graph = cloud
+  let hasConflicts = false
+  const restoredNodeIds = new Set<string>()
+  const pendingState: Record<string, unknown> = {}
+  for (const { draft } of records) {
+    const baseline = draft.syncBaseline
+    if (!baseline || !Array.isArray(baseline.nodes) || !Array.isArray(baseline.edges)) return null
+    const changes = diffCanvasMutations(baseline, draft, draft.textContents)
+    if (!hasConflicts) {
+      hasConflicts = conflictingCanvasElementIds(changes, diffCanvasMutations(baseline, graph)).size > 0
+    }
+    graph = applyCanvasElementMutations(graph, changes)
+    for (const change of changes) {
+      if (change.kind !== 'node') continue
+      if (change.op === 'upsert') restoredNodeIds.add(change.element_id)
+      else restoredNodeIds.delete(change.element_id)
+    }
+    for (const [key, value] of Object.entries(draft.pendingState || {})) {
+      if (
+        Object.prototype.hasOwnProperty.call(pendingState, key) &&
+        JSON.stringify(pendingState[key]) !== JSON.stringify(value)
+      ) {
+        hasConflicts = true
+      }
+      pendingState[key] = value
+    }
+  }
+  return { graph, hasConflicts, restoredNodeIds, pendingState }
+}
+
 /** 读取草稿绑定的画布 id（无草稿或未绑定时返回 0）。 */
 export function readDraftBoundCanvasId(projectId?: string | number, scope?: CanvasDraftScope): number {
-  try {
-    const raw = localStorage.getItem(draftKey(projectId, scope))
-    if (!raw) return 0
-    const parsed = JSON.parse(raw) as { boundCanvasId?: number }
-    return Number(parsed?.boundCanvasId || 0) || 0
-  } catch {
-    return 0
-  }
+  return Number(loadCanvasDraft(projectId, scope)?.boundCanvasId || 0) || 0
 }
 
 /** 保存草稿（仅保留可序列化字段）；projectId 用于按项目隔离，canvasId 用于把草稿绑定到画布 */
@@ -143,8 +256,26 @@ export function saveCanvasDraft(
         }
       : {}),
   }
+  const key = draftKey(projectId, scope)
+  const writerKey = draftWriterKey(key, scope)
   try {
-    localStorage.setItem(draftKey(projectId, scope), JSON.stringify(draft))
+    const shared = readDraftRecord(key)?.draft
+    const previous = ownedDraftKeys.get(writerKey)
+    if (shared?.scriptCreationHandled) draft.scriptCreationHandled = true
+    if (scope && sync?.pendingSync) {
+      const sequence = String(++draftWriteSequence).padStart(12, '0')
+      const journal = `${writerKey}:${sequence}`
+      localStorage.setItem(journal, JSON.stringify(draft))
+      ownedDraftKeys.set(writerKey, journal)
+      if (previous) localStorage.removeItem(previous)
+      return true
+    }
+    // A cache refresh in one tab must never erase a legacy draft that is still pending recovery.
+    if (!scope || !shared?.pendingSync) localStorage.setItem(key, JSON.stringify(draft))
+    if (scope && sync?.pendingSync === false && previous) {
+      localStorage.removeItem(previous)
+      ownedDraftKeys.delete(writerKey)
+    }
     return true
   } catch {
     return false
@@ -158,7 +289,8 @@ export function saveCanvasScriptCreationHandled(
   scope?: CanvasDraftScope,
 ) {
   try {
-    const draft = loadCanvasDraft(projectId, scope)
+    const key = draftKey(projectId, scope)
+    const draft = readDraftRecord(key)?.draft
     const next = draft || {
       nodes: [],
       edges: [],
@@ -166,7 +298,7 @@ export function saveCanvasScriptCreationHandled(
       updatedAt: Date.now(),
       boundCanvasId: Number(projectId || 0) || 0,
     }
-    localStorage.setItem(draftKey(projectId, scope), JSON.stringify({ ...next, scriptCreationHandled: handled }))
+    localStorage.setItem(key, JSON.stringify({ ...next, scriptCreationHandled: handled }))
   } catch {
     // localStorage 不可用时由云端 state 保存。
   }
@@ -174,19 +306,26 @@ export function saveCanvasScriptCreationHandled(
 
 /** 读取草稿，无草稿或解析失败返回 null */
 export function loadCanvasDraft(projectId?: string | number, scope?: CanvasDraftScope): CanvasDraft | null {
-  try {
-    const raw = localStorage.getItem(draftKey(projectId, scope))
-    if (!raw) return null
-    return JSON.parse(raw) as CanvasDraft
-  } catch {
-    return null
-  }
+  const key = draftKey(projectId, scope)
+  const shared = readDraftRecord(key)?.draft
+  if (!scope || projectId === undefined) return shared ?? null
+  const pending = loadPendingCanvasDrafts(projectId, scope)
+  const newest = pending[pending.length - 1]?.draft
+  if (!newest) return shared ?? null
+  return shared?.scriptCreationHandled ? { ...newest, scriptCreationHandled: true } : newest
 }
 
 /** 清除指定项目的草稿 */
 export function clearCanvasDraft(projectId?: string | number, scope?: CanvasDraftScope) {
   try {
-    localStorage.removeItem(draftKey(projectId, scope))
+    const key = draftKey(projectId, scope)
+    localStorage.removeItem(key)
+    const writerKey = draftWriterKey(key, scope)
+    const journal = ownedDraftKeys.get(writerKey)
+    if (scope && journal) {
+      localStorage.removeItem(journal)
+      ownedDraftKeys.delete(writerKey)
+    }
   } catch {
     // 静默
   }
