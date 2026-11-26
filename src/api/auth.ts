@@ -7,7 +7,19 @@ import { shouldRequestAuthenticatedSession } from '../utils/workflowGuards'
 import { createKeyedSingleFlight, createSingleFlight } from '../utils/singleFlight'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { AUTH_REFRESH_LOCK_NAME, runSessionLogoutWithoutLock, runSharedSessionRefresh } from './sessionRefresh'
-import { acceptAccountSwitchSession, getAccountSwitchId, isAccountSwitchSession } from './accountSwitch'
+import {
+  ACCOUNT_SWITCH_HEADER,
+  acceptAccountSwitchSession,
+  getAccountSwitchId,
+  isAccountSwitchSession,
+} from './accountSwitch'
+import {
+  getAuthRequestScope,
+  invalidateAuthRequestScope,
+  isAuthRequestScopeCurrent,
+  publishAuthRequestBoundary,
+  type AuthRequestBoundaryKind,
+} from './authRequestScope'
 
 /** 记录浏览器是否期待存在已登录会话，避免匿名页反复请求鉴权端点。 */
 const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
@@ -27,6 +39,12 @@ export class AuthApiError extends Error {
     this.requestId = requestId
     this.response = response
     this.cause = cause
+  }
+}
+
+function assertCurrentAuthRequest(authScope: number) {
+  if (!isAuthRequestScopeCurrent(authScope)) {
+    throw new AuthApiError('登录状态已变化，请重试', { code: 'AUTH_SESSION_CHANGED', cause: 'aborted' })
   }
 }
 
@@ -142,11 +160,13 @@ export function getSession() {
  * signal 只用于让调用方在结果返回时丢弃(抛「已取消」),不会取消共享的在途请求。
  */
 export async function refreshSession({ signal } = {}) {
+  const authScope = getAuthRequestScope()
   if (signal?.aborted) {
     throw new AuthApiError('网络请求已取消', { cause: 'aborted' })
   }
-  const outcome = await runSharedSessionRefresh()
-  if (signal?.aborted) {
+  const outcome = await runSharedSessionRefresh(authScope)
+  assertCurrentAuthRequest(authScope)
+  if (signal?.aborted || outcome.abortCause === 'aborted') {
     throw new AuthApiError('网络请求已取消', { cause: 'aborted' })
   }
   if (outcome.error) {
@@ -168,16 +188,44 @@ export async function refreshSession({ signal } = {}) {
 }
 
 /** 通知后端注销当前会话，等在途的 Cookie 续期完成后再清理。 */
-export async function logoutSession() {
+export async function logoutSession(boundaryKind: AuthRequestBoundaryKind = 'logout') {
+  const authScope = getAuthRequestScope()
+  let completedScope: number | undefined
+  const finishLogout = () => {
+    assertCurrentAuthRequest(authScope)
+    // Update the shared cookie marker and generation before releasing the lock.
+    try {
+      clearAuthSessionMarker()
+    } catch {
+      // Server logout and local request invalidation still succeed without storage.
+    }
+    publishAuthRequestBoundary(boundaryKind)
+    completedScope = getAuthRequestScope()
+  }
+  const logout = async (signal?: AbortSignal) => {
+    // A peer logout/login may have completed while this request waited for the lock.
+    assertCurrentAuthRequest(authScope)
+    const result = await businessPost('/api/v1/auth/logout', { signal }).catch((error) => {
+      if (isUnauthorizedAuthError(error)) finishLogout()
+      else assertCurrentAuthRequest(authScope)
+      throw error
+    })
+    finishLogout()
+    return result
+  }
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
-  if (!locks) return runSessionLogoutWithoutLock(() => businessPost('/api/v1/auth/logout'))
 
   try {
-    return await withRequestTimeout((signal) =>
-      // 与 sessionRefresh.ts 共用锁，避免其他标签页的续期响应在登出后写回 Cookie。
-      locks.request(AUTH_REFRESH_LOCK_NAME, { signal }, () => businessPost('/api/v1/auth/logout', { signal })),
-    )
+    const result = locks
+      ? await withRequestTimeout((signal) =>
+          // 与 sessionRefresh.ts 共用锁，避免其他标签页的续期响应在登出后写回 Cookie。
+          locks.request(AUTH_REFRESH_LOCK_NAME, { signal }, () => logout(signal)),
+        )
+      : await runSessionLogoutWithoutLock(() => logout())
+    assertCurrentAuthRequest(completedScope ?? authScope)
+    return result
   } catch (error) {
+    assertCurrentAuthRequest(completedScope ?? authScope)
     if (error instanceof RequestAbortError) {
       throw new AuthApiError('退出登录请求超时，请稍后重试', { cause: error.abortCause })
     }
@@ -190,43 +238,62 @@ export async function logoutSession() {
  * 在 oauth-start 之前调用，避免注销时销毁本次 OAuth state。
  */
 export async function clearExistingSession(): Promise<void> {
+  resetAuthenticatedSession()
   try {
-    await logoutSession()
+    await logoutSession('account-change')
   } catch (error) {
     if (!isUnauthorizedAuthError(error)) throw error
   }
+  assertCurrentAuthRequest(getAuthRequestScope())
   resetAuthenticatedSession()
-  clearAuthSessionMarker()
 }
 
 /** 读取当前登录用户资料。 */
-export function getCurrentUser() {
-  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me'))
+export function getCurrentUser(options = {}) {
+  const { authScope, ...requestOptions } = options
+  return requestAuthenticatedJson(buildUrl(businessApiBaseUrl, '/api/v1/me'), requestOptions, authScope)
 }
 
 /** 修改当前用户的文字资料；用户名唯一性由后端校验并通过 AuthApiError 返回。 */
-export function updateMyProfile(payload) {
-  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me/profile'), {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload || {}),
-  })
+export function updateMyProfile(payload, { authScope } = {}) {
+  return requestAuthenticatedJson(
+    buildUrl(businessApiBaseUrl, '/api/v1/me/profile'),
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    },
+    authScope,
+  )
 }
 
 /** 通过专用 multipart 端点上传当前用户头像，长上传显式不设通用短超时。 */
-export function uploadMyAvatar(file) {
+export function uploadMyAvatar(file, { authScope } = {}) {
   const formData = new FormData()
   formData.append('file', file)
-  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me/avatar'), {
-    method: 'POST',
-    body: formData,
-    // 头像文件上传受文件大小和用户网络影响，保留长流程不限时语义。
-    timeoutMs: 0,
-  })
+  return requestAuthenticatedJson(
+    buildUrl(businessApiBaseUrl, '/api/v1/me/avatar'),
+    {
+      method: 'POST',
+      body: formData,
+      // 头像文件上传受文件大小和用户网络影响，保留长流程不限时语义。
+      timeoutMs: 0,
+    },
+    authScope,
+  )
+}
+
+async function requestAuthenticatedJson(url, options, authScope = getAuthRequestScope()) {
+  assertCurrentAuthRequest(authScope)
+  try {
+    return await requestJson(url, options)
+  } finally {
+    assertCurrentAuthRequest(authScope)
+  }
 }
 
 /**
- * 成员列表的并发去重：同一 workspace 的在途请求共用一个 Promise。
+ * 成员列表的并发去重：同一登录会话和 workspace 的在途请求共用一个 Promise。
  *
  * 这个接口的调用方很分散——workspaceSession 初始化、useWorkspaceMemberAccess、
  * 侧边栏团队分组、项目管理与空间看板，一次导航里它们几乎同时开火，
@@ -236,10 +303,18 @@ export function uploadMyAvatar(file) {
 const workspaceMembersRequest = createKeyedSingleFlight<any>()
 
 /** 读取指定工作空间的成员列表。 */
-export function listWorkspaceMembers(workspaceId) {
-  return workspaceMembersRequest.run(workspaceId, () =>
-    requestJson(buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`)),
-  )
+export function listWorkspaceMembers(workspaceId, { userScope = '', switchId = '' } = {}) {
+  const authScope = getAuthRequestScope()
+  const key = JSON.stringify([authScope, workspaceId, userScope, switchId])
+  return workspaceMembersRequest.run(key, async () => {
+    assertCurrentAuthRequest(authScope)
+    const members = await requestJson(
+      buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`),
+      bootstrapSwitchOptions(switchId),
+    )
+    assertCurrentAuthRequest(authScope)
+    return members
+  })
 }
 
 /**
@@ -250,11 +325,18 @@ const authSessionRequest = createSingleFlight<any>()
 
 /** 去重获取完整鉴权上下文，包含会话、用户资料和当前成员。 */
 export function getAuthenticatedSession() {
+  const authScope = getAuthRequestScope()
+  try {
+    assertCurrentAuthRequest(authScope)
+  } catch (error) {
+    return Promise.reject(error)
+  }
   return authSessionRequest.run(fetchAuthenticatedSession)
 }
 
 /** 登出时作废共享会话请求，防止较晚返回的旧响应重新写回已清空登录态。 */
 export function resetAuthenticatedSession() {
+  invalidateAuthRequestScope()
   authSessionRequest.reset()
 }
 
@@ -269,6 +351,8 @@ function readAuthUserId(user) {
 
 /** 执行 session 校验、必要时刷新，再合并可选的用户资料和当前成员。 */
 async function fetchAuthenticatedSession() {
+  const authScope = getAuthRequestScope()
+  assertCurrentAuthRequest(authScope)
   // 如果正在进行 SSO 登录回调，即使没有历史 marker 也应该尝试获取 session
   const ssoPending = window.sessionStorage.getItem('zzh_sso_pending') === '1'
   const accountSwitchId = getAccountSwitchId()
@@ -286,12 +370,14 @@ async function fetchAuthenticatedSession() {
   try {
     session = await getSession()
   } catch (error) {
+    assertCurrentAuthRequest(authScope)
     if (!isUnauthorizedAuthError(error) || !shouldAttemptRefresh) {
       throw error
     }
 
     session = await refreshSession()
   }
+  assertCurrentAuthRequest(authScope)
 
   // 会话端点是认证链的信任根。HTTP 200 的空值、数组或基础类型都不能继续与
   // profile 响应合并，否则异常响应可能被拼装成看似已登录的上下文。
@@ -307,7 +393,7 @@ async function fetchAuthenticatedSession() {
   if (accountSwitchId && (!switched || session.impersonation_id !== accountSwitchId)) {
     throw new AuthApiError('切换会话已失效', { status: 401, code: 'IMPERSONATION_EXPIRED' })
   }
-  if (switched) acceptAccountSwitchSession(session)
+  const switchId = switched ? session.impersonation_id : ''
 
   if (Object.keys(session).length === 0) {
     throw new AuthApiError('未获取到有效账号会话，请稍后重试', { code: 'SESSION_IDENTITY_MISSING' })
@@ -318,14 +404,16 @@ async function fetchAuthenticatedSession() {
   let profileLoadError
 
   try {
-    profile = await getCurrentUser()
+    profile = await getCurrentUser(bootstrapSwitchOptions(switchId))
   } catch (error) {
+    assertCurrentAuthRequest(authScope)
     if (isUnauthorizedAuthError(error) || !sessionUserId) {
       throw error
     }
 
     profileLoadError = error
   }
+  assertCurrentAuthRequest(authScope)
 
   const profileUserId = readAuthUserId(profile?.user)
   if (sessionUserId && profileUserId && sessionUserId !== profileUserId) {
@@ -343,9 +431,15 @@ async function fetchAuthenticatedSession() {
     authContext.access_token_expires_at = session.access_token_expires_at
   }
   if (profileLoadError) authContext.profileLoadError = profileLoadError
-  authContext.currentMember = await getCurrentWorkspaceMember(authContext)
+  authContext.currentMember = await getCurrentWorkspaceMember(authContext, switchId)
+  assertCurrentAuthRequest(authScope)
+  if (switched) acceptAccountSwitchSession(session)
 
   return authContext
+}
+
+function bootstrapSwitchOptions(switchId: string) {
+  return switchId ? { headers: { [ACCOUNT_SWITCH_HEADER]: switchId } } : {}
 }
 
 /** 兼容多种会话字段，提取当前工作空间 ID。 */
@@ -426,7 +520,7 @@ function businessPost(path, options = {}) {
 }
 
 /** 根据当前用户和工作空间匹配成员记录，附加资料失败不破坏主会话。 */
-async function getCurrentWorkspaceMember(authContext) {
+async function getCurrentWorkspaceMember(authContext, switchId: string) {
   const userId = Number(authContext?.user?.id || 0)
   const workspaceId = pickCurrentWorkspaceId(authContext)
 
@@ -435,7 +529,10 @@ async function getCurrentWorkspaceMember(authContext) {
   }
 
   try {
-    const members = await listWorkspaceMembers(workspaceId)
+    const members = await listWorkspaceMembers(workspaceId, {
+      userScope: readAuthUserId(authContext.user),
+      switchId,
+    })
 
     if (!Array.isArray(members)) {
       return null

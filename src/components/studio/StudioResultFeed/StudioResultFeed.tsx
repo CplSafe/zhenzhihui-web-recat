@@ -53,12 +53,17 @@ export interface StudioResultFeedProps {
   onFilterChange: (filter: 'all' | 'image' | 'video') => void
   onPreview?: (item: StudioResultItem) => void
   onRetry?: (batch: StudioResultBatch) => void
+  retryableItems?: ReadonlySet<string>
+  retryingItems?: ReadonlySet<string>
+  onRetryPending?: (itemId: string) => void
   /** 首屏历史加载中。 */
   loading?: boolean
   /** 更早的历史加载中。 */
   loadingMore?: boolean
   /** 是否还有更早的历史。 */
   hasMore?: boolean
+  /** 本次有未读完的历史流；用户重试原页。 */
+  historyError?: boolean
   /** 滚动到顶部附近时触发，加载更早的历史。 */
   onLoadMore?: () => void
 }
@@ -102,9 +107,13 @@ export default function StudioResultFeed({
   onFilterChange,
   onPreview,
   onRetry,
+  retryableItems,
+  retryingItems,
+  onRetryPending,
   loading = false,
   loadingMore = false,
   hasMore = false,
+  historyError = false,
   onLoadMore,
 }: StudioResultFeedProps) {
   const visible = batches.filter((batch) => filter === 'all' || batch.mode === filter)
@@ -146,7 +155,7 @@ export default function StudioResultFeed({
 
   // 顶部哨兵进入视口（含 300px 预加载）就拉更早的一页，与站内其它无限滚动一致。
   useEffect(() => {
-    if (!hasMore || !onLoadMore) return
+    if (!hasMore || !onLoadMore || historyError || loadingMore) return
     const sentinel = topSentinelRef.current
     if (!sentinel) return
     if (typeof IntersectionObserver === 'undefined') return
@@ -159,7 +168,7 @@ export default function StudioResultFeed({
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [hasMore, onLoadMore, loadingMore])
+  }, [hasMore, onLoadMore, loadingMore, historyError])
 
   return (
     <section className={styles.feed} aria-label="创作结果">
@@ -180,7 +189,7 @@ export default function StudioResultFeed({
         </div>
       </div>
 
-      {visible.length === 0 && !loading ? (
+      {visible.length === 0 && !loading && !historyError ? (
         <div className={styles.empty}>
           <span className={styles.emptyTitle}>还没有创作记录</span>
           <span className={styles.emptyHint}>在左侧输入描述，开始你的第一次生成</span>
@@ -196,7 +205,15 @@ export default function StudioResultFeed({
               <span>{loading ? '加载创作记录…' : '加载更早的创作…'}</span>
             </div>
           )}
-          {!loading && !loadingMore && !hasMore && visible.length > 0 && (
+          {historyError && !loading && !loadingMore && (
+            <div className={styles.loadingMore}>
+              <span role="status">部分创作记录未加载</span>
+              <button type="button" className={styles.retry} onClick={onLoadMore}>
+                重试加载历史
+              </button>
+            </div>
+          )}
+          {!loading && !loadingMore && !historyError && !hasMore && visible.length > 0 && (
             <div className={styles.historyEnd}>没有更早的创作了</div>
           )}
 
@@ -208,7 +225,7 @@ export default function StudioResultFeed({
                   {batch.summary}
                   {batch.shotCount ? ` · ${batch.shotCount} 镜` : ''} · {formatTime(batch.createdAt)}
                 </span>
-                {onRetry && (
+                {onRetry && !batch.items.some((item) => item.status === 'pending') && (
                   <button type="button" className={styles.retry} onClick={() => onRetry(batch)}>
                     再次生成
                   </button>
@@ -220,59 +237,74 @@ export default function StudioResultFeed({
               {/* 比例由该批次的生成参数决定，逐格注入，从「生成中」阶段就占好位 */}
               <div className={styles.items}>
                 {batch.items.map((item) => (
-                  <div key={item.id} className={styles.item} style={itemRatioStyle(batch.ratio)}>
-                    {item.status === 'pending' && (
-                      <>
-                        <span className={styles.skeleton} aria-hidden="true" />
-                        <div className={styles.pending} role="status" aria-live="polite">
-                          <span className={styles.pendingIcon} aria-hidden="true">
-                            {batch.mode === 'video' ? '🎬' : '🖼'}
-                          </span>
-                          <span>{batch.mode === 'video' ? '视频生成中…' : '图片生成中…'}</span>
-                          {typeof item.progress === 'number' && (
-                            <>
-                              <span className={styles.percent}>{Math.round(clampPercent(item.progress))}%</span>
-                              <span className={styles.progressTrack}>
-                                <span
-                                  className={styles.progressFill}
-                                  style={{ width: `${clampPercent(item.progress)}%` }}
-                                />
-                              </span>
-                            </>
-                          )}
+                  <div key={item.id} style={itemRatioStyle(batch.ratio)}>
+                    <div className={styles.item}>
+                      {item.status === 'pending' && (
+                        <>
+                          <span className={styles.skeleton} aria-hidden="true" />
+                          <div className={styles.pending} role="status" aria-live="polite">
+                            <span className={styles.pendingIcon} aria-hidden="true">
+                              {batch.mode === 'video' ? '🎬' : '🖼'}
+                            </span>
+                            <span>{item.error || (batch.mode === 'video' ? '视频生成中…' : '图片生成中…')}</span>
+                            {typeof item.progress === 'number' && (
+                              <>
+                                <span className={styles.percent}>{Math.round(clampPercent(item.progress))}%</span>
+                                <span className={styles.progressTrack}>
+                                  <span
+                                    className={styles.progressFill}
+                                    style={{ width: `${clampPercent(item.progress)}%` }}
+                                  />
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+                      {item.status === 'failed' && (
+                        <div className={`${styles.state} ${styles.failed}`}>
+                          <span aria-hidden="true">⚠</span>
+                          <span>{item.error || '生成失败'}</span>
                         </div>
-                      </>
-                    )}
+                      )}
 
-                    {item.status === 'failed' && (
-                      <div className={`${styles.state} ${styles.failed}`}>
-                        <span aria-hidden="true">⚠</span>
-                        <span>{item.error || '生成失败'}</span>
+                      {item.status === 'done' && item.url && (
+                        <>
+                          {batch.mode === 'video' ? (
+                            <video
+                              className={`${styles.media} ${styles.video}`}
+                              src={item.url}
+                              controls
+                              playsInline
+                              preload="metadata"
+                            />
+                          ) : (
+                            <img
+                              className={styles.media}
+                              src={item.url}
+                              alt="生成结果"
+                              loading="lazy"
+                              onClick={() => onPreview?.(item)}
+                            />
+                          )}
+                          {/* 全站统一的 AI 生成标记 */}
+                          <AiBadge />
+                        </>
+                      )}
+                    </div>
+                    {item.status === 'pending' && retryableItems?.has(item.id) && onRetryPending && (
+                      <div className={styles.requestRetry}>
+                        <span>已受理会复用原任务，尚未建单时按原请求计费。</span>
+                        <button
+                          type="button"
+                          className={styles.retry}
+                          disabled={retryingItems?.has(item.id)}
+                          onClick={() => onRetryPending(item.id)}
+                        >
+                          {retryingItems?.has(item.id) ? '正在重试原请求…' : '重试原请求'}
+                        </button>
                       </div>
-                    )}
-
-                    {item.status === 'done' && item.url && (
-                      <>
-                        {batch.mode === 'video' ? (
-                          <video
-                            className={`${styles.media} ${styles.video}`}
-                            src={item.url}
-                            controls
-                            playsInline
-                            preload="metadata"
-                          />
-                        ) : (
-                          <img
-                            className={styles.media}
-                            src={item.url}
-                            alt="生成结果"
-                            loading="lazy"
-                            onClick={() => onPreview?.(item)}
-                          />
-                        )}
-                        {/* 全站统一的 AI 生成标记 */}
-                        <AiBadge />
-                      </>
                     )}
                   </div>
                 ))}

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Edge, Node } from '@xyflow/react'
+import { comparableNode, nodeToMutation } from '@/utils/canvasElements'
+import { restoreCanvasTaskState } from '@/utils/canvasTaskState'
 import {
   clearCanvasDraft,
   clearRecoveredCanvasDrafts,
@@ -7,6 +9,7 @@ import {
   loadCanvasDraft,
   loadPendingCanvasDrafts,
   mergePendingCanvasDrafts,
+  readCanvasConfirmedRevision,
   readDraftBoundCanvasId,
   saveCanvasDraft,
   saveCanvasScriptCreationHandled,
@@ -189,5 +192,113 @@ describe('canvasDraft', () => {
     expect(hasOwnPendingCanvasDraft(34, oldEditor)).toBe(false)
     expect(hasOwnPendingCanvasDraft(34, newEditor)).toBe(true)
     expect(loadPendingCanvasDrafts(34, newEditor)).toHaveLength(1)
+  })
+
+  it('keeps the latest confirmed revision when another tab caches an older canvas snapshot', () => {
+    const scope = { userId: 7, workspaceId: 21, writerId: 'saving-tab' }
+    const anotherTab = { ...scope, writerId: 'reading-tab' }
+    const oldNode: Node = { id: 'old', type: 'text', position: { x: 1, y: 2 }, data: { kind: 'text' } }
+    const canvasId = 38
+    expect(saveCanvasDraft([], [], canvasId, canvasId, scope, { pendingSync: false, confirmedRevision: 5 })).toBe(true)
+    expect(
+      saveCanvasDraft([oldNode], [], canvasId, canvasId, anotherTab, { pendingSync: false, confirmedRevision: 3 }),
+    ).toBe(true)
+    expect(readCanvasConfirmedRevision(canvasId, scope)).toBe(5)
+    expect(loadCanvasDraft(canvasId, scope)?.nodes).toEqual([])
+    expect(readCanvasConfirmedRevision(canvasId, { ...scope, workspaceId: 22 })).toBe(0)
+    expect(readCanvasConfirmedRevision(canvasId, { ...scope, userId: 8 })).toBe(0)
+  })
+
+  it('restores an in-flight undo from another writer without treating the confirmed write as a conflict', () => {
+    const prompt = '保留原提示词。'.repeat(1000)
+    const original: Node = { id: 'shared', type: 'image', position: { x: 0, y: 0 }, data: { kind: 'image', prompt } }
+    const submitted = { ...original, data: { ...original.data, groupId: 'group-1' } }
+    const writer = { userId: 7, workspaceId: 21, writerId: 'performing-undo' }
+    const reader = { ...writer, writerId: 'reopened-canvas' }
+    expect(
+      saveCanvasDraft([original], [], 35, 35, writer, {
+        pendingSync: true,
+        syncBaseline: { nodes: [comparableNode(original)], edges: [] },
+        submittedMutations: [nodeToMutation(submitted)],
+        acknowledgedMutationIds: [submitted.id],
+        acknowledgedRevision: 2,
+        graphFromBaseline: true,
+      }),
+    ).toBe(true)
+
+    const recovered = loadPendingCanvasDrafts(35, reader)
+    expect(recovered[0]?.draft.acknowledgedRevision).toBe(2)
+    expect(recovered[0]?.draft.nodes).toEqual([original])
+    expect(recovered[0]?.draft.submittedMutations).toEqual([nodeToMutation(submitted)])
+    expect(recovered[0]?.snapshot.split(prompt)).toHaveLength(2)
+    expect(JSON.parse(recovered[0]?.snapshot ?? '{}')).toMatchObject({ nodes: null, edges: null })
+    expect(mergePendingCanvasDrafts({ nodes: [submitted], edges: [] }, recovered)).toMatchObject({
+      graph: { nodes: [original], edges: [] },
+      hasConflicts: false,
+    })
+
+    const collaboratorVersion = { ...original, data: { ...original.data, groupId: 'other-group' } }
+    expect(mergePendingCanvasDrafts({ nodes: [collaboratorVersion], edges: [] }, recovered)).toMatchObject({
+      hasConflicts: true,
+    })
+  })
+
+  it('retains a collaborator version newer than an unchanged acknowledged batch on reopen', () => {
+    const prompt = '公共原提示词。'.repeat(1000)
+    const image = (id: string, title: string): Node => ({
+      id,
+      type: 'image',
+      position: { x: 0, y: 0 },
+      data: { kind: 'image', title, prompt },
+    })
+    const before = [image('acknowledged', '云端原稿'), image('locked', '被锁原稿')]
+    const local = [image('acknowledged', '已提交'), image('locked', '等待恢复')]
+    const collaborator = image('acknowledged', '协作者的新版本')
+    const writer = { userId: 7, workspaceId: 21, writerId: 'pending-batches' }
+    const reader = { ...writer, writerId: 'reopened-canvas' }
+    expect(
+      saveCanvasDraft(local, [], 36, 36, writer, {
+        pendingSync: true,
+        syncBaseline: { nodes: before.map((node) => comparableNode(node)), edges: [] },
+        acknowledgedMutationIds: ['acknowledged'],
+        acknowledgedRevision: 2,
+      }),
+    ).toBe(true)
+
+    const recovered = loadPendingCanvasDrafts(36, reader)
+    expect(recovered[0]?.draft.nodes).toEqual(local)
+    expect(recovered[0]?.draft.submittedMutations).toBeUndefined()
+    expect(recovered[0]?.snapshot.split(prompt)).toHaveLength(3)
+    expect(JSON.parse(recovered[0]?.snapshot ?? '{}').nodes).toBeNull()
+    expect(mergePendingCanvasDrafts({ nodes: [collaborator, before[1]], edges: [] }, recovered)).toMatchObject({
+      graph: { nodes: [collaborator, local[1]], edges: [] },
+      hasConflicts: false,
+    })
+  })
+
+  it('compares an unknown receipt with the persisted task state before rehydration', () => {
+    const original: Node = {
+      id: 'failed-video',
+      type: 'video',
+      position: { x: 0, y: 0 },
+      data: { kind: 'video', taskId: 29, taskStatus: 'failed', taskError: '任务失败' },
+    }
+    const submitted = { ...original, position: { x: 200, y: 0 } }
+    const rehydrated = { ...submitted, data: restoreCanvasTaskState(submitted.data) }
+    const scope = { userId: 7, workspaceId: 21, writerId: 'unknown-aid' }
+    expect(rehydrated.data.taskStatus).toBe('reconnecting')
+    expect(
+      saveCanvasDraft([original], [], 37, 37, scope, {
+        pendingSync: true,
+        syncBaseline: { nodes: [comparableNode(original)], edges: [] },
+        submittedMutations: [nodeToMutation(submitted)],
+        graphFromBaseline: true,
+      }),
+    ).toBe(true)
+
+    const records = loadPendingCanvasDrafts(37, scope)
+    expect(
+      mergePendingCanvasDrafts({ nodes: [rehydrated], edges: [] }, records, { nodes: [submitted], edges: [] }),
+    ).toMatchObject({ graph: { nodes: [original], edges: [] }, hasConflicts: false })
   })
 })

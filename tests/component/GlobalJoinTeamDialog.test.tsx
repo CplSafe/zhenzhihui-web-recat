@@ -60,12 +60,12 @@ describe('GlobalJoinTeamDialog behavior', () => {
 
   it('normalizes the invite code, joins, switches safely, and closes on success', async () => {
     const user = userEvent.setup()
-    render(<GlobalJoinTeamDialog />)
+    render(<GlobalJoinTeamDialog userScope="7" />)
 
     await user.type(screen.getByRole('textbox', { name: '邀请码' }), ' AB C 123 ')
     await user.click(screen.getByRole('button', { name: '确认加入' }))
 
-    await waitFor(() => expect(mocks.joinTeam).toHaveBeenCalledWith('ABC123'))
+    await waitFor(() => expect(mocks.joinTeam).toHaveBeenCalledWith('ABC123', '7'))
     expect(mocks.switchWorkspaceSafely).toHaveBeenCalledWith(22, { sourceWorkspace: { id: 21 } })
     expect(mocks.showToast).toHaveBeenCalledWith('已加入团队空间', 'success')
     expect(mocks.close).toHaveBeenCalledTimes(1)
@@ -73,12 +73,12 @@ describe('GlobalJoinTeamDialog behavior', () => {
 
   it('submits with Enter and closes with Escape', async () => {
     const user = userEvent.setup()
-    render(<GlobalJoinTeamDialog />)
+    render(<GlobalJoinTeamDialog userScope="7" />)
 
     const input = screen.getByRole('textbox', { name: '邀请码' })
     expect(input).toHaveFocus()
     await user.type(input, 'ENTER123{Enter}')
-    await waitFor(() => expect(mocks.joinTeam).toHaveBeenCalledWith('ENTER123'))
+    await waitFor(() => expect(mocks.joinTeam).toHaveBeenCalledWith('ENTER123', '7'))
 
     await user.keyboard('{Escape}')
     expect(mocks.close).toHaveBeenCalled()
@@ -88,7 +88,7 @@ describe('GlobalJoinTeamDialog behavior', () => {
     const user = userEvent.setup()
     const pending = deferred<any>()
     mocks.joinTeam.mockReturnValue(pending.promise)
-    render(<GlobalJoinTeamDialog />)
+    render(<GlobalJoinTeamDialog userScope="7" />)
 
     await user.type(screen.getByRole('textbox', { name: '邀请码' }), 'TEAM123')
     await user.dblClick(screen.getByRole('button', { name: '确认加入' }))
@@ -105,7 +105,7 @@ describe('GlobalJoinTeamDialog behavior', () => {
   it('recovers after a failure and allows retry', async () => {
     const user = userEvent.setup()
     mocks.joinTeam.mockRejectedValueOnce(new Error('邀请码已失效')).mockResolvedValueOnce({ workspaceId: 22 })
-    render(<GlobalJoinTeamDialog />)
+    render(<GlobalJoinTeamDialog userScope="7" />)
 
     await user.type(screen.getByRole('textbox', { name: '邀请码' }), 'EXPIRED')
     await user.click(screen.getByRole('button', { name: '确认加入' }))
@@ -122,16 +122,16 @@ describe('GlobalJoinTeamDialog behavior', () => {
     const user = userEvent.setup()
     const oldJoin = deferred<any>()
     mocks.joinTeam.mockReturnValue(oldJoin.promise)
-    const view = render(<GlobalJoinTeamDialog />)
+    const view = render(<GlobalJoinTeamDialog userScope="7" />)
     await user.type(screen.getByRole('textbox', { name: '邀请码' }), 'OLDTEAM')
     await user.click(screen.getByRole('button', { name: '确认加入' }))
 
     await user.keyboard('{Escape}')
     expect(mocks.close).toHaveBeenCalledTimes(1)
     mocks.ui.joinTeamOpen = false
-    view.rerender(<GlobalJoinTeamDialog />)
+    view.rerender(<GlobalJoinTeamDialog userScope="7" />)
     mocks.ui.joinTeamOpen = true
-    view.rerender(<GlobalJoinTeamDialog />)
+    view.rerender(<GlobalJoinTeamDialog userScope="7" />)
 
     await act(async () => {
       oldJoin.resolve({ sourceWorkspace: { id: 21 }, workspaceId: 99 })
@@ -148,7 +148,7 @@ describe('GlobalJoinTeamDialog behavior', () => {
     const user = userEvent.setup()
     mocks.ui.workspaceSwitchLocked = true
     mocks.ui.workspaceSwitchLockReason = '视频处理中'
-    render(<GlobalJoinTeamDialog />)
+    render(<GlobalJoinTeamDialog userScope="7" />)
     await user.type(screen.getByRole('textbox', { name: '邀请码' }), 'LOCKED')
     await user.click(screen.getByRole('button', { name: '确认加入' }))
 

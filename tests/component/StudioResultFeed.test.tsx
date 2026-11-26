@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import StudioResultFeed, { type StudioResultBatch } from '@/components/studio/StudioResultFeed/StudioResultFeed'
 
@@ -130,6 +130,17 @@ describe('StudioResultFeed 固定比例', () => {
 })
 
 describe('StudioResultFeed 历史流', () => {
+  it('部分历史失败时通过按钮手动重试，而不是显示已到底', () => {
+    const retry = vi.fn()
+    render(
+      <StudioResultFeed batches={[]} filter="all" onFilterChange={() => {}} hasMore historyError onLoadMore={retry} />,
+    )
+    expect(screen.queryByText('还没有创作记录')).toBeNull()
+    expect(screen.queryByText('没有更早的创作了')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试加载历史' }))
+    expect(retry).toHaveBeenCalledOnce()
+  })
+
   it('聊天式排列：按传入顺序渲染，旧在上新在下', () => {
     const { container } = render(
       <StudioResultFeed

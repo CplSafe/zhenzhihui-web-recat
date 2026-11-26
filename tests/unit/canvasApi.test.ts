@@ -70,7 +70,25 @@ describe('fetchAllCanvasElements', () => {
     expect(mocks.requestBusinessJson).toHaveBeenNthCalledWith(
       2,
       '/api/v1/canvases/9/elements?workspace_id=7&after_revision=4&limit=1000&cursor=page-2',
+      { cache: 'no-store' },
     )
+  })
+
+  it.each([null, {}, { items: [] }, { sync_revision: 7 }, { items: [], sync_revision: null }])(
+    'does not treat an incomplete response as an empty canvas: %j',
+    async (data) => {
+      mocks.requestBusinessJson.mockResolvedValue({ code: 0, data })
+      await expect(
+        fetchAllCanvasElements({ workspaceId: 7, canvasId: 9, requireValidSnapshot: true }),
+      ).rejects.toMatchObject({ code: 'CANVAS_INVALID_SNAPSHOT' })
+    },
+  )
+
+  it('accepts an explicit empty page with revision zero as a new canvas', async () => {
+    mocks.requestBusinessJson.mockResolvedValue({ data: { items: [], sync_revision: '0' } })
+    await expect(
+      fetchAllCanvasElements({ workspaceId: 7, canvasId: 9, requireValidSnapshot: true }),
+    ).resolves.toMatchObject({ elements: [], sync_revision: 0 })
   })
 
   it('rejects repeated cursors rather than accepting an incomplete canvas', async () => {
@@ -264,5 +282,17 @@ describe('saveCanvasElements acknowledgement', () => {
     await expect(
       saveCanvasElements({ workspaceId: 7, canvasId: 9, baseRevision: 4, mutations: [], state: { zoom: 1 } }),
     ).resolves.toEqual({ sync_revision: 4 })
+  })
+
+  it('requires read-back if a node edit returns its unchanged base revision', async () => {
+    mocks.requestBusinessJson.mockResolvedValue({ data: { revision: '4' } })
+    await expect(
+      saveCanvasElements({
+        workspaceId: 7,
+        canvasId: 9,
+        baseRevision: 4,
+        mutations: [{ element_id: 'text', kind: 'node', op: 'upsert', payload: { data: { text: '新内容' } } }],
+      }),
+    ).rejects.toMatchObject({ code: 'CANVAS_SAVE_ACK_UNKNOWN' })
   })
 })

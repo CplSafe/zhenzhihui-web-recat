@@ -21,6 +21,7 @@ import {
   updateWorkspace,
 } from '../api/business'
 import { listWorkspaceMembers } from '../api/auth'
+import { getAuthRequestScope, invalidateAuthRequestScope, isAuthRequestScopeCurrent } from '../api/authRequestScope'
 import { setFavoriteVideoUserScope } from '../utils/favoriteVideos'
 import { setHotCopyDraftUserScope } from '../utils/hotCopyDraft'
 import { setSmartEntryDraftScope } from '../utils/smartEntryDraft'
@@ -226,7 +227,7 @@ export interface WorkspaceSessionState {
   switchWorkspace: (id: any, options?: { forceMemberReload?: boolean }) => void
   createTeam: (name: string) => Promise<any>
   renameTeam: (id: any, name: string) => Promise<any>
-  joinTeam: (inviteCode: string) => Promise<JoinWorkspaceResult>
+  joinTeam: (inviteCode: string, expectedUserScope: string) => Promise<JoinWorkspaceResult>
   deleteTeam: (id: any) => Promise<WorkspaceTransitionResult>
   disbandTeam: (id: any) => Promise<WorkspaceTransitionResult>
   consumePendingWorkspaceTransition: (removedWorkspaceId: any) => PendingWorkspaceTransition | null
@@ -379,6 +380,13 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     currentWorkspaceMemberWorkspaceId: 0,
 
     setAuthSession: (session) => {
+      const previousSession = get().authSession
+      if (
+        getSessionUserScope(previousSession) !== getSessionUserScope(session) ||
+        previousSession?.impersonation_id !== session?.impersonation_id
+      ) {
+        invalidateAuthRequestScope()
+      }
       authSessionEpoch += 1
       workspaceListRequestSeq += 1
       clearWorkspaceScopedState()
@@ -630,7 +638,18 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       return updated
     },
 
-    joinTeam: async (inviteCode) => {
+    joinTeam: async (inviteCode, expectedUserScope) => {
+      const authScope = getAuthRequestScope()
+      const checkAuthScope = () => {
+        if (
+          !expectedUserScope ||
+          getSessionUserScope(get().authSession) !== expectedUserScope ||
+          !isAuthRequestScopeCurrent(authScope)
+        ) {
+          throw new Error('登录状态已变化，请重新提交邀请码')
+        }
+      }
+      checkAuthScope()
       const sourceWorkspace = deriveCurrentWorkspace(get())
       const beforeIds = new Set(
         deriveAllWorkspaces(get())
@@ -638,7 +657,9 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
           .filter(Boolean),
       )
       const redeemed = await redeemWorkspaceInvitation({ inviteCode })
+      checkAuthScope()
       await get().loadWorkspaces()
+      checkAuthScope()
       const joinedWorkspaceId = pickWorkspaceId(redeemed)
       let currentList = deriveAllWorkspaces(get())
       if (joinedWorkspaceId && !findById(currentList, joinedWorkspaceId)) {
@@ -820,6 +841,8 @@ useWorkspaceSessionStore.subscribe((state) => {
 export const useCurrentWorkspace = () => useWorkspaceSessionStore(deriveCurrentWorkspace)
 /** 订阅当前登录用户。 */
 export const useCurrentUser = () => useWorkspaceSessionStore(deriveCurrentUser)
+/** 订阅当前登录用户的稳定身份标识。 */
+export const useAuthUserScope = () => useWorkspaceSessionStore(deriveDraftUserScope)
 /** 订阅当前空间中的成员身份。 */
 export const useCurrentMember = () => useWorkspaceSessionStore(deriveCurrentMember)
 /** 订阅当前工作空间 id。 */

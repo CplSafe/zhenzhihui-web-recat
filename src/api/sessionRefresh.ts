@@ -9,6 +9,7 @@
  */
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { getAccountSwitchId } from './accountSwitch'
+import { getAuthRequestScope, isAuthRequestScopeCurrent } from './authRequestScope'
 
 /** 业务后端的续期端点(同源代理)。 */
 export const AUTH_REFRESH_PATH = '/api/v1/auth/refresh'
@@ -21,16 +22,16 @@ export interface SessionRefreshOutcome {
   payload: any
   /** 网络失败 / 超时时的原始错误;HTTP 已返回(无论状态码)时为 null。 */
   error: unknown
-  /** 请求因超时被中断时为 'timeout';正常返回或网络错误为 null。 */
-  abortCause: 'timeout' | null
+  /** 超时或所属账号已改变时的中断原因。 */
+  abortCause: 'timeout' | 'aborted' | null
 }
 
-let inFlight: Promise<SessionRefreshOutcome> | null = null
+let inFlight: { scope: number; promise: Promise<SessionRefreshOutcome> } | null = null
 let logoutInFlight: Promise<unknown> | null = null
 
 /** 没有 Web Locks 时，按同一标签页内的调用顺序执行续期和注销。 */
 export function runSessionLogoutWithoutLock<T>(logout: () => Promise<T>): Promise<T> {
-  const request = Promise.resolve(logoutInFlight ?? inFlight).then(logout, logout)
+  const request = Promise.resolve(logoutInFlight ?? inFlight?.promise).then(logout, logout)
   logoutInFlight = request
   const clear = () => {
     if (logoutInFlight === request) logoutInFlight = null
@@ -55,14 +56,17 @@ async function readJsonResponse(response: Response): Promise<any> {
  * 这里不接受调用方的 AbortSignal:共享请求不能被任一调用方取消,需要「取消」语义的调用方
  * (AuthContext 登出)在拿到结果后自行按 signal / epoch 丢弃即可。
  */
-export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
+export function runSharedSessionRefresh(scope = getAuthRequestScope()): Promise<SessionRefreshOutcome> {
   if (getAccountSwitchId())
     return Promise.resolve({ ok: false, status: 401, payload: null, error: null, abortCause: null })
-  if (logoutInFlight) return logoutInFlight.then(runSharedSessionRefresh, runSharedSessionRefresh)
-  if (inFlight) return inFlight
+  if (!isAuthRequestScopeCurrent(scope)) return Promise.resolve(staleRefresh())
+  const resume = () => runSharedSessionRefresh(scope)
+  if (logoutInFlight) return logoutInFlight.then(resume, resume)
+  if (inFlight) return inFlight.scope === scope ? inFlight.promise : inFlight.promise.then(resume)
   const request = withRequestTimeout(
     async (signal) => {
       const refresh = async (): Promise<SessionRefreshOutcome> => {
+        if (!isAuthRequestScopeCurrent(scope)) return staleRefresh()
         if (getAccountSwitchId()) return { ok: false, status: 401, payload: null, error: null, abortCause: null }
         const response = await fetch(AUTH_REFRESH_PATH, {
           method: 'POST',
@@ -79,21 +83,28 @@ export function runSharedSessionRefresh(): Promise<SessionRefreshOutcome> {
         : refresh()
     },
     { defaultTimeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS },
-  ).catch(
-    (error): SessionRefreshOutcome => ({
-      ok: false,
-      status: 0,
-      payload: null,
-      error,
-      abortCause: error instanceof RequestAbortError && error.abortCause === 'timeout' ? 'timeout' : null,
-    }),
   )
-  inFlight = request
+    .catch(
+      (error): SessionRefreshOutcome => ({
+        ok: false,
+        status: 0,
+        payload: null,
+        error,
+        abortCause: error instanceof RequestAbortError && error.abortCause === 'timeout' ? 'timeout' : null,
+      }),
+    )
+    .then((outcome) => (isAuthRequestScopeCurrent(scope) ? outcome : staleRefresh()))
+  const entry = { scope, promise: request }
+  inFlight = entry
   // 结束后清空,后续再需要续期可再次发起
   void request.finally(() => {
-    if (inFlight === request) inFlight = null
+    if (inFlight === entry) inFlight = null
   })
   return request
+}
+
+function staleRefresh(): SessionRefreshOutcome {
+  return { ok: false, status: 0, payload: null, error: new RequestAbortError('aborted'), abortCause: 'aborted' }
 }
 
 /** 仅供测试:丢弃在途请求引用。 */

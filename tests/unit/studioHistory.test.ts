@@ -209,8 +209,7 @@ describe('findResumableItems', () => {
     expect(findResumableItems([batch], new Set())).toEqual([])
   })
 
-  it('图片批次不走视频续轮询', () => {
-    // 图片是同步返回的，没有可续的任务。
+  it('刷新后有任务 ID 的图片也能继续轮询', () => {
     const batch: StudioResultBatch = {
       id: 'b1',
       mode: 'image',
@@ -219,7 +218,7 @@ describe('findResumableItems', () => {
       createdAt: 0,
       items: [{ id: 'i1', status: 'pending', taskId: 9 }],
     }
-    expect(findResumableItems([batch], new Set())).toEqual([])
+    expect(findResumableItems([batch], new Set())).toEqual([{ batchId: 'b1', itemId: 'i1', taskId: 9 }])
   })
 
   it('跨批次收集', () => {

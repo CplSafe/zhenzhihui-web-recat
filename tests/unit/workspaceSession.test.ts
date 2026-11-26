@@ -136,7 +136,7 @@ describe('workspace session isolation', () => {
   })
 
   it('refreshes the joined workspace member after switching to it', async () => {
-    const transition = await useWorkspaceSessionStore.getState().joinTeam('invite-code')
+    const transition = await useWorkspaceSessionStore.getState().joinTeam('invite-code', '7')
 
     expect(transition).toMatchObject({
       workspaceId: 2,
@@ -148,6 +148,45 @@ describe('workspace session isolation', () => {
     await vi.waitFor(() => expect(deriveCurrentMember(useWorkspaceSessionStore.getState())).toEqual(teamMember))
     expect(mocks.listWorkspaceMembers).toHaveBeenCalledWith(2)
   })
+
+  it('rejects retained invites before the API call when the expected account is absent or different', async () => {
+    const { setAuthSession, joinTeam } = useWorkspaceSessionStore.getState()
+
+    setAuthSession(null)
+    await expect(joinTeam('old-invite', '7')).rejects.toThrow('登录状态已变化')
+    setAuthSession({ user: { id: 8 }, workspace: personalWorkspace })
+    await expect(joinTeam('old-invite', '7')).rejects.toThrow('登录状态已变化')
+
+    expect(mocks.redeemWorkspaceInvitation).not.toHaveBeenCalled()
+    expect(mocks.listWorkspaces).not.toHaveBeenCalled()
+  })
+
+  it.each(['redeem', 'list'] as const)(
+    'discards an invite when the account changes while waiting for %s',
+    async (step) => {
+      const redemption = deferred<{ Workspace: typeof teamWorkspace }>()
+      const list = deferred<(typeof personalWorkspace)[]>()
+      const nextWorkspace = { id: 3, name: '另一账号个人空间', type: 'personal' }
+      mocks.redeemWorkspaceInvitation.mockReturnValueOnce(redemption.promise)
+      if (step === 'list') mocks.listWorkspaces.mockReturnValueOnce(list.promise)
+
+      const join = useWorkspaceSessionStore.getState().joinTeam('invite-code', '7')
+      const rejected = expect(join).rejects.toThrow('登录状态已变化')
+      if (step === 'list') {
+        redemption.resolve({ Workspace: teamWorkspace })
+        await vi.waitFor(() => expect(mocks.listWorkspaces).toHaveBeenCalledTimes(1))
+      }
+
+      useWorkspaceSessionStore.getState().setAuthSession(null)
+      useWorkspaceSessionStore.getState().setAuthSession({ user: { id: 8 }, workspace: nextWorkspace })
+      if (step === 'redeem') redemption.resolve({ Workspace: teamWorkspace })
+      else list.resolve([personalWorkspace, teamWorkspace])
+
+      await rejected
+      expect(useWorkspaceSessionStore.getState().userWorkspaces).toEqual([nextWorkspace])
+      expect(deriveWorkspaceId(useWorkspaceSessionStore.getState())).toBe(nextWorkspace.id)
+    },
+  )
 
   it('refreshes the created workspace member after switching to it', async () => {
     mocks.listWorkspaces.mockResolvedValue([personalWorkspace])

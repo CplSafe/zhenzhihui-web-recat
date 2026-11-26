@@ -1,4 +1,5 @@
 import {
+  type AiTaskSubmission,
   BusinessApiError,
   cancelAiTask,
   createAiResponse,
@@ -6,6 +7,7 @@ import {
   estimateAiTaskCost,
   getAiTask,
   getAiTaskId,
+  replayAiTaskSubmission,
   streamAiResponse,
   waitForAiTask,
 } from '@/api/business'
@@ -1104,5 +1106,90 @@ describe('image generation streaming', () => {
       }),
     ).rejects.toThrow()
     expect(onTaskAccepted).not.toHaveBeenCalled()
+  })
+})
+
+describe('exact AI task submission replay', () => {
+  it.each([false, true])('reuses the original endpoint and body (stream=%s)', async (stream) => {
+    const sent: { url: string; body: string; accept: string | null }[] = []
+    const onSubmit = vi.fn<(submission: AiTaskSubmission) => void>()
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      sent.push({ url: String(url), body: String(init?.body), accept: new Headers(init?.headers).get('Accept') })
+      return stream
+        ? new Response('event: image.completed\ndata: {"id":321,"status":"succeeded"}\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        : jsonResponse({ data: { id: 321, status: 'pending' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      createAiTask({
+        workspaceId: 7,
+        capability: 'image',
+        operationCode: 'image.image_to_image',
+        modelVersionId: 92,
+        modelVersion: { id: 92 },
+        idempotencyKey: 'studio_original',
+        prompt: '保留原参数',
+        inputAssets: [{ asset_id: 104, role: 'reference_image' }],
+        params: { stream, size: '1024x1024' },
+        onSubmit,
+      }),
+    ).resolves.toMatchObject({ id: 321 })
+
+    const submission = onSubmit.mock.calls[0][0]
+    expect(submission).toEqual({ stream, body: sent[0].body })
+    expect(sent[0].url).toBe(stream ? '/api/v1/ai/tasks?stream=true' : '/api/v1/ai/tasks')
+    expect(JSON.parse(submission.body)).toMatchObject({
+      workspace_id: 7,
+      model_version_id: 92,
+      operation_code: 'image.image_to_image',
+      idempotency_key: 'studio_original',
+      input_assets: [{ asset_id: 104, role: 'reference_image' }],
+      params: { stream, size: '1024x1024' },
+    })
+    await expect(replayAiTaskSubmission(submission)).resolves.toMatchObject({ id: 321 })
+    expect(sent).toEqual([sent[0], sent[0]])
+  })
+
+  it('reports the acknowledged task even if the replay stream later fails', async () => {
+    const events =
+      'event: response.created\ndata: {"task":{"task_id":321,"status":"pending"}}\n\n' +
+      'event: image.error\ndata: {"message":"连接中断"}\n\n'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(events, { headers: { 'Content-Type': 'text/event-stream' } })),
+    )
+    const onTaskAccepted = vi.fn()
+
+    await expect(
+      replayAiTaskSubmission(
+        { stream: true, body: '{"idempotency_key":"studio_original"}' },
+        undefined,
+        onTaskAccepted,
+      ),
+    ).rejects.toMatchObject({ taskId: '321' })
+    expect(onTaskAccepted).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 321 }))
+  })
+
+  it('does not send a task when recording its original request fails', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      createAiTask({
+        workspaceId: 7,
+        capability: 'image',
+        operationCode: 'image.text_to_image',
+        modelVersionId: 92,
+        modelVersion: { id: 92 },
+        prompt: '保留原参数',
+        onSubmit() {
+          throw new Error('任务记录无法保存')
+        },
+      }),
+    ).rejects.toThrow('任务记录无法保存')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

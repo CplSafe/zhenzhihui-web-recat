@@ -21,6 +21,7 @@ vi.mock('@/api/auth', () => ({
 
 import * as accountSwitch from '@/api/accountSwitch'
 import { clearAuthSessionMarker } from '@/api/auth'
+import { AUTH_REQUEST_BOUNDARY_KEY, observeAuthRequestBoundary } from '@/api/authRequestScope'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { releaseLogoutDraftWriteBarrier } from '@/utils/logoutBarrier'
@@ -37,7 +38,7 @@ function LoginProbe({ returnTo }: { returnTo?: string } = {}) {
         onClick={() =>
           handleLoginSuccess(
             {
-              user: { id: 9 },
+              user: { id: 9, team_setup_required: false },
               workspaces: [{ id: 1, type: 'personal' }],
               workspace: { id: 1, type: 'personal' },
               expires_in: 120,
@@ -65,6 +66,7 @@ describe('AuthProvider login refresh scheduling', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     window.localStorage.clear()
+    observeAuthRequestBoundary()
     window.sessionStorage.clear()
     useWorkspaceSessionStore.getState().setAuthSession(null)
     releaseLogoutDraftWriteBarrier('9')
@@ -92,6 +94,31 @@ describe('AuthProvider login refresh scheduling', () => {
     fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
 
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 84_000)
+  })
+
+  it('updates the same account after team setup without publishing another shared sign-in', async () => {
+    const boundary = 'account-change:earlier-login'
+    window.localStorage.setItem(AUTH_REQUEST_BOUNDARY_KEY, boundary)
+    observeAuthRequestBoundary()
+    authMocks.getAuthenticatedSession.mockResolvedValueOnce({
+      user: { id: 9, team_setup_required: true },
+      workspaces: [{ id: 1, type: 'personal' }],
+    })
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <LoginProbe />
+          </AuthProvider>
+        </MemoryRouter>,
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
+
+    expect(screen.getByLabelText('authenticated')).toHaveTextContent('true')
+    expect(useWorkspaceSessionStore.getState().authSession?.user?.team_setup_required).toBe(false)
+    expect(window.localStorage.getItem(AUTH_REQUEST_BOUNDARY_KEY)).toBe(boundary)
   })
 
   it('returns to the guarded page after login and falls back to /hot-copy otherwise', () => {

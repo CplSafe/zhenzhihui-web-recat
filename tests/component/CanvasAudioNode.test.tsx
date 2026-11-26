@@ -13,7 +13,10 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/utils/audioWaveform', () => ({ loadAudioWaveform: mocks.waveform }))
 vi.mock('@/utils/audioMix', () => ({ renderAudioMix: mocks.renderMix, audioBufferToWav: () => new Blob(['wav']) }))
-vi.mock('@/api/business', () => ({ uploadAssetFile: mocks.upload }))
+vi.mock('@/api/business', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/business')>()),
+  uploadAssetFile: mocks.upload,
+}))
 vi.mock('@xyflow/react', () => ({
   useStore: (selector: any) => selector({ nodes: mocks.selection }),
   useReactFlow: () => ({ updateNodeData: mocks.update, getNode: mocks.getNode, getEdges: mocks.getEdges }),

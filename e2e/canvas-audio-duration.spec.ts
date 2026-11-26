@@ -147,7 +147,11 @@ test('连接配音时禁止短于配音的视频时长和最大时长不足的�
   await prompt.fill('根据连接的旁白生成视频')
   await expect(panel.locator('[data-canvas-generate]')).toBeDisabled()
 
-  await panel.getByRole('button', { name: '最多15秒模型' }).click()
+  await page.mouse.move(1250, 250)
+  await page.mouse.wheel(0, 360)
+  const modelButton = panel.getByRole('button', { name: '最多15秒模型' })
+  await expect(modelButton).toBeInViewport()
+  await modelButton.click()
   const shortModel = page.getByRole('option', { name: /最多10秒模型/ })
   await expect(shortModel).toHaveAttribute('aria-disabled', 'true')
   await expect(shortModel).toContainText('已连接的配音约 11 秒')

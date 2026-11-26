@@ -16,8 +16,15 @@ import {
   estimateAiTaskCost,
   getAiTaskId,
   normalizeAiTaskStatus,
+  type AiTaskSubmission,
 } from './business'
+import { isAuthRequestScopeCurrent } from './authRequestScope'
 import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
+import {
+  assertTaskMediaRequestScope,
+  captureTaskMediaRequestScope,
+  type TaskMediaRequestScope,
+} from '@/utils/taskMediaRequestScope'
 import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
 import { getModelParamFields, getModelParamOptionValues, matchModelParamOptionValue } from '@/utils/modelSchema'
 import { getBackendGenerationModelName, getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
@@ -512,12 +519,14 @@ function isSameOriginAssetDownload(url: string): boolean {
 }
 
 /** 对同源资产地址按退避表探测可读性，外部地址不主动请求。 */
-async function waitForDisplayUrl(url: string, signal?: AbortSignal): Promise<string> {
+async function waitForDisplayUrl(url: string, scope: TaskMediaRequestScope): Promise<string> {
+  assertTaskMediaRequestScope(scope)
   if (!url) return ''
   if (!isSameOriginAssetDownload(url)) return url
+  const { signal } = scope
 
   for (let attempt = 0; attempt <= ASSET_READY_RETRY_DELAYS_MS.length; attempt++) {
-    ensureShotImageNotAborted(signal)
+    assertTaskMediaRequestScope(scope)
     try {
       const res = await fetch(url, {
         credentials: 'include',
@@ -531,11 +540,12 @@ async function waitForDisplayUrl(url: string, signal?: AbortSignal): Promise<str
         /* ignore */
       }
       if (res.ok) {
-        ensureShotImageNotAborted(signal)
+        assertTaskMediaRequestScope(scope)
         return url
       }
     } catch (e: any) {
       if (signal?.aborted || String(e?.name || '') === 'AbortError') throw createShotImageCancelledError()
+      assertTaskMediaRequestScope(scope)
     }
     if (attempt < ASSET_READY_RETRY_DELAYS_MS.length) await delay(ASSET_READY_RETRY_DELAYS_MS[attempt], signal)
   }
@@ -544,9 +554,9 @@ async function waitForDisplayUrl(url: string, signal?: AbortSignal): Promise<str
 }
 
 /** 按后端给出的顺序返回首个已就绪的可展示地址。 */
-async function firstReadyDisplayUrl(urls: string[], signal?: AbortSignal): Promise<string> {
+async function firstReadyDisplayUrl(urls: string[], scope: TaskMediaRequestScope): Promise<string> {
   for (const url of urls || []) {
-    const ready = await waitForDisplayUrl(url, signal)
+    const ready = await waitForDisplayUrl(url, scope)
     if (ready) return ready
   }
   return ''
@@ -565,6 +575,7 @@ async function waitForShotImageTask(args: {
   signal?: AbortSignal
   onTask?: (taskId: number) => void
   cancelRemoteOnAbort?: boolean
+  scope: TaskMediaRequestScope
 }): Promise<any> {
   const taskId = getAiTaskId({ id: args.taskId })
   if (!taskId) throw new Error('分镜图生成任务 ID 无效')
@@ -572,7 +583,7 @@ async function waitForShotImageTask(args: {
   args.onTask?.(taskId)
 
   const cancelRemoteTask = async () => {
-    if (!args.cancelRemoteOnAbort) return
+    if (!args.cancelRemoteOnAbort || !isAuthRequestScopeCurrent(args.scope.authScope)) return
     try {
       await cancelAiTask({ workspaceId: args.workspaceId, taskId })
     } catch {
@@ -588,6 +599,7 @@ async function waitForShotImageTask(args: {
   return retryShotImageStage(
     async () => {
       try {
+        assertTaskMediaRequestScope({ authScope: args.scope.authScope })
         // 每次重试都只按同一个 taskId 查询，绝不回到 createAiTask，避免重复计费。
         return await waitForAiTask({
           workspaceId: args.workspaceId,
@@ -617,34 +629,38 @@ async function resolveShotImageTaskResult(args: {
   workspaceId: number
   completed: any
   taskId: number
-  signal?: AbortSignal
+  scope: TaskMediaRequestScope
 }): Promise<ShotImageGenerationResult> {
-  ensureShotImageNotAborted(args.signal)
+  const { scope } = args
+  assertTaskMediaRequestScope(scope)
   let assetId = validAssetId(extractOutputAssetId(args.completed))
   if (!assetId) {
     assetId = validAssetId(
-      await findAssetIdByTaskId(args.workspaceId, getAiTaskId(args.completed) || args.taskId, 'image'),
+      await findAssetIdByTaskId(args.workspaceId, getAiTaskId(args.completed) || args.taskId, 'image', scope),
     )
   }
 
+  assertTaskMediaRequestScope(scope)
   let url = assetId
     ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId })
-        .then((item) => waitForDisplayUrl(item, args.signal))
+        .then((item) => waitForDisplayUrl(item, scope))
         .catch(() => {
-          ensureShotImageNotAborted(args.signal)
+          assertTaskMediaRequestScope(scope)
           return ''
         })
     : ''
-  if (!url) url = await firstReadyDisplayUrl(extractTaskMediaUrls(args.completed), args.signal)
+  if (!url) url = await firstReadyDisplayUrl(extractTaskMediaUrls(args.completed), scope)
   if (!url) {
     const urls = await resolveGeneratedMediaUrls({
       workspaceId: args.workspaceId,
       task: args.completed,
       type: 'image',
+      scope,
     })
-    url = await firstReadyDisplayUrl(urls, args.signal)
+    url = await firstReadyDisplayUrl(urls, scope)
   }
-  if (!url) throw new Error('未生成分镜图')
+  assertTaskMediaRequestScope(scope)
+  if (!url) throw Object.assign(new Error('未生成分镜图'), { code: 'TASK_MEDIA_PENDING', taskId: args.taskId })
   return { url, assetId }
 }
 
@@ -657,6 +673,7 @@ export async function resumeShotImageGeneration(args: {
   taskId: number
   signal?: AbortSignal
 }): Promise<ShotImageGenerationResult> {
+  const scope = captureTaskMediaRequestScope(args.signal)
   const taskId = getAiTaskId({ id: args.taskId })
   if (!taskId) throw new Error('分镜图生成任务 ID 无效')
 
@@ -665,6 +682,7 @@ export async function resumeShotImageGeneration(args: {
     taskId,
     task: { id: taskId, status: 'processing' },
     signal: args.signal,
+    scope,
   })
 
   return retryShotImageStage(
@@ -673,7 +691,7 @@ export async function resumeShotImageGeneration(args: {
         workspaceId: args.workspaceId,
         completed,
         taskId,
-        signal: args.signal,
+        scope,
       }),
     (error) => !isAbortedTaskError(error) && !args.signal?.aborted,
     args.signal,
@@ -700,20 +718,27 @@ export async function generateShotImage(args: {
   resolution?: string
   /** 前端中断当前等待链路 */
   signal?: AbortSignal
+  /** 本地离开时仅停止等待，保留已经提交的任务。 */
+  keepTaskOnAbort?: boolean
   /** 任务一创建就抛出 taskId,供上层在需要时主动 cancel */
   onTask?: (taskId: number) => void
   /** 同一次用户动作的稳定幂等根键；省略时本次调用自动创建。 */
   idempotencyKey?: string
+  /** 在发送前记录实际请求；回调失败时不发送请求。 */
+  onSubmit?: (submission: AiTaskSubmission) => void
+  /** 流式创建返回 task ID 时立即确认，不等待流结束。 */
+  onTaskAccepted?: (taskId: number) => void
   /** 图生图不可用时是否允许退回文生图；需要严格匹配费用确认的场景应设为 false。 */
   allowTextToImageFallback?: boolean
 }): Promise<{ url: string; assetId: number }> {
+  const scope = captureTaskMediaRequestScope(args.signal)
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
   const explicitModel = getExplicitImageModel(args)
   const idempotencyRoot = String(args.idempotencyKey || '').trim() || createShotImageIdempotencyRoot()
   let outputSafetyRetryUsed = false
 
   const submitShotTask = async (
-    operationCode: string,
+    operationCode: 'image.text_to_image' | 'image.image_to_image',
     inputAssetIds: number[],
     idempotencyKey: string,
   ): Promise<{ task: any; taskId: number }> => {
@@ -725,6 +750,7 @@ export async function generateShotImage(args: {
     }
     return retryShotImageStage(
       async () => {
+        assertTaskMediaRequestScope(scope)
         const task = await createAiTask({
           workspaceId: args.workspaceId,
           capability: 'image',
@@ -739,6 +765,10 @@ export async function generateShotImage(args: {
                 ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
               }),
           idempotencyKey,
+          onSubmit: args.onSubmit,
+          onTaskAccepted: args.onTaskAccepted
+            ? (value: unknown) => args.onTaskAccepted?.(getAiTaskId(value))
+            : undefined,
           signal: args.signal,
           prompt: args.prompt,
           inputAssets: inputAssetIds.map((id) => ({ asset_id: id, role: 'reference_image' })),
@@ -767,7 +797,7 @@ export async function generateShotImage(args: {
   }
 
   const runShotTask = async (
-    operationCode: string,
+    operationCode: 'image.text_to_image' | 'image.image_to_image',
     inputAssetIds: number[],
     operationKey: string,
   ): Promise<{ url: string; assetId: number }> => {
@@ -778,7 +808,8 @@ export async function generateShotImage(args: {
       taskId,
       signal: args.signal,
       onTask: args.onTask,
-      cancelRemoteOnAbort: true,
+      cancelRemoteOnAbort: !args.keepTaskOnAbort,
+      scope,
     })
     // Completed tasks may become visible in the asset service slightly later.
     // Retry result resolution only; never submit another provider task.
@@ -788,7 +819,7 @@ export async function generateShotImage(args: {
           workspaceId: args.workspaceId,
           completed,
           taskId,
-          signal: args.signal,
+          scope,
         }),
       (error) => !isAbortedTaskError(error) && !args.signal?.aborted,
       args.signal,
@@ -800,7 +831,7 @@ export async function generateShotImage(args: {
    * failed 且 outputs 为空时，用新的幂等键重新采样一次；其余审核错误绝不自动重试。
    */
   const runShotTaskWithOutputSafetyRetry = async (
-    operationCode: string,
+    operationCode: 'image.text_to_image' | 'image.image_to_image',
     inputAssetIds: number[],
     operationKey: string,
   ): Promise<{ url: string; assetId: number }> => {

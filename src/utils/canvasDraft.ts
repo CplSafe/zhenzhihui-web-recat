@@ -4,14 +4,21 @@
  * 草稿键按项目 id 隔离，避免不同画布项目互相覆盖
  */
 import type { Node, Edge } from '@xyflow/react'
+import type { CanvasElementMutation } from '@/api/canvasApi'
 import {
   applyCanvasElementMutations,
   conflictingCanvasElementIds,
   diffCanvasMutations,
+  edgeDeleteMutation,
+  edgeToMutation,
+  nodeDeleteMutation,
+  nodeToMutation,
   pickPersistedNodeData,
   type ComparableNode,
   type ComparableEdge,
 } from '@/utils/canvasElements'
+
+type CanvasSyncBaseline = { nodes: ComparableNode[]; edges: ComparableEdge[] }
 
 const DRAFT_KEY_PREFIX = 'zzh_canvas_draft'
 const SCRIPT_CREATION_PENDING_PREFIX = 'zzh_canvas_script_creation_pending'
@@ -98,8 +105,15 @@ interface CanvasDraft {
   /** 创建画布时的一次性脚本创作入口是否已处理 */
   scriptCreationHandled?: boolean
   pendingSync?: boolean
-  syncBaseline?: { nodes: ComparableNode[]; edges: ComparableEdge[] }
+  confirmedRevision?: number
+  syncBaseline?: CanvasSyncBaseline
   pendingState?: Record<string, unknown>
+  submittedMutations?: CanvasElementMutation[]
+  acknowledgedMutationIds?: string[]
+  acknowledgedRevision?: number
+  receiptBaselineDataKeys?: Record<string, string[]>
+  graphFromBaseline?: boolean
+  compactNodes?: Array<CanvasDraft['nodes'][number] & { baselineDataKeys?: string[] }>
 }
 
 export interface PendingCanvasDraft {
@@ -114,10 +128,106 @@ function readDraftRecord(key: string): PendingCanvasDraft | null {
     const snapshot = localStorage.getItem(key)
     if (!snapshot) return null
     const draft = JSON.parse(snapshot) as CanvasDraft
+    if (draft?.syncBaseline && (draft.graphFromBaseline || draft.compactNodes || draft.receiptBaselineDataKeys)) {
+      restoreDraftFromBaseline(draft, draft.syncBaseline)
+    }
     return draft && Array.isArray(draft.nodes) && Array.isArray(draft.edges) ? { key, snapshot, draft } : null
   } catch {
     return null
   }
+}
+
+function storedCanvasRevision(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+/** Read the last confirmed shared snapshot even when a writer has a newer pending journal. */
+export function readCanvasConfirmedRevision(projectId: string | number, scope: CanvasDraftScope): number {
+  const shared = readDraftRecord(draftKey(projectId, scope))?.draft
+  return shared?.boundCanvasId === Number(projectId) ? storedCanvasRevision(shared.confirmedRevision) : 0
+}
+
+/** A pending undo often returns the graph to its baseline and changes only a few fields in a sent node. */
+function restoreDraftFromBaseline(draft: CanvasDraft, baseline: CanvasSyncBaseline) {
+  if (draft.graphFromBaseline) {
+    draft.nodes = baseline.nodes.map((node) => ({
+      id: node.id,
+      type: node.type || 'text',
+      position: node.position ?? { x: 0, y: 0 },
+      data: node.data ?? {},
+      style: node.style as CanvasDraft['nodes'][number]['style'],
+    }))
+    draft.edges = baseline.edges
+  }
+  if (!draft.compactNodes && !draft.receiptBaselineDataKeys) return
+  const nodeById = new Map(baseline.nodes.map((node) => [node.id, node]))
+  if (draft.compactNodes) {
+    draft.nodes = draft.compactNodes.map(({ baselineDataKeys, ...node }) => ({
+      ...node,
+      data: restoreBaselineNodeData(node.data, nodeById.get(node.id)?.data, baselineDataKeys),
+    }))
+  }
+  draft.submittedMutations = draft.submittedMutations?.map((mutation) => {
+    const linkedKeys = draft.receiptBaselineDataKeys?.[mutation.element_id]
+    if (!linkedKeys?.length) return mutation
+    return {
+      ...mutation,
+      payload: {
+        ...mutation.payload,
+        data: restoreBaselineNodeData(
+          (mutation.payload?.data as Record<string, unknown>) ?? {},
+          nodeById.get(mutation.element_id)?.data,
+          linkedKeys,
+        ),
+      },
+    }
+  })
+}
+
+function restoreBaselineNodeData(
+  data: Record<string, unknown>,
+  baseline?: Record<string, unknown>,
+  linkedKeys?: string[],
+) {
+  if (!baseline || !linkedKeys?.length) return data
+  return { ...Object.fromEntries(linkedKeys.map((key) => [key, baseline[key]])), ...data }
+}
+
+function compactBaselineNodeData(data: Record<string, unknown>, baseline?: Record<string, unknown>) {
+  if (!baseline) return { data }
+  const baselineDataKeys: string[] = []
+  const changed = Object.entries(data).filter(([key, value]) => {
+    const original = baseline[key]
+    if (value !== original && (typeof value !== 'object' || JSON.stringify(value) !== JSON.stringify(original))) {
+      return true
+    }
+    baselineDataKeys.push(key)
+    return false
+  })
+  return baselineDataKeys.length ? { data: Object.fromEntries(changed), baselineDataKeys } : { data }
+}
+
+function compactDraftGraph(draft: CanvasDraft, baselineNodes: Map<string, ComparableNode>) {
+  const compactNodes = draft.nodes.map((node) => ({
+    ...node,
+    ...compactBaselineNodeData(node.data, baselineNodes.get(node.id)?.data),
+  }))
+  if (compactNodes.some((node) => node.baselineDataKeys?.length)) draft.compactNodes = compactNodes
+}
+
+function compactDraftReceipts(draft: CanvasDraft, baselineNodes: Map<string, ComparableNode>) {
+  const linkedKeys: Array<[string, string[]]> = []
+  draft.submittedMutations = draft.submittedMutations?.map((mutation) => {
+    if (mutation.kind !== 'node' || mutation.op !== 'upsert') return mutation
+    const { data, baselineDataKeys } = compactBaselineNodeData(
+      (mutation.payload?.data as Record<string, unknown>) ?? {},
+      baselineNodes.get(mutation.element_id)?.data,
+    )
+    if (!baselineDataKeys) return mutation
+    linkedKeys.push([mutation.element_id, baselineDataKeys])
+    return { ...mutation, payload: { ...mutation.payload, data } }
+  })
+  if (linkedKeys.length) draft.receiptBaselineDataKeys = Object.fromEntries(linkedKeys)
 }
 
 /** Review each independent draft against its own cloud baseline. The legacy pending snapshot is retained. */
@@ -170,8 +280,55 @@ export function clearRecoveredCanvasDrafts(records: PendingCanvasDraft[]) {
   }
 }
 
+/** Rebase edits made after dispatch, including undo back to the previous cloud baseline. */
+export function reconcileCanvasSaveAttempt(
+  baseline: CanvasSyncBaseline,
+  localChanges: CanvasElementMutation[],
+  remoteChanges: CanvasElementMutation[],
+  submitted: CanvasElementMutation[],
+  acknowledgedIds: ReadonlySet<string>,
+) {
+  const remoteById = new Map(remoteChanges.map((change) => [change.element_id, change]))
+  const changedRemotely = conflictingCanvasElementIds(submitted, remoteChanges)
+  const changedLocally = conflictingCanvasElementIds(submitted, localChanges)
+  const confirmed = new Set<string>()
+  const localById = new Map(localChanges.map((change) => [change.element_id, change]))
+  const nodes = new Map(baseline.nodes.map((node) => [node.id, node]))
+  const edges = new Map(baseline.edges.map((edge) => [edge.id, edge]))
+  for (const { element_id: id, kind } of submitted) {
+    const stillMatchesCloud = remoteById.get(id)?.kind === kind && !changedRemotely.has(id)
+    if (stillMatchesCloud) confirmed.add(id)
+    if (!stillMatchesCloud && !acknowledgedIds.has(id)) continue
+    const current = localById.get(id)
+    if (current?.kind === kind && !changedLocally.has(id)) {
+      // The author made no newer edit to a submitted change, so this read owns the displayed version.
+      localById.delete(id)
+      continue
+    }
+    if (current || !remoteById.has(id)) continue
+    // The local graph matches the pre-write baseline at this id, while the server has the submitted version.
+    if (kind === 'node') {
+      const node = nodes.get(id)
+      localById.set(
+        id,
+        node
+          ? nodeToMutation({ ...node, position: node.position ?? { x: 0, y: 0 }, data: node.data ?? {} })
+          : nodeDeleteMutation(id),
+      )
+    } else {
+      const edge = edges.get(id)
+      localById.set(id, edge ? edgeToMutation(edge) : edgeDeleteMutation(id))
+    }
+  }
+  return { remaining: [...localById.values()], confirmed }
+}
+
 /** Merge older journals first. Keep conflicting snapshots intact until recovery is confirmed and saved. */
-export function mergePendingCanvasDrafts(cloud: { nodes: Node[]; edges: Edge[] }, records: PendingCanvasDraft[]) {
+export function mergePendingCanvasDrafts(
+  cloud: { nodes: Node[]; edges: Edge[] },
+  records: PendingCanvasDraft[],
+  authoritativeCloud = cloud,
+) {
   let graph = cloud
   let hasConflicts = false
   const restoredNodeIds = new Set<string>()
@@ -179,9 +336,32 @@ export function mergePendingCanvasDrafts(cloud: { nodes: Node[]; edges: Edge[] }
   for (const { draft } of records) {
     const baseline = draft.syncBaseline
     if (!baseline || !Array.isArray(baseline.nodes) || !Array.isArray(baseline.edges)) return null
-    const changes = diffCanvasMutations(baseline, draft, draft.textContents)
+    const submitted = Array.isArray(draft.submittedMutations) ? draft.submittedMutations : []
+    const submittedIds = new Set(submitted.map(({ element_id }) => element_id))
+    const acknowledgedIds = new Set(draft.acknowledgedMutationIds || [])
+    // IDs without a payload were acknowledged, and the author had not modified them again.
+    let changes = diffCanvasMutations(baseline, draft, draft.textContents).filter(
+      ({ element_id }) => !acknowledgedIds.has(element_id) || submittedIds.has(element_id),
+    )
+    let remoteChanges = diffCanvasMutations(baseline, graph)
+    if (submitted.length) {
+      const { remaining, confirmed } = reconcileCanvasSaveAttempt(
+        baseline,
+        changes,
+        diffCanvasMutations(baseline, authoritativeCloud),
+        submitted,
+        acknowledgedIds,
+      )
+      // Only other recovered drafts may supersede an own receipt. UI normalization of the cloud graph cannot do so.
+      const superseded =
+        graph === cloud
+          ? new Set<string>()
+          : conflictingCanvasElementIds(remoteChanges, diffCanvasMutations(baseline, cloud))
+      changes = remaining
+      remoteChanges = remoteChanges.filter(({ element_id }) => !confirmed.has(element_id) || superseded.has(element_id))
+    }
     if (!hasConflicts) {
-      hasConflicts = conflictingCanvasElementIds(changes, diffCanvasMutations(baseline, graph)).size > 0
+      hasConflicts = conflictingCanvasElementIds(changes, remoteChanges).size > 0
     }
     graph = applyCanvasElementMutations(graph, changes)
     for (const change of changes) {
@@ -216,8 +396,13 @@ export function saveCanvasDraft(
   scope?: CanvasDraftScope,
   sync?: {
     pendingSync: boolean
-    syncBaseline?: { nodes: ComparableNode[]; edges: ComparableEdge[] }
+    confirmedRevision?: number
+    syncBaseline?: CanvasSyncBaseline
     pendingState?: Record<string, unknown>
+    submittedMutations?: CanvasElementMutation[]
+    acknowledgedMutationIds?: string[]
+    acknowledgedRevision?: number
+    graphFromBaseline?: boolean
   },
 ) {
   const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
@@ -251,10 +436,22 @@ export function saveCanvasDraft(
     ...(sync
       ? {
           pendingSync: sync.pendingSync,
+          ...(storedCanvasRevision(sync.confirmedRevision) ? { confirmedRevision: sync.confirmedRevision } : {}),
           ...(sync.syncBaseline ? { syncBaseline: sync.syncBaseline } : {}),
           ...(sync.pendingState ? { pendingState: sync.pendingState } : {}),
+          ...(sync.submittedMutations?.length ? { submittedMutations: sync.submittedMutations } : {}),
+          ...(sync.acknowledgedMutationIds?.length ? { acknowledgedMutationIds: sync.acknowledgedMutationIds } : {}),
+          ...(sync.acknowledgedRevision ? { acknowledgedRevision: sync.acknowledgedRevision } : {}),
         }
       : {}),
+  }
+  if (scope && sync?.pendingSync && sync.syncBaseline) {
+    if (sync.graphFromBaseline) draft.graphFromBaseline = true
+    if (draft.submittedMutations?.length || draft.acknowledgedMutationIds?.length) {
+      const baselineNodes = new Map(sync.syncBaseline.nodes.map((node) => [node.id, node]))
+      if (!draft.graphFromBaseline && draft.acknowledgedMutationIds?.length) compactDraftGraph(draft, baselineNodes)
+      compactDraftReceipts(draft, baselineNodes)
+    }
   }
   const key = draftKey(projectId, scope)
   const writerKey = draftWriterKey(key, scope)
@@ -265,13 +462,21 @@ export function saveCanvasDraft(
     if (scope && sync?.pendingSync) {
       const sequence = String(++draftWriteSequence).padStart(12, '0')
       const journal = `${writerKey}:${sequence}`
-      localStorage.setItem(journal, JSON.stringify(draft))
+      // Older journal readers skip a compact graph rather than interpreting it as a deletion of every element.
+      const stored =
+        draft.graphFromBaseline || draft.compactNodes
+          ? { ...draft, nodes: null, edges: draft.graphFromBaseline ? null : draft.edges }
+          : draft
+      localStorage.setItem(journal, JSON.stringify(stored))
       ownedDraftKeys.set(writerKey, journal)
       if (previous) localStorage.removeItem(previous)
       return true
     }
     // A cache refresh in one tab must never erase a legacy draft that is still pending recovery.
-    if (!scope || !shared?.pendingSync) localStorage.setItem(key, JSON.stringify(draft))
+    const sharedIsNewer =
+      shared?.boundCanvasId === draft.boundCanvasId &&
+      storedCanvasRevision(shared.confirmedRevision) > storedCanvasRevision(draft.confirmedRevision)
+    if (!scope || (!shared?.pendingSync && !sharedIsNewer)) localStorage.setItem(key, JSON.stringify(draft))
     if (scope && sync?.pendingSync === false && previous) {
       localStorage.removeItem(previous)
       ownedDraftKeys.delete(writerKey)

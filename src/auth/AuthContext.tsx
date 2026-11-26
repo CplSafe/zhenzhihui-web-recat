@@ -23,6 +23,15 @@ import {
   isAccountSwitchSession,
   subscribeToAccountSwitchExpiry,
 } from '../api/accountSwitch'
+import {
+  AUTH_REQUEST_BOUNDARY_KEY,
+  getAuthRequestScope,
+  getUnobservedAuthRequestBoundaryKind,
+  observeAuthRequestBoundary,
+  publishAuthRequestBoundary,
+  readAuthRequestBoundary,
+} from '../api/authRequestScope'
+import { useUiStore } from '../stores/ui'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
 import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
@@ -36,7 +45,13 @@ import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 /** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
 const AUTH_LOGOUT_EVENT_KEY = 'zzh.auth.logout-event.v1'
-type ClearAuthReason = 'expired' | 'local-logout' | 'remote-logout' | 'account-switch-expired'
+type ClearAuthReason =
+  | 'expired'
+  | 'local-logout'
+  | 'remote-logout'
+  | 'remote-auth-logout'
+  | 'remote-auth-change'
+  | 'account-switch-expired'
 
 /** 从不同后端会话字段中提取稳定的用户草稿隔离标识。 */
 function getDraftUserScopeFromSession(session: any): string {
@@ -323,6 +338,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loadSeqRef.current += 1
       resetAuthenticatedSession()
       if (session) {
+        // Team setup also supplies a refreshed session for the already signed-in account.
+        if (getDraftUserScopeFromSession(session) !== getCurrentDraftUserScope()) {
+          useUiStore.getState().closeJoinTeam()
+          if (!isAccountSwitchSession(session)) publishAuthRequestBoundary('account-change')
+        }
         flushSync(() => {
           setSession(session)
           setIsAuthenticated(true)
@@ -361,13 +381,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearLocalAuthState = useCallback(
     (draftUserScope: string, reason: ClearAuthReason) => {
       const switchExpired = reason === 'account-switch-expired'
+      const peerChangedAccount = reason === 'remote-auth-change'
       // The store switches every draft helper to the anonymous scope when the
       // session is cleared. Block both identities first so unmount cleanups or
       // delayed callbacks cannot recreate the signed-out user's draft under
       // an `anon` key.
       if (draftUserScope || !switchExpired) {
-        beginLogoutDraftWriteBarrier(draftUserScope, !switchExpired)
-        beginLogoutDraftWriteBarrier('anon', !switchExpired)
+        beginLogoutDraftWriteBarrier(draftUserScope, !switchExpired && !peerChangedAccount)
+        beginLogoutDraftWriteBarrier('anon', !switchExpired && !peerChangedAccount)
         detachRunningVideoGensForOwner(draftUserScope)
       }
       stopSessionRefresh()
@@ -375,6 +396,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 否则登出前发起的 getAuthenticatedSession 若在此之后 resolve,会把刚清掉的会话「复活」。
       loadSeqRef.current++
       resetAuthenticatedSession()
+      useUiStore.getState().closeJoinTeam()
       setSession(null)
       setIsAuthenticated(false)
       setIsCheckingSession(false)
@@ -385,16 +407,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccountSwitchExpired(true)
         return
       }
-      clearLocalDraftsOnLogout(draftUserScope)
-      clearLocalDraftsOnLogout('anon')
-      clearAuthSessionMarker()
+      if (!peerChangedAccount) {
+        clearLocalDraftsOnLogout(draftUserScope)
+        clearLocalDraftsOnLogout('anon')
+      }
+      // Real logout already updated the marker under the shared auth lock.
+      if (
+        reason === 'expired' ||
+        reason === 'remote-logout' ||
+        (reason === 'local-logout' && import.meta.env.DEV && !hasConfiguredDevBackend())
+      ) {
+        clearAuthSessionMarker()
+      }
       clearOAuthLoginReturnTo()
-      if (reason === 'local-logout') {
+      const requestBoundary = readAuthRequestBoundary()
+      if (reason === 'local-logout' && (!requestBoundary || requestBoundary.startsWith('logout:'))) {
         try {
           localStorage.setItem(
             AUTH_LOGOUT_EVENT_KEY,
             JSON.stringify({
               userId: draftUserScope,
+              requestBoundary,
               nonce: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
             }),
           )
@@ -426,10 +459,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearLocalAuthState])
 
   useEffect(() => {
+    getAuthRequestScope()
+    const reconcileSharedAuth = () => {
+      const boundaryKind = getUnobservedAuthRequestBoundaryKind()
+      if (!boundaryKind) return
+      if (getAccountSwitchId()) {
+        observeAuthRequestBoundary()
+        return
+      }
+      const currentUserScope = getCurrentDraftUserScope()
+      if (currentUserScope) {
+        flushSync(() => {
+          clearLocalAuthState(currentUserScope, boundaryKind === 'logout' ? 'remote-auth-logout' : 'remote-auth-change')
+          observeAuthRequestBoundary()
+        })
+      } else {
+        stopSessionRefresh()
+        loadSeqRef.current += 1
+        resetAuthenticatedSession()
+        observeAuthRequestBoundary()
+        setIsCheckingSession(false)
+      }
+    }
     const onStorage = (event: StorageEvent) => {
+      if (event.key === AUTH_REQUEST_BOUNDARY_KEY || event.key === null) {
+        reconcileSharedAuth()
+        return
+      }
       if (event.key !== AUTH_LOGOUT_EVENT_KEY || !event.newValue || getAccountSwitchId()) return
       try {
         const payload = JSON.parse(event.newValue)
+        if (typeof payload?.requestBoundary === 'string' && payload.requestBoundary !== readAuthRequestBoundary())
+          return
         const currentUserScope = getCurrentDraftUserScope()
         if (!currentUserScope) return
         if (String(payload?.userId || '') !== currentUserScope) return
@@ -439,8 +500,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [clearLocalAuthState])
+    window.addEventListener('pageshow', reconcileSharedAuth)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('pageshow', reconcileSharedAuth)
+    }
+  }, [clearLocalAuthState, stopSessionRefresh])
 
   // 首次挂载执行会话检查；卸载时停止刷新计时器。
   useEffect(() => {

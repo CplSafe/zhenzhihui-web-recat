@@ -31,17 +31,37 @@ import { ModelAvailabilityPanel } from '@/components/common/ModelAvailabilityNot
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useStudioCostEstimate } from '@/composables/useStudioCostEstimate'
+import { useStudioGenerationRecovery } from '@/composables/useStudioGenerationRecovery'
 import { useStudioHistory } from '@/composables/useStudioHistory'
 import { useToast } from '@/composables/useToast'
 import { INSUFFICIENT_CREDITS_TEXT, creditsLabel } from '@/utils/creditsFormat'
 import { notifyGenerationDone } from '@/utils/studioNotify'
-import { useWorkspaceId } from '@/stores/workspaceSession'
-import { getBusinessErrorMessage, uploadAssetFile } from '@/api/business'
+import {
+  deriveCurrentUser,
+  deriveWorkspaceId,
+  useCurrentUser,
+  useWorkspaceId,
+  useWorkspaceSessionStore,
+} from '@/stores/workspaceSession'
+import { getBusinessErrorMessage, uploadAssetFile, type AiTaskSubmission } from '@/api/business'
+import { getAuthRequestScope, isAuthRequestScopeCurrent } from '@/api/authRequestScope'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { ensureAssetId, generateShotImage } from '@/api/smartShotImage'
-import { generateFullVideo, resumeFullVideo } from '@/api/smartVideo'
-import { findResumableItems } from '@/utils/studioHistory'
+import { generateFullVideo } from '@/api/smartVideo'
+import type { StudioOperation } from '@/api/studioHistory'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
+import {
+  isStudioGenerationRejected,
+  isStudioMediaPending,
+  readStudioErrorReceipt,
+  readStudioGenerationIntents,
+  readStudioSubmissionIdentity,
+  STUDIO_TASK_SYNCING,
+  STUDIO_MEDIA_PENDING,
+  type StudioGenerationIntent,
+} from '@/utils/studioGenerationRecovery'
 import { toStudioModelChoice } from '@/utils/studioModelPresentation'
+import { preferLocalStudioBatches } from '@/utils/studioHistory'
 import {
   type StudioMode,
   type StudioParams,
@@ -75,12 +95,17 @@ let batchSequence = 0
 /** 生成批次 / 产物的稳定唯一 ID。 */
 function createStudioId(prefix: string): string {
   batchSequence += 1
-  return `${prefix}-${Date.now().toString(36)}-${batchSequence.toString(36)}`
+  return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${batchSequence.toString(36)}-${Math.random().toString(36).slice(2)}`}`
 }
 
 /** AI 创作台主组件。 */
-export default function StudioCreateView() {
-  const workspaceId = useWorkspaceId()
+export default function WorkspaceScopedStudioCreateView() {
+  const workspaceId = Number(useWorkspaceId() || 0)
+  const ownerId = resolveUserId(useCurrentUser())
+  return <StudioCreateView key={`${workspaceId}:${ownerId}`} workspaceId={workspaceId} ownerId={ownerId} />
+}
+
+function StudioCreateView({ workspaceId, ownerId }: { workspaceId: number; ownerId: number }) {
   const handleNavigate = useSidebarNavigate()
   const requireAuth = useRequireAuth()
   const { showToast } = useToast()
@@ -103,6 +128,7 @@ export default function StudioCreateView() {
   const [pendingConfirm, setPendingConfirm] = useState(false)
 
   const [submitting, setSubmitting] = useState(false)
+  const submittingKeyRef = useRef<string>()
   const [filter, setFilter] = useState<'all' | 'image' | 'video'>('all')
 
   // 页面卸载后不再 setState，避免在途生成回调打到已卸载组件。
@@ -125,8 +151,24 @@ export default function StudioCreateView() {
     loading: historyLoading,
     loadingMore: historyLoadingMore,
     hasMore: historyHasMore,
+    historyError,
     loadMore: loadOlderHistory,
-  } = useStudioHistory(ws)
+  } = useStudioHistory(ws, ownerId)
+  const generationRecovery = useStudioGenerationRecovery(ws, ownerId, batches, setBatches)
+  const {
+    key: generationKey,
+    lockedOperations,
+    localItems,
+    write: writeIntent,
+    retryableItems,
+    retryingItems,
+    retry,
+  } = generationRecovery
+  const activeGenerationKey = useRef(generationKey)
+  useEffect(() => {
+    activeGenerationKey.current = generationKey
+    setSubmitting(submittingKeyRef.current === generationKey)
+  }, [generationKey])
 
   /** 每个 operation 可选的模型（含 logo、描述与后端声明的参数约束）。 */
   const modelsByOperation = useMemo(() => {
@@ -330,7 +372,7 @@ export default function StudioCreateView() {
   /** 把某个批次内的单条产物更新为完成/失败。 */
   const patchItem = useCallback(
     (batchId: string, itemId: string, patch: Partial<StudioResultItem>) => {
-      if (!aliveRef.current) return
+      if (!aliveRef.current || activeGenerationKey.current !== generationKey) return
       setBatches((current) =>
         current.map((batch) =>
           batch.id === batchId
@@ -339,63 +381,13 @@ export default function StudioCreateView() {
         ),
       )
     },
-    [setBatches],
+    [generationKey, setBatches],
   )
 
   /** 滚动到指定批次，用于点击系统通知回到页面后定位。 */
   const scrollToBatch = useCallback((batchId: string) => {
     document.getElementById(`studio-batch-${batchId}`)?.scrollIntoView({ block: 'center' })
   }, [])
-
-  // 已认领续轮询的任务，避免历史刷新时对同一任务重复发起轮询。
-  const resumedTaskIdsRef = useRef<Set<number>>(new Set())
-  // 工作空间序号：切空间后在途的续轮询凭它判断自己是否已过期。
-  const resumeScopeRef = useRef(0)
-
-  // 切换工作空间后任务集合完全不同：清空认领记录，并让在途回调作废
-  // （否则旧空间的结果会打到新空间的列表上，或旧 task_id 挡住新空间的同号任务）。
-  useEffect(() => {
-    resumeScopeRef.current += 1
-    resumedTaskIdsRef.current = new Set()
-  }, [ws])
-
-  /**
-   * 续接刷新前还没跑完的视频任务。
-   *
-   * 历史流里状态仍是「生成中」的批次，如果不续轮询就会永远停在转圈上。这里凭
-   * task_id 直接续轮询到终态（不重新建任务、不重复扣积分）。
-   */
-  useEffect(() => {
-    if (!ws) return
-    const pending = findResumableItems(batches, resumedTaskIdsRef.current)
-    if (!pending.length) return
-
-    const scope = resumeScopeRef.current
-    pending.forEach(({ batchId, itemId, taskId }) => {
-      // 同步登记：本 effect 因 patchItem 触发的重跑会据此跳过该任务，不会重复轮询。
-      resumedTaskIdsRef.current.add(taskId)
-
-      void (async () => {
-        try {
-          const result = await resumeFullVideo({
-            workspaceId: ws,
-            taskId,
-            onProgress: (progress) => {
-              if (resumeScopeRef.current === scope) patchItem(batchId, itemId, { progress })
-            },
-          })
-          if (resumeScopeRef.current !== scope) return
-          patchItem(batchId, itemId, { status: 'done', url: result.url })
-        } catch (error: any) {
-          if (resumeScopeRef.current !== scope) return
-          patchItem(batchId, itemId, {
-            status: 'failed',
-            error: getBusinessErrorMessage(error) || error?.message || '生成失败',
-          })
-        }
-      })()
-    })
-  }, [batches, ws, patchItem])
 
   const promptText = prompt.trim()
   const useStoryboard = mode === 'video' && storyboardOn && shots.length > 0
@@ -485,8 +477,9 @@ export default function StudioCreateView() {
    * 分镜白扣一次积分。确认后再走 runGeneration 真正提交。
    */
   const submit = async () => {
+    const authScope = getAuthRequestScope()
     const authed = await requireAuth()
-    if (!authed) return
+    if (!authed || !aliveRef.current || !isAuthRequestScopeCurrent(authScope)) return
 
     if (shouldStoryboardBeforeGenerate({ mode, storyboardOn, shotCount: shots.length })) {
       if (!promptText) {
@@ -505,98 +498,192 @@ export default function StudioCreateView() {
 
   /** 真正创建生成任务。 */
   const runGeneration = async () => {
+    const authScope = getAuthRequestScope()
     const text = promptText
     const blocker = findSubmitBlocker()
     if (blocker) {
       showToast(blocker, estimate && !estimate.canAfford ? 'error' : undefined)
       return
     }
-    if (!selectedModel) return
+    if (!selectedModel || !generationKey || submittingKeyRef.current === generationKey) return
+    const operation = primaryOperation as StudioOperation
+    const controller = new AbortController()
+    const { signal } = controller
+    const stopOnScopeChange = useWorkspaceSessionStore.subscribe((state) => {
+      if (
+        deriveWorkspaceId(state) !== ws ||
+        resolveUserId(deriveCurrentUser(state)) !== ownerId ||
+        !isAuthRequestScopeCurrent(authScope)
+      ) {
+        controller.abort()
+      }
+    })
+    submittingKeyRef.current = generationKey
+    setSubmitting(true)
     setPendingConfirm(false)
 
-    const authed = await requireAuth()
-    if (!authed) return
+    const generate = async () => {
+      if (signal.aborted || !isAuthRequestScopeCurrent(authScope)) return
+      if (
+        readStudioGenerationIntents(generationKey).some(
+          (intent) => intent.operation === operation && !intent.mediaPending,
+        )
+      ) {
+        showToast(STUDIO_TASK_SYNCING, 'info')
+        return
+      }
 
-    const batchId = createStudioId('batch')
-    const items: StudioResultItem[] = Array.from({ length: params.count }, () => ({
-      id: createStudioId('item'),
-      status: 'pending' as const,
-    }))
-    const batch: StudioResultBatch = {
-      id: batchId,
-      mode,
-      prompt: text,
-      summary: formatParamsSummary(mode, params, paramOptions),
-      createdAt: Date.now(),
-      // 比例随批次固定下来，右侧格子据此占位，生成中与出图后同形。
-      ratio: params.ratio,
-      items,
-      ...(useStoryboard ? { shotCount: shots.length } : {}),
-    }
-    // 聊天式排列：新的一次生成追加到底部。
-    setBatches((current) => [...current, batch])
-    setSubmitting(true)
+      const batchId = createStudioId('batch')
+      const items: StudioResultItem[] = Array.from({ length: params.count }, () => ({
+        id: createStudioId('item'),
+        status: 'pending',
+      }))
+      const batch: Omit<StudioResultBatch, 'items'> = {
+        id: batchId,
+        mode,
+        prompt: text,
+        summary: formatParamsSummary(mode, params, paramOptions),
+        createdAt: Date.now(),
+        ratio: params.ratio,
+        ...(useStoryboard ? { shotCount: shots.length } : {}),
+      }
+      setBatches((current) => [...current, { ...batch, items }])
 
-    try {
       // 图片与视频是彼此独立的上传，并行发起，避免用户白等一段串行时间。
-      const { imageAssetIds: refAssetIds, sourceVideoAssetIds: refVideoAssetIds } = await resolveReferenceAssets()
+      let referenceAssets: Awaited<ReturnType<typeof resolveReferenceAssets>>
+      try {
+        referenceAssets = await resolveReferenceAssets()
+      } catch (error: unknown) {
+        const message = getBusinessErrorMessage(error, '参考素材上传失败，请重试')
+        items.forEach(({ id }) => patchItem(batchId, id, { status: 'failed', error: message }))
+        throw error
+      }
+      const { imageAssetIds: refAssetIds, sourceVideoAssetIds: refVideoAssetIds } = referenceAssets
 
-      // 每条产物并发生成，单条失败不影响同批其他产物。
       let succeeded = 0
       await Promise.all(
         items.map(async (item, index) => {
-          try {
-            if (mode === 'image') {
-              const result = await generateShotImage({
-                workspaceId: ws,
-                prompt: text,
-                refAssetIds,
-                resolution: params.resolution,
-                modelVersionId: selectedModel.id,
-                modelVersion: selectedModel.source,
-                ratio: params.ratio,
-              })
-              patchItem(batchId, item.id, { status: 'done', url: result.url })
-              succeeded += 1
-              return
+          let intent: StudioGenerationIntent | undefined
+          let attempts = 0
+          const idempotencyKey = `studio_${item.id}`
+          localItems.current.add(item.id)
+          const onSubmit = (submission: AiTaskSubmission) => {
+            if (
+              !aliveRef.current ||
+              signal.aborted ||
+              activeGenerationKey.current !== generationKey ||
+              !isAuthRequestScopeCurrent(authScope)
+            ) {
+              throw new Error('创作会话已切换')
             }
-
-            const result = await generateFullVideo({
-              workspaceId: ws,
-              shots: timeline,
-              basePrompt: text,
-              ratio: params.ratio,
-              resolution: params.resolution,
-              modelVersionId: selectedModel.id,
-              modelVersion: selectedModel.source,
-              ...(refAssetIds.length ? { imageAssetIds: refAssetIds } : {}),
-              // 首尾帧 / 参考模式由 params.reference_mode 决定，图片一律以统一 role 下发。
-              referenceMode: videoReferenceMode(videoMode),
-              ...(refVideoAssetIds.length ? { sourceVideoAssetIds: refVideoAssetIds } : {}),
-              ...(paramOptions.supportsAudio ? { generateAudio: params.generateAudio } : {}),
-              ...(params.count > 1 ? { variationIndex: index + 1, variationTotal: params.count } : {}),
-              // 任务一创建就把 task_id 记到【这条产物】上：刷新后凭它续轮询，而非重新生成。
-              // 一批多个视频会各自建任务，所以必须逐条记录，不能共用批次上的一个字段。
-              // 本次提交已经在轮询了，先登记为「已认领」，避免续轮询的 effect 再接一次。
-              onTask: (taskId) => {
-                resumedTaskIdsRef.current.add(taskId)
-                patchItem(batchId, item.id, { taskId })
-              },
-              onProgress: (progress) => patchItem(batchId, item.id, { progress }),
-            })
+            const { operation, idempotencyKey: key } = readStudioSubmissionIdentity(submission, ws)
+            if (intent?.idempotencyKey !== key) {
+              const pending = readStudioGenerationIntents(generationKey)
+              if (
+                pending.some(
+                  (entry) => entry.operation === operation && entry.batch.id !== batchId && !entry.mediaPending,
+                )
+              ) {
+                throw new Error(STUDIO_TASK_SYNCING)
+              }
+              const next = { operation, idempotencyKey: key, batch, itemId: item.id, submission }
+              if (!writeIntent(item.id, next, intent)) throw new Error(STUDIO_TASK_SYNCING)
+              intent = next
+              attempts = 0
+              patchItem(batchId, item.id, { taskId: undefined, progress: undefined, error: undefined })
+            }
+            attempts += 1
+          }
+          const onTask = (taskId: number) => {
+            if (!intent || !taskId || intent.taskId === taskId || !isAuthRequestScopeCurrent(authScope)) return
+            const previous = intent
+            intent = { ...previous, taskId, submission: undefined }
+            try {
+              if (!writeIntent(item.id, intent, previous)) return
+            } catch {
+              // 原始幂等键已保存，任务 ID 写入失败时仍能从服务端查回。
+            }
+            patchItem(batchId, item.id, { taskId })
+          }
+          try {
+            const result =
+              mode === 'image'
+                ? await generateShotImage({
+                    workspaceId: ws,
+                    prompt: text,
+                    refAssetIds,
+                    resolution: params.resolution,
+                    modelVersionId: selectedModel.id,
+                    modelVersion: selectedModel.source,
+                    ratio: params.ratio,
+                    allowTextToImageFallback: false,
+                    idempotencyKey,
+                    onSubmit,
+                    onTask,
+                    onTaskAccepted: onTask,
+                    signal,
+                    keepTaskOnAbort: true,
+                  })
+                : await generateFullVideo({
+                    workspaceId: ws,
+                    shots: timeline,
+                    basePrompt: text,
+                    ratio: params.ratio,
+                    resolution: params.resolution,
+                    modelVersionId: selectedModel.id,
+                    modelVersion: selectedModel.source,
+                    ...(refAssetIds.length ? { imageAssetIds: refAssetIds } : {}),
+                    // 首尾帧 / 参考模式由 params.reference_mode 决定，图片一律以统一 role 下发。
+                    referenceMode: videoReferenceMode(videoMode),
+                    ...(refVideoAssetIds.length ? { sourceVideoAssetIds: refVideoAssetIds } : {}),
+                    ...(paramOptions.supportsAudio ? { generateAudio: params.generateAudio } : {}),
+                    ...(params.count > 1 ? { variationIndex: index + 1, variationTotal: params.count } : {}),
+                    idempotencyKey,
+                    onSubmit,
+                    onTask,
+                    onProgress: (progress) => patchItem(batchId, item.id, { progress }),
+                    signal,
+                  })
+            if (
+              signal.aborted ||
+              !isAuthRequestScopeCurrent(authScope) ||
+              (intent && !writeIntent(item.id, undefined, intent))
+            )
+              return
             patchItem(batchId, item.id, { status: 'done', url: result.url })
             succeeded += 1
-          } catch (error: any) {
-            patchItem(batchId, item.id, {
-              status: 'failed',
-              error: getBusinessErrorMessage(error) || error?.message || '生成失败',
-            })
+          } catch (error: unknown) {
+            if (signal.aborted || !isAuthRequestScopeCurrent(authScope)) return
+            const receipt = readStudioErrorReceipt(error)
+            if (receipt && !intent?.taskId) onTask(receipt.taskId)
+            if (intent && isStudioMediaPending(error, intent.taskId)) {
+              try {
+                if (writeIntent(item.id, { ...intent, mediaPending: true, submission: undefined }, intent)) {
+                  patchItem(batchId, item.id, { error: STUDIO_MEDIA_PENDING })
+                }
+              } catch {
+                patchItem(batchId, item.id, { error: STUDIO_MEDIA_PENDING })
+              }
+              return
+            }
+            if (!isStudioGenerationRejected(error, attempts, intent?.taskId)) {
+              patchItem(batchId, item.id, { error: STUDIO_TASK_SYNCING })
+              return
+            }
+            try {
+              if (intent && !writeIntent(item.id, undefined, intent)) return
+              patchItem(batchId, item.id, { status: 'failed', error: getBusinessErrorMessage(error, '生成失败') })
+            } catch {
+              patchItem(batchId, item.id, { error: STUDIO_TASK_SYNCING })
+            }
+          } finally {
+            localItems.current.delete(item.id)
           }
         }),
       )
 
       // 生成成功且用户已经切走时叫他回来；页面就在眼前时不打扰（用户决策 2026-08-26）。
-      if (succeeded > 0) {
+      if (succeeded > 0 && isAuthRequestScopeCurrent(authScope)) {
         void notifyGenerationDone({
           count: succeeded,
           kind: mode,
@@ -604,31 +691,29 @@ export default function StudioCreateView() {
           onClick: () => scrollToBatch(batchId),
         })
       }
-    } catch (error: any) {
-      // 参考图上传等前置步骤失败：整批标记失败，避免留下永久 pending。
-      const message = getBusinessErrorMessage(error) || error?.message || '生成失败'
-      if (aliveRef.current) {
-        setBatches((current) =>
-          current.map((entry) =>
-            entry.id === batchId
-              ? {
-                  ...entry,
-                  items: entry.items.map((item) =>
-                    item.status === 'pending' ? { ...item, status: 'failed' as const, error: message } : item,
-                  ),
-                }
-              : entry,
-          ),
-        )
+    }
+    try {
+      // 同一账号空间的同类操作先独占检查并登记请求，再进入付费生成。
+      if (navigator.locks) {
+        await navigator.locks.request(`${generationKey}:${operation}`, { ifAvailable: true }, async (lock) => {
+          if (lock) await generate()
+          else showToast(STUDIO_TASK_SYNCING, 'info')
+        })
+      } else {
+        await generate()
       }
-      showToast(message)
+    } catch (error: unknown) {
+      if (aliveRef.current) showToast(getBusinessErrorMessage(error, '创作任务暂时无法提交'), 'error')
     } finally {
-      if (aliveRef.current) setSubmitting(false)
+      stopOnScopeChange()
+      if (submittingKeyRef.current === generationKey) submittingKeyRef.current = undefined
+      if (aliveRef.current && activeGenerationKey.current === generationKey) setSubmitting(false)
     }
   }
 
   const storyboardTotal = totalStudioShotSec(shots)
-  const canSubmit = !submitting && !scripting && Boolean(ws)
+  const syncingGeneration = lockedOperations.has(primaryOperation as StudioOperation)
+  const canSubmit = !submitting && !scripting && Boolean(generationKey) && !syncingGeneration
 
   return (
     <div className="studio-view">
@@ -838,11 +923,13 @@ export default function StudioCreateView() {
                   ? '正在拆解分镜…'
                   : submitting
                     ? '生成中…'
-                    : pendingConfirm
-                      ? `确认生成${estimate ? ` · ${costLabel}` : ''}`
-                      : estimate
-                        ? `生成 · ${costLabel}`
-                        : '生成'}
+                    : syncingGeneration
+                      ? '正在核对原任务…'
+                      : pendingConfirm
+                        ? `确认生成${estimate ? ` · ${costLabel}` : ''}`
+                        : estimate
+                          ? `生成 · ${costLabel}`
+                          : '生成'}
               </button>
               <p className="studio-console__disclaimer">内容由 AI 生成，请遵守平台规范，禁止用于违法用途。</p>
             </div>
@@ -851,13 +938,17 @@ export default function StudioCreateView() {
           {/* ── 右侧结果流 ── */}
           <div className="studio-view__feed">
             <StudioResultFeed
-              batches={batches}
+              batches={preferLocalStudioBatches(batches)}
               filter={filter}
               onFilterChange={setFilter}
               loading={historyLoading}
               loadingMore={historyLoadingMore}
               hasMore={historyHasMore}
-              onLoadMore={() => void loadOlderHistory()}
+              historyError={historyError}
+              onLoadMore={loadOlderHistory}
+              retryableItems={retryableItems}
+              retryingItems={retryingItems}
+              onRetryPending={(itemId) => void retry(itemId, (message) => showToast(message, 'error'))}
               onPreview={(item) => item.url && window.open(item.url, '_blank', 'noopener,noreferrer')}
               onRetry={(target) => {
                 // 参数会由模式/模型 effect 自动收敛到目标模式的合法档位。

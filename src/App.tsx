@@ -19,6 +19,7 @@ import {
   useCurrentWorkspace,
   useCurrentMember,
   useCurrentUser,
+  useAuthUserScope,
 } from './stores/workspaceSession'
 import ModelAvailabilityProvider from './components/common/ModelAvailabilityProvider'
 import { captureInviteCode } from './utils/inviteCode'
@@ -125,6 +126,7 @@ export function AppShell() {
   const modelWorkspace = useCurrentWorkspace()
   const modelMember = useCurrentMember()
   const modelUser = useCurrentUser()
+  const authUserScope = useAuthUserScope()
   const navigate = useNavigate()
   const location = useLocation()
   const matches = useMatches()
@@ -282,9 +284,9 @@ export function AppShell() {
       ) : null}
 
       {/* 加入空间全局弹窗:侧栏「加入空间」唤出 */}
-      {joinTeamOpen ? (
+      {isAuthenticated && authUserScope && joinTeamOpen ? (
         <Suspense fallback={null}>
-          <GlobalJoinTeamDialog />
+          <GlobalJoinTeamDialog key={authUserScope} userScope={authUserScope} />
         </Suspense>
       ) : null}
 

@@ -14,6 +14,7 @@ import { isValidUploadUrl } from '../utils/uploadUrlSafety'
 import { resolveUploadMimeType } from '../utils/fileSignature'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { AUTH_REFRESH_PATH, runSharedSessionRefresh } from './sessionRefresh'
+import { getAuthRequestScope, isAuthRequestScopeCurrent } from './authRequestScope'
 
 /** 业务 API 固定经同源代理访问，真实后端主机不编译进浏览器代码。 */
 const businessApiBaseUrl = ''
@@ -504,11 +505,13 @@ export async function createAiResponse({
   stream = false,
   signal,
 }: any) {
+  const authScope = getAuthRequestScope()
   if (modelVersionId) {
     // 同一次显式模型调用的非流式重试必须复用幂等键，防止首请求已被供应商接收后重复计费。
     const idempotencyKey = providedIdempotencyKey || createIdempotencyKey('resp')
     let lastError = null
     for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
+      assertCurrentAuthScope(authScope)
       try {
         return await submitAiResponse({
           workspaceId,
@@ -535,6 +538,7 @@ export async function createAiResponse({
   }
 
   return submitWithPlanCandidates(modelPlanCandidates, async (plan) => {
+    assertCurrentAuthScope(authScope)
     const models = await listAiModels({ workspaceId, operationCode, plan, signal })
     const candidates = getEligibleModelsForOperation(models, operationCode)
     const preferred = pickModel(candidates, operationCode, [])
@@ -545,6 +549,7 @@ export async function createAiResponse({
       // 同一候选模型的重试必须复用幂等键；只有明确切换候选模型时才生成新键。
       const idempotencyKey = createIdempotencyKey('resp')
       for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
+        assertCurrentAuthScope(authScope)
         try {
           return await submitAiResponse({
             workspaceId,
@@ -591,11 +596,13 @@ export async function streamAiResponse({
   onDelta,
   signal,
 }: any) {
+  const authScope = getAuthRequestScope()
   if (modelVersionId) {
     // 用户已明确选择模型时，流式重试只能复用这个模型；不能因瞬时故障静默切换成其他模型。
     const idempotencyKey = createIdempotencyKey('resp')
     let lastError = null
     for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
+      assertCurrentAuthScope(authScope)
       try {
         return await openAiResponseStream({
           workspaceId,
@@ -622,6 +629,7 @@ export async function streamAiResponse({
   }
 
   return submitWithPlanCandidates(modelPlanCandidates, async (plan) => {
+    assertCurrentAuthScope(authScope)
     const models = await listAiModels({ workspaceId, operationCode, plan, signal })
     const candidates = getEligibleModelsForOperation(models, operationCode)
     const preferred = pickModel(candidates, operationCode, [])
@@ -632,6 +640,7 @@ export async function streamAiResponse({
       // 同一模型的多次重试复用一个幂等键(换模型才换),避免首请求已到 provider 时重试重复计费
       const idempotencyKey = createIdempotencyKey('resp')
       for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
+        assertCurrentAuthScope(authScope)
         try {
           return await openAiResponseStream({
             workspaceId,
@@ -678,11 +687,31 @@ async function openAiResponseStream({
   onDelta,
   onImagePartial,
   onTaskAccepted,
+  onSubmit,
   imageTask = false,
+  serializedTaskBody,
   signal,
 }: any) {
+  const authScope = getAuthRequestScope()
   let response
   const normalizedMessages = normalizeResponseMessages(messages)
+  const body =
+    serializedTaskBody ??
+    JSON.stringify(
+      removeEmptyFields({
+        workspace_id: workspaceId,
+        canvas_id: canvasId,
+        model_version_id: modelId,
+        operation_code: operationCode,
+        idempotency_key: idempotencyKey,
+        prompt,
+        messages: normalizedMessages,
+        input_assets: inputAssets,
+        params,
+      }),
+    )
+  if (imageTask) onSubmit?.({ stream: true, body })
+  assertCurrentAuthScope(authScope)
 
   try {
     response = await fetch(
@@ -695,33 +724,27 @@ async function openAiResponseStream({
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
-        body: JSON.stringify(
-          removeEmptyFields({
-            workspace_id: workspaceId,
-            canvas_id: canvasId,
-            model_version_id: modelId,
-            operation_code: operationCode,
-            idempotency_key: idempotencyKey,
-            prompt,
-            messages: normalizedMessages,
-            input_assets: inputAssets,
-            params,
-          }),
-        ),
+        body,
       },
     )
   } catch (error) {
+    assertCurrentAuthScope(authScope)
     throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
       response: error,
     })
   }
 
+  if (!isAuthRequestScopeCurrent(authScope)) {
+    void response.body?.cancel().catch(() => undefined)
+    assertCurrentAuthScope(authScope)
+  }
   const responseMetadata = {
     status: response.status,
     requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
   }
   if (!response.ok || !response.body) {
     const payload = await readJsonResponse(response).catch(() => null)
+    assertCurrentAuthScope(authScope)
     throw new BusinessApiError(payload?.message || `请求失败 (${response.status})`, {
       ...responseMetadata,
       code: payload?.code ?? payload?.code_string ?? null,
@@ -902,6 +925,7 @@ async function openAiResponseStream({
   try {
     while (true) {
       const { value, done } = await reader.read()
+      assertCurrentAuthScope(authScope)
 
       if (done) {
         break
@@ -1057,9 +1081,12 @@ export async function createAiTask({
   signal,
   onImagePartial,
   onTaskAccepted,
+  onSubmit,
 }: any) {
-  const submitTask = ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) =>
-    submitAiTask({
+  const authScope = getAuthRequestScope()
+  const submitTask = ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) => {
+    assertCurrentAuthScope(authScope)
+    return submitAiTask({
       workspaceId,
       canvasId,
       modelId,
@@ -1071,7 +1098,9 @@ export async function createAiTask({
       signal,
       onImagePartial,
       onTaskAccepted,
+      onSubmit,
     })
+  }
 
   // 幂等键:同一次 createAiTask 操作全程复用一个 key。后端按 (workspace, idempotency_key) 去重——
   // 换新键会新建任务并再次冻结积分(= 重复扣费,尤其"provider 实际成功但响应 5xx"时换模型重试会双扣);
@@ -1098,6 +1127,7 @@ export async function createAiTask({
   }
 
   return submitWithPlanCandidates(modelPlanCandidates, async (plan) => {
+    assertCurrentAuthScope(authScope)
     const models = await listAiModels({ capability, operationCode, plan, workspaceId })
     const candidates = getEligibleModelsForOperation(models, operationCode)
     const preferred = pickModel(candidates, operationCode, preferredModelKeywords)
@@ -1399,6 +1429,7 @@ function sleepWithSignal(ms, signal) {
 
 /** 在单一请求语义内按指定判定器和指数退避重试，同时尊重调用方取消。 */
 async function requestJsonWithRetry(path, options: any = {}, cfg: any = {}) {
+  const authScope = getAuthRequestScope()
   const retries = Math.max(0, Number(cfg.retries ?? 0) || 0)
   const hasTimeoutOverride = Object.prototype.hasOwnProperty.call(cfg, 'timeoutMs')
   const timeoutMs = Math.max(0, Number(cfg.timeoutMs) || 0)
@@ -1406,16 +1437,20 @@ async function requestJsonWithRetry(path, options: any = {}, cfg: any = {}) {
   const shouldRetry = typeof cfg.shouldRetry === 'function' ? cfg.shouldRetry : () => false
   let attempt = 0
   for (;;) {
+    assertCurrentAuthScope(authScope)
     if (options?.signal?.aborted) {
       throw new BusinessApiError('请求已取消', { cause: 'aborted' })
     }
     try {
-      return await requestJson(path, {
-        ...options,
-        ...(hasTimeoutOverride ? { timeoutMs } : {}),
-      })
+      return await requestJson(path, { ...options, ...(hasTimeoutOverride ? { timeoutMs } : {}) }, false, authScope)
     } catch (error) {
-      if (attempt >= retries || !shouldRetry(error)) throw error
+      if (attempt >= retries || !shouldRetry(error)) {
+        // 后一次拒绝不能证明先前因网络或服务异常中断的付费请求没有建单。
+        if (cfg.trackSubmissionUncertainty && attempt > 0 && error instanceof BusinessApiError) {
+          error.submissionMayHaveSucceeded = true
+        }
+        throw error
+      }
       const backoff = baseDelayMs * Math.pow(2, attempt)
       const jitter = Math.floor(Math.random() * 250)
       attempt += 1
@@ -1437,6 +1472,7 @@ async function submitAiTask({
   signal,
   onImagePartial,
   onTaskAccepted,
+  onSubmit,
 }) {
   prompt = normalizeCanvasToolPrompt(prompt, params)
   if (operationCode === 'video.upscale' && !String(prompt || '').trim()) {
@@ -1461,6 +1497,7 @@ async function submitAiTask({
       signal,
       onImagePartial,
       onTaskAccepted,
+      onSubmit,
       imageTask: true,
     })
     return normalizeAiTask(result.task)
@@ -1485,6 +1522,33 @@ async function submitAiTask({
   // dropping input_assets during empty-field cleanup.
   requestBody.input_assets = Array.isArray(inputAssets) ? inputAssets : []
 
+  const body = JSON.stringify(requestBody)
+  onSubmit?.({ stream: false, body })
+  return submitSerializedAiTask(body, signal)
+}
+
+export interface AiTaskSubmission {
+  stream: boolean
+  body: string
+}
+
+/** 重发同一个任务请求。保留原参数和幂等键，不重新解析模型或上传素材。 */
+export async function replayAiTaskSubmission(
+  submission: AiTaskSubmission,
+  signal?: AbortSignal,
+  onTaskAccepted?: (task: unknown) => void,
+) {
+  if (!submission.stream) return submitSerializedAiTask(submission.body, signal)
+  const result = await openAiResponseStream({
+    imageTask: true,
+    serializedTaskBody: submission.body,
+    signal,
+    onTaskAccepted,
+  })
+  return normalizeAiTask(result.task)
+}
+
+async function submitSerializedAiTask(body: string, signal?: AbortSignal) {
   let responseMetadata
   const payload = await requestJsonWithRetry(
     '/api/v1/ai/tasks',
@@ -1497,13 +1561,14 @@ async function submitAiTask({
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestBody),
+      body,
     },
     {
       retries: 2,
       timeoutMs: LONG_RUNNING_API_REQUEST_TIMEOUT_MS,
       baseDelayMs: 800,
       shouldRetry: isRetryableAiCreateTaskError,
+      trackSubmissionUncertainty: true,
     },
   )
   const task = normalizeAiTask(payload)
@@ -1631,6 +1696,7 @@ export async function waitForAiTask({
   onPoll = undefined,
   signal = undefined,
 }) {
+  const authScope = getAuthRequestScope()
   let currentTask = normalizeAiTask(task)
   const startedAt = Date.now()
   let pollErrorCount = 0
@@ -1643,6 +1709,7 @@ export async function waitForAiTask({
   }
 
   const ensureNotAborted = () => {
+    assertCurrentAuthScope(authScope)
     if (signal?.aborted) {
       throw new BusinessApiError('AI 任务等待已取消', { cause: 'aborted' })
     }
@@ -1674,6 +1741,7 @@ export async function waitForAiTask({
       currentTask = normalizeAiTask(await getAiTask({ workspaceId, taskId, signal }))
       pollErrorCount = 0
     } catch (error) {
+      assertCurrentAuthScope(authScope)
       if (!isRetryableAiTaskPollError(error)) {
         throw new BusinessApiError(error?.message || 'AI 任务状态查询失败', {
           status: error?.status,
@@ -2182,7 +2250,15 @@ export function disableSubscriptionAutoRenew({ workspaceId, subscriptionId }) {
 }
 
 /** 按类型、状态和来源分页列出工作空间素材资产。 */
-export function listAssets({ workspaceId, type = '', status = 'active', source = '', limit = 100, offset = 0 }) {
+export function listAssets({
+  workspaceId,
+  type = '',
+  status = 'active',
+  source = '',
+  limit = 100,
+  offset = 0,
+  signal = undefined,
+}) {
   const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
   const query = new URLSearchParams({
     workspace_id: String(wsId),
@@ -2202,7 +2278,7 @@ export function listAssets({ workspaceId, type = '', status = 'active', source =
     query.set('source', source)
   }
 
-  return requestJson(`/api/v1/assets?${query}`)
+  return requestJson(`/api/v1/assets?${query}`, { signal })
 }
 
 /** 为图片或视频素材发起 Seedance 审核。审核素材由后端关联，生成仍引用原素材 ID。 */
@@ -2226,9 +2302,9 @@ export function getSeedanceModeration(assetId, { workspaceId, signal } = {}) {
   })
 }
 
-/** 按工作空间和素材语义生成续传缓存键。 */
-function assetUploadResumeKey(workspaceId, prompt, source) {
-  return `${Math.floor(Number(workspaceId) || 0)}:${String(source || '')}:${String(prompt || '')}`
+/** 按登录会话、工作空间和素材语义隔离续传凭证。 */
+function assetUploadResumeKey(authScope, workspaceId, prompt, source) {
+  return `${authScope}:${Math.floor(Number(workspaceId) || 0)}:${String(source || '')}:${String(prompt || '')}`
 }
 
 /** 读取同一 File 与业务键对应的未过期续传状态。 */
@@ -2380,7 +2456,8 @@ export async function uploadAssetFile({
     throw createAssetUploadWaitError({ cause: 'aborted' })
   }
 
-  const resumeKey = assetUploadResumeKey(workspaceId, prompt, source)
+  const authScope = getAuthRequestScope()
+  const resumeKey = assetUploadResumeKey(authScope, workspaceId, prompt, source)
   let pendingUpload = getResumableAssetUpload(file, resumeKey)
   if (pendingUpload && !pendingUpload.created && pendingUpload.createStage?.controller.signal.aborted) {
     clearResumableAssetUpload(file, resumeKey, pendingUpload)
@@ -2419,6 +2496,7 @@ export async function uploadAssetFile({
           // 改过扩展名的 JPEG/HEIC/MOV 会让 /complete 的服务端校验 400，而文件此时已经传上去了。
           resolveUploadMimeType(file)
             .then((mimeType) => {
+              assertCurrentAuthScope(authScope)
               pendingUpload.mimeType = mimeType
               return requestJson('/api/v1/assets', {
                 method: 'POST',
@@ -2461,6 +2539,7 @@ export async function uploadAssetFile({
       createWaitError: (cause) => createAssetUploadWaitError({ cause }),
     })
   }
+  assertCurrentAuthScope(authScope)
   const created = pendingUpload.created
   const upload = created?.upload
 
@@ -2483,6 +2562,7 @@ export async function uploadAssetFile({
     if (!pendingUpload.uploadStage || pendingUpload.uploadStage.controller.signal.aborted) {
       const uploadStage = createSharedAssetUploadStage(
         async (stageSignal) => {
+          assertCurrentAuthScope(authScope)
           const formData = new FormData()
           Object.entries(upload.form_fields || {}).forEach(([key, value]) => {
             formData.append(key, value)
@@ -2588,20 +2668,23 @@ export async function uploadAssetFile({
     })
   }
 
+  assertCurrentAuthScope(authScope)
   const asset = created.asset
   let completed = pendingUpload.completed
   try {
     if (!completed && (!pendingUpload.completeStage || pendingUpload.completeStage.controller.signal.aborted)) {
       const completeStage = createSharedAssetUploadStage(
-        (stageSignal) =>
-          completeAssetUpload({
+        (stageSignal) => {
+          assertCurrentAuthScope(authScope)
+          return completeAssetUpload({
             workspaceId,
             assetId: asset.id,
             signal: stageSignal,
           }).then((completedAsset) => {
             if (pendingUpload.completeStage === completeStage) pendingUpload.completed = completedAsset
             return completedAsset
-          }),
+          })
+        },
         (settledStage) => {
           if (pendingUpload.completeStage === settledStage) pendingUpload.completeStage = null
         },
@@ -2655,6 +2738,7 @@ export async function uploadAssetFile({
   }
 
   clearResumableAssetUpload(file, resumeKey, pendingUpload)
+  assertCurrentAuthScope(authScope)
 
   return {
     asset: completed || asset,
@@ -3163,8 +3247,14 @@ async function getCachedModel(cacheKey, loader) {
  * 发起或复用一次业务会话刷新(与 AuthContext 的主动续期共用同一个全局单飞,
  * 见 sessionRefresh.ts),避免多个 401 与定时续期同时打出并发 refresh。
  */
-function refreshBusinessSession() {
-  return runSharedSessionRefresh().then((outcome) => outcome.ok)
+function refreshBusinessSession(authScope: number) {
+  return runSharedSessionRefresh(authScope).then((outcome) => outcome.ok && !isBusinessError(outcome.payload))
+}
+
+function assertCurrentAuthScope(authScope: number) {
+  if (!isAuthRequestScopeCurrent(authScope)) {
+    throw new BusinessApiError('登录状态已变化，请重试', { code: 'AUTH_SESSION_CHANGED', cause: 'aborted' })
+  }
 }
 
 /**
@@ -3221,7 +3311,13 @@ function safeAttachmentFileName(fileName: string, fallback: string): string {
  * 业务 API 的附件请求层：复用 JSON 请求的 cookie、超时、401 单飞续期与错误语义，
  * 但成功响应保持原始二进制内容，不经过 JSON 解包。
  */
-async function requestFile(path: string, options: any = {}, _retried = false): Promise<BusinessFileResult> {
+async function requestFile(
+  path: string,
+  options: any = {},
+  _retried = false,
+  authScope = getAuthRequestScope(),
+): Promise<BusinessFileResult> {
+  assertCurrentAuthScope(authScope)
   let response
   let body
   const hasTimeoutOverride = Object.prototype.hasOwnProperty.call(options || {}, 'timeoutMs')
@@ -3247,6 +3343,7 @@ async function requestFile(path: string, options: any = {}, _retried = false): P
     response = result.response
     body = result.body
   } catch (error) {
+    assertCurrentAuthScope(authScope)
     if (error instanceof RequestAbortError) {
       const abortedByCaller = error.abortCause === 'aborted'
       throw new BusinessApiError(abortedByCaller ? '网络请求已取消' : '网络请求超时，请稍后重试', {
@@ -3259,9 +3356,11 @@ async function requestFile(path: string, options: any = {}, _retried = false): P
     })
   }
 
+  assertCurrentAuthScope(authScope)
   if (response.status === 401 && !_retried && !String(path).includes(AUTH_REFRESH_PATH)) {
-    const ok = await refreshBusinessSession()
-    if (ok) return requestFile(path, options, true)
+    const ok = await refreshBusinessSession(authScope)
+    assertCurrentAuthScope(authScope)
+    if (ok) return requestFile(path, options, true, authScope)
   }
 
   const contentType = String(response.headers.get('Content-Type') || '').toLowerCase()
@@ -3290,7 +3389,8 @@ async function requestFile(path: string, options: any = {}, _retried = false): P
   }
 }
 
-async function requestJson(path, options: any = {}, _retried = false) {
+async function requestJson(path, options: any = {}, _retried = false, authScope = getAuthRequestScope()) {
+  assertCurrentAuthScope(authScope)
   let response
   let payload
   const hasTimeoutOverride = Object.prototype.hasOwnProperty.call(options || {}, 'timeoutMs')
@@ -3316,6 +3416,7 @@ async function requestJson(path, options: any = {}, _retried = false) {
     response = result.response
     payload = result.payload
   } catch (error) {
+    assertCurrentAuthScope(authScope)
     if (error instanceof RequestAbortError) {
       const abortedByCaller = error.abortCause === 'aborted'
       throw new BusinessApiError(abortedByCaller ? '网络请求已取消' : '网络请求超时，请稍后重试', {
@@ -3330,9 +3431,11 @@ async function requestJson(path, options: any = {}, _retried = false) {
 
   // 401 → 先静默续期一次再重试原请求;排除续期接口本身,避免死循环。
   // 这样短命 access token 过期时用户无感(自动续上重试),只有续期也失败才真正报「登录失效」。
+  assertCurrentAuthScope(authScope)
   if (response.status === 401 && !_retried && !String(path).includes(AUTH_REFRESH_PATH)) {
-    const ok = await refreshBusinessSession()
-    if (ok) return requestJson(path, options, true)
+    const ok = await refreshBusinessSession(authScope)
+    assertCurrentAuthScope(authScope)
+    if (ok) return requestJson(path, options, true, authScope)
   }
 
   const responseMetadata = {

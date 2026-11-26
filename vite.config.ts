@@ -73,6 +73,11 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'safari13',
       manifest: true,
+      // 图标和插图单独缓存，避免把编码后的图片内容放进需要解析的 JS。
+      assetsInlineLimit(filePath: string) {
+        const normalizedPath = filePath.replaceAll('\\', '/')
+        if (!normalizedPath.includes('/node_modules/') && /\.(?:png|svg)$/i.test(normalizedPath)) return false
+      },
       // Terser costs a little more build time than esbuild, but gives the
       // route-heavy client a stable gzip margin without weakening the bundle
       // policy or changing any lazy-loading boundary.

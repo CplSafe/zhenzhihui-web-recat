@@ -85,7 +85,14 @@ test('图生图按对应操作的模型限制拦截连线', async ({ page }, tes
     })
   })
   await page.goto('/canvas/198')
-  await page.getByRole('combobox', { name: '画布缩放', exact: true }).selectOption('50')
+  await expect(page.getByTitle('添加节点')).toBeVisible()
+  const zoom = page.getByRole('button', { name: /当前缩放.*点击回到 100%/ })
+  await page.locator('.canvas-view').focus()
+  for (let step = 0; step < 3; step++) {
+    const before = Number.parseInt(await zoom.innerText(), 10)
+    await page.keyboard.press('Control+-')
+    await expect.poll(async () => Number.parseInt(await zoom.innerText(), 10)).toBeLessThan(before)
+  }
   await page.locator('.react-flow__node[data-id="target"]').click()
   const source = page.locator('.react-flow__node[data-id="source-3"]')
   await source.hover()

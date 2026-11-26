@@ -5,6 +5,7 @@ interface Props {
   saveStatus: DraftSaveStatus
   cloudStatus: string
   cloudMessage: string
+  canSave: boolean
   onBack: () => void
   onSave: () => void
   manualSaving: boolean
@@ -15,6 +16,7 @@ export default function CanvasNavigationStatus({
   saveStatus,
   cloudStatus,
   cloudMessage,
+  canSave,
   onBack,
   onSave,
   manualSaving,
@@ -43,7 +45,7 @@ export default function CanvasNavigationStatus({
             {cloudMessage}
           </span>
         )}
-        {(cloudStatus === 'error' || cloudStatus === 'offline' || manualSaving) && (
+        {canSave && (cloudStatus === 'error' || cloudStatus === 'offline' || manualSaving) && (
           <button type="button" className="canvas-manual-save" onClick={onSave} disabled={manualSaving}>
             {manualSaving ? '保存中…' : '保存画布'}
           </button>

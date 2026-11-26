@@ -48,29 +48,42 @@ describe('fetchStudioHistoryPage', () => {
       .mockResolvedValueOnce({ items: [] })
       .mockResolvedValueOnce({ items: [] })
 
-    await expect(fetchStudioHistoryPage({ workspaceId: 1, limit: 2 })).resolves.toMatchObject({ hasMore: true })
+    await expect(fetchStudioHistoryPage({ workspaceId: 1, limit: 2 })).resolves.toMatchObject({
+      nextOffsets: { 'image.text_to_image': 2 },
+    })
   })
 
   it('都不满页时判定已到底', async () => {
     mockedListAiTasks.mockResolvedValue({ items: [task(1, '2026-08-26T10:00:00Z')] })
-    await expect(fetchStudioHistoryPage({ workspaceId: 1, limit: 5 })).resolves.toMatchObject({ hasMore: false })
+    await expect(fetchStudioHistoryPage({ workspaceId: 1, limit: 5 })).resolves.toMatchObject({ nextOffsets: {} })
   })
 
-  it('单条 operation 失败不影响其余结果', async () => {
-    // 视频接口挂了不该让整个历史流空掉，图片的历史照常展示。
+  it('失败的流保留原偏移，成功的流独立前进', async () => {
     mockedListAiTasks
       .mockResolvedValueOnce({ items: [task(1, '2026-08-26T10:00:00Z')] })
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce({ items: [task(3, '2026-08-26T11:00:00Z')] })
 
-    const page = await fetchStudioHistoryPage({ workspaceId: 1 })
+    const page = await fetchStudioHistoryPage({ workspaceId: 1, limit: 1 })
     expect(page.items.map((item) => item.id)).toEqual([3, 1])
+    expect(page.failedOperations).toEqual(['image.image_to_image'])
+    expect(page.nextOffsets).toEqual({ 'image.text_to_image': 1, 'image.image_to_image': 0, 'video.generate': 1 })
   })
 
   it('把 offset 与 limit 透传给后端', async () => {
     mockedListAiTasks.mockResolvedValue({ items: [] })
-    await fetchStudioHistoryPage({ workspaceId: 42, offset: 24, limit: 12 })
+    await fetchStudioHistoryPage({
+      workspaceId: 42,
+      offsets: { 'video.generate': 24, 'image.image_to_image': 12 },
+      limit: 12,
+    })
 
-    expect(mockedListAiTasks).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 42, offset: 24, limit: 12 }))
+    expect(mockedListAiTasks).toHaveBeenCalledTimes(2)
+    expect(mockedListAiTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 42, operationCode: 'video.generate', offset: 24, limit: 12 }),
+    )
+    expect(mockedListAiTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ operationCode: 'image.image_to_image', offset: 12 }),
+    )
   })
 })

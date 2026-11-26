@@ -1,6 +1,7 @@
 import { clearPageCache } from '@/utils/pageDataCache'
 import { clearAllCache } from '@/utils/swrCache'
 import { APP_HOME_PATH } from '@/utils/sidebarNavigation'
+import { invalidateAuthRequestScope } from './authRequestScope'
 
 const SWITCH_HINT_KEY = 'zzh.auth.account-switch.v1'
 export const ACCOUNT_SWITCH_HEADER = 'X-ZZH-Account-Switch'
@@ -59,6 +60,7 @@ export function clearAccountSwitchCaches(): void {
 
 export function acceptAccountSwitchSession(session: AccountSwitchSession): boolean {
   if (currentId === session.impersonation_id) return true
+  invalidateAuthRequestScope()
   clearAccountSwitchCaches()
   currentId = session.impersonation_id
   return saveSwitchHint(currentId)
@@ -114,6 +116,7 @@ export function installAccountSwitchTransport(isHandoffPath: (path: string) => b
   const reconcile = () => {
     const next = readSwitchHint()
     if (next === currentId || isHandoffPath(window.location.pathname)) return
+    invalidateAuthRequestScope()
     clearAccountSwitchCaches()
     // Keep the old tab's ID attached until document navigation completes.
     window.location.replace(next ? APP_HOME_PATH : '/')
@@ -128,6 +131,7 @@ export function installAccountSwitchTransport(isHandoffPath: (path: string) => b
 
 /** Called after server revocation so stale requests keep their old ID until navigation. */
 export function restoreOrdinaryAccount(id: string): void {
+  invalidateAuthRequestScope()
   if (readSwitchHint() === id) saveSwitchHint('')
   clearAccountSwitchCaches()
   window.location.replace('/')

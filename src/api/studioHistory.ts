@@ -12,13 +12,22 @@ import type { StudioHistoryTask } from '@/utils/studioHistory'
 
 /** 创作台会产出、且应当出现在历史流里的 operation。 */
 export const STUDIO_OPERATIONS = ['image.text_to_image', 'image.image_to_image', 'video.generate'] as const
+export type StudioOperation = (typeof STUDIO_OPERATIONS)[number]
+export type StudioHistoryOffsets = Partial<Record<StudioOperation, number>>
+
+export const FIRST_STUDIO_HISTORY_OFFSETS: StudioHistoryOffsets = {
+  'image.text_to_image': 0,
+  'image.image_to_image': 0,
+  'video.generate': 0,
+}
 
 /** 一页历史任务。 */
 export interface StudioHistoryPage {
   /** 本页任务，按 created_at 倒序（新 → 旧），与后端一致。 */
   items: StudioHistoryTask[]
-  /** 是否还有更早的历史。 */
-  hasMore: boolean
+  /** 只包含未结束或本次失败的流，各自从下一条尚未读取的位置继续。 */
+  nextOffsets: StudioHistoryOffsets
+  failedOperations: StudioOperation[]
 }
 
 /** 从后端分页响应中稳妥读出 items 数组。 */
@@ -30,37 +39,46 @@ function readItems(payload: any): StudioHistoryTask[] {
 /**
  * 拉取一页历史任务。
  *
- * offset 对每个 operation 各自独立：三条流按同一 offset 取同样多的条数，
- * 合并后按创建时间倒序。这样「继续往前翻」在每条流上都不会漏记录。
+ * 各流独立分页。成功才推进该流的偏移，失败保留原位置供重试。
  */
 export async function fetchStudioHistoryPage({
   workspaceId,
-  offset = 0,
+  offsets = FIRST_STUDIO_HISTORY_OFFSETS,
   limit = 12,
   signal,
 }: {
   workspaceId: number
-  offset?: number
+  offsets?: StudioHistoryOffsets
   limit?: number
   signal?: AbortSignal
 }): Promise<StudioHistoryPage> {
   const pages = await Promise.all(
-    STUDIO_OPERATIONS.map(async (operationCode) => {
-      try {
-        const payload = await listAiTasks({ workspaceId, operationCode, limit, offset, signal })
-        return readItems(payload)
-      } catch {
-        // 单条 operation 拉取失败不该让整页历史空掉：其余 operation 的结果照常展示。
-        return [] as StudioHistoryTask[]
-      }
+    STUDIO_OPERATIONS.flatMap((operationCode) => {
+      const offset = offsets[operationCode]
+      if (offset === undefined) return []
+      return [fetchStream(operationCode, offset)]
     }),
   )
 
-  // 任一 operation 还能满页返回，就说明历史没到底。
-  const hasMore = pages.some((items) => items.length >= limit)
+  async function fetchStream(operationCode: StudioOperation, offset: number) {
+    try {
+      const payload = await listAiTasks({ workspaceId, operationCode, limit, offset, signal })
+      const items = readItems(payload)
+      return { operationCode, items, nextOffset: items.length >= limit ? offset + limit : undefined, failed: false }
+    } catch {
+      return { operationCode, items: [], nextOffset: offset, failed: true }
+    }
+  }
+
+  const nextOffsets: StudioHistoryOffsets = {}
+  const failedOperations: StudioOperation[] = []
+  for (const { operationCode, nextOffset, failed } of pages) {
+    if (nextOffset !== undefined) nextOffsets[operationCode] = nextOffset
+    if (failed) failedOperations.push(operationCode)
+  }
   const merged = pages
-    .flat()
+    .flatMap(({ items }) => items)
     .sort((a, b) => (Date.parse(String(b.created_at || '')) || 0) - (Date.parse(String(a.created_at || '')) || 0))
 
-  return { items: merged, hasMore }
+  return { items: merged, nextOffsets, failedOperations }
 }

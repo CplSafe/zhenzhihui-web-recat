@@ -116,7 +116,10 @@ for (const scenario of [
     await page.route('**/api/v1/ai/tasks', async (route) => {
       submissions.push(route.request().postDataJSON())
       // 明确的业务拒绝；503 属于结果不确定的提交，不能用它断言立即恢复重试按钮。
-      await route.fulfill({ status: 400, json: { message: '模拟提交失败，保留输入以便重试' } })
+      await route.fulfill({
+        status: 400,
+        json: { code_string: 'INVALID_MODEL_PARAMS', message: '模拟提交失败，保留输入以便重试' },
+      })
     })
     await page.goto('/canvas/125')
     await expect(page.locator('.react-flow__node[data-id="video"]')).toBeVisible()

@@ -1,7 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/api/studioHistory', () => ({ fetchStudioHistoryPage: vi.fn() }))
+vi.mock('@/api/studioHistory', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/studioHistory')>()),
+  fetchStudioHistoryPage: vi.fn(),
+}))
 
 import { fetchStudioHistoryPage } from '@/api/studioHistory'
 import { useStudioHistory } from '@/composables/useStudioHistory'
@@ -21,7 +24,8 @@ describe('useStudioHistory', () => {
   it('首屏加载最近一页并按旧→新排列', async () => {
     mockedFetch.mockResolvedValue({
       items: [task(2, '2026-08-26T11:00:00Z'), task(1, '2026-08-26T10:00:00Z')],
-      hasMore: false,
+      nextOffsets: {},
+      failedOperations: [],
     })
 
     const { result } = renderHook(() => useStudioHistory(1))
@@ -40,8 +44,12 @@ describe('useStudioHistory', () => {
 
   it('翻页把更早的历史拼到前面并推进 offset', async () => {
     mockedFetch
-      .mockResolvedValueOnce({ items: [task(10, '2026-08-26T12:00:00Z')], hasMore: true })
-      .mockResolvedValueOnce({ items: [task(5, '2026-08-26T09:00:00Z')], hasMore: false })
+      .mockResolvedValueOnce({
+        items: [task(10, '2026-08-26T12:00:00Z')],
+        nextOffsets: { 'video.generate': 12 },
+        failedOperations: [],
+      })
+      .mockResolvedValueOnce({ items: [task(5, '2026-08-26T09:00:00Z')], nextOffsets: {}, failedOperations: [] })
 
     const { result } = renderHook(() => useStudioHistory(1))
     await waitFor(() => expect(result.current.hasMore).toBe(true))
@@ -52,12 +60,12 @@ describe('useStudioHistory', () => {
 
     expect(result.current.batches.map((batch) => batch.id)).toEqual(['task-5', 'task-10'])
     // 第二页必须从第一页之后继续取，否则会把同一页反复拼进来。
-    expect(mockedFetch).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 12 }))
+    expect(mockedFetch).toHaveBeenLastCalledWith(expect.objectContaining({ offsets: { 'video.generate': 12 } }))
     expect(result.current.hasMore).toBe(false)
   })
 
   it('没有更多时不再请求', async () => {
-    mockedFetch.mockResolvedValue({ items: [task(1)], hasMore: false })
+    mockedFetch.mockResolvedValue({ items: [task(1)], nextOffsets: {}, failedOperations: [] })
     const { result } = renderHook(() => useStudioHistory(1))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
@@ -70,8 +78,8 @@ describe('useStudioHistory', () => {
   it('并发触发翻页只发一次请求', async () => {
     // 滚动抖动会连续触发哨兵，重复请求既浪费又会把同一页拼两次。
     mockedFetch
-      .mockResolvedValueOnce({ items: [task(10)], hasMore: true })
-      .mockResolvedValueOnce({ items: [task(5)], hasMore: true })
+      .mockResolvedValueOnce({ items: [task(10)], nextOffsets: { 'video.generate': 12 }, failedOperations: [] })
+      .mockResolvedValueOnce({ items: [task(5)], nextOffsets: { 'video.generate': 12 }, failedOperations: [] })
 
     const { result } = renderHook(() => useStudioHistory(1))
     await waitFor(() => expect(result.current.hasMore).toBe(true))
@@ -87,9 +95,9 @@ describe('useStudioHistory', () => {
     // 回归：若把 inFlightRef 清理写在 IIFE 内部，同步抛错会让 ref 停在一个已 settle
     // 的 promise 上，之后每次 loadMore 都直接返回它，翻页静默失效。
     mockedFetch
-      .mockResolvedValueOnce({ items: [task(10)], hasMore: true })
+      .mockResolvedValueOnce({ items: [task(10)], nextOffsets: { 'video.generate': 12 }, failedOperations: [] })
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce({ items: [task(5)], hasMore: false })
+      .mockResolvedValueOnce({ items: [task(5)], nextOffsets: {}, failedOperations: [] })
 
     const { result } = renderHook(() => useStudioHistory(1))
     await waitFor(() => expect(result.current.hasMore).toBe(true))
@@ -97,15 +105,51 @@ describe('useStudioHistory', () => {
     await act(async () => {
       await result.current.loadMore()
     })
-    // 失败后停止继续翻，但已加载的历史保留。
+    // 失败保留历史和相同 offset，下一次主动重试。
     expect(result.current.batches.map((batch) => batch.id)).toEqual(['task-10'])
     expect(result.current.loadingMore).toBe(false)
+    expect(result.current.historyError).toBe(true)
+    await act(async () => {
+      await result.current.loadMore()
+    })
+    expect(result.current.batches.map((batch) => batch.id)).toEqual(['task-5', 'task-10'])
+    expect(mockedFetch).toHaveBeenLastCalledWith(expect.objectContaining({ offsets: { 'video.generate': 12 } }))
+    expect(result.current.historyError).toBe(false)
+  })
+
+  it('首屏部分失败只重试失败流，后续翻页各用自己的偏移', async () => {
+    mockedFetch
+      .mockResolvedValueOnce({
+        items: [task(10)],
+        nextOffsets: { 'image.image_to_image': 0, 'video.generate': 12 },
+        failedOperations: ['image.image_to_image'],
+      })
+      .mockResolvedValueOnce({
+        items: [task(20, '2026-08-27T12:00:00Z')],
+        nextOffsets: { 'image.image_to_image': 12 },
+        failedOperations: [],
+      })
+      .mockResolvedValueOnce({ items: [task(3)], nextOffsets: {}, failedOperations: [] })
+
+    const { result } = renderHook(() => useStudioHistory(1))
+    await waitFor(() => expect(result.current.historyError).toBe(true))
+    await act(async () => {
+      await result.current.loadMore()
+    })
+    expect(result.current.batches.map((batch) => batch.id)).toEqual(['task-10', 'task-20'])
+    expect(mockedFetch).toHaveBeenLastCalledWith(expect.objectContaining({ offsets: { 'image.image_to_image': 0 } }))
+    await act(async () => {
+      await result.current.loadMore()
+    })
+    expect(mockedFetch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offsets: { 'image.image_to_image': 12, 'video.generate': 12 } }),
+    )
   })
 
   it('切换工作空间后清空并重新加载', async () => {
     mockedFetch
-      .mockResolvedValueOnce({ items: [task(1)], hasMore: false })
-      .mockResolvedValueOnce({ items: [task(99)], hasMore: false })
+      .mockResolvedValueOnce({ items: [task(1)], nextOffsets: {}, failedOperations: [] })
+      .mockResolvedValueOnce({ items: [task(99)], nextOffsets: {}, failedOperations: [] })
 
     const { result, rerender } = renderHook(({ ws }) => useStudioHistory(ws), { initialProps: { ws: 1 } })
     await waitFor(() => expect(result.current.batches.map((b) => b.id)).toEqual(['task-1']))
@@ -119,7 +163,7 @@ describe('useStudioHistory', () => {
     let resolveFirst: (value: any) => void = () => {}
     mockedFetch
       .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
-      .mockResolvedValueOnce({ items: [task(99)], hasMore: false })
+      .mockResolvedValueOnce({ items: [task(99)], nextOffsets: {}, failedOperations: [] })
 
     const { result, rerender } = renderHook(({ ws }) => useStudioHistory(ws), { initialProps: { ws: 1 } })
     rerender({ ws: 2 })
@@ -127,7 +171,7 @@ describe('useStudioHistory', () => {
 
     // 旧空间的请求现在才返回，必须被丢弃。
     await act(async () => {
-      resolveFirst({ items: [task(1)], hasMore: true })
+      resolveFirst({ items: [task(1)], nextOffsets: { 'video.generate': 12 }, failedOperations: [] })
     })
     expect(result.current.batches.map((b) => b.id)).toEqual(['task-99'])
   })
@@ -137,11 +181,12 @@ describe('useStudioHistory', () => {
     const { result } = renderHook(() => useStudioHistory(1))
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.batches).toEqual([])
-    expect(result.current.hasMore).toBe(false)
+    expect(result.current.hasMore).toBe(true)
+    expect(result.current.historyError).toBe(true)
   })
 
   it('setBatches 可供外部追加新生成的批次', async () => {
-    mockedFetch.mockResolvedValue({ items: [task(1)], hasMore: false })
+    mockedFetch.mockResolvedValue({ items: [task(1)], nextOffsets: {}, failedOperations: [] })
     const { result } = renderHook(() => useStudioHistory(1))
     await waitFor(() => expect(result.current.loading).toBe(false))
 

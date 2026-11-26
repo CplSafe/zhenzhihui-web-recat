@@ -155,6 +155,10 @@ function unwrap<T>(payload: unknown): T | null {
   return payload as T | null
 }
 
+function parseCanvasRevision(value: unknown): number {
+  return typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)) ? Number(value) : NaN
+}
+
 /** 校验正整数 ID，非法时抛出统一业务异常（对齐 business.ts requirePositiveInteger）。 */
 function requirePositiveInteger(value: unknown, message: string): number {
   const normalized = Number(value)
@@ -322,12 +326,14 @@ export async function fetchCanvasElements(
     afterRevision = 0,
     cursor = '',
     limit = 500,
+    requireValidSnapshot = false,
   }: {
     workspaceId: number
     canvasId: number
     afterRevision?: number
     cursor?: string
     limit?: number
+    requireValidSnapshot?: boolean
   },
   reader?: CanvasElementsReader,
 ): Promise<CanvasElementsPage> {
@@ -340,27 +346,32 @@ export async function fetchCanvasElements(
   })
   if (cursor) query.set('cursor', String(cursor))
   const path = `/api/v1/canvases/${id}/elements?${query}`
-  const payload = reader ? await reader.read(path, { signal: reader.signal }) : await requestBusinessJson(path)
+  const payload = reader
+    ? await reader.read(path, { signal: reader.signal })
+    : await requestBusinessJson(path, { cache: 'no-store' })
   // 后端实际返回 data.items（对齐 GET 契约）；兼容 data.elements 两种字段名，避免云端元素无法解析
-  const page =
-    unwrap<CanvasElementsPage & { items?: CanvasElementMutation[] }>(payload) ||
-    ({} as CanvasElementsPage & { items?: CanvasElementMutation[] })
-  const rawElements = Array.isArray(page.elements) ? page.elements : Array.isArray(page.items) ? page.items : []
+  const page = unwrap<CanvasElementsPage & { items?: CanvasElementMutation[] }>(payload)
+  const rows = Array.isArray(page?.elements) ? page.elements : page?.items
+  const revision = parseCanvasRevision(page?.sync_revision)
+  if (requireValidSnapshot && (!Array.isArray(rows) || !Number.isSafeInteger(revision) || revision < 0)) {
+    throw new BusinessApiError('云端未返回有效的画布数据，本机草稿仍会保留', { code: 'CANVAS_INVALID_SNAPSHOT' })
+  }
+  const rawElements = Array.isArray(rows) ? rows : []
   return {
     elements: rawElements.map((row: CanvasElementMutation & { deleted?: boolean }) => ({
       ...row,
       op: row.deleted === true || row.op === 'delete' ? 'delete' : 'upsert',
     })),
-    image_model_version_ids: page.image_model_version_ids ?? undefined,
-    image_model_version_id: page.image_model_version_id ?? undefined,
-    video_model_version_ids: page.video_model_version_ids ?? undefined,
-    video_model_version_id: page.video_model_version_id ?? undefined,
-    sync_revision: Number(page.sync_revision) || 0,
-    history_floor_revision: Number(page.history_floor_revision) || 0,
-    state: page.state || undefined,
-    schema_version: page.schema_version,
-    next_cursor: page.next_cursor,
-    has_more: Boolean(page.has_more),
+    image_model_version_ids: page?.image_model_version_ids ?? undefined,
+    image_model_version_id: page?.image_model_version_id ?? undefined,
+    video_model_version_ids: page?.video_model_version_ids ?? undefined,
+    video_model_version_id: page?.video_model_version_id ?? undefined,
+    sync_revision: Number.isSafeInteger(revision) ? revision : 0,
+    history_floor_revision: Number(page?.history_floor_revision) || 0,
+    state: page?.state || undefined,
+    schema_version: page?.schema_version,
+    next_cursor: page?.next_cursor,
+    has_more: Boolean(page?.has_more),
   }
 }
 
@@ -382,12 +393,14 @@ export async function fetchAllCanvasElements(
      */
     limit = 1000,
     maxPages = 200,
+    requireValidSnapshot = false,
   }: {
     workspaceId: number
     canvasId: number
     afterRevision?: number
     limit?: number
     maxPages?: number
+    requireValidSnapshot?: boolean
   },
   reader?: CanvasElementsReader,
 ): Promise<CanvasElementsPage> {
@@ -398,7 +411,10 @@ export async function fetchAllCanvasElements(
   let lastPage: CanvasElementsPage | null = null
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision, cursor, limit }, reader)
+    const page = await fetchCanvasElements(
+      { workspaceId, canvasId, afterRevision, cursor, limit, requireValidSnapshot },
+      reader,
+    )
     firstPage ||= page
     lastPage = page
     elements.push(...page.elements)
@@ -478,9 +494,11 @@ export async function saveCanvasElements({
     }),
   })
   const data = unwrap<{ sync_revision?: number | string; revision?: number | string }>(payload)
-  const value = data?.sync_revision ?? data?.revision
-  const revision = typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)) ? Number(value) : NaN
-  if (!Number.isSafeInteger(revision) || revision <= 0 || revision < Math.floor(baseRev)) {
+  const revision = parseCanvasRevision(data?.sync_revision ?? data?.revision)
+  const submittedRevision = Math.floor(baseRev)
+  // 元素变更需要推进版本。仅保存画布状态时，后端可以沿用元素版本。
+  const minimumRevision = submittedRevision + (normalizedMutations.length > 0 ? 1 : 0)
+  if (!Number.isSafeInteger(revision) || revision <= 0 || revision < minimumRevision) {
     throw new BusinessApiError('云端保存结果待确认，正在重新读取画布', { code: 'CANVAS_SAVE_ACK_UNKNOWN' })
   }
   return { sync_revision: revision }
@@ -497,6 +515,8 @@ export async function saveCanvasElementsBatched({
   mutations,
   state,
   schemaVersion = 1,
+  onBatchStart,
+  onBatchSaved,
 }: {
   workspaceId: number
   canvasId: number
@@ -504,6 +524,8 @@ export async function saveCanvasElementsBatched({
   mutations: CanvasElementMutation[]
   state?: Record<string, unknown>
   schemaVersion?: number
+  onBatchStart?: (mutations: CanvasElementMutation[]) => void
+  onBatchSaved?: (revision: number) => void
 }): Promise<{ sync_revision: number }> {
   let currentRevision = Number(baseRevision) || 0
   const BATCH_LIMIT = 500
@@ -544,6 +566,7 @@ export async function saveCanvasElementsBatched({
   if (batch.length || batchState) batches.push({ mutations: batch, state: batchState })
   // 完成所有大小检查后再提交，避免单个超大元素导致前面的批次先被写入。
   for (const item of batches) {
+    onBatchStart?.(item.mutations)
     const result = await saveCanvasElements({
       workspaceId,
       canvasId,
@@ -553,6 +576,7 @@ export async function saveCanvasElementsBatched({
       schemaVersion,
     })
     currentRevision = result.sync_revision
+    onBatchSaved?.(currentRevision)
   }
   return { sync_revision: currentRevision }
 }

@@ -3,8 +3,9 @@
  * 否则长时间挂后台后切回页面,两条路径并发打出两个 refresh,轮换式刷新令牌会让后到的那个被拒。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { logoutSession, refreshSession } from '@/api/auth'
-import { getAiTask } from '@/api/business'
+import { logoutSession, refreshSession, resetAuthenticatedSession } from '@/api/auth'
+import { AUTH_REQUEST_BOUNDARY_KEY, observeAuthRequestBoundary } from '@/api/authRequestScope'
+import { completeAssetUpload, createAiResponse, getAiTask, removeWorkspaceMember } from '@/api/business'
 import { resetSharedSessionRefreshForTests, runSharedSessionRefresh } from '@/api/sessionRefresh'
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -26,8 +27,10 @@ function deferred<T>() {
 describe('shared session refresh single-flight', () => {
   beforeEach(() => {
     resetSharedSessionRefreshForTests()
+    observeAuthRequestBoundary()
   })
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     resetSharedSessionRefreshForTests()
   })
@@ -111,6 +114,92 @@ describe('shared session refresh single-flight', () => {
     await runSharedSessionRefresh()
     await runSharedSessionRefresh()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('never refreshes or replays an earlier account’s mutation after a late 401', async () => {
+    const oldRequest = deferred<Response>()
+    const fetchMock = vi.fn(async () => oldRequest.promise)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const mutation = removeWorkspaceMember({ workspaceId: 21, userId: 22 })
+    const rejected = expect(mutation).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+    resetAuthenticatedSession()
+    oldRequest.resolve(jsonResponse({ code_string: 'UNAUTHORIZED' }, 401))
+
+    await rejected
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not replay an old mutation before the peer boundary storage event arrives', async () => {
+    const oldRequest = deferred<Response>()
+    const fetchMock = vi.fn(async () => oldRequest.promise)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const mutation = removeWorkspaceMember({ workspaceId: 21, userId: 22 })
+    const rejected = expect(mutation).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+    localStorage.setItem(AUTH_REQUEST_BOUNDARY_KEY, 'account-change:peer')
+    oldRequest.resolve(jsonResponse({ code_string: 'UNAUTHORIZED' }, 401))
+
+    await rejected
+    await expect(removeWorkspaceMember({ workspaceId: 21, userId: 22 })).rejects.toMatchObject({
+      code: 'AUTH_SESSION_CHANGED',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('separates refresh results across authentication boundaries while preserving new replay', async () => {
+    const oldRefresh = deferred<Response>()
+    let oldTaskCalls = 0
+    let newTaskCalls = 0
+    let refreshCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input)
+        if (path === '/api/v1/auth/refresh') {
+          return ++refreshCalls === 1 ? oldRefresh.promise : jsonResponse({ data: { expires_in: 120 } })
+        }
+        if (path === '/api/v1/ai/tasks/77') {
+          oldTaskCalls += 1
+          return jsonResponse({ code_string: 'UNAUTHORIZED' }, 401)
+        }
+        if (path === '/api/v1/ai/tasks/88') {
+          return ++newTaskCalls === 1
+            ? jsonResponse({ code_string: 'UNAUTHORIZED' }, 401)
+            : jsonResponse({ data: { id: 88, status: 'succeeded' } })
+        }
+        throw new Error(`Unexpected request: ${path}`)
+      }),
+    )
+
+    const oldTask = getAiTask({ workspaceId: 21, taskId: 77 })
+    const rejected = expect(oldTask).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+    await vi.waitFor(() => expect(refreshCalls).toBe(1))
+    resetAuthenticatedSession()
+    const newTask = getAiTask({ workspaceId: 21, taskId: 88 })
+    oldRefresh.resolve(jsonResponse({ data: { expires_in: 120 } }))
+
+    await rejected
+    await expect(newTask).resolves.toMatchObject({ id: 88, status: 'succeeded' })
+    expect({ oldTaskCalls, newTaskCalls, refreshCalls }).toEqual({ oldTaskCalls: 1, newTaskCalls: 2, refreshCalls: 2 })
+  })
+
+  it.each([
+    ['upload completion', () => completeAssetUpload({ workspaceId: 21, assetId: 42 })],
+    ['AI response', () => createAiResponse({ workspaceId: 21, modelVersionId: 1, prompt: '测试提示词' })],
+  ] as const)('preserves the authentication scope across a transient-error retry for %s', async (_name, submit) => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => jsonResponse({ message: '暂时不可用' }, 503))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const completion = submit()
+    const rejected = expect(completion).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+    await vi.advanceTimersByTimeAsync(0)
+    resetAuthenticatedSession()
+    await vi.runOnlyPendingTimersAsync()
+
+    await rejected
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('keeps logout between older and newer refreshes when Web Locks are unavailable', async () => {

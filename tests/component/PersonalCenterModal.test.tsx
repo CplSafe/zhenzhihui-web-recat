@@ -38,6 +38,7 @@ vi.mock('@/utils/profileOverrides', () => ({
   saveUserAvatarOverride: mocks.saveAvatarOverride,
 }))
 
+import { AUTH_REQUEST_BOUNDARY_KEY, observeAuthRequestBoundary } from '@/api/authRequestScope'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 
 function deferred<T>() {
@@ -53,6 +54,8 @@ function deferred<T>() {
 describe('PersonalCenterModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.removeItem(AUTH_REQUEST_BOUNDARY_KEY)
+    observeAuthRequestBoundary()
     mocks.state.user = { id: 101, mobile: '17633125265', nickname: 'Alice', avatar: '/broken.png' }
     mocks.state.session = { user: mocks.state.user }
     mocks.updateMyProfile.mockResolvedValue({})
@@ -158,6 +161,54 @@ describe('PersonalCenterModal', () => {
     expect(mocks.setState).not.toHaveBeenCalled()
     expect(mocks.showToast).not.toHaveBeenCalledWith('保存成功', 'success')
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('does not send the old nickname after a peer account change during avatar upload', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<{ avatar_url: string }>()
+    const onClose = vi.fn()
+    mocks.uploadMyAvatar.mockReturnValueOnce(pending.promise)
+    render(<PersonalCenterModal onClose={onClose} />)
+    const nickname = screen.getByRole('textbox', { name: '昵称' })
+    await user.clear(nickname)
+    await user.type(nickname, '旧账号昵称')
+    await user.upload(screen.getByLabelText('上传头像文件'), new File(['image'], 'avatar.png', { type: 'image/png' }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(mocks.uploadMyAvatar).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      window.localStorage.setItem(AUTH_REQUEST_BOUNDARY_KEY, 'account-change:peer')
+      pending.resolve({ avatar_url: '/old-avatar.png' })
+      await pending.promise
+    })
+
+    expect(mocks.updateMyProfile).not.toHaveBeenCalled()
+    expect(mocks.getCurrentUser).not.toHaveBeenCalled()
+    expect(mocks.setState).not.toHaveBeenCalled()
+    expect(mocks.saveAvatarOverride).not.toHaveBeenCalled()
+    expect(mocks.showToast).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled()
+  })
+
+  it('saves the avatar and nickname in the same current session', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    mocks.uploadMyAvatar.mockResolvedValueOnce({ url: '/new.png' })
+    render(<PersonalCenterModal onClose={onClose} />)
+    const nickname = screen.getByRole('textbox', { name: '昵称' })
+    await user.clear(nickname)
+    await user.type(nickname, '新昵称')
+    const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+    await user.upload(screen.getByLabelText('上传头像文件'), avatar)
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const requestScope = mocks.uploadMyAvatar.mock.calls[0][1]
+    expect(requestScope).toEqual({ authScope: expect.any(Number) })
+    expect(mocks.updateMyProfile).toHaveBeenCalledWith({ nickname: '新昵称', name: '新昵称' }, requestScope)
+    expect(mocks.getCurrentUser).toHaveBeenCalledWith(requestScope)
+    expect(mocks.saveAvatarOverride).toHaveBeenCalledWith(mocks.state.user, '/new.png?_profile_v=1')
   })
 
   it('ignores an old user save after the active account changes', async () => {

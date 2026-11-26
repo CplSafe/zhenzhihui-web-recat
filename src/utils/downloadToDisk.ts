@@ -1,19 +1,11 @@
 /**
- * 下载文件到本地,并尽量让用户自选保存位置。全站唯一下载入口
- * (项目管理 / 智能成片 / 爆款复制 / 历史项目 / 模板库 都走这里,取代此前 4 套各异实现)。
- *
- * 四步:
- *  ① 先在用户手势内弹 showSaveFilePicker「另存为」拿文件句柄(必须在任何耗时 await 之前调用,
- *     以保留瞬时激活;用户取消则直接结束)。浏览器不支持(非 Chromium / 非安全上下文)则无句柄。
- *  ② resolveUrl()(可在此刷新签名 URL)。
- *  ③ 尝试 fetch 成 blob 并校验内容(任何源都试:同源 /download 必成,跨域资源域名若放行 CORS 也成):
- *     - 有文件句柄 → 写入句柄;
- *     - 无句柄 → a[download] 触发下载(blob 同源,download 必生效,文件名可控)。
- *  ④ fetch 失败(跨域未放行 CORS / 网络)→ 隐藏 iframe 触发浏览器下载(靠 Content-Disposition,不跳转页面)。
+ * 全站共用的下载入口。验证 URL 和响应后，将 Blob 交给浏览器下载。
+ * 保存位置、重名处理和取消由浏览器管理，应用不创建、覆盖或清理本地文件句柄。
+ * 微信 HTTP 媒体与不允许跨域读取的附件走浏览器导航下载。
  */
 import { assetAttachmentUrl, resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
 
-/** 下载动作的最终结果，用于区分已完成、用户取消与浏览器接管。 */
+/** 保留既有返回类型。浏览器接管下载后返回 started。 */
 export type DownloadResult = 'done' | 'cancelled' | 'started'
 
 /** 下载完成后识别出的真实媒体类型与推荐扩展名。 */
@@ -155,57 +147,33 @@ function openWechatMediaUrl(url: string): void {
 }
 
 /**
- * 安全地把远程资源保存到本地；优先使用文件选择器，失败时降级为浏览器下载。
+ * 安全地把已校验的远程资源交给浏览器下载。
  * URL 会在实际请求前重新解析和校验，避免过期签名及危险协议被直接打开。
  */
 export async function downloadToDisk(opts: {
   /** 建议文件名(含扩展名,如 我的视频_20260624.mp4) */
   fileName: string
-  /** 解析最终可下载 URL(可在此刷新签名 URL);在选好保存位置后才调用 */
+  /** 解析最终可下载 URL，可在此刷新签名 URL */
   resolveUrl: () => Promise<string> | string
-  /** MIME(写入文件句柄时用,默认 video/mp4) */
+  /** 默认保存的 MIME 类型，缺省为 video/mp4 */
   mimeType?: string
   /** 按响应头与文件头保留真实媒体格式；适用于可能返回 PNG/JPEG/WebP 的图片生成接口。 */
   preserveResponseMediaType?: boolean
 }): Promise<DownloadResult> {
   const mime = opts.mimeType || 'video/mp4'
-  const ext = (opts.fileName.split('.').pop() || '').toLowerCase()
   const weChatBrowser = isWeChatBrowser()
 
-  // ① 先弹「另存为」(用户手势内)
-  const picker = (window as { showSaveFilePicker?: any }).showSaveFilePicker
-  let fileHandle: any = null
-  if (typeof picker === 'function' && !weChatBrowser && !opts.preserveResponseMediaType) {
-    try {
-      fileHandle = await picker({
-        suggestedName: opts.fileName,
-        ...(ext ? { types: [{ description: '文件', accept: { [mime]: [`.${ext}`] } }] } : {}),
-      })
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return 'cancelled' // 用户取消
-      fileHandle = null // 不支持/权限失败 → 后续仍可 a[download] / iframe
-    }
+  let resolvedUrl: string
+  try {
+    resolvedUrl = await opts.resolveUrl()
+  } catch (err: any) {
+    if (err?.name === 'AbortError') return 'cancelled'
+    throw err
   }
-
-  // showSaveFilePicker 在用户确认保存位置的那一刻就已经在磁盘上建好了空文件。
-  // 之后任何一条失败路径（内容为空、HTTP 错误、CORS 走 iframe）如果直接返回，
-  // 这个 0 字节文件就会留在用户目录里，看起来像“下载成功但文件是空的”。
-  // 因此所有不写盘的出口都必须先尝试清掉它。
-  const discardEmptyFile = async () => {
-    if (!fileHandle) return
-    try {
-      await fileHandle.remove?.()
-    } catch {
-      // 浏览器不支持 FileSystemHandle.remove()（或权限不足）时无法删除，
-      // 只能交由调用方的错误提示说明这个空文件不可用。
-    }
-  }
-
-  // ② 解析并校验视频数据 URL。必须在 fetch / iframe 之前完成，避免危险协议或
+  // 在 fetch / iframe 之前校验地址，避免危险协议或
   // 协议相对/反斜杠地址被浏览器重新解释成可执行或非预期的外部地址。
-  const safeUrl = resolveSafeDownloadUrl(await opts.resolveUrl(), globalThis.location?.origin || '')
+  const safeUrl = resolveSafeDownloadUrl(resolvedUrl, globalThis.location?.origin || '')
   if (!safeUrl) {
-    await discardEmptyFile()
     const unsafe = new Error('下载地址不安全，已停止下载')
     unsafe.name = 'UnsafeDownloadUrlError'
     throw unsafe
@@ -215,15 +183,12 @@ export async function downloadToDisk(opts: {
   // 微信 WebView 对 blob: + a[download] 的支持不稳定，可能创建空文件或在异步读取前丢失 Blob。
   // HTTP(S) 资源直接交给微信/后端响应处理：支持附件下载的环境会下载，其余环境会打开原图/视频供长按保存。
   if (weChatBrowser && safeUrl.kind === 'http') {
-    await discardEmptyFile()
     openWechatMediaUrl(url)
     return 'started'
   }
 
-  // ③ 尝试 fetch + 内容校验(任何源都试一次)
   let blob: Blob | null = null
   let resolvedFileName = opts.fileName
-  let useIframeFallback = false
   try {
     // 内容校验:视频流不应是 0 字节(资源尚未写完),也不应是 JSON/HTML/纯文本(被包成 200 的错误体)。
     // 「刚生成还没落库」是时序竞态 → 命中空内容时自动等待重试几次,多数能自愈,避免存出空 mp4。
@@ -250,51 +215,38 @@ export async function downloadToDisk(opts: {
       throw empty
     }
   } catch (err: any) {
-    if (err?.name === 'AbortError') {
-      await discardEmptyFile()
-      return 'cancelled'
-    }
+    if (err?.name === 'AbortError') return 'cancelled'
     if (err?.name === 'EmptyContentError') {
-      // 空内容:别静默回退到 iframe(同样是空),交给调用方提示
-      await discardEmptyFile()
+      // 空内容交给调用方提示。
       throw err
     }
     const isNetworkTypeError = err instanceof TypeError || err?.name === 'TypeError'
     // 同源地址不存在 CORS 兜底价值；blob:、HTTP 错误及其他真实失败也绝不进入 iframe。
     // 只有跨域 http(s) 的网络 TypeError 才可能是“资源可下载但 fetch 被 CORS 拦截”。
     if (!safeUrl.isCrossOrigin || safeUrl.kind !== 'http' || !isNetworkTypeError) {
-      await discardEmptyFile()
       const failure = new Error('视频下载失败，请稍后重试')
       failure.name = 'DownloadFetchError'
       throw failure
     }
-    useIframeFallback = true
   }
 
-  if (!useIframeFallback && blob) {
-    // 写盘与 fetch 分开处理：文件系统写入或 a.click() 失败不能被误判成 CORS 再走 iframe。
-    if (fileHandle) {
-      const writable = await fileHandle.createWritable()
-      await writable.write(blob)
-      await writable.close()
-      return 'done'
-    }
+  if (blob) {
     const objUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = objUrl
     a.download = resolvedFileName
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    // 微信 HTTP 下载不会走 Blob；其余浏览器仍留足时间让下载器异步读取大文件。
-    setTimeout(() => URL.revokeObjectURL(objUrl), 60_000)
-    return 'done'
+    try {
+      document.body.appendChild(a)
+      a.click()
+    } finally {
+      a.remove()
+      // 留足时间让下载器异步读取文件。
+      setTimeout(() => URL.revokeObjectURL(objUrl), 60_000)
+    }
+    return 'started'
   }
 
-  // ④ 隐藏 iframe 触发下载(跨域未放行 CORS 的 CDN 走这条路,不跳转页面)
-  // 走到这里说明拿不到 blob，选好的文件句柄永远不会被写入，必须先清掉那个空文件，
-  // 否则浏览器另存一份的同时，用户选定位置还躺着一个 0 字节的同名文件。
-  await discardEmptyFile()
+  // 跨域 CDN 不允许读取资源时，用 iframe 触发附件下载，当前页面保持打开。
   const iframe = document.createElement('iframe')
   iframe.style.display = 'none'
   iframe.tabIndex = -1

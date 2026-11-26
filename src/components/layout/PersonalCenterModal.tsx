@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { updateMyProfile, getCurrentUser, uploadMyAvatar } from '@/api/auth'
+import { getAuthRequestScope, isAuthRequestScopeCurrent } from '@/api/authRequestScope'
 import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { applyUserProfileOverrides, bustUserAvatarCache, saveUserAvatarOverride } from '@/utils/profileOverrides'
@@ -139,8 +140,15 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       onClose()
       return
     }
+    const authScope = getAuthRequestScope()
+    if (!isAuthRequestScopeCurrent(authScope)) return
     const requestId = ++saveRequestRef.current
     const requestScope = userScopeRef.current
+    const isCurrentSave = () =>
+      aliveRef.current &&
+      requestId === saveRequestRef.current &&
+      requestScope === userScopeRef.current &&
+      isAuthRequestScopeCurrent(authScope)
     savingRef.current = true
     setSaving(true)
     try {
@@ -170,8 +178,8 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       }
 
       if (avatarFile) {
-        const uploaded: any = await uploadMyAvatar(avatarFile)
-        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
+        const uploaded: any = await uploadMyAvatar(avatarFile, { authScope })
+        if (!isCurrentSave()) return
         nextAvatarUrl = bustUserAvatarCache(
           String(uploaded?.avatar_url || uploaded?.avatarUrl || uploaded?.avatar || uploaded?.url || avatarData || ''),
         )
@@ -182,8 +190,8 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
         payload.name = next
       }
       if (Object.keys(payload).length) {
-        await updateMyProfile(payload)
-        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
+        await updateMyProfile(payload, { authScope })
+        if (!isCurrentSave()) return
       }
       if (nextAvatarUrl) {
         saveUserAvatarOverride(user, nextAvatarUrl)
@@ -194,18 +202,18 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
 
       // 再刷新服务端资料以补齐其他字段；刚提交的昵称和头像始终拥有最高优先级。
       try {
-        const me = await getCurrentUser()
-        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
+        const me = await getCurrentUser({ authScope })
+        if (!isCurrentSave()) return
         syncCommittedUser(me)
       } catch {
-        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
+        if (!isCurrentSave()) return
         // 即时会话已在上方提交；资料查询失败不影响本次昵称和头像更新。
       }
-      if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
+      if (!isCurrentSave()) return
       showToast('保存成功', 'success')
       onClose()
     } catch (error: any) {
-      if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
+      if (!isCurrentSave()) return
       const msg = String(error?.message || '保存失败')
       const duplicated =
         Number(error?.status) === 409 ||

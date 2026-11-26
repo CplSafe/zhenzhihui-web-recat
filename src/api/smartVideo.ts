@@ -4,7 +4,14 @@
  * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, getAiTaskId, resolveTaskModel, estimateAiTaskCost } from './business'
+import {
+  createAiTask,
+  waitForAiTask,
+  getAiTaskId,
+  resolveTaskModel,
+  estimateAiTaskCost,
+  type AiTaskSubmission,
+} from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import {
   findModelParamField,
@@ -18,6 +25,11 @@ import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/uti
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
+import {
+  assertTaskMediaRequestScope,
+  captureTaskMediaRequestScope,
+  type TaskMediaRequestScope,
+} from '@/utils/taskMediaRequestScope'
 import { readAiTaskProgress } from '@/utils/taskProgress'
 import { requireReferenceImageAssetIds } from '@/utils/smartGenerationGuards'
 import {
@@ -768,6 +780,9 @@ export async function generateFullVideo(args: {
   modelVersion?: any
   modelPlanCandidates?: string[]
   idempotencyKey?: string
+  /** 在发送前记录实际请求；回调失败时不发送生成请求。 */
+  onSubmit?: (submission: AiTaskSubmission) => void
+  signal?: AbortSignal
   /**
    * 真人成片的出镜身份约束正文（见 utils/smartRealPerson）。
    * 整片由分镜图驱动，身份主要靠参考帧继承，但运动生成过程仍可能漂；这里把约束显式写进提示词。
@@ -802,6 +817,7 @@ export async function generateFullVideo(args: {
   durationSec?: number
   prompt?: string
 }): Promise<{ url: string; assetId: number }> {
+  const scope = captureTaskMediaRequestScope(args.signal)
   const explicitPrompt = String(args.prompt || '').trim()
   const prompt = explicitPrompt
     ? withNoOnscreenTextGuard(explicitPrompt)
@@ -819,6 +835,7 @@ export async function generateFullVideo(args: {
   // 已显式选择时使用页面传入模型；旧调用未选择时仍自动解析 Seedance，保持原生成链路兼容。
   // 两种路径都会让 createAiTask 走“显式模型”分支，不会在失败后静默切换模型。
   const model = await resolveFullVideoModel(args)
+  assertTaskMediaRequestScope(scope)
   // 用户上传的素材整体作为参考图下发（不再逐镜一张图）。允许张数由所选模型声明，
   // 超出直接拦下——静默截断会把用户挑的素材悄悄丢掉，比报错更难发现。
   const imgIds = requireReferenceImageAssetIds(
@@ -852,6 +869,8 @@ export async function generateFullVideo(args: {
     prompt,
     inputAssets,
     idempotencyKey: args.idempotencyKey,
+    onSubmit: args.onSubmit,
+    ...(args.signal ? { signal: args.signal } : {}),
     params: request.params,
   })
   // 任务一创建就把 task_id 抛给上层持久化(中途切路由/刷新后可凭它续轮询,而非重新生成)
@@ -863,12 +882,13 @@ export async function generateFullVideo(args: {
     task,
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
+    ...(args.signal ? { signal: args.signal } : {}),
     onPoll: (currentTask: any) => {
       const progress = readAiTaskProgress(currentTask)
       if (progress !== undefined) args.onProgress?.(progress)
     },
   })
-  return resolveVideoTaskResult(args.workspaceId, completed, getAiTaskId(completed) || taskId)
+  return resolveVideoTaskResult(args.workspaceId, completed, getAiTaskId(completed) || taskId, undefined, scope)
 }
 
 /** 将已完成任务解析为视频资产；入库尚未完成时抛出可续试的待就绪错误。 */
@@ -877,11 +897,16 @@ async function resolveVideoTaskResult(
   completed: any,
   fallbackTaskId: any,
   pendingMessage = '视频任务已完成，视频仍在入库，请稍后自动重试',
+  scope?: TaskMediaRequestScope,
 ): Promise<{ url: string; assetId: number }> {
   try {
-    const { url, assetId } = await resolveTaskVideoResult(workspaceId, completed, fallbackTaskId)
+    const { url, assetId } = scope
+      ? await resolveTaskVideoResult(workspaceId, completed, fallbackTaskId, scope)
+      : await resolveTaskVideoResult(workspaceId, completed, fallbackTaskId)
+    assertTaskMediaRequestScope(scope)
     if (url) return { url, assetId }
   } catch (cause) {
+    assertTaskMediaRequestScope(scope)
     const error: any = new Error(pendingMessage)
     error.code = 'TASK_MEDIA_PENDING'
     error.smartVideoTaskId = Number(fallbackTaskId || 0) || 0
@@ -901,8 +926,10 @@ async function resolveVideoTaskResult(
 export async function resumeFullVideo(args: {
   workspaceId: number
   taskId: number
+  signal?: AbortSignal
   onProgress?: (progress: number) => void
 }): Promise<{ url: string; assetId: number }> {
+  const scope = captureTaskMediaRequestScope(args.signal)
   const taskId = getAiTaskId({ id: args.taskId })
   if (!taskId) throw new Error('视频生成任务 ID 无效')
   const completed = await waitForAiTask({
@@ -910,12 +937,13 @@ export async function resumeFullVideo(args: {
     task: { id: taskId },
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
+    signal: args.signal,
     onPoll: (currentTask: any) => {
       const progress = readAiTaskProgress(currentTask)
       if (progress !== undefined) args.onProgress?.(progress)
     },
   })
-  return resolveVideoTaskResult(args.workspaceId, completed, taskId)
+  return resolveVideoTaskResult(args.workspaceId, completed, taskId, undefined, scope)
 }
 
 /**

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { invalidateAuthRequestScope } from '@/api/authRequestScope'
+import { captureTaskMediaRequestScope } from '@/utils/taskMediaRequestScope'
 
 const mocks = vi.hoisted(() => ({
   listAssets: vi.fn(),
@@ -28,6 +30,49 @@ import {
   resolveVerifiedResultAssetId,
   resolveVerifiedResultAssetIds,
 } from '@/utils/taskMedia'
+
+describe('task result request scope', () => {
+  beforeEach(() => {
+    mocks.listAssets.mockReset()
+    mocks.getAssetDownloadUrl.mockReset()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  it('aborts the media lookup during backoff with no further asset requests', async () => {
+    const controller = new AbortController()
+    mocks.listAssets.mockResolvedValue({ items: [], total: 0 })
+    const result = resolveTaskVideoResult(
+      21,
+      { id: 3208, status: 'succeeded' },
+      3208,
+      captureTaskMediaRequestScope(controller.signal),
+    )
+    const rejected = expect(result).rejects.toMatchObject({ cause: 'aborted' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.listAssets).toHaveBeenCalledOnce()
+    expect(mocks.listAssets).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 21, signal: controller.signal }),
+    )
+    controller.abort()
+    await rejected
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(mocks.listAssets).toHaveBeenCalledOnce()
+  })
+
+  it('does not continue asset pagination or obtain a media URL after credentials change', async () => {
+    mocks.listAssets.mockImplementation(async () => {
+      invalidateAuthRequestScope()
+      return { items: [{ id: 701, task_id: 3208 }], total: 1 }
+    })
+    await expect(
+      resolveTaskVideoResult(21, { id: 3208, status: 'succeeded' }, 3208, captureTaskMediaRequestScope()),
+    ).rejects.toMatchObject({ cause: 'aborted' })
+    expect(mocks.listAssets).toHaveBeenCalledOnce()
+    expect(mocks.getAssetDownloadUrl).not.toHaveBeenCalled()
+  })
+})
 
 describe('verified result asset selection', () => {
   beforeEach(() => {

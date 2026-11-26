@@ -411,15 +411,6 @@ test.describe('已认证关键路由与读取链路', () => {
             body: JSON.stringify({ output_text: '夏日饮品海报' }),
           })
         })
-        // 强制走 fetch + blob + a[download] 的浏览器下载链路，
-        // 避免 Chromium 的 File System Access API 在无头测试中弹出不可控的文件选择器。
-        await page.addInitScript(() => {
-          Object.defineProperty(window, 'showSaveFilePicker', {
-            configurable: true,
-            value: undefined,
-          })
-        })
-
         await page.goto('/smart')
         await page.getByRole('tab', { name: '制作图片' }).click()
         const entryModelTrigger = page.getByRole('button', { name: /^生成模型，/ })

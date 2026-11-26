@@ -47,13 +47,29 @@ describe('buildDownloadName', () => {
 type WindowWithPicker = Window & { showSaveFilePicker?: unknown }
 
 describe('downloadToDisk URL 防护', () => {
+  const originalFile = '需要保留的已有文件'
+  let existingFile: string | undefined
+  const picker = vi.fn(() => {
+    existingFile = ''
+    return Promise.resolve({
+      remove: () => {
+        existingFile = undefined
+      },
+    })
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
-    delete (window as WindowWithPicker).showSaveFilePicker
+    existingFile = originalFile
+    picker.mockClear()
+    ;(window as WindowWithPicker).showSaveFilePicker = picker
     document.body.innerHTML = ''
   })
 
   afterEach(() => {
+    expect(picker).not.toHaveBeenCalled()
+    expect(existingFile).toBe(originalFile)
+    delete (window as WindowWithPicker).showSaveFilePicker
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
     vi.unstubAllGlobals()
@@ -151,7 +167,7 @@ describe('downloadToDisk URL 防护', () => {
         preserveResponseMediaType: true,
         resolveUrl: () => '/api/v1/assets/42/download?workspace_id=21',
       }),
-    ).resolves.toBe('done')
+    ).resolves.toBe('started')
 
     expect(downloadedName).toBe('生成图片.jpg')
     expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/jpeg' }))
@@ -233,14 +249,7 @@ describe('downloadToDisk URL 防护', () => {
     expect(document.querySelector('iframe')).toBeNull()
   })
 
-  it('正常同源视频仍可写入用户选择的文件', async () => {
-    const writable = {
-      write: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    }
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockResolvedValue({
-      createWritable: vi.fn().mockResolvedValue(writable),
-    })
+  it('确认同源视频内容后交给浏览器下载，保持附件参数和建议文件名', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3]), {
         status: 200,
@@ -248,24 +257,24 @@ describe('downloadToDisk URL 防护', () => {
       }),
     )
     vi.stubGlobal('fetch', fetchMock)
+    let downloadedName = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      downloadedName = this.download
+    })
 
     await expect(
       downloadToDisk({
         fileName: '测试视频.mp4',
         resolveUrl: () => '/api/v1/assets/42/download',
       }),
-    ).resolves.toBe('done')
+    ).resolves.toBe('started')
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/assets/42/download?attachment=1', { cache: 'no-store' })
-    expect(writable.write).toHaveBeenCalledWith(expect.any(Blob))
-    expect(writable.close).toHaveBeenCalledOnce()
+    expect(downloadedName).toBe('测试视频.mp4')
     expect(document.querySelector('iframe')).toBeNull()
   })
 
-  it('内容为空时删除另存为已建好的空文件，而不是把 0 字节文件留在磁盘上', async () => {
-    const remove = vi.fn().mockResolvedValue(undefined)
-    const createWritable = vi.fn()
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockResolvedValue({ createWritable, remove })
+  it('内容为空时不会打开文件选择器或发起下载', async () => {
     // 后端已返回 200 但资源尚未写完：三次重试都是 0 字节（每次给新的 Response，body 只能读一次）。
     vi.stubGlobal(
       'fetch',
@@ -280,65 +289,20 @@ describe('downloadToDisk URL 防护', () => {
     await vi.advanceTimersByTimeAsync(4_000)
     await settled
 
-    // 关键：另存为在用户确认时就建好了空文件，失败路径必须清掉它。
-    expect(remove).toHaveBeenCalledOnce()
-    expect(createWritable).not.toHaveBeenCalled()
+    expect(document.body.children).toHaveLength(0)
   })
 
-  it('同源请求失败时同样清掉另存为建好的空文件', async () => {
-    const remove = vi.fn().mockResolvedValue(undefined)
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockResolvedValue({
-      createWritable: vi.fn(),
-      remove,
-    })
+  it('同源请求返回错误时不会打开文件选择器或发起下载', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })))
 
     await expect(
       downloadToDisk({ fileName: '测试视频.mp4', resolveUrl: () => '/api/v1/assets/42/download' }),
     ).rejects.toThrow('视频下载失败')
 
-    expect(remove).toHaveBeenCalledOnce()
+    expect(document.body.children).toHaveLength(0)
   })
 
-  it('跨域改走 iframe 时先清掉永远不会被写入的空文件', async () => {
-    const remove = vi.fn().mockResolvedValue(undefined)
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockResolvedValue({
-      createWritable: vi.fn(),
-      remove,
-    })
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-
-    await expect(
-      downloadToDisk({ fileName: '测试视频.mp4', resolveUrl: () => 'https://cdn.example.com/video.mp4' }),
-    ).resolves.toBe('started')
-
-    expect(remove).toHaveBeenCalledOnce()
-    expect(document.querySelector('iframe')).not.toBeNull()
-  })
-
-  it('浏览器不支持删除文件句柄时也不会让下载报错中断', async () => {
-    // 老版本 Chromium 没有 FileSystemHandle.remove()：清理失败只能放弃，但不能掩盖原始错误。
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockResolvedValue({ createWritable: vi.fn() })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockImplementation(() => Promise.resolve(new Response(new Uint8Array([]), { status: 200 }))),
-    )
-
-    const settled = expect(
-      downloadToDisk({ fileName: '测试视频.mp4', resolveUrl: () => '/api/v1/assets/42/download' }),
-    ).rejects.toThrow('视频内容为空或尚未就绪')
-    await vi.advanceTimersByTimeAsync(4_000)
-    await settled
-  })
-
-  it('文件句柄写入失败时不会改走 iframe', async () => {
-    const writable = {
-      write: vi.fn().mockRejectedValue(new Error('Disk full')),
-      close: vi.fn(),
-    }
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockResolvedValue({
-      createWritable: vi.fn().mockResolvedValue(writable),
-    })
+  it('触发下载失败后释放 Blob 和链接，不改走 iframe', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -348,27 +312,39 @@ describe('downloadToDisk URL 防护', () => {
         }),
       ),
     )
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: () => 'blob:video' })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {
+      throw new Error('Download blocked')
+    })
 
     await expect(
       downloadToDisk({
         fileName: '测试视频.mp4',
         resolveUrl: () => 'https://cdn.example.com/video.mp4',
       }),
-    ).rejects.toThrow('Disk full')
+    ).rejects.toThrow('Download blocked')
 
-    expect(document.querySelector('iframe')).toBeNull()
+    expect(document.body.children).toHaveLength(0)
+    vi.advanceTimersByTime(60_000)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:video')
   })
 
-  it('用户取消文件选择时不会解析或请求下载地址', async () => {
-    const resolveUrl = vi.fn(() => '/api/download')
-    const pickerError = new Error('Cancelled')
-    pickerError.name = 'AbortError'
-    ;(window as WindowWithPicker).showSaveFilePicker = vi.fn().mockRejectedValue(pickerError)
+  it('地址解析被取消时不请求下载', async () => {
+    const resolveUrl = vi.fn().mockRejectedValue(new DOMException('Cancelled', 'AbortError'))
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(downloadToDisk({ fileName: '测试视频.mp4', resolveUrl })).resolves.toBe('cancelled')
-    expect(resolveUrl).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('下载请求被取消时不显示错误或触发兜底下载', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('Cancelled', 'AbortError')))
+    await expect(
+      downloadToDisk({ fileName: '测试视频.mp4', resolveUrl: () => 'https://cdn.example.com/video.mp4' }),
+    ).resolves.toBe('cancelled')
+    expect(document.body.children).toHaveLength(0)
   })
 })

@@ -9,12 +9,13 @@ import { useUiStore } from '@/stores/ui'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { getBusinessErrorMessage } from '@/api/business'
+import { getAuthRequestScope, isAuthRequestScopeCurrent } from '@/api/authRequestScope'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
 
 /**
  * 连接全局弹窗状态、加入团队接口与安全空间切换；用提交 epoch 防止关闭后旧响应回写新弹窗。
  */
-export default function GlobalJoinTeamDialog() {
+export default function GlobalJoinTeamDialog({ userScope }: { userScope: string }) {
   const open = useUiStore((s) => s.joinTeamOpen)
   const close = useUiStore((s) => s.closeJoinTeam)
   const workspaceSwitchLocked = useUiStore((s) => s.workspaceSwitchLocked)
@@ -35,16 +36,18 @@ export default function GlobalJoinTeamDialog() {
 
   const handleSubmit = async ({ inviteCode }: { inviteCode: string }) => {
     const code = String(inviteCode || '').trim()
-    if (!code || loading) return
+    if (!code || loading || !userScope) return
     if (workspaceSwitchLocked) {
       showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'info')
       return
     }
     const submissionEpoch = ++submissionEpochRef.current
-    const isCurrentSubmission = () => openRef.current && submissionEpochRef.current === submissionEpoch
+    const authScope = getAuthRequestScope()
+    const isCurrentDialog = () => openRef.current && submissionEpochRef.current === submissionEpoch
+    const isCurrentSubmission = () => isCurrentDialog() && isAuthRequestScopeCurrent(authScope)
     setLoading(true)
     try {
-      const transition = await joinTeam(code)
+      const transition = await joinTeam(code, userScope)
       if (!isCurrentSubmission()) return
       if (transition.workspaceId) {
         const switched = switchWorkspaceSafely(transition.workspaceId, {
@@ -60,7 +63,7 @@ export default function GlobalJoinTeamDialog() {
         showToast(getBusinessErrorMessage(e, '加入失败,请确认邀请码是否正确/有效'), 'error')
       }
     } finally {
-      if (isCurrentSubmission()) setLoading(false)
+      if (isCurrentDialog()) setLoading(false)
     }
   }
 

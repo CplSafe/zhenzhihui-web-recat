@@ -646,6 +646,7 @@ interface CanvasNodePanelProps {
   onCreateVideoFromText?: (prompt: string) => void
   /** 图片/视频节点输入框内容变更：由页面写回节点并持久化，切换节点/刷新后可回显。 */
   onPromptChange?: (prompt: string) => void
+  registerPromptWriteBack?: (controls: { hasPending: () => boolean; flush: () => void }) => () => void
   /**
    * 生成参数变更：同样由页面写回节点并持久化。
    * 不持久化的话，调好的分辨率/时长刷新即退回模型默认值，而提示词却留着——
@@ -846,6 +847,7 @@ export default function CanvasNodePanel({
   onSaveText,
   onCreateVideoFromText,
   onPromptChange,
+  registerPromptWriteBack,
   onParamsChange,
   inheritedTexts,
   onAdoptInheritedText,
@@ -1002,6 +1004,16 @@ export default function CanvasNodePanel({
     pendingWriteBackRef.current = null
     pending?.write?.(pending.text)
   }, [])
+  useLayoutEffect(() => {
+    const unregister = registerPromptWriteBack?.({
+      hasPending: () => pendingWriteBackRef.current !== null,
+      flush: flushPromptWriteBack,
+    })
+    return () => {
+      flushPromptWriteBack()
+      unregister?.()
+    }
+  }, [registerPromptWriteBack, flushPromptWriteBack])
   const schedulePromptWriteBack = useCallback(
     (next: string, write?: (text: string) => void) => {
       pendingWriteBackRef.current = { text: next, write }
@@ -2338,6 +2350,7 @@ export default function CanvasNodePanel({
           }
         }}
         onBlur={() => {
+          flushPromptWriteBack()
           setPromptFocused(false)
           closeAtPicker()
         }}

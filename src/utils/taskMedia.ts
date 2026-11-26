@@ -3,6 +3,7 @@
  * 分页扫描带重复页保护和页数上限，避免后端忽略 offset 时形成无限请求。
  */
 import { extractAssetPage, extractTaskMediaUrls, getAssetDownloadUrl, listAssets } from '../api/business'
+import { assertTaskMediaRequestScope, type TaskMediaRequestScope } from './taskMediaRequestScope'
 
 /** 反查任务素材时的单页大小。 */
 const TASK_ASSET_PAGE_SIZE = 100
@@ -12,8 +13,20 @@ const TASK_ASSET_MAX_PAGES = 20
 const TASK_ASSET_RETRY_DELAYS_MS = [0, 400, 900, 1800, 3000, 3000] as const
 
 /** 按需等待指定毫秒数。 */
-const wait = (delayMs: number): Promise<void> =>
-  delayMs > 0 ? new Promise((resolve) => window.setTimeout(resolve, delayMs)) : Promise.resolve()
+function wait(delayMs: number, scope?: TaskMediaRequestScope): Promise<void> {
+  assertTaskMediaRequestScope(scope)
+  if (delayMs <= 0) return Promise.resolve()
+  const signal = scope?.signal
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, delayMs)
+    signal?.addEventListener('abort', finish, { once: true })
+  })
+}
 
 /** 严格比较两个有效的任务 ID。 */
 const sameTaskId = (left: unknown, right: unknown): boolean => {
@@ -104,12 +117,14 @@ async function findAssetsByTaskId({
   type,
   maxPages = TASK_ASSET_MAX_PAGES,
   collectAll = false,
+  scope,
 }: {
   workspaceId: number
   taskId: unknown
   type: 'video' | 'image' | 'audio' | ''
   maxPages?: number
   collectAll?: boolean
+  scope?: TaskMediaRequestScope
 }): Promise<any[]> {
   const wsId = Math.floor(Number(workspaceId) || 0)
   const normalizedTaskId = Number(taskId || 0)
@@ -119,12 +134,15 @@ async function findAssetsByTaskId({
   let offset = 0
   const seenPageSignatures = new Set<string>()
   for (let pageIndex = 0; pageIndex < Math.max(1, maxPages); pageIndex += 1) {
+    assertTaskMediaRequestScope(scope)
     const payload = await listAssets({
       workspaceId: wsId,
       type,
       limit: TASK_ASSET_PAGE_SIZE,
       offset,
+      ...(scope?.signal ? { signal: scope.signal } : {}),
     })
+    assertTaskMediaRequestScope(scope)
     const page = extractAssetPage(payload)
     const items = Array.isArray(page.items) ? page.items : []
     const matches = items.filter((asset: any) =>
@@ -164,16 +182,20 @@ async function findAssetsByTaskId({
 
 // 解析已完成任务的可播放地址：优先 output.asset_id，其次按 task.id 反查素材，最后使用供应商临时直链。
 // type 会传给素材列表作为兜底筛选条件。
-export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
+export async function resolveGeneratedMediaUrls({ workspaceId, task, type, scope = undefined }) {
+  assertTaskMediaRequestScope(scope)
   const wsId = Number(workspaceId || 0)
   const uniqueAssetIds = extractResultAssetIds(task)
   const urls = []
 
   for (const assetId of uniqueAssetIds) {
     try {
+      assertTaskMediaRequestScope(scope)
       const url = await getAssetDownloadUrl({ workspaceId: wsId, assetId })
+      assertTaskMediaRequestScope(scope)
       if (url) urls.push(url)
     } catch {
+      assertTaskMediaRequestScope(scope)
       // Ignore a single signed-url miss; task_id fallback below can still find generated assets.
     }
   }
@@ -184,12 +206,15 @@ export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
 
   if (task?.id && wsId) {
     try {
-      const taskAssets = await findAssetsByTaskId({ workspaceId: wsId, taskId: task.id, type: type || '' })
+      const taskAssets = await findAssetsByTaskId({ workspaceId: wsId, taskId: task.id, type: type || '', scope })
       for (const asset of taskAssets) {
+        assertTaskMediaRequestScope(scope)
         const url = await getAssetDownloadUrl({ workspaceId: wsId, assetId: asset.id })
+        assertTaskMediaRequestScope(scope)
         if (url) urls.push(url)
       }
     } catch {
+      assertTaskMediaRequestScope(scope)
       // 资产列表短暂不可用时仍允许使用任务直链完成当前页面预览。
     }
   }
@@ -389,8 +414,9 @@ export async function findAssetIdByTaskId(
   workspaceId: number,
   taskId: any,
   type: 'video' | 'image' | 'audio' = 'video',
+  scope?: TaskMediaRequestScope,
 ): Promise<number> {
-  return (await findAssetIdsByTaskId(workspaceId, taskId, type))[0] || 0
+  return (await findAssetIdsByTaskId(workspaceId, taskId, type, scope))[0] || 0
 }
 
 /** 同上，返回该任务名下的全部素材 ID（一次出多张图时 outputs 常不带 asset_id，只能按 task_id 反查）。 */
@@ -398,11 +424,13 @@ export async function findAssetIdsByTaskId(
   workspaceId: number,
   taskId: any,
   type: 'video' | 'image' | 'audio' = 'video',
+  scope?: TaskMediaRequestScope,
 ): Promise<number[]> {
   const tId = Number(taskId || 0)
   if (!workspaceId || !tId) return []
   for (const [attempt, delayMs] of TASK_ASSET_RETRY_DELAYS_MS.entries()) {
-    await wait(delayMs)
+    await wait(delayMs, scope)
+    assertTaskMediaRequestScope(scope)
     try {
       // 第一次完整翻页，兼顾恢复较旧任务；后续属于“刚完成但资产尚未落库”的短重试，
       // 新资产通常位于列表头部，只查前两页可避免最坏情况下反复发出上百个请求。
@@ -411,10 +439,12 @@ export async function findAssetIdsByTaskId(
         taskId: tId,
         type,
         maxPages: attempt === 0 ? TASK_ASSET_MAX_PAGES : 2,
+        scope,
       })
       const ids = [...new Set(hits.map((hit: any) => Number(hit?.id || 0)).filter((id) => id > 0))]
       if (ids.length) return ids
     } catch {
+      assertTaskMediaRequestScope(scope)
       // 任务已成功但资产落库/列表查询可能短暂失败，继续有限次数重试。
     }
   }
@@ -429,11 +459,15 @@ export async function resolveTaskVideoResult(
   workspaceId: number,
   completed: any,
   fallbackTaskId: any,
+  scope?: TaskMediaRequestScope,
 ): Promise<{ url: string; assetId: number }> {
+  assertTaskMediaRequestScope(scope)
   let assetId = extractVideoOutputAssetId(completed)
-  if (!assetId) assetId = await findAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId, 'video')
+  if (!assetId) assetId = await findAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId, 'video', scope)
+  assertTaskMediaRequestScope(scope)
   // 已经反查到稳定资产时直接取我方存储地址，避免 resolveGeneratedMediaUrls 再扫描一遍素材列表。
   let url = assetId ? await getAssetDownloadUrl({ workspaceId, assetId }).catch(() => '') : ''
+  assertTaskMediaRequestScope(scope)
   if (!url && !assetId) [url] = extractTaskMediaUrls(completed)
   return { url: url || '', assetId }
 }

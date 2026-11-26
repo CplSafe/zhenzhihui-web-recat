@@ -738,7 +738,12 @@ describe('resumeShotImageGeneration', () => {
       assetId: 93,
     })
 
-    expect(mocks.findAssetIdByTaskId).toHaveBeenCalledWith(11, 83, 'image')
+    expect(mocks.findAssetIdByTaskId).toHaveBeenCalledWith(
+      11,
+      83,
+      'image',
+      expect.objectContaining({ authScope: expect.any(Number) }),
+    )
     expect(mocks.createAiTask).not.toHaveBeenCalled()
   })
 

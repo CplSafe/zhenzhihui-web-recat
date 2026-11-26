@@ -173,11 +173,13 @@ import { formatExactVideoDurationLabel, formatVideoTimeLabel } from '@/utils/vid
 import {
   saveCanvasDraft,
   loadCanvasDraft,
+  readCanvasConfirmedRevision,
   loadPendingCanvasDrafts,
   clearRecoveredCanvasDrafts,
   createCanvasDraftWriterId,
   hasOwnPendingCanvasDraft,
   mergePendingCanvasDrafts,
+  reconcileCanvasSaveAttempt,
   type PendingCanvasDraft,
   saveCanvasScriptCreationHandled,
   clearCanvasScriptCreationPending,
@@ -202,6 +204,7 @@ import {
   isPermanentCanvasSaveError,
   saveCanvasElementsBatched,
   subscribeCanvasEvents,
+  type CanvasElementMutation,
 } from '@/api/canvasApi'
 import {
   cancelAiTask,
@@ -2769,6 +2772,7 @@ function CanvasInner({
     [currentUserId, workspaceId, draftWriterId],
   )
   const canvasBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const cloudLoadedRef = useRef(false)
   const [subjectEditTarget, setSubjectEditTarget] = useState<{
     canvasBinding: string
     source: CanvasSubjectEditSource
@@ -3123,7 +3127,8 @@ function CanvasInner({
     onSocketRevision,
   )
   const currentBusyReason = useLatestCallback(busyReason)
-  const canUseSelectedNodePanel = canEditSelection && !agentOwner
+  const canvasReadOnly = Boolean(agentOwner) || !cloudLoadedRef.current
+  const canUseSelectedNodePanel = canEditSelection && !canvasReadOnly
   const guardSelectedNodePanel = (event: React.SyntheticEvent) => {
     if (!canUseSelectedNodePanel) guardCanvasReadOnlyInteraction(event)
   }
@@ -3145,7 +3150,7 @@ function CanvasInner({
   const saveStatusRef = useRef<DraftSaveStatus>('saved')
   saveStatusRef.current = saveStatus
   const [cloudStatus, setCloudStatus] = useState<'loading' | 'online' | 'offline' | 'error'>('loading')
-  const [cloudMessage, setCloudMessage] = useState('正在读取云端画布')
+  const [cloudMessage, setCloudMessage] = useState('正在读取云端画布，载入后可编辑')
   const [scriptImportOpen, setScriptImportOpen] = useState(false)
   const guideStorageKey = `zzh_canvas_start_${workspaceId}_${canvasId}`
   const [scriptCreationHandled, setScriptCreationHandled] = useState(true)
@@ -3196,8 +3201,7 @@ function CanvasInner({
     undo: [],
     redo: [],
   })
-  const cancelledTasksRef = useRef(new Map<string, CanvasGenerationRequest>())
-  const restartGenerationRef = useRef<(nodeId: string, request: CanvasGenerationRequest) => void>(() => undefined)
+  const cancelledTaskIdsRef = useRef(new Set<number>())
   // 能否撤销/重做的状态（ref 变化不触发渲染，需显式同步）
   const [historyFlags, setHistoryFlags] = useState({ canUndo: false, canRedo: false })
   // 最新 nodes/edges 引用：供历史快照在任何回调里读取当前状态
@@ -3995,7 +3999,8 @@ function CanvasInner({
 
   const validateConnection = useCallback(
     (sourceId: string, targetId: string, additionalEdges: Edge[] = []): string | null => {
-      if (busyReason(targetId)) return busyReason(targetId)!
+      const lock = currentBusyReason(targetId)
+      if (lock) return lock
       if (
         hasEdgeBetween(sourceId, targetId) ||
         additionalEdges.some((edge) => edge.source === sourceId && edge.target === targetId)
@@ -4123,6 +4128,7 @@ function CanvasInner({
       resolveTargetVideoLimit,
       resolveTargetAudioLimit,
       countIncomingMediaConnections,
+      currentBusyReason,
     ],
   )
 
@@ -4267,6 +4273,23 @@ function CanvasInner({
     setHistoryFlags({ canUndo: true, canRedo: false })
   }, [])
 
+  const restoreHistoryNodes = useCallback((items: CanvasHistorySnapshot['nodes']) => {
+    return (items as Node[]).map((node) => {
+      if (!cancelledTaskIdsRef.current.has(Number(node.data?.taskId))) return node
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          taskStatus: 'cancelled',
+          taskProgress: 0,
+          taskError: '任务已取消，可手动重新生成',
+          taskFailure: undefined,
+          resultSyncAttempts: 0,
+        },
+      }
+    })
+  }, [])
+
   // 撤销：当前状态入重做栈，恢复撤销栈顶
   const undo = useCallback(() => {
     const { undo: undoStack, redo: redoStack } = historyRef.current
@@ -4278,25 +4301,7 @@ function CanvasInner({
       textContents: collectTextContents(),
     })
     if (redoStack.length > HISTORY_LIMIT) redoStack.shift()
-    const restoredNodes = prev.nodes.map((node) => {
-      if (!cancelledTasksRef.current.has(node.id)) return node
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          taskId: undefined,
-          taskStatus: '',
-          taskProgress: 0,
-          taskError: '',
-          resultSyncAttempts: 0,
-        },
-      }
-    })
-    const generationsToRestart = restoredNodes
-      .map((node) => ({ nodeId: node.id, request: cancelledTasksRef.current.get(node.id) }))
-      .filter((item): item is { nodeId: string; request: CanvasGenerationRequest } => Boolean(item.request))
-    generationsToRestart.forEach(({ nodeId }) => cancelledTasksRef.current.delete(nodeId))
-    setNodes(restoredNodes as Node[])
+    setNodes(restoreHistoryNodes(prev.nodes))
     setEdges(prev.edges as Edge[])
     // 同步恢复文本内容，保证文本节点与结构状态一致
     restoreTextContents(prev.textContents)
@@ -4304,10 +4309,7 @@ function CanvasInner({
     setSaveStatus('dirty')
     setContextMenu(null)
     setHistoryFlags({ canUndo: undoStack.length > 0, canRedo: true })
-    generationsToRestart.forEach(({ nodeId, request }) => {
-      window.setTimeout(() => restartGenerationRef.current(nodeId, request), 0)
-    })
-  }, [setNodes, setEdges])
+  }, [restoreHistoryNodes, setNodes, setEdges])
 
   const confirmAndCancelGeneratingVideos = useCallback(
     async (nodesToDelete: Node[]): Promise<boolean> => {
@@ -4337,13 +4339,13 @@ function CanvasInner({
         return false
       }
 
-      // 逐个取消，互不影响：用 Promise.all 时一个失败会让其余已成功的任务漏记 cancelledTasksRef。
+      // 逐个记录成功取消的任务，供撤销和重做恢复任务状态。
       const results = await Promise.allSettled(
         generatingVideos.map(async (node) => {
           const taskId = Number((node.data as any)?.taskId || 0)
-          await cancelAiTask({ workspaceId, taskId })
-          const request = (node.data as any)?.generationRequest as CanvasGenerationRequest | undefined
-          if (request) cancelledTasksRef.current.set(node.id, request)
+          const result = await cancelAiTask({ workspaceId, taskId })
+          const status = normalizeAiTaskStatus(result?.status)
+          if (!status || status === 'cancelled') cancelledTaskIdsRef.current.add(taskId)
         }),
       )
 
@@ -4393,7 +4395,7 @@ function CanvasInner({
       textContents: collectTextContents(),
     })
     if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
-    setNodes(next.nodes as Node[])
+    setNodes(restoreHistoryNodes(next.nodes))
     setEdges(next.edges as Edge[])
     // 同步恢复文本内容
     restoreTextContents(next.textContents)
@@ -4401,7 +4403,7 @@ function CanvasInner({
     setSaveStatus('dirty')
     setContextMenu(null)
     setHistoryFlags({ canUndo: true, canRedo: redoStack.length > 0 })
-  }, [setNodes, setEdges])
+  }, [restoreHistoryNodes, setNodes, setEdges])
 
   // React Flow 删除节点时会级联移除关联线；键盘入口统一提交历史，这里只同步删除副作用。
   const handleNodesDelete = useCallback((deleted: Node[]) => {
@@ -4633,7 +4635,7 @@ function CanvasInner({
 
   const handleRemoveRef = useCallback(
     (edgeId: string) => {
-      const lock = busyReason(latestRef.current.edges.find((edge) => edge.id === edgeId)?.target)
+      const lock = currentBusyReason(latestRef.current.edges.find((edge) => edge.id === edgeId)?.target)
       if (lock) {
         showToast(lock, 'error')
         return
@@ -4647,7 +4649,7 @@ function CanvasInner({
         setSelectedNode({ ...selectedNode, sourceRefs: newRefs })
       }
     },
-    [selectedNode, setEdges, commitHistory],
+    [selectedNode, setEdges, commitHistory, currentBusyReason],
   )
 
   /**
@@ -5410,11 +5412,6 @@ function CanvasInner({
   const canvasIdRef = useRef<number | null>(null)
   // 服务端同步 revision：保存时作为 base_revision 做乐观锁
   const syncRevisionRef = useRef(0)
-  // 首次云加载完成标记：加载后第一次 nodes/edges 变化不应触发保存
-  const cloudLoadedRef = useRef(false)
-  // 云端加载失败时回退 localStorage 的标记（仅提示，不阻断画布使用）
-  const cloudErrorRef = useRef('')
-
   /**
    * 增量保存到云端（对齐 5.6「只提交变化元素」）：
    * 对比 syncedRef 快照与当前状态 → upsert 新增/变更 + delete 消失。
@@ -5433,6 +5430,17 @@ function CanvasInner({
   const syncRetryAttemptRef = useRef(0)
   const syncRetryBlockedRef = useRef(false)
   const syncRejectedSignatureRef = useRef('')
+  const saveAttemptRef = useRef<{
+    dispatched: CanvasElementMutation[]
+    acknowledged: number
+    acknowledgedRevision: number
+    batches: number
+    state: Record<string, unknown>
+    failure?: { error: unknown; mayHaveAcknowledgedLast: boolean }
+  } | null>(null)
+  const journalPendingCanvasRef = useRef<(onlyWithReceipt?: boolean) => boolean>(() => false)
+  const lockedSaveIdsRef = useRef(new Set<string>())
+  const retryLockedSaveAtRef = useRef(0)
   const localDraftStoredRef = useRef(true)
   const recoveringDraftsRef = useRef<PendingCanvasDraft[]>([])
 
@@ -5454,7 +5462,7 @@ function CanvasInner({
   // 增量保存到云端：对比 syncRef 快照与最新状态 → upsert/delete；内部串行 + 冲突合并重试
   const pushCanvasMutations = useCallback(() => {
     const canvasId = canvasIdRef.current
-    if (!canvasId || !cloudLoadedRef.current) return
+    if (!canvasId || !cloudLoadedRef.current || !canvasMountedRef.current) return
     if (syncRetryTimerRef.current) return
     syncPendingRef.current = true
     // 若已有请求在途，标记待补即可，避免重复入队
@@ -5464,22 +5472,54 @@ function CanvasInner({
       clearRecoveredCanvasDrafts(recoveringDraftsRef.current)
       recoveringDraftsRef.current = []
     }
+    const showLockedSaveStatus = () => {
+      setSaveStatus('dirty')
+      setCloudStatus('error')
+      setCloudMessage(
+        localDraftStoredRef.current
+          ? '节点被占用，修改已暂存在本机，解除占用后可保存'
+          : '节点被占用，本机草稿也未能保存，请勿离开页面',
+      )
+    }
+    const mutationTouchesLock = (ids: ReadonlySet<string>) => {
+      if (!ids.size) return () => false
+      const touchesNode = (id: unknown) => typeof id === 'string' && ids.has(id)
+      const edgeIds = new Set(
+        syncRef.current.edges
+          .filter(({ source, target }) => touchesNode(source) || touchesNode(target))
+          .map(({ id }) => id),
+      )
+      return ({ element_id, kind, payload }: CanvasElementMutation) =>
+        ids.has(element_id) ||
+        (kind === 'edge' && (edgeIds.has(element_id) || touchesNode(payload?.source) || touchesNode(payload?.target)))
+    }
     syncQueueRef.current = syncQueueRef.current.then(async () => {
       // 循环处理：执行期间若有新变化（syncPendingRef），继续以最新状态补存
-      while (syncPendingRef.current) {
+      while (syncPendingRef.current && !syncRetryTimerRef.current && canvasMountedRef.current) {
         syncPendingRef.current = false
+        const unresolved = saveAttemptRef.current
         const latest = latestRef.current
         const currentTextMap = (window as any).__canvasTextContents as Map<string, string> | undefined
         const textMap = new Map(currentTextMap || [])
-        const mutations = diffCanvasMutations(syncRef.current, latest, textMap)
+        const allMutations = diffCanvasMutations(syncRef.current, latest, textMap)
+        const lockedIds = lockedSaveIdsRef.current
+        const parkedIds = new Set(
+          allMutations.filter(mutationTouchesLock(lockedIds)).map(({ element_id }) => element_id),
+        )
+        const mutations = allMutations.filter(({ element_id }) => !parkedIds.has(element_id))
+        if (!unresolved && !parkedIds.size) lockedIds.clear()
         const submittedState = { ...pendingCanvasStateRef.current }
         const signature = JSON.stringify({ mutations, state: submittedState })
-        if (syncRetryBlockedRef.current && signature === syncRejectedSignatureRef.current) continue
+        if (!unresolved && syncRetryBlockedRef.current && signature === syncRejectedSignatureRef.current) continue
         if (syncRetryBlockedRef.current) {
           syncRetryBlockedRef.current = false
           syncRejectedSignatureRef.current = ''
         }
-        if (mutations.length === 0 && Object.keys(submittedState).length === 0) {
+        if (!unresolved && mutations.length === 0 && Object.keys(submittedState).length === 0) {
+          if (parkedIds.size) {
+            showLockedSaveStatus()
+            continue
+          }
           // 被标成待保存、内容却与云端一致（选中、无变化的标脏等）：没有要存的，就是已同步。
           // 以前这里直接跳过，状态永远停在「等待保存…」，用户以为改动没存上。
           setSaveStatus((current) => (current === 'dirty' ? 'saved' : current))
@@ -5492,22 +5532,44 @@ function CanvasInner({
             routeProjectId,
             canvasId,
             draftScope,
-            { pendingSync: false, syncBaseline: syncRef.current },
+            { pendingSync: false, confirmedRevision: syncRevisionRef.current, syncBaseline: syncRef.current },
           )
           continue
         }
+        const attempt = unresolved ?? {
+          dispatched: [],
+          acknowledged: 0,
+          acknowledgedRevision: syncRevisionRef.current,
+          batches: 0,
+          state: submittedState,
+        }
         try {
+          if (attempt.failure) throw attempt.failure.error
           setCloudStatus('online')
           setSaveStatus('saving')
+          if (!hasOwnPendingCanvasDraft(routeProjectId, draftScope)) journalPendingCanvasRef.current()
+          saveAttemptRef.current = attempt
           const { sync_revision } = await saveCanvasElementsBatched({
             workspaceId,
             canvasId,
             baseRevision: syncRevisionRef.current,
             mutations,
+            onBatchStart: (batch) => {
+              if (!canvasMountedRef.current || !cloudLoadedRef.current) throw new Error('Canvas save scope ended')
+              attempt.batches++
+              attempt.dispatched.push(...batch)
+              if (attempt.batches > 1) journalPendingCanvasRef.current(true)
+            },
+            onBatchSaved: (revision) => {
+              attempt.acknowledged = attempt.dispatched.length
+              attempt.acknowledgedRevision = revision
+            },
             ...(Object.keys(submittedState).length
               ? { state: { ...savedCanvasStateRef.current, ...submittedState } }
               : {}),
           })
+          if (!canvasMountedRef.current || !cloudLoadedRef.current) return
+          saveAttemptRef.current = null
           syncRevisionRef.current = sync_revision
           Object.assign(savedCanvasStateRef.current, submittedState)
           Object.entries(submittedState).forEach(([key, value]) => {
@@ -5515,16 +5577,30 @@ function CanvasInner({
           })
           // 成功基线重建必须用「本次提交的内容」（latest 即当时的最新状态），
           // 且以请求时刻为准；若期间又变化，循环会继续补存
-          syncRef.current = {
-            nodes: latest.nodes.map((n) => comparableNode(n, textMap)),
-            edges: latest.edges.map((e) => comparableEdge(e)),
-          }
+          const savedNodes = latest.nodes.map((node) => comparableNode(node, textMap))
+          const savedEdges = latest.edges.map(comparableEdge)
+          syncRef.current = parkedIds.size
+            ? {
+                nodes: [
+                  ...savedNodes.filter(({ id }) => !parkedIds.has(id)),
+                  ...syncRef.current.nodes.filter(({ id }) => parkedIds.has(id)),
+                ],
+                edges: [
+                  ...savedEdges.filter(({ id }) => !parkedIds.has(id)),
+                  ...syncRef.current.edges.filter(({ id }) => parkedIds.has(id)),
+                ],
+              }
+            : { nodes: savedNodes, edges: savedEdges }
           const currentGraph = latestRef.current
           const currentText = (window as any).__canvasTextContents as Map<string, string> | undefined
           const remaining = diffCanvasMutations(syncRef.current, currentGraph, currentText)
           const hasPending = remaining.length > 0 || Object.keys(pendingCanvasStateRef.current).length > 0
-          if (hasPending) syncPendingRef.current = true
-          else clearConfirmedRecoveries()
+          const stillLocked = mutationTouchesLock(lockedIds)
+          const hasWritableChanges =
+            remaining.some((mutation) => !stillLocked(mutation)) ||
+            Object.keys(pendingCanvasStateRef.current).length > 0
+          if (hasWritableChanges) syncPendingRef.current = true
+          if (!hasPending) clearConfirmedRecoveries()
           setSaveStatus(hasPending ? 'dirty' : 'saved')
           setCloudStatus('online')
           setCloudMessage(hasPending ? '还有修改等待保存' : '已保存')
@@ -5534,8 +5610,14 @@ function CanvasInner({
             routeProjectId,
             canvasId,
             draftScope,
-            { pendingSync: hasPending, syncBaseline: syncRef.current, pendingState: pendingCanvasStateRef.current },
+            {
+              pendingSync: hasPending,
+              confirmedRevision: syncRevisionRef.current,
+              syncBaseline: syncRef.current,
+              pendingState: pendingCanvasStateRef.current,
+            },
           )
+          if (hasPending && !hasWritableChanges) showLockedSaveStatus()
           syncRetryBlockedRef.current = false
           syncRejectedSignatureRef.current = ''
           syncRetryAttemptRef.current = 0
@@ -5544,6 +5626,7 @@ function CanvasInner({
             syncRetryTimerRef.current = null
           }
         } catch (error: any) {
+          if (!canvasMountedRef.current || !cloudLoadedRef.current) return
           const errorStatus = Number(error?.status || error?.response?.status || 0)
           const errorCode = String(error?.response?.code_string ?? error?.code ?? '')
           const lockedElements = new Set<string>(
@@ -5557,66 +5640,66 @@ function CanvasInner({
             errorStatus === 409 && (!error?.response?.code_string || errorCode === 'CANVAS_REVISION_CONFLICT')
           const unknownAck = errorCode === 'CANVAS_SAVE_ACK_UNKNOWN'
           const isDeterministicReject = isPermanentCanvasSaveError(errorStatus, errorCode, isConflict)
-          // 版本冲突、节点锁和未确认的保存回执都需要读取云端。网络/服务异常进入退避重试。
+          const rejectedByLock = attempt.dispatched.some(mutationTouchesLock(lockedElements))
+          const mayHaveAcknowledgedLast =
+            unknownAck || (attempt.batches > 0 && (errorStatus === 0 || errorStatus === 408 || errorStatus >= 500))
+          const mayHaveCommitted = mayHaveAcknowledgedLast || attempt.batches > 1
+          const needsRead = mayHaveCommitted || isConflict || rejectedByLock
+          // A retry must reconcile the same dispatched snapshot, even when Undo made the current diff empty.
+          saveAttemptRef.current = needsRead ? attempt : null
+          if (needsRead) attempt.failure = { error, mayHaveAcknowledgedLast }
+          if (needsRead && !unresolved) journalPendingCanvasRef.current()
           try {
-            if (!unknownAck && !isConflict && !lockedElements.size) throw error
-            const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
-            if (!canvasMountedRef.current) return // local draft already contains the pending edits
-            if (page.sync_revision < syncRevisionRef.current) throw error
-            const remote = elementsToGraph(page.elements)
-            remote.nodes = remote.nodes.map((node) => normalizeNodeMedia(node, workspaceId))
+            if (!needsRead) throw error
+            if (rejectedByLock && !unresolved) {
+              for (const id of lockedElements) lockedIds.add(id)
+              retryLockedSaveAtRef.current = Date.now() + 8000
+            }
+            const page = await fetchAllCanvasElements({
+              workspaceId,
+              canvasId,
+              afterRevision: 0,
+              requireValidSnapshot: true,
+            })
+            if (!canvasMountedRef.current || !cloudLoadedRef.current) return
+            if (page.sync_revision < attempt.acknowledgedRevision) throw error
+            const authoritative = elementsToGraph(page.elements)
+            const remote = {
+              ...authoritative,
+              nodes: authoritative.nodes.map((node) => normalizeNodeMedia(node, workspaceId)),
+            }
             const remoteBaseline = {
               nodes: remote.nodes.map((node) => comparableNode(node)),
               edges: remote.edges.map(comparableEdge),
             }
             const remoteChanges = diffCanvasMutations(syncRef.current, remote)
-            const confirmedElementIds = new Set<string>()
-            if (unknownAck) {
-              const changedElementIds = new Set(remoteChanges.map((change) => change.element_id))
-              const differentElements = conflictingCanvasElementIds(mutations, remoteChanges)
-              for (const { element_id } of mutations) {
-                if (changedElementIds.has(element_id) && !differentElements.has(element_id)) {
-                  confirmedElementIds.add(element_id)
-                }
-              }
-            }
+            const authoritativeChanges = diffCanvasMutations(syncRef.current, authoritative)
             const localChanges = () => {
               const currentText = (window as any).__canvasTextContents as Map<string, string> | undefined
-              const pending = diffCanvasMutations(syncRef.current, latestRef.current, currentText).filter(
-                ({ element_id }) => !lockedElements.has(element_id) && !confirmedElementIds.has(element_id),
+              return reconcileCanvasSaveAttempt(
+                syncRef.current,
+                diffCanvasMutations(syncRef.current, latestRef.current, currentText),
+                authoritativeChanges,
+                mayHaveAcknowledgedLast ? attempt.dispatched : attempt.dispatched.slice(0, attempt.acknowledged),
+                new Set(attempt.dispatched.slice(0, attempt.acknowledged).map(({ element_id }) => element_id)),
               )
-              // A read can confirm part of a batched write. Compare those elements to the request snapshot so that a
-              // newer edit or an undo made during that request remains pending.
-              if (confirmedElementIds.size) {
-                const submittedBaseline = {
-                  nodes: latest.nodes.map((node) => comparableNode(node, textMap)),
-                  edges: latest.edges.map(comparableEdge),
-                }
-                pending.push(
-                  ...diffCanvasMutations(submittedBaseline, latestRef.current, currentText).filter(({ element_id }) =>
-                    confirmedElementIds.has(element_id),
-                  ),
-                )
-              }
-              return pending
             }
-            if (lockedElements.size) showToast(error.message || '节点已被占用，已保留其他修改', 'error')
-            let pending = localChanges()
-            const conflicts = conflictingCanvasElementIds(
-              pending,
-              remoteChanges.filter(({ element_id }) => !confirmedElementIds.has(element_id)),
-            )
+            if (rejectedByLock && !unresolved && !parkedIds.size) showToast(error.message || '节点已被占用', 'error')
+            const { remaining: localPending, confirmed } = localChanges()
+            const collaborativeChanges = remoteChanges.filter(({ element_id }) => !confirmed.has(element_id))
+            let pending = localPending
+            const conflicts = conflictingCanvasElementIds(pending, collaborativeChanges)
             if (conflicts.size) {
               const keepLocal = await requestConfirm(
                 `有 ${conflicts.size} 个节点或连线被同时修改。请选择保留的版本，其他修改会自动合并。`,
                 { title: '处理画布编辑冲突', confirmLabel: '保留我的修改', cancelLabel: '使用云端版本' },
               )
-              if (!canvasMountedRef.current) return
+              if (!canvasMountedRef.current || !cloudLoadedRef.current) return
               // The user can keep editing while a network read or confirmation is pending.
-              pending = localChanges().filter((change) => keepLocal || !conflicts.has(change.element_id))
+              pending = localChanges().remaining.filter((change) => keepLocal || !conflicts.has(change.element_id))
             }
             const displayed = applyCanvasElementMutations(remote, pending)
-            const unlocked = (node: Node) => !lockedElements.has(node.id)
+            const unlocked = (node: Node) => !lockedIds.has(node.id)
             displayed.nodes = preserveCompletedCanvasResults(
               latestRef.current.nodes.filter(unlocked),
               preserveCompletedCanvasResults(remote.nodes.filter(unlocked), displayed.nodes),
@@ -5628,7 +5711,7 @@ function CanvasInner({
                 ),
               ),
             )
-            if (remoteChanges.length || lockedElements.size) clearRemoteUndoHistory()
+            if (collaborativeChanges.length) clearRemoteUndoHistory()
             setNodes(displayed.nodes)
             setEdges(displayed.edges)
             latestRef.current = displayed
@@ -5636,7 +5719,8 @@ function CanvasInner({
             syncRef.current = remoteBaseline
             syncRevisionRef.current = page.sync_revision
             savedCanvasStateRef.current = page.state || {}
-            for (const [key, value] of Object.entries(submittedState)) {
+            saveAttemptRef.current = null
+            for (const [key, value] of Object.entries(attempt.state)) {
               if (
                 pendingCanvasStateRef.current[key] === value &&
                 JSON.stringify(savedCanvasStateRef.current[key]) === JSON.stringify(value)
@@ -5644,13 +5728,17 @@ function CanvasInner({
                 delete pendingCanvasStateRef.current[key]
               }
             }
-            const hasPending =
-              diffCanvasMutations(remoteBaseline, displayed).length > 0 ||
-              Object.keys(pendingCanvasStateRef.current).length > 0
-            // Rejected locked edits remain in recovered journals; do not retire them as confirmed.
-            if (lockedElements.size) recoveringDraftsRef.current = []
-            else if (!hasPending) clearConfirmedRecoveries()
-            syncPendingRef.current = hasPending && !unknownAck
+            const remaining = diffCanvasMutations(remoteBaseline, displayed)
+            for (const id of lockedIds) {
+              if (!remaining.some(mutationTouchesLock(new Set([id])))) lockedIds.delete(id)
+            }
+            const hasPendingState = Object.keys(pendingCanvasStateRef.current).length > 0
+            const hasPending = remaining.length > 0 || hasPendingState
+            const stillLocked = mutationTouchesLock(lockedIds)
+            const hasWritableChanges = remaining.some((mutation) => !stillLocked(mutation)) || hasPendingState
+            if (!hasPending) clearConfirmedRecoveries()
+            const shouldBackOff = mayHaveCommitted && !isConflict && !rejectedByLock
+            syncPendingRef.current = hasWritableChanges && !shouldBackOff
             setSaveStatus(hasPending ? 'dirty' : 'saved')
             setCloudStatus('online')
             setCloudMessage(hasPending ? '正在合并并保存修改' : unknownAck ? '已保存' : '已同步其他成员的修改')
@@ -5660,9 +5748,15 @@ function CanvasInner({
               routeProjectId,
               canvasId,
               draftScope,
-              { pendingSync: hasPending, syncBaseline: remoteBaseline, pendingState: pendingCanvasStateRef.current },
+              {
+                pendingSync: hasPending,
+                confirmedRevision: page.sync_revision,
+                syncBaseline: remoteBaseline,
+                pendingState: pendingCanvasStateRef.current,
+              },
             )
-            if (unknownAck && hasPending) throw error // A read that did not confirm the write uses the normal backoff.
+            if (hasPending && !hasWritableChanges) showLockedSaveStatus()
+            if (shouldBackOff && hasWritableChanges) throw error
             syncRetryAttemptRef.current = 0
             syncRetryBlockedRef.current = false
             syncRejectedSignatureRef.current = ''
@@ -5671,9 +5765,10 @@ function CanvasInner({
               syncRetryTimerRef.current = null
             }
           } catch {
+            if (!canvasMountedRef.current || !cloudLoadedRef.current) return
             // 仍失败：保留 dirty 状态；本地草稿继续兜底。
             setSaveStatus('dirty')
-            if (isDeterministicReject) {
+            if (isDeterministicReject && !saveAttemptRef.current && !rejectedByLock) {
               syncRetryBlockedRef.current = true
               syncRejectedSignatureRef.current = signature
               // 确定性拒绝不安排自动重试：等下一次真实变更（会产生不同的 mutation）再走保存链路
@@ -5717,6 +5812,9 @@ function CanvasInner({
       .catch(() => undefined)
       .then(() => {
         syncInFlightRef.current = false
+        if (syncPendingRef.current && !syncRetryTimerRef.current && canvasMountedRef.current) {
+          scheduleSyncRef.current(true)
+        }
       })
   }, [setEdges, setNodes, workspaceId, routeProjectId, draftScope, clearRemoteUndoHistory])
   // 初始化：云端优先（复用画布或新建），失败回退 localStorage 草稿
@@ -5794,8 +5892,37 @@ function CanvasInner({
     ;(async () => {
       try {
         // 1) 全量加载元素；只有全部分页成功后才推进 revision，避免大画布被截断。
-        const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+        const readElements = () =>
+          fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0, requireValidSnapshot: true })
+        const loadRecoveries = () =>
+          loadPendingCanvasDrafts(routeProjectId, draftScope).filter(
+            ({ draft }) => Number(draft.boundCanvasId) === canvasId,
+          )
+        let page = await readElements()
         if (cancelled) return
+        let recoveries = loadRecoveries()
+        const isOlderThanConfirmed = () =>
+          page.sync_revision < readCanvasConfirmedRevision(routeProjectId, draftScope) ||
+          recoveries.some(
+            ({ draft }) =>
+              Math.max(Number(draft.confirmedRevision || 0), Number(draft.acknowledgedRevision || 0)) >
+              page.sync_revision,
+          )
+        for (const delay of [250, 750, 1500]) {
+          if (!isOlderThanConfirmed()) break
+          setCloudMessage('正在核对最近保存的画布版本，暂时仅可预览')
+          await new Promise<void>((resolve) => window.setTimeout(resolve, delay))
+          if (cancelled) return
+          page = await readElements()
+          if (cancelled) return
+          recoveries = loadRecoveries()
+        }
+        if (isOlderThanConfirmed()) {
+          setCloudStatus('error')
+          setCloudMessage('云端尚未返回最近保存的版本，已保留本机画布，请返回后重试')
+          applyLocalDraft()
+          return
+        }
         // 新建空画布直接展示完整节点入口。清理旧版本遗留的一次性剧本引导标记，
         // 避免已有用户仍被锁定在「从剧本开始创作」的单一入口。
         const remoteHandled = Boolean(page.state?.script_creation_handled)
@@ -5813,11 +5940,11 @@ function CanvasInner({
         const cachedNodes = paintedDraft ? (draftForPaint.nodes as Node[]) : []
         const repairedRawNodes = preserveCompletedCanvasResults(cachedNodes, rawCloudNodes)
         const displayedCloudNodes = repairedRawNodes === rawCloudNodes ? cloudNodes : repairedRawNodes.map(restoreNode)
-        const recoveries = loadPendingCanvasDrafts(routeProjectId, draftScope).filter(
-          (record) => Number(record.draft.boundCanvasId) === canvasId,
-        )
         if (recoveries.length) {
-          const recovered = mergePendingCanvasDrafts({ nodes: cloudNodes, edges: cloudEdges }, recoveries)
+          const recovered = mergePendingCanvasDrafts({ nodes: cloudNodes, edges: cloudEdges }, recoveries, {
+            nodes: rawCloudNodes,
+            edges: cloudEdges,
+          })
           if (!recovered) {
             setCloudStatus('error')
             setCloudMessage('检测到未同步的本机草稿，无法安全合并；请保留此页面并联系支持')
@@ -5966,7 +6093,10 @@ function CanvasInner({
           } else {
             setCloudMessage('已保存')
             // 把恢复出的已保存版本写回本机，后续启动即可直接使用，无须反复比较旧草稿。
-            saveCanvasDraft(cloudNodes, cloudEdges, routeProjectId, canvasId, draftScope, { pendingSync: false })
+            saveCanvasDraft(cloudNodes, cloudEdges, routeProjectId, canvasId, draftScope, {
+              pendingSync: false,
+              confirmedRevision: page.sync_revision,
+            })
           }
           fitCanvasView()
         } else {
@@ -6008,14 +6138,16 @@ function CanvasInner({
             setCloudMessage('已保存')
             syncRef.current = { nodes: [], edges: [] }
             restoreTextContents({})
-            saveCanvasDraft([], [], routeProjectId, canvasId, draftScope, { pendingSync: false })
+            saveCanvasDraft([], [], routeProjectId, canvasId, draftScope, {
+              pendingSync: false,
+              confirmedRevision: page.sync_revision,
+            })
           }
           fitCanvasView()
         }
       } catch (error: any) {
         if (cancelled) return
-        // 云端不可用时静默回退本地草稿，保证画布可用
-        cloudErrorRef.current = String(error?.message || '云端画布加载失败')
+        // 云端不可用时仅预览本机草稿。
         setCloudStatus(navigator.onLine ? 'error' : 'offline')
         if ([403, 404].includes(Number(error?.status))) {
           setNodes([])
@@ -6025,7 +6157,7 @@ function CanvasInner({
         }
         const hasDraft = Boolean(draftForPaint?.nodes.length && Number(draftForPaint.boundCanvasId) === canvasId)
         setCloudMessage(
-          hasDraft ? '暂时无法读取云端，显示本机草稿；修改不会保存，请返回后重试' : '暂时无法读取画布，请返回后重试',
+          hasDraft ? '暂时无法读取云端，本机草稿仅可预览，请返回后重试' : '暂时无法读取画布，请返回后重试',
         )
         const draftHandled = loadCanvasDraft(routeProjectId, draftScope)
         const handled = Boolean(draftHandled?.scriptCreationHandled && Number(draftHandled.boundCanvasId) === canvasId)
@@ -6045,21 +6177,56 @@ function CanvasInner({
   const pendingSaveSinceRef = useRef<number | null>(null)
   const scheduleSyncRef = useRef<(immediate?: boolean) => void>(() => undefined)
   const flushCanvasSyncRef = useRef<() => Promise<void>>(async () => undefined)
+  journalPendingCanvasRef.current = (onlyWithReceipt) => {
+    const latest = latestRef.current
+    const text = (window as any).__canvasTextContents as Map<string, string> | undefined
+    const changes = diffCanvasMutations(syncRef.current, latest, text)
+    const attempt = saveAttemptRef.current
+    const sent =
+      attempt?.failure && !attempt.failure.mayHaveAcknowledgedLast
+        ? attempt.dispatched.slice(0, attempt.acknowledged)
+        : attempt?.dispatched
+    // Identical edits need only an ACK ID. Full receipts are needed for later edits/Undo.
+    let submittedMutations: CanvasElementMutation[] | undefined
+    if (sent?.length) {
+      const currentIds = new Set(changes.map(({ element_id }) => element_id))
+      const changedSinceDispatch = conflictingCanvasElementIds(changes, sent)
+      submittedMutations = sent.filter(
+        ({ element_id }) => !currentIds.has(element_id) || changedSinceDispatch.has(element_id),
+      )
+    }
+    const acknowledgedMutationIds = attempt?.dispatched
+      .slice(0, attempt.acknowledged)
+      .map(({ element_id }) => element_id)
+    if (onlyWithReceipt && !submittedMutations?.length && !acknowledgedMutationIds?.length) return false
+    if (!attempt && !changes.length && !Object.keys(pendingCanvasStateRef.current).length) return false
+    localDraftStoredRef.current = saveCanvasDraft(
+      latest.nodes,
+      latest.edges,
+      routeProjectId,
+      canvasIdRef.current,
+      draftScope,
+      {
+        pendingSync: true,
+        confirmedRevision: syncRevisionRef.current,
+        syncBaseline: syncRef.current,
+        pendingState: pendingCanvasStateRef.current,
+        submittedMutations,
+        acknowledgedMutationIds,
+        acknowledgedRevision: acknowledgedMutationIds?.length ? attempt.acknowledgedRevision : undefined,
+        graphFromBaseline: changes.length === 0,
+      },
+    )
+    return true
+  }
   scheduleSyncRef.current = (immediate?: boolean) => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
-    // 草稿必须绑定当前画布 id：所有数据保存都对应画布，防止串画布
-    const boundId = canvasIdRef.current ?? 0
     // 未取得云端基线时，卸载或异步操作不能用空画布覆盖已存在的本机草稿。
     if (!cloudLoadedRef.current) return
     const flush = () => {
       saveTimerRef.current = null
       pendingSaveSinceRef.current = null
-      const latest = latestRef.current
-      const text = (window as any).__canvasTextContents as Map<string, string> | undefined
-      if (
-        diffCanvasMutations(syncRef.current, latest, text).length === 0 &&
-        Object.keys(pendingCanvasStateRef.current).length === 0
-      ) {
+      if (!journalPendingCanvasRef.current()) {
         if (
           syncInFlightRef.current ||
           saveStatusRef.current !== 'saved' ||
@@ -6070,11 +6237,6 @@ function CanvasInner({
         }
         return
       }
-      localDraftStoredRef.current = saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId, draftScope, {
-        pendingSync: true,
-        syncBaseline: syncRef.current,
-        pendingState: pendingCanvasStateRef.current,
-      })
       pushCanvasMutations()
     }
     if (immediate) {
@@ -6134,45 +6296,62 @@ function CanvasInner({
 
   // 手动重试同样走串行保存与冲突合并；先等在途请求，避免重复提交。
   const [manualSaving, setManualSaving] = useState(false)
-  const manualSavingRef = useRef(false)
-  const manualSave = async (): Promise<boolean> => {
-    if (manualSavingRef.current) return false
+  const manualSavingRef = useRef<Promise<boolean> | null>(null)
+  const currentPromptWriteBackRef = useRef<{ hasPending: () => boolean; flush: () => void } | null>(null)
+  const registerPromptWriteBack = useCallback((controls: NonNullable<typeof currentPromptWriteBackRef.current>) => {
+    currentPromptWriteBackRef.current = controls
+    return () => {
+      if (currentPromptWriteBackRef.current === controls) currentPromptWriteBackRef.current = null
+    }
+  }, [])
+  const manualSave = (): Promise<boolean> => {
+    if (manualSavingRef.current) return manualSavingRef.current
     if (!cloudLoadedRef.current) {
       showToast('请返回后重新打开画布，先处理本机草稿或连接问题', 'error')
-      return false
+      return Promise.resolve(false)
     }
-    manualSavingRef.current = true
     setManualSaving(true)
-    try {
-      await syncQueueRef.current
-      if (syncRetryTimerRef.current) {
-        window.clearTimeout(syncRetryTimerRef.current)
-        syncRetryTimerRef.current = null
+    const saving = Promise.resolve().then(async () => {
+      try {
+        currentPromptWriteBackRef.current?.flush()
+        await syncQueueRef.current
+        if (syncRetryTimerRef.current) {
+          window.clearTimeout(syncRetryTimerRef.current)
+          syncRetryTimerRef.current = null
+        }
+        syncRetryBlockedRef.current = false
+        syncRejectedSignatureRef.current = ''
+        lockedSaveIdsRef.current.clear()
+        currentPromptWriteBackRef.current?.flush()
+        scheduleSyncRef.current(true)
+        await syncQueueRef.current
+        const text = (window as any).__canvasTextContents as Map<string, string> | undefined
+        return (
+          cloudLoadedRef.current &&
+          !syncInFlightRef.current &&
+          !syncPendingRef.current &&
+          !saveAttemptRef.current &&
+          !currentPromptWriteBackRef.current?.hasPending() &&
+          diffCanvasMutations(syncRef.current, latestRef.current, text).length === 0 &&
+          Object.keys(pendingCanvasStateRef.current).length === 0
+        )
+      } finally {
+        manualSavingRef.current = null
+        if (canvasMountedRef.current) setManualSaving(false)
       }
-      syncRetryBlockedRef.current = false
-      syncRejectedSignatureRef.current = ''
-      scheduleSyncRef.current(true)
-      await syncQueueRef.current
-      const text = (window as any).__canvasTextContents as Map<string, string> | undefined
-      return (
-        cloudLoadedRef.current &&
-        !syncInFlightRef.current &&
-        !syncPendingRef.current &&
-        diffCanvasMutations(syncRef.current, latestRef.current, text).length === 0 &&
-        Object.keys(pendingCanvasStateRef.current).length === 0
-      )
-    } finally {
-      manualSavingRef.current = false
-      if (canvasMountedRef.current) setManualSaving(false)
-    }
+    })
+    manualSavingRef.current = saving
+    return saving
   }
   const hasUnsavedCanvas = () => {
+    if (currentPromptWriteBackRef.current?.hasPending()) return true
     if (!cloudLoadedRef.current) return Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync)
     const text = (window as any).__canvasTextContents as Map<string, string> | undefined
     return (
-      manualSavingRef.current ||
+      Boolean(manualSavingRef.current) ||
       syncInFlightRef.current ||
       syncPendingRef.current ||
+      Boolean(saveAttemptRef.current) ||
       hasOwnPendingCanvasDraft(routeProjectId, draftScope) ||
       diffCanvasMutations(syncRef.current, latestRef.current, text).length > 0 ||
       Object.keys(pendingCanvasStateRef.current).length > 0
@@ -6236,6 +6415,7 @@ function CanvasInner({
 
   // 卸载/切页前 flush 未保存的防抖任务（同步本地草稿 + 云端），避免丢最近 1 秒改动
   const flushOnUnload = useCallback(() => {
+    currentPromptWriteBackRef.current?.flush()
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
@@ -6256,6 +6436,8 @@ function CanvasInner({
         saveStatusRef.current !== 'saved' ||
         syncInFlightRef.current ||
         syncPendingRef.current ||
+        Boolean(currentPromptWriteBackRef.current?.hasPending()) ||
+        Boolean(saveAttemptRef.current) ||
         hasOwnPendingCanvasDraft(routeProjectId, draftScope) ||
         (!cloudLoadedRef.current && Boolean(loadCanvasDraft(routeProjectId, draftScope)?.pendingSync))
       flushOnUnload()
@@ -6310,8 +6492,15 @@ function CanvasInner({
         return schedule(3000)
       }
       // 保存失败留下 dirty 状态时，主动重新驱动保存，不能只等待状态自行变化。
-      if (!syncInFlightRef.current && !syncPendingRef.current && saveStatusRef.current !== 'saved') {
+      if (
+        !syncInFlightRef.current &&
+        (syncPendingRef.current || saveAttemptRef.current || saveStatusRef.current !== 'saved')
+      ) {
         if (syncRetryTimerRef.current || syncRetryBlockedRef.current) return schedule()
+        if (!saveAttemptRef.current && lockedSaveIdsRef.current.size) {
+          if (Date.now() < retryLockedSaveAtRef.current) return schedule(1500)
+          lockedSaveIdsRef.current.clear()
+        }
         pushCanvasMutations()
         idleRounds = 0
         return schedule(1500)
@@ -6333,15 +6522,19 @@ function CanvasInner({
           latestRef.current.edges !== graphAtRequest.edges ||
           syncInFlightRef.current ||
           syncPendingRef.current ||
+          Boolean(saveAttemptRef.current) ||
           saveStatusRef.current !== 'saved'
         let fullReload = false
-        let page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: knownRevision }).catch(
-          (error) => {
-            if (knownRevision <= 0 || error?.response?.code_string !== 'CANVAS_FULL_SYNC_REQUIRED') throw error
-            fullReload = true
-            return fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
-          },
-        )
+        let page = await fetchAllCanvasElements({
+          workspaceId,
+          canvasId,
+          afterRevision: knownRevision,
+          requireValidSnapshot: true,
+        }).catch((error) => {
+          if (knownRevision <= 0 || error?.response?.code_string !== 'CANVAS_FULL_SYNC_REQUIRED') throw error
+          fullReload = true
+          return fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0, requireValidSnapshot: true })
+        })
         if (disposed) return
         if (settingsAtRequest === modelSaveVersion.current) {
           const currentChoices = pageModelDefaults(page)
@@ -6349,7 +6542,7 @@ function CanvasInner({
         }
         if (localStateChanged()) return schedule(1500)
         if (!fullReload && knownRevision > 0 && page.history_floor_revision > knownRevision) {
-          page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+          page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0, requireValidSnapshot: true })
           if (disposed) return
           if (localStateChanged()) return schedule(1500)
           fullReload = true
@@ -6417,6 +6610,7 @@ function CanvasInner({
             const { nodes, edges } = latestRef.current
             localDraftStoredRef.current = saveCanvasDraft(nodes, edges, routeProjectId, canvasId, draftScope, {
               pendingSync: false,
+              confirmedRevision: page.sync_revision,
               syncBaseline: syncRef.current,
             })
           }
@@ -6456,8 +6650,10 @@ function CanvasInner({
     requestDirectorSyncRef.current = loop.wake
     schedule(1500)
     const onOnline = () => {
+      if (!cloudLoadedRef.current) return
       setCloudStatus('loading')
       setCloudMessage('正在恢复保存连接')
+      loop.wake()
     }
     const onOffline = () => {
       setCloudStatus('offline')
@@ -6984,7 +7180,7 @@ function CanvasInner({
     const carried = (location.state as any)?.carryMaterial
     const assetId = Number(carried?.assetId || 0) || 0
     if (!carried || (!assetId && !carried.url)) return
-    if (cloudStatus === 'loading') return
+    if (canvasReadOnly || cloudStatus === 'loading') return
     carriedMaterialRef.current = true
     handleApplyMaterial({
       assetId,
@@ -6994,7 +7190,7 @@ function CanvasInner({
       source: String(carried.source || ''),
     })
     navigate(location.pathname, { replace: true, state: null })
-  }, [location.state, location.pathname, cloudStatus, handleApplyMaterial, navigate])
+  }, [location.state, location.pathname, canvasReadOnly, cloudStatus, handleApplyMaterial, navigate])
 
   // 节点顶部上传按钮通过全局钩子触发：确保该节点先被选中（其内容将作为上传目标）
   useEffect(() => {
@@ -7158,7 +7354,7 @@ function CanvasInner({
     let preferSystemMedia = false
     let mounted = true
     const canPaste = (target: EventTarget | null) =>
-      cloudStatus !== 'loading' && acceptsCanvasClipboardShortcut(target, Boolean(canvasClipboard))
+      !canvasReadOnly && cloudStatus !== 'loading' && acceptsCanvasClipboardShortcut(target, Boolean(canvasClipboard))
     const onPasteKey = (event: KeyboardEvent) => {
       if (
         !(event.ctrlKey || event.metaKey) ||
@@ -7240,7 +7436,7 @@ function CanvasInner({
       window.clearTimeout(fallbackTimer)
       window.clearTimeout(resetSystemMediaTimer)
     }
-  }, [cloudStatus, importLocalMedia, acceptsCanvasClipboardShortcut, currentBusyReason])
+  }, [canvasReadOnly, cloudStatus, importLocalMedia, acceptsCanvasClipboardShortcut, currentBusyReason])
 
   const clearFileDrag = useCallback(() => {
     if (!fileDragTargetRef.current) return
@@ -7286,14 +7482,14 @@ function CanvasInner({
       if (!hasFileDrag(event.dataTransfer)) return
       event.preventDefault()
       // 只读画布和参考选择模式不接受导入。
-      if (agentOwner || isPickingRef) return
+      if (canvasReadOnly || isPickingRef) return
       const { images, videos, audios, unsupported } = extractMediaFiles(event.dataTransfer)
       void importLocalMedia([...images, ...videos, ...(CANVAS_AUDIO_NODES_ENABLED ? audios : []), ...unsupported], {
         x: event.clientX,
         y: event.clientY,
       })
     },
-    [agentOwner, importLocalMedia, isPickingRef],
+    [canvasReadOnly, importLocalMedia, isPickingRef],
   )
 
   // 模型变更：保存 modelVersionId 到节点数据并回显
@@ -8215,10 +8411,6 @@ function CanvasInner({
       setSaveStatus,
     ],
   )
-
-  restartGenerationRef.current = (nodeId, request) => {
-    void submitNodeGeneration(nodeId, request)
-  }
 
   // 前一个页面可能已经发出付费请求。恢复时保留原提交凭证，等原回执或画布同步找到任务。
   useEffect(() => {
@@ -10648,7 +10840,7 @@ function CanvasInner({
   const deleteSelectedNodes = useCallback(async () => {
     const ids = selectedNodeIds
     if (ids.length < 2) return
-    const lock = ids.map(busyReason).find(Boolean)
+    const lock = ids.map(currentBusyReason).find(Boolean)
     if (lock) {
       showToast(lock, 'error')
       return
@@ -10678,6 +10870,7 @@ function CanvasInner({
     pickingTargetId,
     confirmAndCancelGeneratingVideos,
     commitHistory,
+    currentBusyReason,
     setNodes,
     setEdges,
     setSaveStatus,
@@ -11686,7 +11879,7 @@ function CanvasInner({
    */
   const nodeActions = useMemo<CanvasNodeActions>(
     () => ({
-      readOnly: Boolean(agentOwner),
+      readOnly: canvasReadOnly,
       onNodeWheel: (event) => {
         if (preferencesRef.current.wheelMode !== 'pan') return
         if (
@@ -11740,7 +11933,7 @@ function CanvasInner({
       },
     }),
     [
-      agentOwner,
+      canvasReadOnly,
       imagePreviews,
       getCanvasStoreState,
       setViewport,
@@ -11844,7 +12037,7 @@ function CanvasInner({
 
   const initialCanvasActionRef = useRef<number | null>(null)
   useEffect(() => {
-    if (cloudStatus === 'loading' || initialCanvasActionRef.current === canvasId) return
+    if (canvasReadOnly || cloudStatus === 'loading' || initialCanvasActionRef.current === canvasId) return
     const action = (location.state as any)?.initialCanvasAction
     if (!action || !['script', 'image', 'video', 'import'].includes(action)) return
     initialCanvasActionRef.current = canvasId
@@ -11859,6 +12052,7 @@ function CanvasInner({
   }, [
     canvasId,
     cloudStatus,
+    canvasReadOnly,
     handleAddNode,
     handleCreateScriptNode,
     location.pathname,
@@ -12058,7 +12252,7 @@ function CanvasInner({
     (changes: Parameters<typeof onNodesChange>[0]) => {
       changes = changes.filter(
         (change) =>
-          !('id' in change && busyReason(change.id) && (change.type === 'position' || change.type === 'remove')),
+          !('id' in change && currentBusyReason(change.id) && (change.type === 'position' || change.type === 'remove')),
       )
       const guidesOn = preferencesRef.current.alignmentGuides
       const positionChanges = changes.filter((change) => change.type === 'position')
@@ -12095,7 +12289,7 @@ function CanvasInner({
       }
       onNodesChange(changes)
     },
-    [getCanvasStoreState, onNodesChange],
+    [currentBusyReason, getCanvasStoreState, onNodesChange],
   )
 
   /** 焦点连线：与当前选中节点（单选或多选）相连的那些；开了「仅突出焦点连线」时其余淡化 */
@@ -12226,7 +12420,7 @@ function CanvasInner({
   )
 
   const canvasShortcutsBlocked = Boolean(
-    agentOwner ||
+    canvasReadOnly ||
     canvasModalOpen ||
     imageTool ||
     subjectEdit ||
@@ -12253,7 +12447,7 @@ function CanvasInner({
     if (hdRequest && (!selectedNode || !hdRequest.ids.includes(selectedNode.id))) setHdRequest(null)
   }, [hdRequest, selectedNode])
   useEffect(() => {
-    if (!agentOwner) return
+    if (!canvasReadOnly) return
     setSelectedNode(null)
     setSelectedNodeIds([])
     setOpenDirectorBinding(null)
@@ -12270,7 +12464,7 @@ function CanvasInner({
     setImagePreviewNodeId('')
     setAddMenu(null)
     setContextMenu(null)
-  }, [agentOwner, setTimelineEditorNodeId])
+  }, [canvasReadOnly, setTimelineEditorNodeId])
 
   const closeHdRequest = useCallback(() => setHdRequest(null), [])
   const handleHdModalChange = useCallback(
@@ -12321,7 +12515,7 @@ function CanvasInner({
   return (
     <CanvasReservationContext.Provider value={reservation}>
       <CanvasNodeActionsContext.Provider value={nodeActions}>
-        {!agentOwner && (
+        {!canvasReadOnly && (
           <Suspense fallback={null}>
             <CanvasHdWorkspace
               key={`${workspaceId}:${canvasId}`}
@@ -12350,7 +12544,7 @@ function CanvasInner({
             />
           </Suspense>
         )}
-        {!agentOwner && standaloneCrop && (
+        {!canvasReadOnly && standaloneCrop && (
           <Suspense fallback={null}>
             <CanvasStandaloneImageCropModal
               sourceUrl={standaloneCrop.sourceUrl}
@@ -12363,7 +12557,7 @@ function CanvasInner({
             />
           </Suspense>
         )}
-        {!agentOwner && videoTrim && (
+        {!canvasReadOnly && videoTrim && (
           <Suspense fallback={null}>
             <CanvasVideoTrimModal
               key={`${videoTrim.nodeId}:${videoTrim.assetId}`}
@@ -12373,7 +12567,7 @@ function CanvasInner({
             />
           </Suspense>
         )}
-        {!agentOwner && imageCropRequest ? (
+        {!canvasReadOnly && imageCropRequest ? (
           <Suspense fallback={null}>
             <CanvasImageCropModal
               images={imageCropRequest.images}
@@ -12442,7 +12636,7 @@ function CanvasInner({
           style={audioPanelStyle}
           tabIndex={-1}
           onClickCapture={(event) => {
-            if (agentOwner) return guardCanvasReadOnlyInteraction(event)
+            if (canvasReadOnly) return guardCanvasReadOnlyInteraction(event)
             const target = event.target as HTMLElement
             const lock = busyReason(target.closest?.('.react-flow__node')?.getAttribute('data-id'))
             if (
@@ -12457,6 +12651,7 @@ function CanvasInner({
             showToast(lock, 'error')
           }}
           onDoubleClickCapture={(event) => {
+            if (canvasReadOnly) return guardCanvasReadOnlyInteraction(event)
             if (busyReason((event.target as HTMLElement).closest('.react-flow__node')?.getAttribute('data-id'))) {
               event.stopPropagation()
               return
@@ -12475,7 +12670,7 @@ function CanvasInner({
             handleSelectNodeOnDown(node)
           }}
           onPointerDownCapture={(event) => {
-            if (agentOwner) return guardCanvasReadOnlyInteraction(event)
+            if (canvasReadOnly) return guardCanvasReadOnlyInteraction(event)
             const target = event.target as HTMLElement
             if (event.button === 0) activateCanvasOverlay(event.target)
             pointerStartedInPanelRef.current = Boolean(target.closest?.('.canvas-panel-area, .canvas-director-area'))
@@ -12501,7 +12696,7 @@ function CanvasInner({
             }
           }}
           onKeyDownCapture={(event) => {
-            if (agentOwner) return guardCanvasReadOnlyInteraction(event)
+            if (canvasReadOnly) return guardCanvasReadOnlyInteraction(event)
             const target = event.target as HTMLElement
             if (
               event.key === 'Tab' ||
@@ -12537,7 +12732,7 @@ function CanvasInner({
           onPointerMoveCapture={fileDragActive ? clearFileDrag : undefined}
           /* 偏好「双击空白开菜单」：React Flow 没有 onPaneDoubleClick，在容器上按事件目标判断是否点在空白面上 */
           onDoubleClick={(event) => {
-            if (preferences.paneMenuTrigger !== 'dblclick') return
+            if (canvasReadOnly || preferences.paneMenuTrigger !== 'dblclick') return
             const target = event.target as HTMLElement | null
             if (!target?.classList?.contains('react-flow__pane')) return
             setAddMenu(null)
@@ -12549,7 +12744,7 @@ function CanvasInner({
               {interactionHint.text}
             </div>
           )}
-          {directorAvailable && !agentOwner && (
+          {directorAvailable && !canvasReadOnly && (
             <CanvasDirectorDock
               key={canvasBindingKey}
               workspaceId={workspaceId}
@@ -12570,6 +12765,7 @@ function CanvasInner({
               saveStatus={saveStatus}
               cloudStatus={cloudStatus}
               cloudMessage={cloudMessage}
+              canSave={cloudLoadedRef.current}
               manualSaving={manualSaving}
               onSave={() => {
                 void manualSave()
@@ -12577,10 +12773,10 @@ function CanvasInner({
               onBack={() => navigate('/canvas')}
             />
           </div>
-          {(!agentOwner || canManage) && (
+          {(!canvasReadOnly || canManage) && (
             <CanvasGlobalActions
-              open={!agentOwner && actionsMenuOpen}
-              readOnly={Boolean(agentOwner)}
+              open={!canvasReadOnly && actionsMenuOpen}
+              readOnly={canvasReadOnly}
               presence={
                 canManage && canvasId > 0 && workspaceId > 0 && currentUserId > 0 ? (
                   <CanvasOnlineMembers key={canvasBindingKey} userId={currentUserId} members={onlineMembers} />
@@ -12608,7 +12804,7 @@ function CanvasInner({
             !drawerPanel &&
             !scriptImportOpen &&
             !guideRequested &&
-            !agentOwner &&
+            !canvasReadOnly &&
             !canvasModalOpen && <p className="canvas-empty-hint">点击下方「+」创建新节点</p>}
 
           {canManage && modelSettingsOpen && (
@@ -12709,7 +12905,7 @@ function CanvasInner({
             controls={
               nodes.length > 0 && (
                 <div data-canvas-readonly-control>
-                  {agentOwner ? (
+                  {canvasReadOnly ? (
                     <CanvasViewControls
                       readOnly
                       zoom={transform[2]}
@@ -12742,7 +12938,7 @@ function CanvasInner({
               )
             }
           >
-            {!drawerPanel && !agentOwner && (
+            {!drawerPanel && !canvasReadOnly && (
               <CanvasFloatingToolbar
                 shortcuts={preferences.shortcuts}
                 leaving={toolbarLeaving}
@@ -12772,7 +12968,7 @@ function CanvasInner({
             !canvasModalOpen &&
             !drawerPanel &&
             !toolbarLeaving &&
-            !agentOwner &&
+            !canvasReadOnly &&
             foregroundToolbar !== 'bottom' &&
             panelAnchor?.toolbarRevealX !== undefined && (
               <button
@@ -12893,15 +13089,15 @@ function CanvasInner({
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodesChange={handleNodesChange}
-              onEdgesChange={agentOwner ? undefined : onEdgesChange}
-              onConnect={agentOwner ? undefined : onConnect}
-              onConnectEnd={agentOwner ? undefined : onConnectEnd}
+              onEdgesChange={canvasReadOnly ? undefined : onEdgesChange}
+              onConnect={canvasReadOnly ? undefined : onConnect}
+              onConnectEnd={canvasReadOnly ? undefined : onConnectEnd}
               /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
               isValidConnection={(connection) => {
                 if (!dragEnabled || !connection.source || !connection.target) return false
                 return !validateConnection(connection.source, connection.target)
               }}
-              nodesConnectable={!agentOwner && dragEnabled}
+              nodesConnectable={!canvasReadOnly && dragEnabled}
               /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步）。
                * React Flow 默认 deleteKeyCode 只有 Backspace，用户按 Del 无反应；这里同时接受
                * Delete 与 Backspace（输入框聚焦时 React Flow 自身会忽略，不会误删）。 */
@@ -12927,12 +13123,12 @@ function CanvasInner({
               selectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? 'Shift' : null}
               multiSelectionKeyCode={canvasKeyboardActive && !canvasShortcutsBlocked ? ['Control', 'Meta'] : null}
               /* 抓手模式下左键让给平移，框选退回 Shift+拖 */
-              selectionOnDrag={!agentOwner && !panModeEnabled && !spacePanning}
+              selectionOnDrag={!canvasReadOnly && !panModeEnabled && !spacePanning}
               selectionMode={SelectionMode.Partial}
               onSelectionChange={handleSelectionChange}
               /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
               onNodeDoubleClick={(_e, node) => {
-                if ((node.data as Record<string, unknown> | undefined)?.kind === 'timeline') {
+                if (!canvasReadOnly && (node.data as Record<string, unknown> | undefined)?.kind === 'timeline') {
                   setTimelineEditorNodeId(node.id)
                 }
               }}
@@ -13047,12 +13243,12 @@ function CanvasInner({
               /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
               onPaneContextMenu={(e) => {
                 e.preventDefault()
-                if (agentOwner) return
+                if (canvasReadOnly) return
                 setAddMenu(null)
                 setContextMenu({ x: e.clientX, y: e.clientY })
               }}
               onNodeContextMenu={(e, node) => {
-                if (busyReason(node.id)) {
+                if (canvasReadOnly || busyReason(node.id)) {
                   e.preventDefault()
                   return
                 }
@@ -13065,12 +13261,12 @@ function CanvasInner({
               }}
               onEdgeContextMenu={(e) => {
                 e.preventDefault()
-                if (agentOwner) return
+                if (canvasReadOnly) return
                 setAddMenu(null)
                 setContextMenu({ x: e.clientX, y: e.clientY })
               }}
               onNodeClick={(event, node) => {
-                if (agentOwner) return
+                if (canvasReadOnly) return
                 if (isPickingRef) {
                   handlePickRefNode(node as unknown as Node)
                   return
@@ -13147,10 +13343,10 @@ function CanvasInner({
                 setSelectedNodeIds([])
               }}
               /* 工具栏「锁定」：nodesDraggable 关掉后节点不可拖，画布照常平移 */
-              nodesDraggable={!agentOwner && dragEnabled && !spacePanning && !panModeEnabled}
+              nodesDraggable={!canvasReadOnly && dragEnabled && !spacePanning && !panModeEnabled}
               /* 默认左键让给框选，平移走中键 [1] / 右键 [2]，空格+左键由 spacePanning 临时接管；
                * 工具栏「拖动」（抓手）点亮后左键 [0] 也平移 */
-              panOnDrag={agentOwner || panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
+              panOnDrag={canvasReadOnly || panModeEnabled || spacePanning ? [0, 1, 2] : [1, 2]}
               /* 无限画布不限制平移范围，远离原点的节点和低倍率视口都必须可达。 */
               /*
                * 滚轮行为按偏好：
@@ -13169,7 +13365,7 @@ function CanvasInner({
               preventScrolling
               snapToGrid={snapEnabled}
               snapGrid={CANVAS_SNAP_GRID}
-              elementsSelectable={!agentOwner}
+              elementsSelectable={!canvasReadOnly}
               /*
                * 缩放范围。
                *
@@ -14405,6 +14601,7 @@ function CanvasInner({
                             setSaveStatus('dirty')
                           }}
                           onPromptChange={handleNodePromptChange}
+                          registerPromptWriteBack={registerPromptWriteBack}
                           onParamsChange={handleNodeParamsChange}
                           inheritedTexts={inheritedPromptTexts}
                           onAdoptInheritedText={handleAdoptInheritedText}

@@ -130,7 +130,7 @@ export interface ResumableItem {
 }
 
 /**
- * 找出需要续轮询的视频产物。
+ * 找出需要续轮询的图片和视频产物。
  *
  * 逐条产物而非逐个批次：一次生成 N 个视频会并发创建 N 个独立任务，
  * 按批次找只会认领其中一个，其余产物刷新后永远停在「生成中」。
@@ -142,7 +142,6 @@ export function findResumableItems(
 ): ResumableItem[] {
   const resumable: ResumableItem[] = []
   batches.forEach((batch) => {
-    if (batch.mode !== 'video') return
     batch.items.forEach((item) => {
       const taskId = Number(item.taskId || 0)
       if (item.status !== 'pending' || taskId <= 0 || claimed.has(taskId)) return
@@ -150,6 +149,14 @@ export function findResumableItems(
     })
   })
   return resumable
+}
+
+/** 同一 task_id 已落在本地批次时保留该批次，避免重复展示或轮询。 */
+export function preferLocalStudioBatches(batches: readonly StudioResultBatch[]): StudioResultBatch[] {
+  const taskIds = new Set(
+    batches.flatMap((batch) => (batch.id.startsWith('task-') ? [] : batch.items.map(({ taskId }) => taskId))),
+  )
+  return batches.filter((batch) => !batch.id.startsWith('task-') || !taskIds.has(Number(batch.id.slice(5))))
 }
 
 /**
@@ -165,5 +172,5 @@ export function prependHistoryBatches(
 ): StudioResultBatch[] {
   const seen = new Set(current.map((batch) => batch.id))
   const fresh = older.filter((batch) => !seen.has(batch.id))
-  return fresh.length ? [...fresh, ...current] : [...current]
+  return fresh.length ? [...fresh, ...current].sort((a, b) => a.createdAt - b.createdAt) : [...current]
 }

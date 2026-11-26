@@ -4,13 +4,18 @@ import {
   clearAuthSessionMarker,
   clearExistingSession,
   getAuthenticatedSession,
+  getCurrentUser,
   getSession,
   hasAuthSessionMarker,
+  listWorkspaceMembers,
   logoutSession,
   markAuthSessionExpected,
   refreshSession,
   resetAuthenticatedSession,
+  updateMyProfile,
+  uploadMyAvatar,
 } from '@/api/auth'
+import { AUTH_REQUEST_BOUNDARY_KEY, getAuthRequestScope, observeAuthRequestBoundary } from '@/api/authRequestScope'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -69,6 +74,7 @@ beforeEach(() => {
   resetAuthenticatedSession()
   window.localStorage.clear()
   window.sessionStorage.clear()
+  observeAuthRequestBoundary()
 })
 
 afterEach(() => {
@@ -151,6 +157,7 @@ describe('raw session lifecycle requests', () => {
 
     await expect(clearExistingSession()).resolves.toBeUndefined()
     expect(hasAuthSessionMarker()).toBe(false)
+    expect(localStorage.getItem(AUTH_REQUEST_BOUNDARY_KEY)).toMatch(/^account-change:/)
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
@@ -163,6 +170,7 @@ describe('raw session lifecycle requests', () => {
 
     await expect(clearExistingSession()).rejects.toMatchObject({ status: 500, message: 'logout failed' })
     expect(hasAuthSessionMarker()).toBe(true)
+    expect(localStorage.getItem(AUTH_REQUEST_BOUNDARY_KEY)).toBeNull()
   })
 
   it('allows a new session probe after clearing the previous session', async () => {
@@ -182,7 +190,7 @@ describe('raw session lifecycle requests', () => {
     markAuthSessionExpected()
     await expect(getAuthenticatedSession()).resolves.toMatchObject({ user: { id: 9 } })
     oldSession.resolve(jsonResponse({ data: { user: { id: 7 } } }))
-    await expect(oldProbe).resolves.toMatchObject({ user: { id: 7 } })
+    await expect(oldProbe).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
   })
 
   it('waits for the shared refresh lock before issuing a logout request', async () => {
@@ -201,10 +209,88 @@ describe('raw session lifecycle requests', () => {
     refreshFinished.resolve(undefined)
     await logout
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(localStorage.getItem(AUTH_REQUEST_BOUNDARY_KEY)).toMatch(/^logout:/)
+  })
+
+  it('does not log out the newer cookie if the requesting tab waited behind the shared auth lock', async () => {
+    const queued = deferred<void>()
+    const request = vi.fn(async (_name: string, _options: LockOptions, callback: () => Promise<unknown>) => {
+      await queued.promise
+      return callback()
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('navigator', { locks: { request } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const logout = logoutSession()
+    const rejected = expect(logout).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+    localStorage.setItem(AUTH_REQUEST_BOUNDARY_KEY, 'account-change:peer')
+    markAuthSessionExpected()
+    queued.resolve(undefined)
+
+    await rejected
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(hasAuthSessionMarker()).toBe(true)
+  })
+})
+
+describe('authenticated profile requests', () => {
+  it('rejects an old profile write before sending it and discards the late avatar response', async () => {
+    const avatarResponse = deferred<Response>()
+    const fetchMock = vi.fn((_input: RequestInfo | URL) => avatarResponse.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    const authScope = getAuthRequestScope()
+    const avatar = uploadMyAvatar(new File(['image'], 'avatar.png'), { authScope })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const avatarRejected = expect(avatar).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED', cause: 'aborted' })
+
+    window.localStorage.setItem(AUTH_REQUEST_BOUNDARY_KEY, 'account-change:peer')
+    await expect(updateMyProfile({ nickname: '旧昵称' }, { authScope })).rejects.toMatchObject({
+      code: 'AUTH_SESSION_CHANGED',
+    })
+    await expect(getCurrentUser()).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    avatarResponse.resolve(jsonResponse({ code: 0, data: { avatar_url: '/old.png' } }))
+    await avatarRejected
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(requestPath(fetchMock.mock.calls[0][0])).toBe('/api/v1/me/avatar')
   })
 })
 
 describe('getAuthenticatedSession', () => {
+  it('verifies a new switched session using provisional headers before publishing its switch ID', async () => {
+    vi.resetModules()
+    const switchedAuth = await import('@/api/auth')
+    const { ACCOUNT_SWITCH_HEADER, getAccountSwitchId } = await import('@/api/accountSwitch')
+    const switchSession = {
+      impersonating: true as const,
+      impersonation_id: 'a'.repeat(64),
+      access_token_expires_at: '2099-11-24T12:00:00.000Z',
+      user: { id: 7 },
+      workspace: { id: 21 },
+    }
+    const provisionalPaths: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const path = requestPath(input)
+        if (path === '/api/v1/auth/session') return jsonResponse({ data: switchSession })
+        expect(getAccountSwitchId()).toBe('')
+        expect(new Headers(options?.headers).get(ACCOUNT_SWITCH_HEADER)).toBe(switchSession.impersonation_id)
+        provisionalPaths.push(path)
+        if (path === '/api/v1/me') return jsonResponse({ data: { user: { id: 7, nickname: '匹配身份' } } })
+        if (path === '/api/v1/workspaces/21/members') return jsonResponse({ data: [{ user_id: 7 }] })
+        throw new Error(`Unexpected request: ${path}`)
+      }),
+    )
+    switchedAuth.markAuthSessionExpected()
+
+    await expect(switchedAuth.getAuthenticatedSession()).resolves.toMatchObject({
+      user: { id: 7, nickname: '匹配身份' },
+    })
+    expect(provisionalPaths).toEqual(['/api/v1/me', '/api/v1/workspaces/21/members'])
+    expect(getAccountSwitchId()).toBe(switchSession.impersonation_id)
+  })
+
   it('uses native switch metadata when enriching the switched account with a matching profile', async () => {
     vi.resetModules()
     const switchedAuth = await import('@/api/auth')
@@ -485,7 +571,7 @@ describe('getAuthenticatedSession', () => {
       }
       if (path === '/api/v1/me') {
         profileCalls += 1
-        return jsonResponse({ data: { user: { id: profileCalls } } })
+        return jsonResponse({ data: { user: { id: 2 } } })
       }
       if (path === '/api/v1/workspaces/11/members') return jsonResponse({ data: [{ user_id: 1 }] })
       if (path === '/api/v1/workspaces/22/members') return jsonResponse({ data: [{ user_id: 2 }] })
@@ -500,8 +586,20 @@ describe('getAuthenticatedSession', () => {
     expect(newRequest).not.toBe(oldRequest)
     expect(sessionCalls).toBe(2)
 
-    oldSession.resolve(jsonResponse({ data: { user: { id: 1 }, workspace: { id: 11 } } }))
-    await expect(oldRequest).resolves.toMatchObject({ user: { id: 1 } })
+    oldSession.resolve(
+      jsonResponse({
+        data: {
+          user: { id: 1 },
+          workspace: { id: 11 },
+          impersonating: true,
+          impersonation_id: 'a'.repeat(64),
+          access_token_expires_at: '2099-11-24T12:00:00.000Z',
+        },
+      }),
+    )
+    await expect(oldRequest).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+    expect(localStorage.getItem('zzh.auth.account-switch.v1')).toBeNull()
+    expect(profileCalls).toBe(0)
 
     const coalescedWithNew = getAuthenticatedSession()
     expect(coalescedWithNew).toBe(newRequest)
@@ -514,6 +612,26 @@ describe('getAuthenticatedSession', () => {
     })
     await expect(coalescedWithNew).resolves.toMatchObject({ user: { id: 2 } })
   })
+})
+
+it('loads members again for a different authentication scope in the same workspace', async () => {
+  const oldMembers = deferred<Response>()
+  const fetchMock = vi
+    .fn()
+    .mockReturnValueOnce(oldMembers.promise)
+    .mockResolvedValueOnce(jsonResponse({ data: [{ user_id: 8, role: 'member' }] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const before = listWorkspaceMembers(21)
+  expect(listWorkspaceMembers(21)).toBe(before)
+  const rejected = expect(before).rejects.toMatchObject({ cause: 'aborted', code: 'AUTH_SESSION_CHANGED' })
+  resetAuthenticatedSession()
+  const after = listWorkspaceMembers(21)
+  oldMembers.resolve(jsonResponse({ data: [{ user_id: 8, role: 'admin' }] }))
+
+  await rejected
+  await expect(after).resolves.toEqual([{ user_id: 8, role: 'member' }])
+  expect(fetchMock).toHaveBeenCalledTimes(2)
 })
 
 describe('session response parsing', () => {
