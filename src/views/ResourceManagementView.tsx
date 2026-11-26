@@ -50,7 +50,6 @@ import {
 } from '@/utils/creativeDraftMetadata'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 
-const AssetLibrary = lazy(() => import('@/components/resource/AssetLibrary'))
 const RealPersonLibrary = lazy(() => import('@/components/resource/RealPersonLibrary'))
 
 // 主 Tab + 各自子分类(全部 = 我上传的 + 我生成的 的所有素材)
@@ -89,11 +88,6 @@ const MAIN_TABS = [
     key: 'collected',
     label: '我收藏的',
     subs: [] as { k: string; l: string }[],
-  },
-  {
-    key: 'library',
-    label: '资产库',
-    subs: [],
   },
   {
     key: 'people',
@@ -1354,7 +1348,7 @@ export default function ResourceManagementView() {
     [gridCards, safePage],
   )
   const selectedCards = paginatedCards.filter((card: any) => selectedCardIds.has(String(card.id)))
-  const showAssetWorkspace = mainTab !== 'people' && mainTab !== 'library' && !showProjectList
+  const showAssetWorkspace = mainTab !== 'people' && !showProjectList
 
   useEffect(() => {
     setPage(1)
@@ -1672,33 +1666,29 @@ export default function ResourceManagementView() {
                 {t.label}
               </button>
             ))}
-            {mainTab !== 'library' && (
-              <>
-                <label className="rm2-search">
-                  <img src={resourceSearchIcon} alt="" aria-hidden="true" />
-                  <input
-                    value={searchQuery}
-                    type="text"
-                    placeholder="搜索素材名称、关键词..."
-                    aria-label="搜索素材名称、关键词"
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </label>
-                <div className="rm2-sort">
-                  <span>排序</span>
-                  <FilterSelect
-                    ariaLabel="按创建时间排序"
-                    className="rm2-sort__select"
-                    value={sortOrder}
-                    options={[
-                      { value: 'newest', label: '最近创建' },
-                      { value: 'oldest', label: '最早创建' },
-                    ]}
-                    onChange={(value) => setSortOrder(value as 'newest' | 'oldest')}
-                  />
-                </div>
-              </>
-            )}
+            <label className="rm2-search">
+              <img src={resourceSearchIcon} alt="" aria-hidden="true" />
+              <input
+                value={searchQuery}
+                type="text"
+                placeholder="搜索素材名称、关键词..."
+                aria-label="搜索素材名称、关键词"
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </label>
+            <div className="rm2-sort">
+              <span>排序</span>
+              <FilterSelect
+                ariaLabel="按创建时间排序"
+                className="rm2-sort__select"
+                value={sortOrder}
+                options={[
+                  { value: 'newest', label: '最近创建' },
+                  { value: 'oldest', label: '最早创建' },
+                ]}
+                onChange={(value) => setSortOrder(value as 'newest' | 'oldest')}
+              />
+            </div>
           </div>
 
           {/* 子分类(全部 tab,或进入项目后的图片/视频)*/}
@@ -1725,11 +1715,7 @@ export default function ResourceManagementView() {
           )}
 
           {/* 内容 */}
-          {mainTab === 'library' ? (
-            <Suspense fallback={<div className="rm2-empty">正在加载资产库…</div>}>
-              <AssetLibrary key={accessScope} workspaceId={currentWorkspaceId} />
-            </Suspense>
-          ) : mainTab === 'people' ? (
+          {mainTab === 'people' ? (
             <Suspense fallback={<div className="rm2-empty">正在加载真人素材库…</div>}>
               <RealPersonLibrary workspaceId={currentWorkspaceId} userId={currentUserId} query={searchQuery} />
             </Suspense>
