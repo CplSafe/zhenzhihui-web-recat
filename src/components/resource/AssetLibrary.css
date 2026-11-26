@@ -1,0 +1,78 @@
+.asset-library-toolbar,
+.asset-library-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-library-toolbar {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.asset-library-categories {
+  margin-bottom: 16px;
+}
+
+.asset-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  padding: 0;
+  margin: 0 0 16px;
+  list-style: none;
+}
+
+.asset-library-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.asset-library-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #f5f6f7;
+}
+
+.asset-library-card audio {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 12px 12px 0;
+}
+
+.asset-library-card-body,
+.asset-library-form,
+.asset-library-form label {
+  display: grid;
+  gap: 8px;
+}
+
+.asset-library-card-body {
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+
+.asset-library-form {
+  gap: 16px;
+}
+
+.asset-library-form input,
+.asset-library-form select {
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 8px;
+  font: inherit;
+  border: 1px solid #bfc5ca;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.asset-library-form .asset-library-actions {
+  justify-content: flex-end;
+}
