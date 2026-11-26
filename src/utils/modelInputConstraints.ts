@@ -29,10 +29,18 @@ export interface ModelInputRoleConstraint {
   maxCount: number
   mimeTypes: string[]
   maxSizeBytes: number
+  minDurationSec?: number
+  maxDurationSec?: number
+  maxTotalDurationSec?: number
+  minDurationSecByMode?: Record<string, number>
 }
 
 export interface ModelInputConstraints {
   roles: ModelInputRoleConstraint[]
+  maxInputOutputDurationSec?: number
+  referenceModeMaxResolution?: string
+  videoInputDisablesGeneratedAudio?: boolean
+  audioRequiresVisualInput?: boolean
   /** 组间互斥：任一组有素材时其它组必须为空（万相的首尾帧 vs 参考素材）。 */
   mutuallyExclusiveRoleGroups: string[][]
 }
@@ -46,6 +54,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function positiveInt(value: unknown): number {
   const n = Math.floor(Number(value) || 0)
   return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+function durationMinimumsByMode(value: unknown): Record<string, number> | undefined {
+  const source = asRecord(value)
+  if (!source) return undefined
+  return Object.fromEntries(
+    Object.entries(source).flatMap(([mode, raw]) => {
+      const seconds = positiveNumber(raw)
+      return seconds === undefined ? [] : [[mode, seconds]]
+    }),
+  )
 }
 
 function toStringArray(value: unknown): string[] {
@@ -72,6 +96,10 @@ export function getModelInputConstraints(model: unknown, operationCode: string):
       maxCount: positiveInt(entry.max_count ?? entry.maxCount),
       mimeTypes: toStringArray(entry.mime_types ?? entry.mimeTypes),
       maxSizeBytes: positiveInt(entry.max_size_bytes ?? entry.maxSizeBytes),
+      minDurationSec: positiveNumber(entry.min_duration_seconds),
+      maxDurationSec: positiveNumber(entry.max_duration_seconds),
+      maxTotalDurationSec: positiveNumber(entry.max_total_duration_seconds),
+      minDurationSecByMode: durationMinimumsByMode(entry.min_duration_seconds_by_mode),
     }))
     .filter((entry) => entry.role !== '')
 
@@ -80,7 +108,17 @@ export function getModelInputConstraints(model: unknown, operationCode: string):
     .map((group) => toStringArray(group))
     .filter((group) => group.length > 0)
 
-  return { roles, mutuallyExclusiveRoleGroups }
+  return {
+    roles,
+    mutuallyExclusiveRoleGroups,
+    maxInputOutputDurationSec: positiveNumber(forOperation.max_input_output_duration_seconds),
+    referenceModeMaxResolution:
+      typeof forOperation.reference_mode_max_resolution === 'string'
+        ? forOperation.reference_mode_max_resolution
+        : undefined,
+    videoInputDisablesGeneratedAudio: forOperation.video_input_disables_generated_audio === true,
+    audioRequiresVisualInput: forOperation.audio_requires_visual_input === true,
+  }
 }
 
 /** Resolve a reference role from the same operation whitelist enforced by the backend. */
@@ -131,4 +169,60 @@ export function getModelReferenceImageMinimum(model: unknown, operationCode: str
     if (match) return Math.max(0, match.minCount)
   }
   return 0
+}
+
+/** Check the known browser durations. Unreadable metadata is verified by the server. */
+export function getMediaDurationError(
+  role: ModelInputRoleConstraint,
+  durations: readonly number[],
+  mode: string,
+  outputDuration: number,
+  maxInputOutputDuration?: number,
+): string | null {
+  const label = role.role === 'audio' ? '参考音频' : '输入视频'
+  const minimum = role.minDurationSecByMode?.[mode] ?? role.minDurationSec
+  const maximum = role.maxDurationSec
+  let total = 0
+  for (const [index, seconds] of durations.entries()) {
+    if (!Number.isFinite(seconds) || seconds <= 0) continue
+    if (minimum !== undefined && seconds < minimum) return `第 ${index + 1} 段${label}至少需要 ${minimum} 秒`
+    if (maximum !== undefined && seconds - maximum > 1e-9) return `第 ${index + 1} 段${label}最多 ${maximum} 秒`
+    total += seconds
+  }
+  if (role.maxTotalDurationSec !== undefined && total - role.maxTotalDurationSec > 1e-9) {
+    return `${label}合计最多 ${role.maxTotalDurationSec} 秒`
+  }
+  if (
+    role.role === 'video' &&
+    total > 0 &&
+    outputDuration > 0 &&
+    maxInputOutputDuration !== undefined &&
+    total + outputDuration - maxInputOutputDuration > 1e-9
+  ) {
+    return `参考视频与生成视频合计最多 ${maxInputOutputDuration} 秒`
+  }
+  return null
+}
+
+export function getVideoModeInputError(
+  constraints: ModelInputConstraints,
+  params: Readonly<Record<string, unknown>>,
+  roles: readonly string[],
+): string | null {
+  const imageCount = roles.filter((role) => role === 'image' || role === 'reference_image').length
+  const hasVideo = roles.includes('video')
+  if (constraints.audioRequiresVisualInput && roles.includes('audio') && !hasVideo && imageCount === 0) {
+    return '此模型使用参考音频时还需要添加图片或视频'
+  }
+  if (constraints.videoInputDisablesGeneratedAudio && hasVideo && params.generate_audio === true) {
+    return '此模型使用参考视频时不能同时开启生成音频'
+  }
+  const maxResolution = constraints.referenceModeMaxResolution
+  const voices = params.reference_voice_ids
+  const hasVoices = Array.isArray(voices) ? voices.length > 0 : typeof voices === 'string' && voices.trim() !== ''
+  const isReference = params.reference_mode === true || imageCount > 1 || hasVoices
+  if (maxResolution && isReference && String(params.resolution ?? '').toLowerCase() === '1080p') {
+    return `参考生视频最高支持 ${maxResolution}，请降低分辨率后重试`
+  }
+  return null
 }

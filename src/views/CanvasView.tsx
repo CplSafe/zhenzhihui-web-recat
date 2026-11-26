@@ -231,14 +231,14 @@ import { useCanvasLocalMediaImport } from '@/composables/useCanvasLocalMediaImpo
 import { useCanvasTimelineUiState } from '@/composables/useCanvasTimelineUiState'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import CanvasAudioNode from '@/components/canvas/CanvasAudioNode'
-import { normalizeAudioSettings, parseTimelineAudio, syncTimelineAudio } from '@/utils/canvasAudio'
+import { normalizeAudioSettings, parseTimelineAudio, readAudioDuration, syncTimelineAudio } from '@/utils/canvasAudio'
 import {
   CANVAS_AUDIO_NODES_ENABLED,
   CANVAS_PHASE_ONE_EXTRAS_ENABLED,
   isCanvasAudioEntryVisible,
   isCanvasAudioKind,
 } from '@/utils/canvasFeatureFlags'
-import { getModelInputConstraints } from '@/utils/modelInputConstraints'
+import { getMediaDurationError, getModelInputConstraints, getVideoModeInputError } from '@/utils/modelInputConstraints'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import {
   captureVideoFrameDataUrl,
@@ -7608,7 +7608,8 @@ function CanvasInner({
         const submitMaxImageRefs =
           getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
         if (generate.kind === 'video' && generate.operationCode !== 'video.upscale') {
-          const submitInputRoles = getModelInputConstraints(submitModel?.source, generate.operationCode).roles
+          const submitConstraints = getModelInputConstraints(submitModel?.source, generate.operationCode)
+          const submitInputRoles = submitConstraints.roles
           const videoValidationArgs = {
             operationCode: generate.operationCode,
             videoMode: generate.videoMode,
@@ -7619,10 +7620,7 @@ function CanvasInner({
               ? (submitInputRoles.find((role) => role.role === 'video')?.maxCount ?? 0)
               : 1,
             selfVideoAssetId: generate.selfVideoAssetId,
-            maxAudioRefs:
-              getModelInputConstraints(submitModel?.source, generate.operationCode).roles.find((role) =>
-                /audio/i.test(role.role),
-              )?.maxCount || 0,
+            maxAudioRefs: submitInputRoles.find((role) => /audio/i.test(role.role))?.maxCount || 0,
             minImageRefs: getModelReferenceImageMinimum(submitModel?.source, 'video.generate'),
             modelLabel: submitModel?.displayName,
           }
@@ -7630,6 +7628,47 @@ function CanvasInner({
           if (inputError) {
             showToast(inputError, 'error')
             return
+          }
+          const modeError = getVideoModeInputError(
+            submitConstraints,
+            generate.params || {},
+            generate.inputAssets.map((asset) => asset.role),
+          )
+          if (modeError) {
+            showToast(modeError, 'error')
+            return
+          }
+          const workspace = Number(workspaceId || 0)
+          const mode = String(generate.params?.mode || '')
+          const outputDuration = Number(generate.params?.duration ?? 5)
+          for (const role of submitInputRoles) {
+            if (role.role !== 'video' && role.role !== 'audio') continue
+            if (
+              !role.minDurationSec &&
+              !role.maxDurationSec &&
+              !role.maxTotalDurationSec &&
+              !role.minDurationSecByMode?.[mode] &&
+              !(role.role === 'video' && submitConstraints.maxInputOutputDurationSec)
+            )
+              continue
+            const assetIds = generate.inputAssets
+              .filter((asset) => asset.role === role.role)
+              .map((asset) => Number(asset.asset_id))
+            const durations = await mapWithConcurrency(assetIds, 3, async (assetId) => {
+              if (role.role === 'video') return readTimelineAssetDurationSec(assetId, workspace).catch(() => 0)
+              return readAudioDuration(assetStreamUrl(assetId, workspace)).catch(() => 0)
+            })
+            const durationError = getMediaDurationError(
+              role,
+              durations,
+              mode,
+              outputDuration,
+              submitConstraints.maxInputOutputDurationSec,
+            )
+            if (durationError) {
+              showToast(durationError, 'error')
+              return
+            }
           }
           const modelNames = [
             submitModel?.displayName,
@@ -7697,7 +7736,12 @@ function CanvasInner({
           const videoAssetIds = generate.inputAssets
             .filter((asset) => asset.role === 'video')
             .map((asset) => Number(asset.asset_id))
-          const maxVideoRefSec = resolveRefVideoLimits(submitModel?.source).maxDurationSec
+          const videoRole = submitInputRoles.find((role) => role.role === 'video')
+          const hasVideoDurationContract =
+            videoRole?.minDurationSec || videoRole?.maxDurationSec || videoRole?.maxTotalDurationSec
+          const maxVideoRefSec = hasVideoDurationContract
+            ? null
+            : resolveRefVideoLimits(submitModel?.source).maxDurationSec
           let videoRefTotalSec = 0
           if (maxVideoRefSec !== null && videoAssetIds.length) {
             const durations = await Promise.all(

@@ -6,6 +6,7 @@
  * - 单条时长优先读取模型 schema 的 `source_video_duration` 字段；
  *   Seedance 2.5 缺失该字段时按服务商公开的 30 秒输入上限兜底。
  */
+import { getModelInputConstraints } from './modelInputConstraints'
 import { getModelParamFields, findModelParamField } from './modelSchema'
 
 /** 参考视频数量上限（后端 provider 侧的硬约束）。 */
@@ -22,6 +23,7 @@ export interface StudioRefVideoLimits {
   maxDurationSec: number | null
   /** 单条参考视频的时长下限（秒）；模型未声明时为 null。 */
   minDurationSec: number | null
+  maxTotalDurationSec?: number
 }
 
 /** 读取数值型 schema 约束，非法值返回 null。 */
@@ -55,11 +57,16 @@ function isSeedance25(model: unknown): boolean {
  * https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh&redirect=1
  */
 export function resolveRefVideoLimits(model: unknown): StudioRefVideoLimits {
+  const role = getModelInputConstraints(model, 'video.generate').roles.find((entry) => entry.role === 'video')
   const field = findModelParamField(getModelParamFields(model), ['source_video_duration', 'sourceVideoDuration'])
   return {
-    maxCount: MAX_REF_VIDEOS,
-    maxDurationSec: readNumber((field as any)?.max ?? (field as any)?.maximum) ?? (isSeedance25(model) ? 30 : null),
-    minDurationSec: readNumber((field as any)?.min ?? (field as any)?.minimum),
+    maxCount: role?.maxCount ?? MAX_REF_VIDEOS,
+    maxDurationSec:
+      role?.maxDurationSec ??
+      readNumber((field as any)?.max ?? (field as any)?.maximum) ??
+      (isSeedance25(model) ? 30 : null),
+    minDurationSec: role?.minDurationSec ?? readNumber((field as any)?.min ?? (field as any)?.minimum),
+    ...(role?.maxTotalDurationSec === undefined ? {} : { maxTotalDurationSec: role.maxTotalDurationSec }),
   }
 }
 
@@ -109,7 +116,12 @@ export function validateRefVideos(videos: readonly StudioRefVideo[], limits: Stu
     const reason = checkDuration(video.durationSec, limits)
     if (reason) return reason
   }
-  return ''
+  return checkTotalDuration(totalRefVideoSec(videos), limits)
+}
+
+function checkTotalDuration(seconds: number, limits: StudioRefVideoLimits): string {
+  const maximum = limits.maxTotalDurationSec
+  return maximum !== undefined && seconds - maximum > 1e-9 ? `参考视频合计最多 ${maximum} 秒` : ''
 }
 
 /** 再添加一条 `durationSec` 秒的视频是否会被拒；返回原因或空串。 */
@@ -119,5 +131,5 @@ export function getRefVideoRejectReason(
   limits: StudioRefVideoLimits,
 ): string {
   if (videos.length >= limits.maxCount) return `最多支持 ${limits.maxCount} 个参考视频`
-  return checkDuration(durationSec, limits)
+  return checkDuration(durationSec, limits) || checkTotalDuration(totalRefVideoSec(videos) + durationSec, limits)
 }

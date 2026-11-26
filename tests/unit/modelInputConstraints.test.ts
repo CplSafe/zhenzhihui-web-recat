@@ -4,6 +4,8 @@ import {
   getModelReferenceImageLimit,
   getModelReferenceImageMinimum,
   getModelInputConstraints,
+  getMediaDurationError,
+  getVideoModeInputError,
   modelAcceptsSourceVideoInput,
   DEFAULT_REFERENCE_IMAGE_LIMIT,
 } from '@/utils/modelInputConstraints'
@@ -164,4 +166,38 @@ describe('modelAcceptsSourceVideoInput', () => {
     expect(modelAcceptsSourceVideoInput({}, 'video.generate')).toBe(false)
     expect(modelAcceptsSourceVideoInput(undefined, 'video.generate')).toBe(false)
   })
+})
+
+test('validates fractional audio limits and video edit or output combination limits from the catalog', () => {
+  const model = {
+    input_constraints: {
+      'video.generate': {
+        max_input_output_duration_seconds: 30,
+        reference_mode_max_resolution: '720p',
+        video_input_disables_generated_audio: true,
+        audio_requires_visual_input: true,
+        roles: [
+          { role: 'audio', min_duration_seconds: 1.8, max_total_duration_seconds: 30.2 },
+          {
+            role: 'video',
+            min_duration_seconds: 2,
+            min_duration_seconds_by_mode: { edit: 4 },
+            max_duration_seconds: 15,
+          },
+        ],
+      },
+    },
+  }
+  const constraints = getModelInputConstraints(model, 'video.generate')
+  const [audio, video] = constraints.roles
+  expect(getMediaDurationError(audio, [1.8, 28.4], 'generate', 5)).toBeNull()
+  expect(getMediaDurationError(audio, [1.79], 'generate', 5)).toContain('1.8 秒')
+  expect(getMediaDurationError(audio, [20, 10.21], 'generate', 5)).toContain('30.2 秒')
+  expect(getMediaDurationError(video, [3], 'edit', 5)).toContain('4 秒')
+  expect(getMediaDurationError(video, [10], 'generate', 21, constraints.maxInputOutputDurationSec)).toContain('30 秒')
+  expect(getVideoModeInputError(constraints, { generate_audio: true }, ['video'])).toContain('生成音频')
+  expect(getVideoModeInputError(constraints, { resolution: '1080p', reference_mode: true }, ['image'])).toContain(
+    '720p',
+  )
+  expect(getVideoModeInputError(constraints, {}, ['audio'])).toContain('图片')
 })

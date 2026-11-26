@@ -1852,7 +1852,14 @@ export default function CanvasNodePanel({
   }, [videoRefUrls, videoDurations])
   const videoRefTotalSec = videoRefUrls.reduce((sum, url) => sum + (videoDurations[url] || 0), 0)
   // 未声明参考视频输入时长上限的模型不在前端臆造 15 秒限制。
-  const maxVideoRefSec = useMemo(() => resolveRefVideoLimits(selectedModel?.source).maxDurationSec, [selectedModel])
+  const maxVideoRefSec = useMemo(() => {
+    const role = getModelInputConstraints(selectedModel?.source, operationCode).roles.find(
+      (item) => item.role === 'video',
+    )
+    if (role?.maxTotalDurationSec !== undefined) return role.maxTotalDurationSec
+    if (role?.minDurationSec !== undefined || role?.maxDurationSec !== undefined) return null
+    return resolveRefVideoLimits(selectedModel?.source).maxDurationSec
+  }, [selectedModel, operationCode])
 
   const generationPrompt = buildFullPrompt(prompt)
   const requiredPromptHint = validateCanvasGenerationPrompt(kind, '')
