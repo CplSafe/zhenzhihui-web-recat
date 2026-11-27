@@ -1,0 +1,57 @@
+.modal :global(.ant-modal-close) {
+  width: 44px;
+  height: 44px;
+  color: var(--canvas-text-muted, #b0b0b0);
+}
+
+.modal :global(.ant-modal-footer) button {
+  min-height: 44px;
+}
+
+.content {
+  display: grid;
+  gap: 12px;
+}
+
+.description,
+.dimensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--canvas-text-muted, #b0b0b0);
+}
+
+.description strong {
+  overflow-wrap: anywhere;
+}
+
+.description strong,
+.dimensions strong {
+  color: var(--canvas-text, #e5e7eb);
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 144px;
+  padding: 12px;
+  place-items: center;
+  border: 1px solid var(--canvas-border, #454545);
+  border-radius: 8px;
+  background: var(--canvas-bg, #1f1f1f);
+}
+
+.preview {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(46dvh, 420px);
+  object-fit: contain;
+}
+
+.dimensions {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

@@ -5,6 +5,15 @@ import {
   validateCanvasImageCropSource,
   type CanvasImageCropRect,
 } from '@/utils/canvasImagePixelCrop'
+import {
+  isSupportedVideoReferenceImageAspectRatio,
+  videoReferenceImageAspectRatioError,
+  videoReferenceImageIssue,
+  VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO,
+  VIDEO_REFERENCE_IMAGE_MAX_DIMENSION,
+  VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO,
+  VIDEO_REFERENCE_IMAGE_MIN_DIMENSION,
+} from '@/utils/imageFile'
 import CanvasPortalBoundary from './CanvasPortalBoundary'
 import styles from './CanvasStandaloneImageCropModal.module.css'
 
@@ -110,11 +119,22 @@ function resizeCrop(rect: CanvasImageCropRect, delta: Point, size: Size, handle:
 interface Props {
   sourceUrl: string
   title: string
+  zIndex?: number
+  saveLabel?: string
+  referenceLimits?: 'video' | 'aspect'
   onClose: () => void
   onSave: (file: File, width: number, height: number, signal: AbortSignal) => Promise<void>
 }
 
-export default function CanvasStandaloneImageCropModal({ sourceUrl, title, onClose, onSave }: Props) {
+export default function CanvasStandaloneImageCropModal({
+  sourceUrl,
+  title,
+  zIndex = 2200,
+  saveLabel = '裁剪并创建节点',
+  referenceLimits,
+  onClose,
+  onSave,
+}: Props) {
   const [source, setSource] = useState<{ blob: Blob; url: string; size: Size } | null>(null)
   const [size, setSize] = useState<Size | null>(null)
   const [crop, setCrop] = useState<CanvasImageCropRect | null>(null)
@@ -122,6 +142,14 @@ export default function CanvasStandaloneImageCropModal({ sourceUrl, title, onClo
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
   const [busy, setBusy] = useState(false)
+  const referenceIssue =
+    !crop || !referenceLimits
+      ? ''
+      : referenceLimits === 'video'
+        ? videoReferenceImageIssue(crop)
+        : isSupportedVideoReferenceImageAspectRatio(crop)
+          ? ''
+          : videoReferenceImageAspectRatioError(crop)
   const saving = useRef<AbortController | null>(null)
   const lastExport = useRef<{ source: Blob; key: string; file: File } | null>(null)
   const drag = useRef<{
@@ -214,7 +242,7 @@ export default function CanvasStandaloneImageCropModal({ sourceUrl, title, onClo
   }
 
   async function save() {
-    if (!source || !crop || saving.current) return
+    if (!source || !crop || referenceIssue || saving.current) return
     const operation = new AbortController()
     saving.current = operation
     setBusy(true)
@@ -241,7 +269,7 @@ export default function CanvasStandaloneImageCropModal({ sourceUrl, title, onClo
   return (
     <Modal
       open
-      zIndex={2200}
+      zIndex={zIndex}
       width={900}
       className={styles.modal}
       style={{ top: 24 }}
@@ -257,8 +285,8 @@ export default function CanvasStandaloneImageCropModal({ sourceUrl, title, onClo
           <Button autoFocus disabled={busy} onClick={onClose}>
             取消
           </Button>
-          <Button type="primary" loading={busy} disabled={!crop || Boolean(loadError)} onClick={save}>
-            裁剪并创建节点
+          <Button type="primary" loading={busy} disabled={!crop || Boolean(loadError || referenceIssue)} onClick={save}>
+            {saveLabel}
           </Button>
         </>
       }
@@ -357,6 +385,26 @@ export default function CanvasStandaloneImageCropModal({ sourceUrl, title, onClo
           <div className={styles.dimensions} role="status" aria-label="裁剪尺寸">
             {crop.width} × {crop.height} 像素
           </div>
+        )}
+        {referenceLimits && !loadError && (
+          <Alert
+            type={referenceIssue ? 'warning' : 'info'}
+            role="status"
+            showIcon
+            message={referenceIssue || '参考图尺寸要求'}
+            description={
+              <>
+                {referenceLimits === 'video' && (
+                  <div>
+                    宽和高各 {VIDEO_REFERENCE_IMAGE_MIN_DIMENSION}–{VIDEO_REFERENCE_IMAGE_MAX_DIMENSION} 像素
+                  </div>
+                )}
+                <div>
+                  宽高比（宽 ÷ 高） {VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO}–{VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO}
+                </div>
+              </>
+            }
+          />
         )}
         {(loadError || saveError) && <Alert type="error" showIcon message={loadError || saveError} />}
       </div>

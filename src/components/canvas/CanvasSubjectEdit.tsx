@@ -65,11 +65,19 @@ type Props = {
   source: CanvasSubjectEditSource
   workspaceId: number
   canvasId?: number
+  referenceAssetOverrides?: Readonly<Record<number, number>>
   onClose: () => void
   onSubmit: (request: CanvasSubjectEditRequest, title: string) => Promise<void>
 }
 
-export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClose, onSubmit }: Props) {
+export default function CanvasSubjectEdit({
+  source,
+  workspaceId,
+  canvasId,
+  referenceAssetOverrides,
+  onClose,
+  onSubmit,
+}: Props) {
   const isVideo = source.kind === 'video'
   const initialVideo = isVideo ? source.initialVideo : undefined
   const initialFrameUrl = initialVideo?.frameUrl
@@ -105,7 +113,7 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
   const [modelError, setModelError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [error, setError] = useState('')
-  const [quote, setQuote] = useState<Quote | null>(null)
+  const [savedQuote, setQuote] = useState<Quote | null>(null)
   const [videoPrice, setVideoPrice] = useState<{ key: string; price?: QuotePrice; error?: string }>()
   const [videoPriceRetry, setVideoPriceRetry] = useState(0)
   const [phase, setPhase] = useState<'estimate' | 'submit' | null>(null)
@@ -133,7 +141,17 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
   const canSendVideoCutout = isVideo && model && getCanvasSubjectVideoSourceReferenceMode(model) === 'cutout'
   const showTargetPicker =
     mode !== 'remove' && Boolean(model && supportsCanvasSubjectTargetReference(source.kind, model))
-  const targetReference = showTargetPicker ? targetImage : null
+  const adjustedTargetId = targetImage && referenceAssetOverrides?.[targetImage.assetId]
+  const targetReference = !showTargetPicker
+    ? null
+    : adjustedTargetId
+      ? {
+          ...targetImage,
+          assetId: adjustedTargetId,
+          src: assetStreamUrl(adjustedTargetId, workspaceId),
+          name: `${targetImage.name} · 已调整`,
+        }
+      : targetImage
   const supportsSingleReference = isVideo && Boolean(model && supportsCanvasSubjectVideoReference(model))
   const sendsVideoReference =
     canSendVideoCutout && (targetReference ? getCanvasSubjectVideoReferenceLimit(model) > 1 : supportsSingleReference)
@@ -156,6 +174,11 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
   )
   const modeLabel = CANVAS_SUBJECT_EDIT_MODE_LABELS[mode]
   const targetReferenceId = targetReference?.assetId
+  const quote = savedQuote?.request.inputAssets.some(
+    (asset) => ['image', 'reference_image'].includes(asset.role) && referenceAssetOverrides?.[Number(asset.asset_id)],
+  )
+    ? null
+    : savedQuote
   const quoteRatio = videoSize
     ? closestRatioOption(videoSize.width, videoSize.height, SEEDANCE_RATIO_OPTIONS)
     : source.ratio
@@ -475,7 +498,9 @@ export default function CanvasSubjectEdit({ source, workspaceId, canvasId, onClo
       imageSelection: isVideo ? undefined : selectionBounds,
       videoSelection: videoSelection && {
         ...videoSelection,
-        referenceAssetId: sendsVideoReference ? uploadedSelection.current : undefined,
+        referenceAssetId: sendsVideoReference
+          ? (referenceAssetOverrides?.[uploadedSelection.current] ?? uploadedSelection.current)
+          : undefined,
       },
       target: targetDescription,
       description,

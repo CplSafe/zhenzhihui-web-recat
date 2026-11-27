@@ -477,6 +477,9 @@ async function setupSubjectEdit(
         : { id: canvasId, title: '主体编辑回归', revision },
     })
   })
+  await page.routeWebSocket(`**/api/v1/canvases/${canvasId}/node-locks/socket?**`, (socket) => {
+    socket.onMessage(() => socket.send(JSON.stringify({ type: 'state', data: { granted: true, nodes: {} } })))
+  })
   await page.route(`**/api/v1/canvases/${canvasId}/node-locks?**`, (route) => {
     expect(route.request().method()).toBe('POST')
     const { nodes } = route.request().postDataJSON() as { nodes: string[] }
@@ -586,6 +589,7 @@ for (const { kind, hidden, visible } of [
 }
 
 test('视频主体编辑按模式筛选 Seedance 型号并按 Flash 版本提交', async ({ page }, testInfo) => {
+  test.setTimeout(90_000)
   const app = await setupSubjectEdit(page, 'video', {
     extraModels: [seedanceMiniSubjectModel, seedanceSubjectModel, seedanceFastSubjectModel, seedanceFlashSubjectModel],
   })

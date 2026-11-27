@@ -47,7 +47,13 @@ import type { CanvasSubjectEditRequest, CanvasSubjectEditSource } from '@/compon
 import type { VideoUpscaleSubmission } from '@/components/canvas/CanvasUpscale'
 import { normalizeCanvasAssetSource } from '@/utils/canvasGeneration'
 import type { InvalidCanvasImage } from '@/components/canvas/CanvasImageCropModal'
-import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
+import type { CanvasSeedanceAspectRatioImage } from '@/components/canvas/CanvasSeedanceAspectRatioDialog'
+import {
+  isSupportedVideoReferenceImageAspectRatio,
+  readImageDimensions,
+  videoReferenceImageAspectRatioError,
+  videoReferenceImageIssue,
+} from '@/utils/imageFile'
 import {
   canUseCanvasShortcuts,
   isCanvasShortcutTarget,
@@ -215,6 +221,7 @@ import {
   getAiTaskId,
   listAiModels,
   getSeedanceModeration,
+  humanizeVideoAspectRatioError,
   submitSeedanceModeration,
   BusinessApiError,
   normalizeAiTaskStatus,
@@ -269,7 +276,12 @@ import {
 import { planMultiResultPositions } from '@/utils/canvasMultiResult'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
 import { normalizeSeedanceModerationResult, type SeedanceModerationState } from '@/utils/seedanceModeration'
-import { ensureCanvasSeedanceModeration } from '@/utils/canvasSeedanceModeration'
+import {
+  ensureCanvasSeedanceModeration,
+  readCanvasSeedanceImageAspectRatioIssue,
+  readCanvasSeedanceVideoAspectRatioIssue,
+} from '@/utils/canvasSeedanceModeration'
+import { buildMentionLabels } from '@/utils/canvasMentions'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { downloadCanvasSelection, type CanvasDownloadItem } from '@/utils/canvasBatchDownload'
@@ -379,6 +391,8 @@ const CanvasSettingsPanel = lazy(() => import('@/components/canvas/CanvasSetting
 const CanvasNodePanel = lazy(() => import('@/components/canvas/CanvasNodePanel'))
 const CanvasImageCropModal = lazy(() => import('@/components/canvas/CanvasImageCropModal'))
 const CanvasStandaloneImageCropModal = lazy(() => import('@/components/canvas/CanvasStandaloneImageCropModal'))
+const CanvasImagePaddingModal = lazy(() => import('@/components/canvas/CanvasImagePaddingModal'))
+const CanvasSeedanceAspectRatioDialog = lazy(() => import('@/components/canvas/CanvasSeedanceAspectRatioDialog'))
 const CanvasVideoTrimModal = lazy(() => import('@/components/canvas/CanvasVideoTrimModal'))
 const CanvasHdWorkspace = lazy(() => import('@/components/canvas/CanvasUpscale'))
 
@@ -392,6 +406,59 @@ type CanvasMediaEditTarget = {
   assetWorkspaceId: number
   sourceUrl: string
   title: string
+}
+
+type CanvasSeedanceImageInput = Pick<CanvasSeedanceAspectRatioImage, 'assetId' | 'title' | 'nodeId'> & {
+  workspaceId: number
+  reference?: { targetId: string; edgeId: string }
+  subjectSource?: CanvasSubjectEditSource
+}
+
+type CanvasSeedanceCropImage = CanvasSeedanceImageInput & CanvasSeedanceAspectRatioImage
+
+type CanvasStandaloneImageEditTarget = CanvasMediaEditTarget & {
+  referenceEdit?: Pick<CanvasSeedanceCropImage, 'reference' | 'subjectSource' | 'videoInput'> & {
+    action: 'crop' | 'pad' | 'replace'
+  }
+}
+
+function referenceImageEditTarget(
+  source: Omit<CanvasSeedanceCropImage, 'width' | 'height'>,
+  canvasBinding: string,
+  action: NonNullable<CanvasStandaloneImageEditTarget['referenceEdit']>['action'],
+): CanvasStandaloneImageEditTarget {
+  return {
+    canvasBinding,
+    nodeId: source.nodeId || '',
+    assetId: source.assetId,
+    assetWorkspaceId: source.workspaceId,
+    sourceUrl: source.url,
+    title: source.title,
+    referenceEdit: {
+      action,
+      reference: source.reference,
+      subjectSource: source.subjectSource,
+      videoInput: source.videoInput,
+    },
+  }
+}
+
+function seedanceImageRefs(sourceRefs: CanvasSourceRef[], inputAssets: { asset_id: number }[]) {
+  const inputIds = new Set(inputAssets.map(({ asset_id }) => Number(asset_id)))
+  return sourceRefs.filter(
+    (ref) => ref.kind === 'image' && Number(ref.assetId) > 0 && inputIds.has(Number(ref.assetId)),
+  )
+}
+
+function seedanceVideoIds(inputAssets: { asset_id: number; role: string }[]) {
+  return [
+    ...new Set(
+      inputAssets
+        .filter((asset) => asset.role === 'video')
+        .map((asset) => Number(asset.asset_id))
+        .filter((id) => Number.isSafeInteger(id) && id > 0),
+    ),
+  ]
 }
 
 function imageNodeDisplayRatio(width: number, height: number): string {
@@ -2772,13 +2839,26 @@ function CanvasInner({
     [currentUserId, workspaceId, draftWriterId],
   )
   const canvasBindingKey = `${currentUserId}:${workspaceId}:${canvasId}`
+  const canvasBindingRef = useRef(canvasBindingKey)
+  canvasBindingRef.current = canvasBindingKey
   const cloudLoadedRef = useRef(false)
   const [subjectEditTarget, setSubjectEditTarget] = useState<{
     canvasBinding: string
     source: CanvasSubjectEditSource
+    referenceAssetOverrides?: Record<number, number>
   } | null>(null)
   const subjectEdit = subjectEditTarget?.canvasBinding === canvasBindingKey ? subjectEditTarget.source : null
-  const [standaloneCropRequest, setStandaloneCropRequest] = useState<CanvasMediaEditTarget | null>(null)
+  const activeSubjectEditRef = useRef(subjectEdit)
+  activeSubjectEditRef.current = subjectEdit
+  const [seedanceRatioRequest, setSeedanceRatioRequest] = useState<{
+    canvasBinding: string
+    images: CanvasSeedanceCropImage[]
+  } | null>(null)
+  const seedanceRatioImages =
+    seedanceRatioRequest?.canvasBinding === canvasBindingKey ? seedanceRatioRequest.images : null
+  const activeSeedanceRatioRequest = useRef(seedanceRatioRequest)
+  activeSeedanceRatioRequest.current = seedanceRatioRequest
+  const [standaloneCropRequest, setStandaloneCropRequest] = useState<CanvasStandaloneImageEditTarget | null>(null)
   const standaloneCrop = standaloneCropRequest?.canvasBinding === canvasBindingKey ? standaloneCropRequest : null
   const activeStandaloneCropRef = useRef(standaloneCrop)
   activeStandaloneCropRef.current = standaloneCrop
@@ -2788,6 +2868,7 @@ function CanvasInner({
   activeVideoTrimRef.current = videoTrim
   useEffect(() => {
     setSubjectEditTarget(null)
+    setSeedanceRatioRequest(null)
     setStandaloneCropRequest(null)
     setVideoTrimTarget(null)
   }, [canvasBindingKey])
@@ -3055,13 +3136,56 @@ function CanvasInner({
   /** 粘贴节点的实现在后面才定义，paste 监听（定义在前）通过 ref 调它 */
   const pasteClipboardNodesRef = useRef<(anchor?: { x: number; y: number }) => boolean>(() => false)
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
+  const validateSeedanceImages = useCallback(
+    async (images: CanvasSeedanceImageInput[]) => {
+      const uniqueImages = new Map<string, CanvasSeedanceImageInput>()
+      for (const image of images) {
+        const key = `${image.workspaceId}:${image.assetId}`
+        if (!uniqueImages.has(key)) uniqueImages.set(key, image)
+      }
+      const checks = await mapWithConcurrency([...uniqueImages.values()], 3, async (image) => {
+        try {
+          const videoInput = Boolean(image.reference)
+          const invalid = await readCanvasSeedanceImageAspectRatioIssue(image.assetId, image.workspaceId, videoInput)
+          return { invalid: invalid ? { ...image, ...invalid, videoInput } : null, unreadable: null }
+        } catch {
+          return { invalid: null, unreadable: image.title }
+        }
+      })
+      if (!canvasMountedRef.current || canvasBindingRef.current !== canvasBindingKey) return false
+      const invalid = checks.flatMap((check) => (check.invalid ? [check.invalid] : []))
+      if (invalid.length) {
+        setSeedanceRatioRequest({ canvasBinding: canvasBindingKey, images: invalid })
+        return false
+      }
+      const unreadable = checks.flatMap((check) => (check.unreadable ? [check.unreadable] : []))
+      if (unreadable.length) {
+        showToast(`无法读取 ${unreadable.join('、')} 的原图尺寸，请确认素材可以预览后重试`, 'error')
+        return false
+      }
+      return true
+    },
+    [canvasBindingKey],
+  )
+  const validateSeedanceVideos = useCallback(
+    async (videos: { assetId: number; workspaceId: number; title: string }[]) => {
+      const issues = await mapWithConcurrency(videos, 3, ({ assetId, workspaceId, title }) =>
+        readCanvasSeedanceVideoAspectRatioIssue(assetId, workspaceId, title),
+      )
+      if (!canvasMountedRef.current || canvasBindingRef.current !== canvasBindingKey) return false
+      const errors = issues.filter(Boolean)
+      if (errors.length) showToast(errors.join('。'), 'error')
+      return !errors.length
+    },
+    [canvasBindingKey],
+  )
   const seedanceModerationInFlightRef = useRef(new Map<string, AbortController>())
   useEffect(
     () => () => {
       for (const controller of seedanceModerationInFlightRef.current.values()) controller.abort()
       seedanceModerationInFlightRef.current.clear()
     },
-    [workspaceId],
+    [canvasBindingKey],
   )
   /**
    * 编辑面板的字段以 nodes 中的持久化 data 为真相源。
@@ -3230,16 +3354,33 @@ function CanvasInner({
     [workspaceId, setNodes],
   )
   const handleSeedanceModeration = useCallback(
-    async (assetId: number, moderationWorkspaceId: number, mediaType: 'image' | 'video') => {
+    async (assetId: number, moderationWorkspaceId: number, mediaType: 'image' | 'video', nodeId?: string) => {
       const key = `${moderationWorkspaceId}:${assetId}`
       if (seedanceModerationInFlightRef.current.has(key)) return
       const controller = new AbortController()
       seedanceModerationInFlightRef.current.set(key, controller)
       const options = { workspaceId: moderationWorkspaceId, signal: controller.signal }
-      // 先在对应素材节点上显示审核中，提交和查询都不需要离开画布。
-      handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, 'pending')
-
+      const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+      const mediaLabel = mediaType === 'video' ? '视频' : '图片'
+      const title = String(node?.data.title || '').trim() || `${mediaLabel}素材 ${assetId}`
       try {
+        // 补边结果已校验导出尺寸，直接使用新素材 ID。节点手动审核时核验原文件。
+        if (nodeId) {
+          const input = { assetId, workspaceId: moderationWorkspaceId, nodeId, title }
+          const valid =
+            mediaType === 'image' ? await validateSeedanceImages([input]) : await validateSeedanceVideos([input])
+          if (!valid || controller.signal.aborted) return
+          const current = latestRef.current.nodes.find((item) => item.id === nodeId)
+          if (
+            Number(current?.data.assetId) !== assetId ||
+            Number(current?.data.assetWorkspaceId || workspaceId) !== moderationWorkspaceId
+          ) {
+            showToast(`原${mediaLabel}已更换或删除，请重新选择后审核`, 'info')
+            return
+          }
+        }
+        // 原图校验完成后再更新审核状态，避免比例错误被记录成内容拒审。
+        handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, 'pending')
         let current: ReturnType<typeof normalizeSeedanceModerationResult> | null
         try {
           current = normalizeSeedanceModerationResult(await getSeedanceModeration(assetId, options))
@@ -3272,8 +3413,11 @@ function CanvasInner({
           if (current.state === 'approved') {
             showToast(`${mediaType === 'video' ? '视频' : '图片'}认证通过`, 'success')
           } else if (current.state !== 'pending') {
+            const videoRatioError =
+              mediaType === 'video' ? humanizeVideoAspectRatioError(current.lastError || current.reason, title) : ''
             showToast(
-              `${mediaType === 'video' ? '视频' : '图片'}认证失败${current.reason ? `：${current.reason}` : '，请更换素材后重试'}`,
+              videoRatioError ||
+                `${mediaLabel}认证失败${current.reason ? `：${current.reason}` : '，请更换素材后重试'}`,
               'error',
             )
           }
@@ -3284,14 +3428,15 @@ function CanvasInner({
       } catch (cause) {
         if (controller.signal.aborted) return
         handleSeedanceModerationStatusChange(assetId, moderationWorkspaceId, 'unknown')
-        showToast(cause instanceof Error ? cause.message : '审核失败，请稍后重试', 'error')
+        const videoRatioError = mediaType === 'video' ? humanizeVideoAspectRatioError(cause, title) : ''
+        showToast(videoRatioError || (cause instanceof Error ? cause.message : '审核失败，请稍后重试'), 'error')
       } finally {
         if (seedanceModerationInFlightRef.current.get(key) === controller) {
           seedanceModerationInFlightRef.current.delete(key)
         }
       }
     },
-    [handleSeedanceModerationStatusChange],
+    [handleSeedanceModerationStatusChange, validateSeedanceImages, validateSeedanceVideos, workspaceId],
   )
   useEffect(() => {
     ;(window as any).__canvasOpenNextStep = (sourceId: string, clientX: number, clientY: number) => {
@@ -7725,6 +7870,8 @@ function CanvasInner({
   const [imageCropRequest, setImageCropRequest] = useState<{ targetId: string; images: InvalidCanvasImage[] } | null>(
     null,
   )
+  const activeImageCropRequest = useRef(imageCropRequest)
+  activeImageCropRequest.current = imageCropRequest
   const pendingNodeSubmissionsRef = useRef(new Set<string>())
   // 同步占位必须早于素材预检、授权检查和请求指纹等异步操作，防止快速双击并发穿透。
   // 与 pendingNodeSubmissionsRef 分开，避免原有的“本次提交已占用”校验把自己的锁误判为重复。
@@ -7882,28 +8029,47 @@ function CanvasInner({
               ? generate.inputAssets
                   .filter((asset) => asset.role === 'image' || asset.role === 'reference_image')
                   .map((asset) => Number(asset.asset_id))
-              : (generate.sourceRefs || [])
-                  .filter(
-                    (ref) =>
-                      ref.kind === 'image' &&
-                      generate.inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
-                  )
-                  .map((ref) => Number(ref.assetId))
+              : seedanceImageRefs(generate.sourceRefs || [], generate.inputAssets).map((ref) => Number(ref.assetId))
             const imageIds = [...new Set(imageAssetIds.filter((id) => Number.isSafeInteger(id) && id > 0))]
-            const videoIds = [
-              ...new Set(
-                generate.inputAssets
-                  .filter((asset) => asset.role === 'video')
-                  .map((asset) => Number(asset.asset_id))
-                  .filter((id) => Number.isSafeInteger(id) && id > 0),
-              ),
-            ]
+            const videoIds = seedanceVideoIds(generate.inputAssets)
+            if (generate.subjectEdit) {
+              const inputs = imageIds.map((assetId, index) => {
+                const source = latestRef.current.nodes.find(
+                  (node) =>
+                    node.data.kind === 'image' &&
+                    Number(node.data.assetId) === assetId &&
+                    Number(node.data.assetWorkspaceId || workspace) === workspace,
+                )
+                return {
+                  assetId,
+                  workspaceId: workspace,
+                  nodeId: source?.id,
+                  title: String(source?.data.title || '').trim() || `主体编辑参考图${index + 1}`,
+                  subjectSource: activeSubjectEditRef.current,
+                }
+              })
+              if (!(await validateSeedanceImages(inputs))) return
+              if (
+                !(await validateSeedanceVideos(
+                  videoIds.map((assetId) => ({
+                    assetId,
+                    workspaceId: workspace,
+                    title: activeSubjectEditRef.current?.title || `视频素材 ${assetId}`,
+                  })),
+                ))
+              )
+                return
+            }
             const moderationAssets = [
               ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
               ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
             ]
             for (const { assetId, mediaType } of moderationAssets) {
               if (generate.subjectEdit) {
+                if (seedanceModerationInFlightRef.current.has(`${workspace}:${assetId}`)) {
+                  showToast(`${mediaType}素材 ID ${assetId} 正在审核，请稍后重试`, 'info')
+                  return
+                }
                 const moderationError = await ensureCanvasSeedanceModeration(
                   assetId,
                   Number(workspaceId || 0),
@@ -8002,7 +8168,7 @@ function CanvasInner({
                 .map(async (ref) => {
                   const url =
                     Number(ref.assetId) > 0
-                      ? assetStreamUrl(Number(ref.assetId), Number(workspaceId))
+                      ? assetStreamUrl(Number(ref.assetId), Number(ref.workspaceId || workspaceId))
                       : ref.thumbnailUrl
                   if (!url) throw new Error('参考图尚未就绪，请重新选择素材')
                   const size = await readImageDimensions(url)
@@ -8404,6 +8570,8 @@ function CanvasInner({
       canvasModels,
       currentUserId,
       handleInsufficientCredits,
+      validateSeedanceImages,
+      validateSeedanceVideos,
       isRealPersonReferenceAuthorizedNow,
       workspaceId,
       canvasId,
@@ -9662,25 +9830,59 @@ function CanvasInner({
     })
   }
 
-  const saveStandaloneCrop = async (
-    request: CanvasMediaEditTarget,
+  const closeStandaloneImageEdit = () => {
+    setStandaloneCropRequest(null)
+    if (!activeSubjectEditRef.current) canvasRootRef.current?.focus({ preventScroll: true })
+  }
+
+  const saveStandaloneImageEdit = async (
+    request: CanvasStandaloneImageEditTarget,
     file: File,
     width: number,
     height: number,
     signal: AbortSignal,
+    isActive = () => activeStandaloneCropRef.current === request,
   ) => {
+    if (request.referenceEdit) {
+      const size = { width, height }
+      const issue = request.referenceEdit.videoInput
+        ? videoReferenceImageIssue(size)
+        : isSupportedVideoReferenceImageAspectRatio(size)
+          ? ''
+          : videoReferenceImageAspectRatioError(size)
+      if (issue) throw new Error(issue)
+    }
+    const { reference, subjectSource, action } = request.referenceEdit ?? {}
+    const padding = action === 'pad'
+    const replacement = action === 'replace'
+    const editLabel = padding ? '补边' : replacement ? '更换图片' : '裁剪'
     const readSource = () => {
       signal.throwIfAborted()
-      if (activeStandaloneCropRef.current !== request) throw new Error('画布已切换，请重新打开裁剪')
+      if (!canvasMountedRef.current || canvasBindingRef.current !== request.canvasBinding || !isActive()) {
+        throw new Error(`画布已切换，请重新打开${editLabel}`)
+      }
+      if (subjectSource && activeSubjectEditRef.current !== subjectSource)
+        throw new Error(`主体编辑已关闭，请重新打开${editLabel}`)
+      if (!request.nodeId && request.referenceEdit) return null
+      if (reference) {
+        const busy = currentBusyReason(reference.targetId)
+        if (busy) throw new Error(busy)
+      }
       const node = latestRef.current.nodes.find((item) => item.id === request.nodeId)
+      const effective = reference
+        ? collectCanvasSourceRefs(reference.targetId, latestRef.current.nodes, latestRef.current.edges).find(
+            (ref) => ref.edgeId === reference.edgeId && ref.sourceId === request.nodeId,
+          )
+        : { assetId: node?.data.assetId, workspaceId: node?.data.assetWorkspaceId }
       if (
         !node ||
         node.data.kind !== 'image' ||
         node.data.uploading ||
-        Number(node.data.assetId) !== request.assetId ||
-        Number(node.data.assetWorkspaceId || workspaceId) !== request.assetWorkspaceId
+        Number(effective?.assetId) !== request.assetId ||
+        Number(effective?.workspaceId || workspaceId) !== request.assetWorkspaceId ||
+        (reference && !latestRef.current.nodes.some((item) => item.id === reference.targetId))
       ) {
-        throw new Error('原图已更换或删除，请重新打开裁剪')
+        throw new Error(`原图已更换或删除，请重新打开${editLabel}`)
       }
       return node
     }
@@ -9689,8 +9891,49 @@ function CanvasInner({
     const uploaded = await uploadAssetFile({ workspaceId, file, signal })
     const sourceNode = readSource()
     const assetId = Number(uploaded?.asset?.id)
-    if (!Number.isSafeInteger(assetId) || assetId <= 0) throw new Error('裁剪结果上传失败，请重试')
+    if (!Number.isSafeInteger(assetId) || assetId <= 0 || assetId === request.assetId)
+      throw new Error(`${editLabel}结果未另存为新素材，请重试`)
 
+    if (reference && sourceNode) {
+      commitHistory()
+      const nodesWithCrop = latestRef.current.nodes.map((node) =>
+        node.id === reference.targetId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                croppedInputAssets: {
+                  ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
+                  [reference.edgeId]: {
+                    originalAssetId: Number(sourceNode.data.assetId),
+                    assetId,
+                    workspaceId: Number(workspaceId),
+                  },
+                },
+              },
+            }
+          : node,
+      )
+      latestRef.current = { ...latestRef.current, nodes: nodesWithCrop }
+      setNodes(nodesWithCrop)
+      setSaveStatus('dirty')
+      if (!padding) {
+        showToast('已更换本次视频的参考图，请重新点击制作', 'success')
+        return
+      }
+    }
+
+    if ((padding || replacement) && subjectSource) {
+      setSubjectEditTarget((current) =>
+        current?.source === subjectSource
+          ? { ...current, referenceAssetOverrides: { ...current.referenceAssetOverrides, [request.assetId]: assetId } }
+          : current,
+      )
+      if (replacement) {
+        showToast('已替换主体编辑的参考图，请重新确认后提交', 'success')
+        return
+      }
+    }
     const ratio = imageNodeDisplayRatio(width, height)
     const size = canvasImageResultSize({ ratio })
     const gap = 32
@@ -9700,8 +9943,10 @@ function CanvasInner({
       width: node.measured?.width || Number(node.style?.width) || 250,
       height: node.measured?.height || Number(node.style?.height) || 250,
     }))
-    const sourceWidth = sourceNode.measured?.width || Number(sourceNode.style?.width) || 250
-    const anchor = { x: sourceNode.position.x + sourceWidth + gap, y: sourceNode.position.y }
+    const sourceWidth = sourceNode?.measured?.width || Number(sourceNode?.style?.width) || 250
+    const anchor = sourceNode
+      ? { x: sourceNode.position.x + sourceWidth + gap, y: sourceNode.position.y }
+      : screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
     const nextPosition = findFreeNodePosition({ anchor, size, occupied, gap })
     const overlaps = occupied.some(
       (rect) =>
@@ -9717,15 +9962,27 @@ function CanvasInner({
     appendNewNode('image', position, {
       ratio,
       size,
+      skipHistory: Boolean(reference),
+      select: !padding || (!reference && !subjectSource),
       extraData: {
-        title: `${request.title} · 裁剪`,
+        title: `${request.title} · ${editLabel}`,
         assetId,
         assetWorkspaceId: Number(workspaceId),
         assetSource: 'upload',
         resultUrl: assetStreamUrl(assetId, Number(workspaceId)),
+        ...(padding && { seedanceModerationStatus: 'pending' }),
       },
     })
-    showToast('裁剪结果已添加到画布', 'success')
+    if (padding) {
+      showToast(reference ? '补边图已另存并替换当前参考，正在送审' : '补边图已另存，正在送审', 'info')
+      void handleSeedanceModeration(assetId, Number(workspaceId), 'image')
+      return
+    }
+    if (replacement) {
+      showToast('已将处理后的图片添加到画布，请选择新图片重新送审', 'success')
+      return
+    }
+    showToast(sourceNode ? '裁剪结果已添加到画布' : '裁剪结果已保存到素材库，请在主体编辑中重新选择', 'success')
   }
 
   const videoTrimGenerationBlock = (node: Node) =>
@@ -10576,6 +10833,31 @@ function CanvasInner({
     },
     [fitView, setNodes, selectGroup],
   )
+
+  const editSeedanceImage = (image: CanvasSeedanceAspectRatioImage, action: 'crop' | 'pad') => {
+    const source = seedanceRatioImages?.find((item) => item === image)
+    if (!source) return
+    if (source.nodeId) {
+      const node = latestRef.current.nodes.find((item) => item.id === source.nodeId)
+      const effective = source.reference
+        ? collectCanvasSourceRefs(source.reference.targetId, latestRef.current.nodes, latestRef.current.edges).find(
+            (ref) => ref.edgeId === source.reference?.edgeId && ref.sourceId === source.nodeId,
+          )
+        : { assetId: node?.data.assetId, workspaceId: node?.data.assetWorkspaceId }
+      if (
+        !node ||
+        Number(effective?.assetId) !== source.assetId ||
+        Number(effective?.workspaceId || workspaceId) !== source.workspaceId
+      ) {
+        setSeedanceRatioRequest(null)
+        showToast('原图已更换或删除，请重新检查素材', 'info')
+        return
+      }
+      if (action === 'crop') focusNodeFromSearch(source.nodeId)
+    }
+    setSeedanceRatioRequest(null)
+    setStandaloneCropRequest(referenceImageEditTarget(source, canvasBindingKey, action))
+  }
 
   // 搜索遵循当前绑定，只在画布快捷键作用域内接管。
   useEffect(() => {
@@ -12424,6 +12706,7 @@ function CanvasInner({
     canvasModalOpen ||
     imageTool ||
     subjectEdit ||
+    seedanceRatioImages ||
     imageCropRequest ||
     standaloneCrop ||
     videoTrim ||
@@ -12456,6 +12739,7 @@ function CanvasInner({
     setModelSettingsOpen(false)
     setTimelineEditorNodeId('')
     setStandaloneCropRequest(null)
+    setSeedanceRatioRequest(null)
     setVideoTrimTarget(null)
     setImageCropRequest(null)
     setHdRequest(null)
@@ -12544,17 +12828,65 @@ function CanvasInner({
             />
           </Suspense>
         )}
+        {!canvasReadOnly && seedanceRatioImages && (
+          <Suspense fallback={null}>
+            <CanvasSeedanceAspectRatioDialog
+              images={seedanceRatioImages}
+              onClose={() => setSeedanceRatioRequest(null)}
+              onPad={(image) => editSeedanceImage(image, 'pad')}
+              onLocateAndCrop={(image) => editSeedanceImage(image, 'crop')}
+              onReplace={async (image, file, { width, height }, signal) => {
+                const request = seedanceRatioRequest
+                const source = request?.images.find((item) => item === image)
+                if (!request || !source) throw new Error('参考图已变更，请重新检查')
+                await saveStandaloneImageEdit(
+                  referenceImageEditTarget(source, request.canvasBinding, 'replace'),
+                  file,
+                  width,
+                  height,
+                  signal,
+                  () => activeSeedanceRatioRequest.current === request,
+                )
+                setSeedanceRatioRequest((current) => {
+                  if (current !== request) return current
+                  const images = request.images.filter((item) => item !== source)
+                  return images.length ? { ...request, images } : null
+                })
+              }}
+            />
+          </Suspense>
+        )}
         {!canvasReadOnly && standaloneCrop && (
           <Suspense fallback={null}>
-            <CanvasStandaloneImageCropModal
-              sourceUrl={standaloneCrop.sourceUrl}
-              title={standaloneCrop.title}
-              onClose={() => {
-                setStandaloneCropRequest(null)
-                canvasRootRef.current?.focus({ preventScroll: true })
-              }}
-              onSave={(file, width, height, signal) => saveStandaloneCrop(standaloneCrop, file, width, height, signal)}
-            />
+            {standaloneCrop.referenceEdit?.action === 'pad' ? (
+              <CanvasImagePaddingModal
+                key={`${standaloneCrop.assetWorkspaceId}:${standaloneCrop.assetId}:${standaloneCrop.nodeId}`}
+                sourceUrl={standaloneCrop.sourceUrl}
+                title={standaloneCrop.title}
+                onClose={closeStandaloneImageEdit}
+                onSave={(file, width, height, signal) =>
+                  saveStandaloneImageEdit(standaloneCrop, file, width, height, signal)
+                }
+              />
+            ) : (
+              <CanvasStandaloneImageCropModal
+                sourceUrl={standaloneCrop.sourceUrl}
+                title={standaloneCrop.title}
+                zIndex={standaloneCrop.referenceEdit ? 2300 : undefined}
+                saveLabel={standaloneCrop.referenceEdit?.reference ? '裁剪并替换参考图' : undefined}
+                referenceLimits={
+                  standaloneCrop.referenceEdit
+                    ? standaloneCrop.referenceEdit.videoInput
+                      ? 'video'
+                      : 'aspect'
+                    : undefined
+                }
+                onClose={closeStandaloneImageEdit}
+                onSave={(file, width, height, signal) =>
+                  saveStandaloneImageEdit(standaloneCrop, file, width, height, signal)
+                }
+              />
+            )}
           </Suspense>
         )}
         {!canvasReadOnly && videoTrim && (
@@ -12572,55 +12904,32 @@ function CanvasInner({
             <CanvasImageCropModal
               images={imageCropRequest.images}
               onClose={() => setImageCropRequest(null)}
-              onSave={async (image, file, width, height) => {
-                const targetId = imageCropRequest.targetId
-                const source = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
-                if (!source || !latestRef.current.nodes.some((node) => node.id === targetId))
-                  throw new Error('素材节点已删除，请重新生成')
-                const uploaded = await uploadAssetFile({ workspaceId, file })
-                const assetId = Number(uploaded?.asset?.id)
-                if (!(assetId > 0)) throw new Error('裁切图片上传失败')
-                const latestSource = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
-                if (!latestSource || Number(latestSource.data.assetId) !== Number(source.data.assetId))
-                  throw new Error('原素材已更换，请重新生成后裁切')
-                if (!latestRef.current.nodes.some((node) => node.id === targetId)) throw new Error('生成节点已删除')
-                const ratio = naturalImageRatio(width, height)
-                const resultUrl = assetStreamUrl(assetId, Number(workspaceId))
-                commitHistory()
-                const local = source.data.assetSource === 'upload'
-                setNodes((items) =>
-                  items.map((node) => {
-                    if (local && node.id === targetId)
-                      return {
-                        ...node,
-                        data: {
-                          ...node.data,
-                          croppedInputAssets: {
-                            ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
-                            [image.ref.edgeId]: {
-                              originalAssetId: Number(source.data.assetId),
-                              assetId,
-                              workspaceId: Number(workspaceId),
-                            },
-                          },
-                        },
-                      }
-                    if (!local && node.id === source.id)
-                      return {
-                        ...node,
-                        data: { ...node.data, assetId, resultUrl, ratio },
-                        style: { ...node.style, ...canvasImageResultSize({ ...node.data, ratio }) },
-                      }
-                    return node
-                  }),
+              onSave={async (image, file, width, height, { method, signal }) => {
+                await saveStandaloneImageEdit(
+                  referenceImageEditTarget(
+                    {
+                      assetId: Number(image.ref.assetId),
+                      workspaceId: Number(image.ref.workspaceId || workspaceId),
+                      nodeId: image.ref.sourceId,
+                      title: image.ref.title || '参考图',
+                      url: image.url,
+                      videoInput: true,
+                      reference: { targetId: imageCropRequest.targetId, edgeId: image.ref.edgeId },
+                    },
+                    canvasBindingKey,
+                    method === 'upload' ? 'replace' : 'crop',
+                  ),
+                  file,
+                  width,
+                  height,
+                  signal,
+                  () => activeImageCropRequest.current === imageCropRequest,
                 )
-                setSaveStatus('dirty')
                 setImageCropRequest((current) => {
-                  if (!current || current.targetId !== targetId) return current
+                  if (current !== imageCropRequest) return current
                   const images = current.images.filter((item) => item.ref.edgeId !== image.ref.edgeId)
                   return images.length ? { ...current, images } : null
                 })
-                showToast('裁切已保存，请在全部处理后重新点击生成', 'success')
               }}
             />
           </Suspense>
@@ -13719,6 +14028,7 @@ function CanvasInner({
                 workspaceId={Number(workspaceId)}
                 canvasId={Number(canvasId)}
                 source={subjectEdit}
+                referenceAssetOverrides={subjectEditTarget?.referenceAssetOverrides}
                 onClose={() => setSubjectEditTarget(null)}
                 onSubmit={(request, title) => handleMediaToolGenerate({ request, title, images: [subjectEdit] })}
               />
@@ -14475,7 +14785,12 @@ function CanvasInner({
                                     showToast('当前团队尚未就绪，请刷新页面后重试', 'error')
                                     return
                                   }
-                                  void handleSeedanceModeration(assetId, moderationWorkspaceId, mediaType)
+                                  void handleSeedanceModeration(
+                                    assetId,
+                                    moderationWorkspaceId,
+                                    mediaType,
+                                    selectedNode.id,
+                                  )
                                 }
                               : undefined
                           }
@@ -14506,33 +14821,46 @@ function CanvasInner({
                           onModelChange={handleModelChange}
                           onResolvedModel={handleResolvedModel}
                           onGenerate={handleNodeGenerate}
+                          onValidateSeedanceInputs={async (sourceRefs, inputAssets) => {
+                            const labels = buildMentionLabels(sourceRefs)
+                            const validImages = await validateSeedanceImages(
+                              seedanceImageRefs(sourceRefs, inputAssets).map((ref) => ({
+                                assetId: Number(ref.assetId),
+                                workspaceId: Number(ref.workspaceId || workspaceId),
+                                nodeId: ref.sourceId,
+                                title: labels.get(ref.edgeId) || `图片素材 ${ref.assetId}`,
+                                reference: { targetId: selectedNode.id, edgeId: ref.edgeId },
+                              })),
+                            )
+                            if (!validImages) return false
+                            return validateSeedanceVideos(
+                              seedanceVideoIds(inputAssets).map((assetId) => {
+                                const source = sourceRefs.find((ref) => ref.kind === 'video' && ref.assetId === assetId)
+                                return {
+                                  assetId,
+                                  workspaceId: Number(source?.workspaceId || workspaceId),
+                                  title: (source && labels.get(source.edgeId)) || `视频素材 ${assetId}`,
+                                }
+                              }),
+                            )
+                          }}
                           onPreflightAssets={async (sourceRefs, inputAssets, requiresSeedanceModeration) => {
                             if (requiresSeedanceModeration) {
                               const imageIds = [
                                 ...new Set(
-                                  sourceRefs
-                                    .filter(
-                                      (ref) =>
-                                        ref.kind === 'image' &&
-                                        inputAssets.some((asset) => Number(asset.asset_id) === Number(ref.assetId)),
-                                    )
+                                  seedanceImageRefs(sourceRefs, inputAssets)
                                     .map((ref) => Number(ref.assetId))
                                     .filter((id) => Number.isSafeInteger(id) && id > 0),
                                 ),
                               ]
-                              const videoIds = [
-                                ...new Set(
-                                  inputAssets
-                                    .filter((asset) => asset.role === 'video')
-                                    .map((asset) => Number(asset.asset_id))
-                                    .filter((id) => Number.isSafeInteger(id) && id > 0),
-                                ),
-                              ]
+                              const videoIds = seedanceVideoIds(inputAssets)
                               const moderationAssets = [
                                 ...imageIds.map((assetId) => ({ assetId, mediaType: '图片' })),
                                 ...videoIds.map((assetId) => ({ assetId, mediaType: '视频' })),
                               ]
                               for (const { assetId, mediaType } of moderationAssets) {
+                                if (seedanceModerationInFlightRef.current.has(`${workspaceId}:${assetId}`))
+                                  return `${mediaType}素材 ID ${assetId} 正在审核，请稍后重试`
                                 const moderationError = await ensureCanvasSeedanceModeration(
                                   assetId,
                                   Number(workspaceId || 0),

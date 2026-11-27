@@ -31,4 +31,10 @@ describe('Seedance certification status', () => {
     expect(normalizeSeedanceModerationResult({ result_status: 'active' }).state).toBe('approved')
     expect(normalizeSeedanceModerationResult({ result: 'active' }).state).toBe('approved')
   })
+
+  it('keeps raw provider details separate from the user-facing moderation reason', () => {
+    expect(
+      normalizeSeedanceModerationResult({ data: { status: 'failed', reason: '', last_error: ' 送审失败 ' } }),
+    ).toMatchObject({ reason: '', lastError: '送审失败' })
+  })
 })

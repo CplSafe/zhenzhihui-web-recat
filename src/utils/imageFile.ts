@@ -45,8 +45,11 @@ export function isSupportedVideoReferenceImageAspectRatio({ width, height }: Ima
 export function videoReferenceImageAspectRatioError(dimensions: ImageDimensions): string {
   const width = Math.round(Number(dimensions.width) || 0)
   const height = Math.round(Number(dimensions.height) || 0)
-  const ratio = height > 0 ? (width / height).toFixed(2) : '0'
-  return `图片宽高比为 ${ratio}（${width}×${height}px），需在 ${VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO}–${VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO} 之间，请裁掉过长的一边后重试`
+  const exceedsMaximum = height > 0 && width / height > VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO
+  const limit = exceedsMaximum
+    ? `高于 ${VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO}`
+    : `低于 ${VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO}`
+  return `图片宽高比${limit}（${width}×${height}px），需在 ${VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO}–${VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO} 之间，可调整图片后重试`
 }
 
 /**
@@ -75,6 +78,16 @@ export function readImageDimensions(source: string): Promise<ImageDimensions> {
     image.onerror = () => reject(new Error('图片读取失败'))
     image.src = source
   })
+}
+
+/** 读取本地文件的实际像素尺寸，并在解码结束后释放临时地址。 */
+export async function readLocalImageDimensions(file: File): Promise<ImageDimensions> {
+  const url = URL.createObjectURL(file)
+  try {
+    return await readImageDimensions(url)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 /**
@@ -121,7 +134,7 @@ export interface NormalizeImageForAiInputOptions {
 /**
  * 把用户选的图片整理成 AI 生成能接受的输入：
  * - 任一边 < 256px → 直接拒绝（放大也救不回来，让用户换图）；
- * - 宽高比越界（可选）→ 拒绝，提示裁剪；
+ * - 宽高比越界（可选）→ 拒绝，提示调整图片；
  * - 任一边 > 5760px → 等比缩到 5760 以内，PNG 保持 PNG（保留透明），其它转 JPEG；
  * - 已合规原样返回；浏览器解不开这张图时也原样返回，交给后端给明确错误。
  *

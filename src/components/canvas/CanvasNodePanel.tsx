@@ -38,6 +38,12 @@ import { estimateAiTaskCost, uploadAssetFile } from '@/api/business'
 import { getModelInputConstraints } from '@/utils/modelInputConstraints'
 import { requiredVideoDurationForAudio, type AudioSettings } from '@/utils/canvasAudio'
 import { creditsLabel } from '@/utils/creditsFormat'
+import {
+  VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO,
+  VIDEO_REFERENCE_IMAGE_MAX_DIMENSION,
+  VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO,
+  VIDEO_REFERENCE_IMAGE_MIN_DIMENSION,
+} from '@/utils/imageFile'
 import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import { isCanvasToolOnlyImageModel } from '@/utils/canvasImageModelVisibility'
 import {
@@ -634,7 +640,9 @@ interface CanvasNodePanelProps {
     audioUse?: 'reference' | 'mix' | 'replace'
     audioOriginalVolume?: number
   }) => void
-  /** 扣费确认前检查引用素材的团队归属和入库状态。 */
+  /** 费用确认前检查待送审原素材的宽高比。 */
+  onValidateSeedanceInputs?: (sourceRefs: CanvasSourceRef[], inputAssets: CanvasInputAsset[]) => Promise<boolean>
+  /** 费用确认后检查素材的审核、团队归属和入库状态。 */
   onPreflightAssets?: (
     sourceRefs: CanvasSourceRef[],
     inputAssets: CanvasInputAsset[],
@@ -842,6 +850,7 @@ export default function CanvasNodePanel({
   modelOperationStates,
   onReloadModels,
   onGenerate,
+  onValidateSeedanceInputs,
   onPreflightAssets,
   onInsufficientCredits,
   onSaveText,
@@ -920,6 +929,7 @@ export default function CanvasNodePanel({
     }
   }, [promptExpanded, promptEditorSuspended])
   const [checkingAssets, setCheckingAssets] = useState(false)
+  const validatingSeedanceInputsRef = useRef(false)
 
   // 受控回显：优先取节点数据中的比例/模式（存储值为英文 auto）
   const ratio = node?.ratio || (kind === 'video' ? AUTO_RATIO : '1:1')
@@ -1992,6 +2002,9 @@ export default function CanvasNodePanel({
   }>({ loading: false })
   const costEstimate = storedQuote.request === quoteRequest ? storedQuote : { loading: Boolean(quoteRequest) }
   const [costRetry, setCostRetry] = useState(0)
+  const matchesSeedanceQuote = useLatestCallback(
+    (nodeId: string | undefined, request: string) => node?.id === nodeId && quoteRequest === request,
+  )
 
   useEffect(() => {
     if (!quoteRequest) return
@@ -2040,9 +2053,21 @@ export default function CanvasNodePanel({
       return
     }
     if (taskRunning || submissionUnknown || resultDelayed || checkingAssets || maskUploading) return
+    if (validatingSeedanceInputsRef.current) return
     if (kind === 'video' && costEstimate.estimated_cost === undefined) {
       if (costEstimate.error) setCostRetry((value) => value + 1)
       return
+    }
+    if (kind === 'video' && isSeedanceModel && onValidateSeedanceInputs && inputAssets.length) {
+      validatingSeedanceInputsRef.current = true
+      setCheckingAssets(true)
+      try {
+        if (!(await onValidateSeedanceInputs(sourceRefs, inputAssets))) return
+        if (!matchesSeedanceQuote(node?.id, quoteRequest)) return
+      } finally {
+        validatingSeedanceInputsRef.current = false
+        setCheckingAssets(false)
+      }
     }
     const cost = Number(costEstimate.estimated_cost || 0)
     if (kind === 'video' && cost > 0) {
@@ -2493,6 +2518,17 @@ export default function CanvasNodePanel({
               '请选择模型以查看素材限制'
             )}
           </div>
+        )}
+        {kind === 'video' && sourceRefs.some((ref) => ref.kind === 'image' && (ref.assetId || ref.thumbnailUrl)) && (
+          <p className={styles.referenceImageSize}>
+            <span>参考图尺寸</span>
+            <strong>
+              宽和高各 {VIDEO_REFERENCE_IMAGE_MIN_DIMENSION}–{VIDEO_REFERENCE_IMAGE_MAX_DIMENSION} 像素
+            </strong>
+            <strong>
+              宽高比（宽 ÷ 高） {VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO}–{VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO}
+            </strong>
+          </p>
         )}
         {referenceLimitError && (
           <div className={styles.inputError} role="alert">

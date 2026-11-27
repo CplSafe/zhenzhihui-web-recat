@@ -133,9 +133,9 @@ function normalizeCanvas(raw: unknown): CanvasSummary {
   }
 }
 
-/** 把响应中的数组归一化为 CanvasSummary[]（兼容 items/list/直接数组三种形态）。 */
-function normalizeCanvasList(data: unknown): CanvasSummary[] {
-  if (!data || typeof data !== 'object') return []
+/** 兼容 items/list/直接数组三种形态，保留实际返回条数用于计算下一页。 */
+function normalizeCanvasList(data: unknown): CanvasListPage {
+  if (!data || typeof data !== 'object') return { items: [], count: 0 }
   const o = data as Record<string, unknown>
   const raw = Array.isArray(data)
     ? (data as unknown[])
@@ -144,7 +144,7 @@ function normalizeCanvasList(data: unknown): CanvasSummary[] {
       : Array.isArray(o.list)
         ? (o.list as unknown[])
         : []
-  return raw.map(normalizeCanvas).filter((c) => c.id > 0)
+  return { items: raw.map(normalizeCanvas).filter((c) => c.id > 0), count: raw.length }
 }
 
 /** 统一对业务返回做一次 data 解包并容忍 null。 */
@@ -226,18 +226,24 @@ export async function changeCanvasMembers(
   return unwrap<CanvasMembers>(response)
 }
 
-/** 分页列出工作空间画布（GET /canvases）。 */
-export async function listCanvases({
-  workspaceId,
-  includeArchived = false,
-  limit = 50,
-  offset = 0,
-}: {
+export type CanvasListPage = { items: CanvasSummary[]; count: number }
+
+type ListCanvasesOptions = {
   workspaceId: number
   includeArchived?: boolean
   limit?: number
   offset?: number
-}): Promise<CanvasSummary[]> {
+  signal?: AbortSignal
+}
+
+/** 分页列出工作空间画布（GET /canvases）。 */
+export async function listCanvasesPage({
+  workspaceId,
+  includeArchived = false,
+  limit = 50,
+  offset = 0,
+  signal,
+}: ListCanvasesOptions): Promise<CanvasListPage> {
   const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
   const query = new URLSearchParams({
     workspace_id: String(wsId),
@@ -245,8 +251,12 @@ export async function listCanvases({
     offset: String(Math.max(0, Number(offset) || 0)),
   })
   if (includeArchived) query.set('include_archived', 'true')
-  const payload = await requestBusinessJson<unknown>(`/api/v1/canvases?${query}`)
+  const payload = await requestBusinessJson<unknown>(`/api/v1/canvases?${query}`, { signal })
   return normalizeCanvasList(unwrap<unknown>(payload))
+}
+
+export async function listCanvases(options: ListCanvasesOptions): Promise<CanvasSummary[]> {
+  return (await listCanvasesPage(options)).items
 }
 
 /** 读取画布详情（GET /canvases/{id}）。 */

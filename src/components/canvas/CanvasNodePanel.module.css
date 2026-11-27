@@ -1980,6 +1980,26 @@
   line-height: 1.5;
 }
 
+.referenceImageSize {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 12px;
+  width: 100%;
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.referenceImageSize strong {
+  color: var(--canvas-text, #e5e7eb);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .promptModalBackdrop {
   position: fixed;
   inset: 0;

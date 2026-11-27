@@ -112,6 +112,10 @@ vi.mock('@/utils/creativeProjectInitialization', () => ({
 vi.mock('@/api/canvasApi', () => ({
   fetchAllCanvasElements: mocks.fetchAllCanvasElements,
   listCanvases: mocks.listCanvases,
+  listCanvasesPage: async (...args: unknown[]) => {
+    const items = await mocks.listCanvases(...args)
+    return { items, count: items.length }
+  },
 }))
 
 import ProjectManagementView from '@/views/ProjectManagementView'

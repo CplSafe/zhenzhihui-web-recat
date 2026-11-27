@@ -1,16 +1,21 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import {
-  deleteCanvas,
-  duplicateCanvas,
-  fetchAllCanvasElements,
-  listCanvases,
-  patchCanvas,
-  type CanvasSummary,
-} from '@/api/canvasApi'
+import { deleteCanvas, duplicateCanvas, fetchAllCanvasElements, patchCanvas, type CanvasSummary } from '@/api/canvasApi'
 import { getBusinessErrorMessage } from '@/api/business'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
+import { useRecentCanvases } from '@/composables/useRecentCanvases'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
@@ -26,15 +31,218 @@ type Action = {
   onClick: () => void
 }
 
+const emptyCovers: Record<number, CanvasCover | null> = {}
+const recentCanvasSelector = '[data-recent-canvas-id]'
+const canvasTimestamp = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+function layoutRecentProjects(grid: HTMLDivElement, cards: HTMLElement[]) {
+  const width = grid.clientWidth
+  if (!width) return
+  const gap = width < 680 ? 10 : 20
+  const columns = width < 304 ? 1 : width < 680 ? 2 : Math.max(2, Math.floor((width + gap) / (220 + gap)))
+  const cardWidth = (width - gap * (columns - 1)) / columns
+  const heights = Array.from({ length: columns }, () => 0)
+
+  grid.style.setProperty('--recent-card-width', `${cardWidth}px`)
+  grid.dataset.masonryReady = 'true'
+  const cardHeights = cards.map((card) => card.offsetHeight)
+  for (const [index, card] of cards.entries()) {
+    const column = heights.indexOf(Math.min(...heights))
+    card.style.setProperty('--recent-card-left', `${column * (cardWidth + gap)}px`)
+    card.style.setProperty('--recent-card-top', `${heights[column]}px`)
+    heights[column] += cardHeights[index] + gap
+  }
+  grid.style.height = `${Math.max(0, Math.max(...heights) - gap)}px`
+}
+
+function useRecentCanvasCovers(
+  recent: CanvasSummary[],
+  workspaceId: number,
+  userId: number,
+  gridRef: RefObject<HTMLDivElement>,
+) {
+  const scope = `${workspaceId}:${userId}`
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  const [record, setRecord] = useState({ scope, covers: emptyCovers })
+  const covers = record.scope === scope ? record.covers : emptyCovers
+  const [visible, setVisible] = useState<Set<number>>(() => new Set())
+  const [settled, setSettled] = useState(0)
+  const requestsRef = useRef({ scope, ids: new Set<number>(), active: 0 })
+  const setCovers = useCallback(
+    (update: SetStateAction<typeof emptyCovers>) => {
+      if (scopeRef.current !== scope) return
+      setRecord((current) => {
+        const existing = current.scope === scope ? current.covers : emptyCovers
+        return { scope, covers: typeof update === 'function' ? update(existing) : update }
+      })
+    },
+    [scope],
+  )
+
+  useEffect(() => {
+    const requests = { scope, ids: new Set<number>(), active: 0 }
+    requestsRef.current = requests
+    setVisible(new Set())
+    return () => {
+      if (requestsRef.current === requests) requestsRef.current = { scope: '', ids: new Set(), active: 0 }
+    }
+  }, [scope])
+
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid || !recent.length) return
+    const addVisible = (ids: number[]) => {
+      if (!ids.length || scopeRef.current !== scope) return
+      setVisible((current) => {
+        const next = new Set([...current, ...ids])
+        return current.size === next.size ? current : next
+      })
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      addVisible(recent.map(({ id }) => id))
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const ids: number[] = []
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          observer.unobserve(entry.target)
+          ids.push(Number((entry.target as HTMLElement).dataset.recentCanvasId))
+        }
+        addVisible(ids)
+      },
+      { root: grid.closest('.canvas-entry-main'), rootMargin: '240px 0px' },
+    )
+    grid.querySelectorAll(recentCanvasSelector).forEach((card) => observer.observe(card))
+    return () => observer.disconnect()
+  }, [gridRef, recent, scope])
+
+  useEffect(() => {
+    const requests = requestsRef.current
+    if (!workspaceId || requests.scope !== scope) return
+    const ready = recent
+      .filter(({ id }) => visible.has(id) && !requests.ids.has(id) && covers[id] === undefined)
+      .slice(0, Math.max(0, 3 - requests.active))
+    for (const { id } of ready) {
+      requests.ids.add(id)
+      requests.active++
+      void fetchAllCanvasElements({ workspaceId, canvasId: id, afterRevision: 0 })
+        .then((page) => {
+          if (requestsRef.current === requests)
+            setCovers((current) => ({ ...current, [id]: pickCanvasCover(page.elements, workspaceId) }))
+        })
+        .catch(() => {
+          if (requestsRef.current === requests) setCovers((current) => ({ ...current, [id]: null }))
+        })
+        .finally(() => {
+          requests.active--
+          if (requestsRef.current === requests) setSettled((current) => current + 1)
+        })
+    }
+  }, [covers, recent, scope, setCovers, settled, visible, workspaceId])
+
+  return { covers, setCovers }
+}
+
+function RecentCanvasCover({ cover, onError }: { cover: CanvasCover | null | undefined; onError: () => void }) {
+  const [ratio, setRatio] = useState<number>()
+  const measured = (width: number, height: number) => {
+    if (width > 0 && height > 0) setRatio(Math.min(4 / 3, Math.max(9 / 16, width / height)))
+  }
+  return (
+    <span
+      className={styles.projectCover}
+      data-recent-canvas-cover
+      data-media-ready={ratio !== undefined}
+      aria-hidden="true"
+      style={ratio ? ({ '--recent-cover-ratio': ratio } as CSSProperties) : undefined}
+    >
+      {ratio === undefined && (
+        <span className={styles.projectCoverStatus}>
+          <svg viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+            <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+            <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+            <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+          </svg>
+          <span>{cover === null ? '暂无预览' : '正在加载预览…'}</span>
+        </span>
+      )}
+      {cover?.kind === 'video' && (
+        <video
+          className={styles.projectCoverMedia}
+          src={cover.url}
+          preload="metadata"
+          muted
+          playsInline
+          onLoadedMetadata={({ currentTarget }) => measured(currentTarget.videoWidth, currentTarget.videoHeight)}
+          onError={onError}
+        />
+      )}
+      {cover?.kind === 'image' && (
+        <img
+          className={styles.projectCoverMedia}
+          src={cover.url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onLoad={({ currentTarget }) => measured(currentTarget.naturalWidth, currentTarget.naturalHeight)}
+          onError={onError}
+        />
+      )}
+    </span>
+  )
+}
+
+function RecentCanvasMetadata({ item, descriptionId }: { item: CanvasSummary; descriptionId: string }) {
+  const updated = new Date(item.updated_at ?? '')
+  const hasUpdate = Number.isFinite(updated.getTime())
+  const timestamp = hasUpdate ? updated : new Date(item.created_at ?? '')
+  const hasTimestamp = Number.isFinite(timestamp.getTime())
+  const hasCredits = item.usedCredits != null && Number.isFinite(item.usedCredits)
+
+  return (
+    <span className={styles.projectBody} data-recent-canvas-caption>
+      <strong className={styles.projectTitle}>{item.title || '未命名画布'}</strong>
+      <span className={styles.projectMetadata} id={descriptionId}>
+        <span className={styles.projectCredits}>
+          <span>累计消耗</span>
+          {hasCredits ? <strong>{formatCredits(item.usedCredits, 3)} 积分</strong> : <span>暂无记录</span>}
+        </span>
+        <span className={styles.projectUpdated}>
+          <span>{hasUpdate ? '更新于' : hasTimestamp ? '创建于' : '更新时间'}</span>
+          {hasTimestamp ? (
+            <time dateTime={timestamp.toISOString()}>{canvasTimestamp.format(timestamp)}</time>
+          ) : (
+            <span>暂无记录</span>
+          )}
+        </span>
+      </span>
+    </span>
+  )
+}
+
 export default function CanvasEmptyStateActions() {
   const navigate = useNavigate()
+  const cardDescriptionPrefix = useId()
   const workspaceId = useWorkspaceId()
   const currentUserId = Number(resolveUserId(useCurrentUser()) || 0)
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
-  const [recent, setRecent] = useState<CanvasSummary[]>([])
-  const [covers, setCovers] = useState<Record<number, CanvasCover | null>>({})
-  const [loading, setLoading] = useState(false)
+  const { recent, setRecent, loading, loadingMore, canLoadMore, prefetchMore, loadMore, retry, error } =
+    useRecentCanvases(workspaceId, currentUserId)
+  const gridRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const { covers, setCovers } = useRecentCanvasCovers(recent, Number(workspaceId || 0), currentUserId, gridRef)
   const [openMenuId, setOpenMenuId] = useState(0)
   const [settingsTarget, setSettingsTarget] = useState<{ ws: number; id: number; userId: number } | null>(null)
   const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
@@ -43,68 +251,59 @@ export default function CanvasEmptyStateActions() {
   const [deletingId, setDeletingId] = useState(0)
   const [duplicatingId, setDuplicatingId] = useState(0)
   const duplicateBusy = useRef(false)
-  const workspaceIdRef = useRef(workspaceId)
-  workspaceIdRef.current = workspaceId
-  useEffect(() => setSettingsTarget(null), [workspaceId, currentUserId])
+  const mutationScope = `${workspaceId}:${currentUserId}`
+  const mutationScopeRef = useRef(mutationScope)
+  mutationScopeRef.current = mutationScope
   useEffect(() => {
-    if (!workspaceId) {
-      setRecent([])
-      setCovers({})
-      return
-    }
-    let cancelled = false
-    const wsId = Number(workspaceId)
-    setLoading(true)
-    setCovers({})
-    void listCanvases({ workspaceId: wsId, includeArchived: true, limit: 100, offset: 0 })
-      .then((items) => {
-        if (cancelled) return
-        const latest = [...items]
-          .sort((a, b) => {
-            const date = (item: CanvasSummary) =>
-              new Date(item.updated_at || item.created_at || '').getTime() || item.id
-            return date(b) - date(a)
-          })
-          .slice(0, 10)
-        setRecent(latest)
-
-        // 与画布列表共用封面解析：从每张画布最新的图片/视频节点生成稳定预览地址。
-        // 最近项目最多 10 张，限制为 3 路并发，避免空状态一次性打满元素接口。
-        void (async () => {
-          const queue = [...latest]
-          const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
-            while (!cancelled && queue.length) {
-              const item = queue.shift()
-              if (!item) continue
-              try {
-                const page = await fetchAllCanvasElements({
-                  workspaceId: wsId,
-                  canvasId: Number(item.id),
-                  afterRevision: 0,
-                })
-                if (cancelled) return
-                setCovers((current) => ({
-                  ...current,
-                  [Number(item.id)]: pickCanvasCover(page.elements, wsId),
-                }))
-              } catch {
-                if (!cancelled) setCovers((current) => ({ ...current, [Number(item.id)]: null }))
-              }
-            }
-          })
-          await Promise.all(workers)
-        })()
-      })
-      .catch(() => {
-        if (!cancelled) setRecent([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    setOpenMenuId(0)
+    setSettingsTarget(null)
+    setRenameTarget(null)
+    setSaving(false)
+    setDeletingId(0)
+    setDuplicatingId(0)
+    duplicateBusy.current = false
+  }, [mutationScope])
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid || !recent.length || typeof ResizeObserver === 'undefined') return
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>(recentCanvasSelector))
+    let frame = 0
+    const resize = new ResizeObserver(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => layoutRecentProjects(grid, cards))
+    })
+    layoutRecentProjects(grid, cards)
+    resize.observe(grid)
+    cards.forEach((card) => resize.observe(card))
     return () => {
-      cancelled = true
+      cancelAnimationFrame(frame)
+      resize.disconnect()
     }
-  }, [workspaceId])
+  }, [recent])
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || !canLoadMore || loadingMore || error || typeof IntersectionObserver === 'undefined') return
+    const root = sentinel.closest('.canvas-entry-main')
+    const prefetchObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) prefetchMore()
+      },
+      { root, rootMargin: '560px 0px' },
+    )
+    const appendObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMore()
+      },
+      { root, rootMargin: '160px 0px' },
+    )
+    prefetchObserver.observe(sentinel)
+    appendObserver.observe(sentinel)
+    return () => {
+      prefetchObserver.disconnect()
+      appendObserver.disconnect()
+    }
+  }, [canLoadMore, error, loadMore, loadingMore, prefetchMore, recent.length, workspaceId, currentUserId])
   useEffect(() => {
     if (!openMenuId) return
     const onPointerDown = (event: PointerEvent) => {
@@ -131,13 +330,15 @@ export default function CanvasEmptyStateActions() {
     setSaving(true)
     try {
       await patchCanvas({ workspaceId: wsId, canvasId: renameTarget.id, title })
+      if (mutationScopeRef.current !== mutationScope) return
       setRecent((items) => items.map((item) => (item.id === renameTarget.id ? { ...item, title } : item)))
       showToast('画布已重命名', 'success')
       setRenameTarget(null)
     } catch (error) {
-      showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
+      if (mutationScopeRef.current === mutationScope)
+        showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
     } finally {
-      setSaving(false)
+      if (mutationScopeRef.current === mutationScope) setSaving(false)
     }
   }
   const handleDelete = async (item: CanvasSummary) => {
@@ -145,9 +346,11 @@ export default function CanvasEmptyStateActions() {
     if (!wsId || !item.id || deletingId) return
     setOpenMenuId(0)
     if (!(await requestConfirm(`确定删除画布「${item.title || '未命名画布'}」吗?画布内容不可恢复。`))) return
+    if (mutationScopeRef.current !== mutationScope) return
     setDeletingId(item.id)
     try {
       await deleteCanvas({ workspaceId: wsId, canvasId: item.id })
+      if (mutationScopeRef.current !== mutationScope) return
       setRecent((items) => items.filter((canvas) => canvas.id !== item.id))
       setCovers((current) => {
         const next = { ...current }
@@ -161,9 +364,10 @@ export default function CanvasEmptyStateActions() {
       }
       showToast('画布已删除', 'success')
     } catch (error) {
-      showToast(getBusinessErrorMessage(error, '删除失败,请稍后重试'), 'error')
+      if (mutationScopeRef.current === mutationScope)
+        showToast(getBusinessErrorMessage(error, '删除失败,请稍后重试'), 'error')
     } finally {
-      setDeletingId(0)
+      if (mutationScopeRef.current === mutationScope) setDeletingId(0)
     }
   }
   const handleDuplicate = async (item: CanvasSummary) => {
@@ -178,26 +382,28 @@ export default function CanvasEmptyStateActions() {
     )
     try {
       const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: item.id, title })
-      if (Number(workspaceIdRef.current) !== wsId) return
-      setRecent((items) =>
-        [
-          {
-            ...created,
-            title: created.title || title,
-            userId: created.userId || currentUserId || undefined,
-            updated_at: created.updated_at || new Date().toISOString(),
-          },
-          ...items,
-        ].slice(0, 10),
+      if (mutationScopeRef.current !== mutationScope) return
+      setRecent((items) => [
+        {
+          ...created,
+          title: created.title || title,
+          userId: created.userId || currentUserId || undefined,
+          updated_at: created.updated_at || new Date().toISOString(),
+        },
+        ...items,
+      ])
+      setCovers((current) =>
+        current[item.id] === undefined ? current : { ...current, [created.id]: current[item.id] },
       )
-      setCovers((current) => ({ ...current, [created.id]: current[item.id] ?? null }))
       showToast(`已创建副本「${title}」`, 'success')
     } catch (error) {
-      if (Number(workspaceIdRef.current) === wsId)
+      if (mutationScopeRef.current === mutationScope)
         showToast(getBusinessErrorMessage(error, '创建副本失败,请稍后重试'), 'error')
     } finally {
-      duplicateBusy.current = false
-      setDuplicatingId(0)
+      if (mutationScopeRef.current === mutationScope) {
+        duplicateBusy.current = false
+        setDuplicatingId(0)
+      }
     }
   }
   const actions: Action[] = [
@@ -270,143 +476,143 @@ export default function CanvasEmptyStateActions() {
           </button>
         </div>
         {loading ? (
-          <p className={styles.recentHint}>正在加载项目…</p>
+          <p className={styles.recentHint} role="status">
+            正在加载项目…
+          </p>
         ) : recent.length ? (
-          <div className={styles.recentGrid}>
-            {recent.map((item) => (
-              <div
-                role="button"
-                tabIndex={0}
-                key={item.id}
-                className={styles.projectCard}
-                aria-label={`打开画布 ${item.title || '未命名画布'}`}
-                onClick={(event) => {
-                  if ((event.target as HTMLElement).closest('button')) return
-                  navigate(`/canvas/${item.id}`)
-                }}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
-                  event.preventDefault()
-                  navigate(`/canvas/${item.id}`)
-                }}
-              >
-                <span className={styles.projectCover} aria-hidden="true">
-                  {covers[Number(item.id)] ? (
-                    covers[Number(item.id)]!.kind === 'video' ? (
-                      <video
-                        className={styles.projectCoverMedia}
-                        src={covers[Number(item.id)]!.url}
-                        preload="metadata"
-                        muted
-                        playsInline
-                        onError={() => setCovers((current) => ({ ...current, [Number(item.id)]: null }))}
-                      />
-                    ) : (
-                      <img
-                        className={styles.projectCoverMedia}
-                        src={covers[Number(item.id)]!.url}
-                        alt=""
-                        loading="lazy"
-                        onError={() => setCovers((current) => ({ ...current, [Number(item.id)]: null }))}
-                      />
-                    )
-                  ) : (
-                    <>
-                      <svg viewBox="0 0 24 24" fill="none">
-                        <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
-                        <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
-                        <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
-                        <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
-                      </svg>
-                      <span>{covers[Number(item.id)] === null ? '暂无预览' : '正在加载预览…'}</span>
-                    </>
-                  )}
-                </span>
-                <span className={styles.projectActions} data-recent-canvas-menu>
+          <div className={styles.recentGrid} ref={gridRef}>
+            {recent.map((item) => {
+              const cover = covers[item.id]
+              const descriptionId = `${cardDescriptionPrefix}-${item.id}`
+              const menuId = `${descriptionId}-menu`
+              const menuOpen = openMenuId === item.id
+              return (
+                <article
+                  key={item.id}
+                  className={styles.projectSlot}
+                  data-recent-canvas-id={item.id}
+                  data-menu-open={menuOpen}
+                >
                   <button
+                    className={styles.projectCard}
                     type="button"
-                    aria-label={`画布操作 ${item.title || '未命名画布'}`}
-                    aria-expanded={openMenuId === item.id}
-                    onClick={(event) => {
+                    aria-label={`打开画布 ${item.title || '未命名画布'}`}
+                    aria-describedby={descriptionId}
+                    onClick={() => navigate(`/canvas/${item.id}`)}
+                  >
+                    <RecentCanvasCover
+                      key={cover?.url ?? (cover === null ? 'empty' : 'waiting')}
+                      cover={cover}
+                      onError={() => setCovers((current) => ({ ...current, [item.id]: null }))}
+                    />
+                    <RecentCanvasMetadata item={item} descriptionId={descriptionId} />
+                  </button>
+                  <span
+                    className={styles.projectActions}
+                    data-recent-canvas-menu
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape' || !menuOpen) return
                       event.stopPropagation()
-                      setOpenMenuId((id) => (id === item.id ? 0 : item.id))
+                      setOpenMenuId(0)
+                      event.currentTarget.querySelector('button')?.focus()
                     }}
                   >
-                    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-                      <circle cx="4" cy="10" r="1.4" fill="currentColor" />
-                      <circle cx="10" cy="10" r="1.4" fill="currentColor" />
-                      <circle cx="16" cy="10" r="1.4" fill="currentColor" />
-                    </svg>
-                  </button>
-                  {openMenuId === item.id && (
-                    <span className={styles.projectMenu} onClick={(event) => event.stopPropagation()}>
-                      {item.userId && currentUserId && item.userId !== currentUserId ? (
-                        <span className={styles.permissionHint}>仅创建者可重命名或删除此画布</span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRenameTarget(item)
-                            setRenameName(item.title || '')
-                            setOpenMenuId(0)
-                          }}
-                        >
-                          重命名
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={Boolean(duplicatingId)}
-                        onClick={() => void handleDuplicate(item)}
-                      >
-                        {duplicatingId === item.id ? '创建中…' : '创建副本'}
-                      </button>
-                      {item.userId && currentUserId && item.userId === currentUserId && (
-                        <>
+                    <button
+                      type="button"
+                      aria-label={`画布操作 ${item.title || '未命名画布'}`}
+                      aria-expanded={menuOpen}
+                      aria-controls={menuOpen ? menuId : undefined}
+                      aria-describedby={menuOpen ? `${menuId}-stats` : undefined}
+                      onClick={() => setOpenMenuId((id) => (id === item.id ? 0 : item.id))}
+                    >
+                      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                        <circle cx="4" cy="10" r="1.4" fill="currentColor" />
+                        <circle cx="10" cy="10" r="1.4" fill="currentColor" />
+                        <circle cx="16" cy="10" r="1.4" fill="currentColor" />
+                      </svg>
+                    </button>
+                    {menuOpen && (
+                      <span className={styles.projectMenu} id={menuId}>
+                        <span className={styles.projectMenuStats} id={`${menuId}-stats`}>
+                          <span>消耗时间</span>
+                          <span>暂无记录</span>
+                          <span>预估积分</span>
+                          <span>暂无预估</span>
+                        </span>
+                        {item.userId && currentUserId && item.userId !== currentUserId ? (
+                          <span className={styles.permissionHint}>仅创建者可重命名或删除此画布</span>
+                        ) : (
                           <button
                             type="button"
-                            disabled={item.status === 'archived'}
                             onClick={() => {
+                              setRenameTarget(item)
+                              setRenameName(item.title || '')
                               setOpenMenuId(0)
-                              setSettingsTarget({ ws: Number(workspaceId), id: item.id, userId: currentUserId })
                             }}
                           >
-                            设置画布
+                            重命名
                           </button>
-                          <button
-                            type="button"
-                            disabled={deletingId === item.id}
-                            onClick={() => void handleDelete(item)}
-                          >
-                            {deletingId === item.id ? '删除中…' : '删除画布'}
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  )}
-                </span>
-                <span className={styles.projectBody}>
-                  <strong title={item.title || '未命名画布'}>{item.title || '未命名画布'}</strong>
-                  <small>累计消耗 {item.usedCredits == null ? '—' : formatCredits(item.usedCredits)} 积分</small>
-                  <small>
-                    更新于{' '}
-                    {item.updated_at || item.created_at
-                      ? new Date(item.updated_at || item.created_at || '').toLocaleString('zh-CN', {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : '时间未知'}
-                  </small>
-                </span>
-              </div>
-            ))}
+                        )}
+                        <button
+                          type="button"
+                          disabled={Boolean(duplicatingId)}
+                          onClick={() => void handleDuplicate(item)}
+                        >
+                          {duplicatingId === item.id ? '创建中…' : '创建副本'}
+                        </button>
+                        {item.userId && currentUserId && item.userId === currentUserId && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={item.status === 'archived'}
+                              onClick={() => {
+                                setOpenMenuId(0)
+                                setSettingsTarget({ ws: Number(workspaceId), id: item.id, userId: currentUserId })
+                              }}
+                            >
+                              设置画布
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingId === item.id}
+                              onClick={() => void handleDelete(item)}
+                            >
+                              {deletingId === item.id ? '删除中…' : '删除画布'}
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </span>
+                </article>
+              )
+            })}
           </div>
         ) : (
-          <p className={styles.recentHint}>暂无历史项目</p>
+          !error && <p className={styles.recentHint}>暂无历史项目</p>
         )}
+        {error ? (
+          <div className={styles.recentFooter}>
+            <p className={styles.recentHint} role="status">
+              {recent.length ? '更多项目加载失败' : '最近项目加载失败'}
+            </p>
+            <button type="button" onClick={retry}>
+              重试
+            </button>
+          </div>
+        ) : canLoadMore && recent.length > 0 ? (
+          <div className={styles.recentFooter} data-recent-canvas-sentinel ref={sentinelRef}>
+            {loadingMore ? (
+              <p className={styles.recentHint} role="status">
+                正在加载更多项目…
+              </p>
+            ) : typeof IntersectionObserver === 'undefined' ? (
+              <button type="button" onClick={loadMore}>
+                加载更多
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </section>
       {settingsTarget && settingsTarget.ws === Number(workspaceId) && settingsTarget.userId === currentUserId && (
         <CanvasSettingsDialog

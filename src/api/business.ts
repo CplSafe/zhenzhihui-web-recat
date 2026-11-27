@@ -194,6 +194,21 @@ function describeReferenceVideoOrdinal(message) {
   return `第 ${Number(hit[1]) + 1} 个参考视频`
 }
 
+/** 视频审核可提供素材名称，生成错误则用供应商字段辨别素材类型。 */
+export function humanizeVideoAspectRatioError(error: string | Error, videoLabel = '') {
+  const errorMessage =
+    collectBusinessErrorText(error) || String(error instanceof Error ? error.message : (error ?? '')).trim()
+  const lastError =
+    error instanceof BusinessApiError && (error.response?.data?.last_error || error.response?.last_error)
+  const message = [errorMessage, lastError].filter(Boolean).join(' ')
+  if (/\bimage_url\b/i.test(message)) return ''
+  if (!videoLabel && !/\b(?:video_url|(?:reference|input) video)\b/i.test(message)) return ''
+  const limits = /aspect\s*ratio\s+must\s+be\s+between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)/i.exec(message)
+  if (!limits) return ''
+
+  return `${videoLabel || describeReferenceVideoOrdinal(message)}的宽高比（宽 ÷ 高）最小 ${limits[1]}、最大 ${limits[2]}。请手动裁剪到此范围后重试`
+}
+
 /**
  * 纯文本版的供应商错误翻译：输入一段错误原文（任务 error_message、异常 message 等），命中即返回中文提示，
  * 没命中返回空串。getBusinessErrorMessage 走它，任务中心通知 / 历史生成卡片 / 画布这些拿到的是字符串而不是
@@ -204,7 +219,11 @@ export function humanizeProviderErrorText(text) {
   const message = String(text ?? '').trim()
   if (!message) return ''
 
-  // 内容安全 / 版权 / 肖像审核优先：它们有更具体的可操作提示，不能被后面的服务级兜底吞掉。
+  // 视频宽高比错误可能带有 moderation 前缀，先识别供应商提供的具体限制。
+  const videoAspectRatio = humanizeVideoAspectRatioError(message)
+  if (videoAspectRatio) return videoAspectRatio
+
+  // 内容安全 / 版权 / 肖像审核优先于服务级兜底。
   // （2026-09 任务记录里 video.replicate 失败的第一大原因就是版权审核：
   //  「The request failed because the output video may be related to copyright restrictions」）
   const contentSafety = humanizeContentSafetyText(message)
@@ -351,6 +370,9 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
     if (/not available without an active subscription/i.test(error.message)) {
       return '当前模型需要有效会员授权，请查看包含此模型权益的会员；团队成员请联系团队所有者处理'
     }
+
+    const videoAspectRatio = humanizeVideoAspectRatioError(error)
+    if (videoAspectRatio) return videoAspectRatio
 
     const contentSafetyMessage = getContentSafetyErrorMessage(error)
     if (contentSafetyMessage) return contentSafetyMessage

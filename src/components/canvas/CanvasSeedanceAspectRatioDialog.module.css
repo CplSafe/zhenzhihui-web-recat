@@ -1,0 +1,135 @@
+.modal :global(.ant-modal-close) {
+  width: 44px;
+  height: 44px;
+  color: var(--canvas-text-muted, #9ca3af);
+}
+
+.modal :global(.ant-modal-close:hover) {
+  color: var(--canvas-text, #e5e7eb);
+  background: rgb(255 255 255 / 8%);
+}
+
+.limit {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgb(241 188 118 / 35%);
+  border-radius: 8px;
+  background: rgb(241 188 118 / 9%);
+  color: var(--canvas-text, #e5e7eb);
+}
+
+.limit strong {
+  color: #f1bc76;
+  font-variant-numeric: tabular-nums;
+}
+
+.help,
+.error {
+  margin: 0 0 12px;
+  color: var(--canvas-text-muted, #9ca3af);
+}
+
+.error {
+  color: #ffaaa4;
+}
+
+.items {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 2px;
+  max-height: 320px;
+  max-height: min(48dvh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 8px;
+}
+
+.thumbnail {
+  display: block;
+  width: 64px;
+  height: 56px;
+  border-radius: 4px;
+  background: var(--canvas-bg, #1b1b1b);
+  object-fit: contain;
+}
+
+.details {
+  display: grid;
+  color: var(--canvas-text-muted, #9ca3af);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.name {
+  overflow-wrap: anywhere;
+  color: var(--canvas-text, #e5e7eb);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ratio {
+  color: #f1bc76;
+}
+
+.actions {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--canvas-text, #e5e7eb);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.primary {
+  background: var(--canvas-brand-subtle, rgb(0 229 190 / 12%));
+  color: var(--canvas-brand, #00e5be);
+}
+
+.action:hover {
+  border-color: currentColor;
+}
+
+.action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.action:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@media (max-width: 420px) {
+  .item {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .thumbnail {
+    width: 56px;
+  }
+}

@@ -4,6 +4,7 @@ export interface SeedanceModerationResult {
   state: SeedanceModerationState
   rawStatus: string
   reason: string
+  lastError?: string
 }
 
 /** Interpret only explicit terminal states; unknown backend values fail closed. */
@@ -31,9 +32,11 @@ export function normalizeSeedanceModerationResult(payload: unknown): SeedanceMod
   ].includes(normalized)
   const unreviewed = ['', 'unreviewed', 'not_reviewed', 'none'].includes(normalized)
   const reasonValue = data.reason ?? data.message ?? data.error_message ?? data.reject_reason ?? data.failure_reason
+  const lastError = typeof data.last_error === 'string' ? data.last_error.trim() : ''
   return {
     state: approved ? 'approved' : pending ? 'pending' : unreviewed ? 'unreviewed' : 'rejected',
     rawStatus,
     reason: typeof reasonValue === 'string' ? reasonValue.trim() : '',
+    ...(lastError ? { lastError } : {}),
   }
 }

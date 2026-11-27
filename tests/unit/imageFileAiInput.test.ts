@@ -34,10 +34,10 @@ describe('videoReferenceImageIssue', () => {
   })
 
   it('宽高比越界（供应商原文 media aspect ratio must be between 0.4 and 2.5）在本地就能拦下', () => {
-    expect(videoReferenceImageIssue({ width: 300, height: 1000 })).toBe(
-      '图片宽高比为 0.30（300×1000px），需在 0.4–2.5 之间，请裁掉过长的一边后重试',
+    expect(videoReferenceImageIssue({ width: 399, height: 1000 })).toBe(
+      '图片宽高比低于 0.4（399×1000px），需在 0.4–2.5 之间，可调整图片后重试',
     )
-    expect(videoReferenceImageIssue({ width: 3000, height: 1000 })).toContain('宽高比为 3.00')
+    expect(videoReferenceImageIssue({ width: 2501, height: 1000 })).toContain('宽高比高于 2.5')
   })
 })
 
@@ -113,7 +113,7 @@ describe('normalizeImageFileForAiInput', () => {
     const tall = new File(['tall'], 'tall.png', { type: 'image/png' })
     const rejected = normalizeImageFileForAiInput(tall, { checkAspectRatio: true })
     await loadImage(300, 1000)
-    await expect(rejected).rejects.toThrow('图片宽高比为 0.30（300×1000px），需在 0.4–2.5 之间')
+    await expect(rejected).rejects.toThrow('图片宽高比低于 0.4（300×1000px），需在 0.4–2.5 之间')
 
     FakeImage.instances = []
     const accepted = normalizeImageFileForAiInput(tall)

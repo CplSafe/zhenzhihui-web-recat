@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { BusinessApiError, getBusinessErrorMessage, humanizeProviderErrorText } from '@/api/business'
+import {
+  BusinessApiError,
+  getBusinessErrorMessage,
+  humanizeProviderErrorText,
+  humanizeVideoAspectRatioError,
+} from '@/api/business'
 
 describe('getBusinessErrorMessage', () => {
   it('reads nested copyright review details and returns an actionable, non-accusatory message', () => {
@@ -113,6 +118,28 @@ describe('getBusinessErrorMessage', () => {
     const message = getBusinessErrorMessage(error)
     expect(message).toBe('第 4 张参考图的宽高比需要在 0.4–2.5 之间（太窄或太扁的长条图不支持），请裁剪后重试')
     expect(message).not.toMatch(/aspect ratio|image_url/i)
+  })
+
+  it('参考视频比例超限时指出视频、上下限和手动裁剪', () => {
+    const detail = 'moderation: content[1].video_url: media aspect ratio must be between 0.4 and 2.5'
+    const message = '第 2 个参考视频的宽高比（宽 ÷ 高）最小 0.4、最大 2.5。请手动裁剪到此范围后重试'
+    expect(humanizeProviderErrorText(detail)).toBe(message)
+    expect(getBusinessErrorMessage(new BusinessApiError('审核失败', { response: { error_message: detail } }))).toBe(
+      message,
+    )
+  })
+
+  it('视频审核可从业务接口的实际错误字段读取供应商比例上下限', () => {
+    const error = new BusinessApiError('视频审核失败', {
+      response: { data: { last_error: 'media aspect ratio must be between 0.5 and 2.25' } },
+    })
+    expect(humanizeVideoAspectRatioError(error, '视频素材 ID 5274')).toBe(
+      '视频素材 ID 5274的宽高比（宽 ÷ 高）最小 0.5、最大 2.25。请手动裁剪到此范围后重试',
+    )
+    expect(humanizeVideoAspectRatioError('media aspect ratio must be between 0.4 and 2.5')).toBe('')
+    expect(humanizeVideoAspectRatioError('content[1].image_url: media aspect ratio must be between 0.4 and 2.5')).toBe(
+      '',
+    )
   })
 
   it('供应商余额/计费异常：不把 402 与 insufficient_balance 原文暴露给用户，也不说成用户积分不足', () => {

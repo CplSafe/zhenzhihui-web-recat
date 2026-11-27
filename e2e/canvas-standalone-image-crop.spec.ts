@@ -95,10 +95,24 @@ async function installCropFixtures(page: Page, failFirstUpload = false) {
       return originalFetch(input, init)
     }
   }, UPLOAD_URL)
+  const editLocks = (nodes: string[]) => ({
+    granted: true,
+    nodes: Object.fromEntries(nodes.map((id) => [id, [{ user_id: 7, name: 'E2E 用户', editing: true }]])),
+  })
+  await page.routeWebSocket(`**/api/v1/canvases/${CANVAS_ID}/node-locks/socket?**`, (socket) => {
+    socket.onMessage((message) => {
+      const { nodes } = JSON.parse(String(message)) as { nodes: string[] }
+      socket.send(JSON.stringify({ type: 'state', data: editLocks(nodes) }))
+    })
+  })
   await page.route('**/api/v1/ai/tools?**', (route) => route.fulfill({ json: { data: [] } }))
   await page.route(`**/api/v1/canvases/${CANVAS_ID}**`, async (route) => {
     const request = route.request()
     const url = new URL(request.url())
+    if (url.pathname.endsWith('/node-locks') && request.method() === 'POST') {
+      const { nodes } = request.postDataJSON() as { nodes: string[] }
+      return route.fulfill({ json: editLocks(nodes) })
+    }
     if (url.pathname.endsWith('/elements')) {
       if (request.method() === 'PATCH') {
         const { mutations } = request.postDataJSON() as { mutations?: ElementMutation[] }

@@ -7,7 +7,7 @@
  * 权限边界：未被限制的空间成员可以进入项目并查看、下载视频；只有项目创建者或空间 owner/admin
  * 可以管理成员权限和删除项目。所有异步结果都与 workspaceId/用户/请求序号绑定，避免切换空间后串数据。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Pagination } from 'antd'
@@ -21,12 +21,14 @@ import {
   getBusinessErrorMessage,
   getCreativeProject,
   patchCreativeProject,
+  requestBusinessJson,
   updateCreativeProjectDraft,
 } from '@/api/business'
 import InlineEdit from '@/components/common/InlineEdit'
 import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
 import { addClassifiedVideo, countProjectVideos, deriveProjectVideos } from '@/api/projectVideos'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
+import { useProjectManagementCanvases } from '@/composables/useProjectManagementCanvases'
 import { getBackendGenerationModelName } from '@/utils/generationModelCatalog'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
 import { pageCacheKey, readPageCache, writePageCache } from '@/utils/pageDataCache'
@@ -99,6 +101,7 @@ import { DeliveryCountdown } from '@/components/common/DeliveryCountdown'
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
 /** 项目请求尚未完成时复用的稳定空数组。 */
 const EMPTY_PROJECT_ITEMS: any[] = []
+const DEFAULT_PROJECT_PAGE_SIZE = 9
 /** 无待归类视频时复用的稳定空数组。 */
 const EMPTY_LOOSE_VIDEOS: { assetId: number; title: string }[] = []
 
@@ -515,14 +518,21 @@ export default function ProjectManagementView() {
   // 最新成片加载失败时回退原素材封面，不让单个视频地址异常拖垮项目识别。
   const [coverVideoError, setCoverVideoError] = useState<Set<number>>(new Set())
 
-  // 我的项目分页:固定每行 3 个、每页 3 行(共 9 个),不随屏幕改变列数。
   const gridRef = useRef<HTMLDivElement>(null)
   const [page, setPage] = useState(1)
+  const [canvasPageSize, setCanvasPageSize] = useState(DEFAULT_PROJECT_PAGE_SIZE)
+  const [canvasPageAnchor, setCanvasPageAnchor] = useState(0)
   const [query, setQuery] = useState('') // 搜索项目名称/团队
   const [typeFilter, setTypeFilter] = useState<'all' | '个人项目' | '协作项目'>('all')
   const [flowFilter, setFlowFilter] = useState<'all' | 'smart' | 'hot-copy' | 'canvas' | 'promo'>('all')
-  const [canvasItems, setCanvasItems] = useState<CanvasSummary[]>([])
-  const [canvasItemsLoading, setCanvasItemsLoading] = useState(false)
+  const isCanvasTab = flowFilter === 'canvas'
+  const {
+    items: canvasItems,
+    setItems: setCanvasItems,
+    loading: canvasItemsLoading,
+    error: canvasItemsError,
+    retry: retryCanvasItems,
+  } = useProjectManagementCanvases(workspaceId, currentUserId)
   const [canvasCovers, setCanvasCovers] = useState<Record<number, CanvasCover | null>>({})
   const [canvasRenameTarget, setCanvasRenameTarget] = useState<CanvasSummary | null>(null)
   const [canvasRenameName, setCanvasRenameName] = useState('')
@@ -530,8 +540,9 @@ export default function ProjectManagementView() {
   const [canvasDeletingId, setCanvasDeletingId] = useState(0)
   const [canvasDuplicatingId, setCanvasDuplicatingId] = useState(0)
   const canvasDuplicateBusy = useRef(false)
-  const canvasDuplicateWorkspace = useRef(workspaceId)
-  canvasDuplicateWorkspace.current = workspaceId
+  const canvasScope = `${activeWorkspaceId}:${currentUserId}`
+  const canvasScopeRef = useRef(canvasScope)
+  canvasScopeRef.current = canvasScope
   const canvasCoverLoadedRef = useRef(new Set<string>())
   // 生成模型筛选:'' = 全部。按模型展示名筛(用户看到的是名字;同名不同版本自然合并),项目下任一视频用了该模型即显示。
   const [modelFilter, setModelFilter] = useState('')
@@ -565,39 +576,12 @@ export default function ProjectManagementView() {
   const [vidCols, setVidCols] = useState(5)
   const [vidPage, setVidPage] = useState(1)
 
-  // 无限画布文件与普通项目来自不同 API；在项目管理的同名流程分类中汇总画布文件。
-  useEffect(() => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) {
-      setCanvasItems([])
-      return
-    }
-    let cancelled = false
-    setCanvasItemsLoading(true)
-    const load = async () => {
-      const items: CanvasSummary[] = []
-      const limit = 100
-      for (let offset = 0; ; offset += limit) {
-        const page = await listCanvases({ workspaceId: wsId, includeArchived: true, limit, offset })
-        items.push(...page)
-        if (page.length < limit) break
-      }
-      return items
-    }
-    void load()
-      .then((items) => {
-        if (!cancelled) setCanvasItems(items)
-      })
-      .catch(() => {
-        if (!cancelled) setCanvasItems([])
-      })
-      .finally(() => {
-        if (!cancelled) setCanvasItemsLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId])
+  useLayoutEffect(() => {
+    setCanvasPageAnchor(0)
+    setCanvasCovers({})
+    setCanvasRenameTarget(null)
+    canvasCoverLoadedRef.current.clear()
+  }, [canvasScope])
 
   const canDeleteCanvas = useCallback(
     (canvas: CanvasSummary) => Boolean(canvas.userId && currentUserId && canvas.userId === currentUserId),
@@ -620,15 +604,26 @@ export default function ProjectManagementView() {
     setCanvasRenaming(true)
     try {
       await patchCanvas({ workspaceId: wsId, canvasId: target.id, title })
+      if (canvasScopeRef.current !== canvasScope) return
       setCanvasItems((items) => items.map((canvas) => (canvas.id === target.id ? { ...canvas, title } : canvas)))
       showToast('画布已重命名', 'success')
       setCanvasRenameTarget(null)
     } catch (error) {
-      showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
+      if (canvasScopeRef.current === canvasScope)
+        showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
     } finally {
       setCanvasRenaming(false)
     }
-  }, [canvasRenameName, canvasRenameTarget, canvasRenaming, currentUserId, showToast, workspaceId])
+  }, [
+    canvasRenameName,
+    canvasRenameTarget,
+    canvasRenaming,
+    canvasScope,
+    currentUserId,
+    setCanvasItems,
+    showToast,
+    workspaceId,
+  ])
   const handleCanvasDelete = useCallback(
     async (canvas: CanvasSummary) => {
       const wsId = Number(workspaceId || 0)
@@ -639,9 +634,11 @@ export default function ProjectManagementView() {
       }
       setOpenMenuId(0)
       if (!(await requestConfirm(`确定删除画布「${canvas.title || '未命名画布'}」吗?画布内容不可恢复。`))) return
+      if (canvasScopeRef.current !== canvasScope) return
       setCanvasDeletingId(canvas.id)
       try {
         await deleteCanvas({ workspaceId: wsId, canvasId: canvas.id })
+        if (canvasScopeRef.current !== canvasScope) return
         setCanvasItems((items) => items.filter((item) => item.id !== canvas.id))
         setCanvasCovers((covers) => {
           const next = { ...covers }
@@ -655,12 +652,13 @@ export default function ProjectManagementView() {
         }
         showToast('画布已删除', 'success')
       } catch (error) {
-        showToast(getBusinessErrorMessage(error, '删除失败,请稍后重试'), 'error')
+        if (canvasScopeRef.current === canvasScope)
+          showToast(getBusinessErrorMessage(error, '删除失败,请稍后重试'), 'error')
       } finally {
         setCanvasDeletingId(0)
       }
     },
-    [canDeleteCanvas, canvasDeletingId, requestConfirm, showToast, workspaceId],
+    [canDeleteCanvas, canvasDeletingId, canvasScope, requestConfirm, setCanvasItems, showToast, workspaceId],
   )
   const handleCanvasDuplicate = useCallback(
     async (canvas: CanvasSummary) => {
@@ -675,7 +673,7 @@ export default function ProjectManagementView() {
       )
       try {
         const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: canvas.id, title })
-        if (Number(canvasDuplicateWorkspace.current) !== wsId) return
+        if (canvasScopeRef.current !== canvasScope) return
         setCanvasItems((items) => [
           {
             ...created,
@@ -688,14 +686,14 @@ export default function ProjectManagementView() {
         setCanvasCovers((covers) => ({ ...covers, [created.id]: covers[canvas.id] ?? null }))
         showToast(`已创建副本「${title}」`, 'success')
       } catch (error) {
-        if (Number(canvasDuplicateWorkspace.current) === wsId)
+        if (canvasScopeRef.current === canvasScope)
           showToast(getBusinessErrorMessage(error, '创建副本失败，请稍后重试'), 'error')
       } finally {
         canvasDuplicateBusy.current = false
         setCanvasDuplicatingId(0)
       }
     },
-    [canvasItems, currentUserId, showToast, workspaceId],
+    [canvasItems, canvasScope, currentUserId, setCanvasItems, showToast, workspaceId],
   )
 
   // 创建项目弹窗
@@ -976,8 +974,6 @@ export default function ProjectManagementView() {
     if (modelFilter && !modelOptions.some((option) => option.value === modelFilter)) setModelFilter('')
   }, [modelFilter, modelOptions])
 
-  // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
-  const pageSize = 9
   const pagedProjectItems = useMemo(() => {
     const items = [
       ...shownFolders.map((folder) => ({ kind: 'project' as const, updatedAt: folder.updatedAt, folder })),
@@ -1002,56 +998,79 @@ export default function ProjectManagementView() {
         task,
       })),
     ].sort((a, b) => (sortDesc ? b.updatedAt - a.updatedAt : a.updatedAt - b.updatedAt))
-    return items.slice((page - 1) * pageSize, page * pageSize)
-  }, [shownFolders, shownRefineTasks, shownPromoTasks, realManual, realPromo, page, pageSize, sortDesc])
+    return items.slice((page - 1) * DEFAULT_PROJECT_PAGE_SIZE, page * DEFAULT_PROJECT_PAGE_SIZE)
+  }, [shownFolders, shownRefineTasks, shownPromoTasks, realManual, realPromo, page, sortDesc])
+  const hasCanvasResults = shownCanvases.length > 0
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!isCanvasTab || !hasCanvasResults || !grid) return
+    return observeElementResize(grid, () => {
+      const columns = getComputedStyle(grid)
+        .gridTemplateColumns.split(/\s+/)
+        .filter((track) => track.endsWith('px')).length
+      if (columns) setCanvasPageSize(Math.ceil(DEFAULT_PROJECT_PAGE_SIZE / columns) * columns)
+    })
+  }, [hasCanvasResults, isCanvasTab])
+
+  const lastCanvasPage = Math.max(1, Math.ceil(shownCanvases.length / canvasPageSize))
+  const canvasPage = Math.min(Math.floor(canvasPageAnchor / canvasPageSize) + 1, lastCanvasPage)
+  const canvasPageStart = (canvasPage - 1) * canvasPageSize
   const pagedCanvases = useMemo(
-    () => shownCanvases.slice((page - 1) * pageSize, page * pageSize),
-    [shownCanvases, page, pageSize],
+    () => shownCanvases.slice(canvasPageStart, canvasPageStart + canvasPageSize),
+    [shownCanvases, canvasPageStart, canvasPageSize],
   )
-  // 无限画布卡片需要从画布元素中选最近生成的图片/视频作为封面。
-  // 每页最多 9 张，限 3 路并发，避免项目管理页加载时打满元素接口。
+  const canvasCoverKeys = isCanvasTab ? pagedCanvases.map(({ id, revision }) => `${id}:${revision || 0}`).join(',') : ''
+  // 只为当前页查询封面，切页或切空间时取消未完成的请求。
   useEffect(() => {
     const wsId = activeWorkspaceId
-    if (!wsId || !pagedCanvases.length) return
-    let cancelled = false
-    const queue = pagedCanvases
-      .map((canvas) => ({ id: Number(canvas.id || 0), key: `${wsId}:${canvas.id}:${canvas.revision || 0}` }))
-      .filter(({ id, key }) => id > 0 && !canvasCoverLoadedRef.current.has(key))
-    const load = async ({ id, key }: { id: number; key: string }) => {
-      canvasCoverLoadedRef.current.add(key)
-      try {
-        const result = await fetchAllCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
-        if (!cancelled) setCanvasCovers((covers) => ({ ...covers, [id]: pickCanvasCover(result.elements, wsId) }))
-      } catch {
-        canvasCoverLoadedRef.current.delete(key)
-      }
-    }
+    if (!wsId || !canvasCoverKeys) return
+    const controller = new AbortController()
+    const queue = canvasCoverKeys.split(',').filter((key) => !canvasCoverLoadedRef.current.has(key))
     void Promise.all(
       Array.from({ length: Math.min(3, queue.length) }, async () => {
-        while (!cancelled && queue.length) {
-          const item = queue.shift()
-          if (item) await load(item)
+        while (!controller.signal.aborted && queue.length) {
+          const key = queue.shift()!
+          const id = Number(key.split(':')[0])
+          try {
+            const result = await fetchAllCanvasElements(
+              { workspaceId: wsId, canvasId: id, afterRevision: 0 },
+              {
+                read: (path, { signal }) => requestBusinessJson(path, { signal, cache: 'no-store' }),
+                signal: controller.signal,
+              },
+            )
+            if (controller.signal.aborted) return
+            canvasCoverLoadedRef.current.add(key)
+            setCanvasCovers((covers) => ({ ...covers, [id]: pickCanvasCover(result.elements, wsId) }))
+          } catch {
+            if (!controller.signal.aborted) setCanvasCovers((covers) => ({ ...covers, [id]: covers[id] ?? null }))
+          }
         }
       }),
     )
-    return () => {
-      cancelled = true
-    }
-  }, [activeWorkspaceId, pagedCanvases])
-  const isCanvasTab = flowFilter === 'canvas'
+    return () => controller.abort()
+  }, [activeWorkspaceId, canvasCoverKeys, canvasScope])
   const isPromoTab = flowFilter === 'promo'
   const activeItemCount = isCanvasTab
     ? shownCanvases.length
     : shownFolders.length + shownRefineTasks.length + shownPromoTasks.length + realManual.length + realPromo.length
-  const activeTotalPages = Math.max(1, Math.ceil(activeItemCount / pageSize))
+  const activePageSize = isCanvasTab ? canvasPageSize : DEFAULT_PROJECT_PAGE_SIZE
+  const activeTotalPages = Math.max(1, Math.ceil(activeItemCount / activePageSize))
 
-  // 列数变化 / 项目减少导致当前页越界时,夹回最后一页
+  // 项目减少时保留最后一个可用页，调整列数时继续显示原先的浏览位置。
   useEffect(() => {
-    if (page > activeTotalPages) setPage(activeTotalPages)
-  }, [page, activeTotalPages])
+    if (isCanvasTab) {
+      if (canvasPageAnchor >= activeItemCount && canvasPageAnchor !== canvasPageStart) {
+        setCanvasPageAnchor(canvasPageStart)
+      }
+    } else if (page > activeTotalPages) {
+      setPage(activeTotalPages)
+    }
+  }, [activeItemCount, activeTotalPages, canvasPageAnchor, canvasPageStart, isCanvasTab, page])
   // 搜索 / 过滤 / 排序变化时回到第一页
   useEffect(() => {
     setPage(1)
+    setCanvasPageAnchor(0)
   }, [query, flowFilter, typeFilter, modelFilter, sortDesc, effectiveOwnerFilter])
 
   // 已归类(拖入项目)的视频 → 从待归类隐藏。来源:各项目云端草稿(collectClassifiedKeys),
@@ -1965,6 +1984,16 @@ export default function ProjectManagementView() {
 
             {/* 项目卡片网格 */}
             <section className="pm2-section">
+              {isCanvasTab && canvasItemsError && (
+                <div className="pm2-canvas-load-error" role="alert">
+                  <span>
+                    {canvasItems.length ? '部分无限画布文件加载失败，已加载的文件仍可查看' : '无限画布文件加载失败'}
+                  </span>
+                  <button type="button" onClick={retryCanvasItems}>
+                    重试
+                  </button>
+                </div>
+              )}
               {deliveryProjects.errors.length > 0 && !isCanvasTab && (
                 <div className="pm2-hint" role="alert">
                   {deliveryProjects.errors.join('、')}加载失败{' '}
@@ -1975,7 +2004,7 @@ export default function ProjectManagementView() {
               )}
               {(
                 isCanvasTab
-                  ? canvasItemsLoading && !canvasItems.length
+                  ? canvasItemsLoading && !activeItemCount
                   : isPromoTab
                     ? deliveryProjects.loading && !realPromo.length && !shownPromoTasks.length
                     : (loading || deliveryProjects.loading) &&
@@ -1986,8 +2015,8 @@ export default function ProjectManagementView() {
                       !realPromo.length
               ) ? (
                 <div className="pm2-hint">{isCanvasTab ? '正在加载无限画布文件…' : '正在加载项目…'}</div>
-              ) : activeItemCount === 0 && deliveryProjects.errors.length && !isCanvasTab ? null : activeItemCount ===
-                0 ? (
+              ) : !activeItemCount &&
+                (isCanvasTab ? canvasItemsError : deliveryProjects.errors.length) ? null : !activeItemCount ? (
                 <div className="pm2-hint">
                   {isCanvasTab
                     ? query
@@ -2465,15 +2494,26 @@ export default function ProjectManagementView() {
                       )}
                 </div>
               )}
-              {activeTotalPages > 1 && (
-                <div className="pm2-pager">
-                  <Pagination
-                    current={page}
-                    pageSize={pageSize}
-                    total={activeItemCount}
-                    showSizeChanger={false}
-                    onChange={setPage}
-                  />
+              {(activeTotalPages > 1 || (isCanvasTab && activeItemCount > 0)) && (
+                <div className={`pm2-pager${isCanvasTab ? ' pm2-pager--canvas' : ''}`}>
+                  {isCanvasTab && (
+                    <span className="pm2-page-range" aria-live="polite">
+                      第 {canvasPageStart + 1}–{canvasPageStart + pagedCanvases.length} 项，
+                      {canvasItemsLoading || canvasItemsError ? '已匹配 ' : '共 '}
+                      {activeItemCount} 项
+                    </span>
+                  )}
+                  {activeTotalPages > 1 && (
+                    <Pagination
+                      current={isCanvasTab ? canvasPage : page}
+                      pageSize={activePageSize}
+                      total={activeItemCount}
+                      showSizeChanger={false}
+                      onChange={
+                        isCanvasTab ? (nextPage) => setCanvasPageAnchor((nextPage - 1) * canvasPageSize) : setPage
+                      }
+                    />
+                  )}
                 </div>
               )}
             </section>

@@ -126,6 +126,10 @@ vi.mock('@/api/canvasApi', () => ({
   deleteCanvas: mocks.deleteCanvas,
   fetchAllCanvasElements: mocks.fetchAllCanvasElements,
   listCanvases: mocks.listCanvases,
+  listCanvasesPage: async (options: unknown) => {
+    const items = await mocks.listCanvases(options)
+    return { items, count: items.length }
+  },
   patchCanvas: mocks.patchCanvas,
 }))
 
@@ -168,9 +172,11 @@ describe('CanvasListView 封面加载', () => {
       canvas(103, '丙'),
     ])
     render(<CanvasEmptyStateActions />)
-    expect(await screen.findByText('累计消耗 1.25 积分')).toBeInTheDocument()
-    expect(screen.getByText('累计消耗 0 积分')).toBeInTheDocument()
-    expect(screen.getByText('累计消耗 — 积分')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '打开画布 甲' }, WAIT)).toHaveAccessibleDescription(
+      /累计消耗\s*1\.25 积分/,
+    )
+    expect(screen.getByRole('button', { name: '打开画布 乙' })).toHaveAccessibleDescription(/累计消耗\s*0 积分/)
+    expect(screen.getByRole('button', { name: '打开画布 丙' })).toHaveAccessibleDescription(/累计消耗\s*暂无记录/)
   })
 
   it('每张卡片显示自己的累计积分，包括零消耗', async () => {

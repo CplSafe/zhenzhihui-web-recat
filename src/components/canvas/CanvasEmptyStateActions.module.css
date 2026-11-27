@@ -64,21 +64,43 @@
   cursor: pointer;
 }
 .recentGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
-  gap: 16px;
+  column-width: 220px;
+  column-gap: 20px;
+}
+.projectSlot {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  margin-bottom: 20px;
+  break-inside: avoid;
+  vertical-align: top;
+}
+.recentGrid[data-masonry-ready='true'] {
+  position: relative;
+  columns: unset;
+}
+.recentGrid[data-masonry-ready='true'] .projectSlot {
+  position: absolute;
+  inset-block-start: var(--recent-card-top, 0);
+  inset-inline-start: var(--recent-card-left, 0);
+  width: var(--recent-card-width, 100%);
+  margin: 0;
+}
+.projectSlot[data-menu-open='true'] {
+  z-index: 5;
 }
 .projectCard {
   position: relative;
-  display: flex;
-  overflow: hidden;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  isolation: isolate;
+  width: 100%;
   min-width: 0;
+  overflow: hidden;
   padding: 0;
   border: 1px solid #e1e8e5;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--canvas-surface-raised, #202433);
-  box-shadow: 0 1px 3px rgb(16 24 40 / 5%);
   color: var(--canvas-text, #e5e7eb);
   font: inherit;
   text-align: left;
@@ -96,15 +118,27 @@
   outline-offset: 3px;
 }
 .projectCover {
-  display: flex;
-  aspect-ratio: 1;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 8px;
+  position: relative;
+  display: block;
+  grid-area: 1 / 1;
+  overflow: hidden;
   background: #f1f4f3;
   color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
+}
+.projectCover::before {
+  display: block;
+  width: 100%;
+  aspect-ratio: var(--recent-cover-ratio, 4 / 5);
+  content: '';
+}
+.projectCoverStatus {
+  position: absolute;
+  inset: clamp(32px, 30%, 94px) 0 auto;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  transform: translateY(-50%);
 }
 .projectCover svg {
   width: 24px;
@@ -113,11 +147,17 @@
   stroke-width: 1.5;
 }
 .projectCoverMedia {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
   background: #f1f4f3;
+}
+.projectCover[data-media-ready='true'] .projectCoverMedia {
+  opacity: 1;
 }
 .projectActions {
   position: absolute;
@@ -127,31 +167,46 @@
 }
 .projectActions > button {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   padding: 0;
-  border: 1px solid #e5ebe8;
-  border-radius: 8px;
-  background: rgb(255 255 255 / 94%);
-  color: #4b5563;
-  font-size: 21px;
-  line-height: 1;
+  border: 1px solid rgb(255 255 255 / 60%);
+  border-radius: 50%;
+  background: rgb(17 26 23 / 72%);
+  color: #fff;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgb(16 24 40 / 10%);
+}
+.projectActions > button:focus-visible {
+  outline: 2px solid #a6f3dd;
+  outline-offset: 2px;
 }
 .projectMenu {
   position: absolute;
-  top: 36px;
+  top: calc(100% + 5px);
   right: 0;
   display: grid;
-  min-width: 120px;
+  width: 164px;
   overflow: hidden;
   padding: 4px;
   border: 1px solid #e5ebe8;
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+.projectMenuStats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+  padding: 7px 5px 8px;
+  border-bottom: 1px solid var(--canvas-border, rgb(255 255 255 / 12%));
+  font-size: 12px;
+  line-height: 1.4;
+}
+.projectMenuStats > span:nth-child(even) {
+  color: var(--canvas-text-muted, #9ca3af);
+  text-align: right;
 }
 .permissionHint {
   padding: 8px 10px;
@@ -239,31 +294,77 @@
   cursor: not-allowed;
 }
 .projectBody {
-  display: flex;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-area: 1 / 1;
+  align-self: end;
+  gap: 4px;
+  margin-top: 62px;
+  padding: 11px 12px;
+  background: linear-gradient(180deg, rgb(13 25 21 / 83%), rgb(13 25 21 / 98%));
+}
+.projectBody::before {
+  position: absolute;
+  inset: auto 0 100%;
+  height: 24px;
+  background: linear-gradient(transparent, rgb(13 25 21 / 83%));
+  content: '';
+  pointer-events: none;
+}
+.projectTitle {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.projectMetadata {
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
+  gap: 2px;
+  color: #e1ebe5;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
-.projectBody strong,
-.projectBody small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.projectCredits,
+.projectUpdated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
 }
-.projectBody strong {
-  color: var(--canvas-text, #e5e7eb);
-  font-size: 13px;
+.projectCredits strong {
+  color: #fff;
   font-weight: 600;
 }
-.projectBody small {
-  color: var(--canvas-text-muted, #9ca3af);
-  font-size: 11px;
+.projectUpdated time {
+  min-width: 0;
 }
 .recentHint {
   margin: 0;
   color: var(--canvas-text-muted, #9ca3af);
   font-size: 12px;
+}
+.recentFooter {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.recentFooter button {
+  padding: 5px 10px;
+  border: 1px solid var(--canvas-border, #e5ebe8);
+  border-radius: 6px;
+  background: var(--canvas-surface-raised, #fff);
+  color: var(--canvas-brand, #087d60);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .action {
@@ -347,8 +448,11 @@
     width: min(520px, calc(100% - 36px));
   }
   .recentGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    columns: 2;
+    column-gap: 10px;
+  }
+  .projectSlot {
+    margin-bottom: 10px;
   }
 
   .intro {
@@ -373,14 +477,6 @@
 @media (max-width: 420px) {
   .studio {
     width: min(340px, calc(100% - 28px));
-  }
-
-  .projectCover {
-    aspect-ratio: 16 / 9;
-  }
-
-  .recentGrid {
-    grid-template-columns: 1fr;
   }
 
   .action {
@@ -410,9 +506,19 @@
   }
 }
 
+@media (max-width: 380px) {
+  .recentGrid {
+    columns: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .action {
+  .action,
+  .projectCard {
     transition: none;
+  }
+  .projectBody {
+    padding: 8px 9px 10px;
   }
 }
 
@@ -428,7 +534,6 @@
 .projectCoverMedia {
   background: #12141c;
 }
-.projectActions > button,
 .projectMenu,
 .renameDialog {
   border-color: var(--canvas-border, rgb(255 255 255 / 12%));
@@ -437,7 +542,7 @@
 }
 
 /* The editor uses neutral surfaces; the same component also appears on the library page. */
-:global(.canvas-view) :is(.projectCover, .projectCoverMedia, .projectActions > button, .projectMenu),
+:global(.canvas-view) :is(.projectCover, .projectCoverMedia, .projectMenu),
 :global(body[data-canvas-ui='true']) .renameDialog,
 :global(body[data-canvas-ui='true']) .renameDialog input,
 :global(body[data-canvas-ui='true']) .renameDialog > div button {
@@ -487,22 +592,10 @@
 }
 
 /* Entry-page overrides are scoped away from the editor's empty canvas. */
-:global(.canvas-entry-main) .projectCover {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1;
-  flex: none;
-  overflow: hidden;
-}
-:global(.canvas-entry-main) .projectCoverMedia {
-  position: absolute;
-  inset: 0;
-}
 :global(.canvas-entry-main) .projectCover,
 :global(.canvas-entry-main) .projectCoverMedia {
   background: #f1f4f3;
 }
-:global(.canvas-entry-main) .projectActions > button,
 :global(.canvas-entry-main) .projectMenu {
   background: #fff;
   border-color: #e5ebe8;

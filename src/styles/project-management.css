@@ -1204,6 +1204,86 @@
   justify-content: flex-end;
   margin-top: 24px;
 }
+.pm2-pager--canvas {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.pm2-pager--canvas .ant-pagination {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+  min-width: 0;
+  row-gap: 6px;
+  margin-inline-start: auto;
+}
+.pm2-page-range {
+  min-width: 0;
+  margin: 0;
+  color: #525f71;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.pm2-canvas-load-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #edd9ad;
+  border-radius: 10px;
+  background: #fff9eb;
+  color: #694b11;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pm2-canvas-load-error > :is(span, p) {
+  flex: 1 1 204px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.pm2-canvas-load-error > button {
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 1px solid #ddba71;
+  border-radius: 6px;
+  background: #fff;
+  color: #694b11;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pm2-canvas-load-error > button:hover:not(:disabled) {
+  background: #fff1d2;
+}
+.pm2-canvas-load-error > button:focus-visible {
+  outline: 2px solid #956518;
+  outline-offset: 2px;
+}
+.pm2-canvas-load-error > button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+@media (max-width: 480px) {
+  .pm2-pager--canvas {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pm2-pager--canvas .ant-pagination {
+    justify-content: flex-start;
+    margin-inline-start: 0;
+  }
+  .pm2-canvas-load-error > button {
+    min-height: 40px;
+  }
+}
 
 /* ===== 项目管理头部 / 筛选 / 富卡片 ===== */
 .pm2-head {

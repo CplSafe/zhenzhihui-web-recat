@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { expectNoUnexpectedApi, installStrictAuthenticatedApp } from './fixtures/strict-authenticated-app'
+import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const width of [1440, 768, 390]) {
   test(`画布列表与新建弹窗在 ${width}px 可操作`, async ({ page }, testInfo) => {
@@ -105,35 +105,47 @@ test('空画布列表显示创建引导', async ({ page }, testInfo) => {
 })
 
 for (const width of [1440, 390]) {
-  test(`最近项目的不同尺寸封面在 ${width}px 均显示为正方形`, async ({ page }, testInfo) => {
+  test(`最近项目在 ${width}px 以不同高度的海报铺排，项目信息保留在封面内`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     const api = await installStrictAuthenticatedApp(page)
-    await page.route('**/api/v1/canvases?**', (route) =>
-      route.fulfill({
-        json: {
-          items: [
-            { id: 701, title: '竖图', updated_at: '2026-11-03T10:00:00Z' },
-            { id: 702, title: '横图', updated_at: '2026-11-02T10:00:00Z' },
-            { id: 703, title: '无封面', updated_at: '2026-11-01T10:00:00Z' },
-          ],
-        },
-      }),
-    )
+    const pageErrors: Error[] = []
+    page.on('pageerror', (error) => pageErrors.push(error))
+    const projects = [
+      { title: '竖图', width: 90, height: 160 },
+      { title: '横图', width: 160, height: 90 },
+      { title: '无封面' },
+      { title: '正方形', width: 120, height: 120 },
+      { title: '超宽预览', width: 300, height: 90 },
+      { title: '横图二', width: 160, height: 90 },
+      { title: '竖图二', width: 90, height: 160 },
+      { title: '横图三', width: 160, height: 90 },
+      { title: '竖图三', width: 90, height: 160 },
+      { title: '无封面二' },
+    ].map((project, index) => ({
+      ...project,
+      id: 701 + index,
+      user_id: 7,
+      updated_at: new Date(Date.UTC(2026, 10, 3, 10, 0, 59 - index)).toISOString(),
+    }))
+    await page.route('**/api/v1/canvases?**', (route) => {
+      const offset = Number(new URL(route.request().url()).searchParams.get('offset'))
+      return route.fulfill({ json: { items: offset === 0 ? projects : [] } })
+    })
     await page.route('**/api/v1/canvases/*/elements?**', (route) => {
       const id = Number(new URL(route.request().url()).pathname.split('/').at(-2))
+      const project = projects.find((item) => item.id === id)
       return route.fulfill({
         json: {
-          elements:
-            id === 703
-              ? []
-              : [
-                  {
-                    element_id: 'cover',
-                    kind: 'node',
-                    op: 'upsert',
-                    payload: { type: 'image', data: { kind: 'image', assetId: id } },
-                  },
-                ],
+          elements: project?.width
+            ? [
+                {
+                  element_id: 'cover',
+                  kind: 'node',
+                  op: 'upsert',
+                  payload: { type: 'image', data: { kind: 'image', assetId: id } },
+                },
+              ]
+            : [],
           has_more: false,
           sync_revision: 1,
         },
@@ -141,34 +153,340 @@ for (const width of [1440, 390]) {
     })
     await page.route('**/api/v1/assets/*/download?**', (route) => {
       const id = Number(new URL(route.request().url()).pathname.split('/').at(-2))
-      const dimensions = id === 701 ? 'width="100" height="200"' : 'width="200" height="100"'
+      const project = projects.find((item) => item.id === id)
+      if (!project?.width || !project.height) return route.fallback()
       return route.fulfill({
         contentType: 'image/svg+xml',
-        body: `<svg xmlns="http://www.w3.org/2000/svg" ${dimensions}><rect width="100%" height="100%" fill="#8cb5a7"/></svg>`,
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="${project.width}" height="${project.height}"><rect width="100%" height="100%" fill="hsl(${(id * 41) % 360}, 26%, 67%)"/></svg>`,
       })
     })
     await page.goto('/canvas')
-    for (const title of ['竖图', '横图', '无封面']) {
-      const card = page.getByRole('button', { name: `打开画布 ${title}` })
-      const cover = card.locator('[class*="projectCover_"]')
-      await expect(cover).toBeVisible()
-      if (title !== '无封面') {
+    const recent = page.getByRole('region', { name: '最近的漫剧项目' })
+    const cards = recent.getByRole('button', { name: /^打开画布 / })
+    await expect(cards).toHaveCount(projects.length)
+    await expect
+      .poll(() => cards.evaluateAll((items) => items.map((item) => item.getAttribute('aria-label'))))
+      .toEqual(projects.map(({ title }) => `打开画布 ${title}`))
+    const posterHeights = new Map<string, number>()
+    for (const project of width > 1000 ? projects : projects.slice(0, 5)) {
+      const card = recent.getByRole('button', { name: `打开画布 ${project.title}`, exact: true })
+      const cover = card.locator('[data-recent-canvas-cover]')
+      const caption = card.locator('[data-recent-canvas-caption]')
+      await cover.scrollIntoViewIfNeeded()
+      if (project.width && project.height) {
         const image = cover.locator('img')
-        await expect(image).toHaveJSProperty('complete', true)
-        await expect(image).toHaveCSS('object-fit', 'cover')
-        expect(await image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0)
+        await expect(image).toHaveJSProperty('naturalWidth', project.width)
+        await expect(cover).toHaveAttribute('data-media-ready', 'true')
       } else {
         await expect(cover.getByText('暂无预览')).toBeVisible()
       }
-      const bounds = await cover.boundingBox()
-      expect(Math.abs(bounds!.width - bounds!.height)).toBeLessThan(1)
+      const targetRatio =
+        project.width && project.height ? Math.max(9 / 16, Math.min(4 / 3, project.width / project.height)) : 4 / 5
+      await expect
+        .poll(async () => {
+          const bounds = await cover.boundingBox()
+          return bounds ? bounds.width / bounds.height : Infinity
+        })
+        .toBeLessThan(targetRatio + 0.02)
+      const [coverBounds, captionBounds, cardBounds] = await Promise.all([
+        cover.boundingBox(),
+        caption.boundingBox(),
+        card.boundingBox(),
+      ])
+      expect(coverBounds).not.toBeNull()
+      expect(captionBounds).not.toBeNull()
+      expect(cardBounds).not.toBeNull()
+      expect(Math.abs(coverBounds!.height - cardBounds!.height)).toBeLessThan(3)
+      expect(Math.abs(coverBounds!.width - cardBounds!.width)).toBeLessThan(3)
+      expect(captionBounds!.x).toBeGreaterThanOrEqual(coverBounds!.x - 1)
+      expect(captionBounds!.x + captionBounds!.width).toBeLessThanOrEqual(coverBounds!.x + coverBounds!.width + 1)
+      expect(captionBounds!.y).toBeGreaterThanOrEqual(coverBounds!.y - 1)
+      expect(captionBounds!.y + captionBounds!.height).toBeLessThanOrEqual(coverBounds!.y + coverBounds!.height + 1)
+      posterHeights.set(project.title, coverBounds!.height)
+      if (project.title === '竖图') {
+        expect(Math.abs(coverBounds!.width / coverBounds!.height - 9 / 16)).toBeLessThan(0.02)
+      }
     }
-    await page.screenshot({ path: testInfo.outputPath(`canvas-square-covers-${width}.png`), fullPage: true })
-    await page.getByRole('button', { name: '画布操作 竖图' }).click()
-    await expect(page.getByRole('button', { name: '重命名', exact: true })).toBeVisible()
+    expect(posterHeights.get('竖图')!).toBeGreaterThan(posterHeights.get('横图')! + 12)
+    expect(posterHeights.get('竖图')!).toBeGreaterThan(posterHeights.get('无封面')! + 12)
+
+    const bounds = await cards.evaluateAll((items) =>
+      items.map((item) => {
+        const { top, right, bottom, left } = item.getBoundingClientRect()
+        return { top, right, bottom, left }
+      }),
+    )
+    const top = Math.min(...bounds.map((item) => item.top))
+    const firstRow = bounds.filter((item) => Math.abs(item.top - top) < 2)
+    expect(firstRow.length).toBeGreaterThan(1)
+    const tallestFirstRowBottom = Math.max(...firstRow.map((item) => item.bottom))
+    expect(bounds.some((item) => item.top > top + 2 && item.top < tallestFirstRowBottom - 2)).toBe(true)
+    for (const [index, one] of bounds.entries()) {
+      expect(
+        bounds
+          .slice(index + 1)
+          .some(
+            (other) =>
+              Math.min(one.right, other.right) - Math.max(one.left, other.left) > 2 &&
+              Math.min(one.bottom, other.bottom) - Math.max(one.top, other.top) > 2,
+          ),
+      ).toBe(false)
+    }
+    await recent.getByRole('heading', { name: '最近的项目' }).scrollIntoViewIfNeeded()
+    expect(await page.locator('.canvas-entry-main').evaluate((main) => main.scrollWidth <= main.clientWidth + 1)).toBe(
+      true,
+    )
+    await page.screenshot({ path: testInfo.outputPath(`canvas-masonry-${width}.png`) })
+    expect(pageErrors).toEqual([])
     expectNoUnexpectedApi(api)
   })
 }
+
+for (const retryPage of [false, true]) {
+  test(
+    retryPage
+      ? '追加最近项目失败时可按原偏移重试并保留已展示的卡片'
+      : '最近项目滚动时预取下一页，接近页尾才追加，并保留卡片操作与查看更多',
+    async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: 1024, height: 440 })
+      const api = await installStrictAuthenticatedApp(page)
+      const pageErrors: Error[] = []
+      page.on('pageerror', (error) => pageErrors.push(error))
+      const projects = Array.from({ length: 17 }, (_, index) => ({
+        id: 801 + index,
+        title: `滚动项目 ${String(index + 1).padStart(2, '0')}`,
+        user_id: index === 10 ? 8 : 7,
+        updated_at: new Date(Date.UTC(2026, 10, 3, 10, 0, 59 - index)).toISOString(),
+      }))
+      const listRequests: Array<{ offset: number; limit: number }> = []
+      const coverRequests: number[] = []
+      const nextPage = [projects[9], ...projects.slice(10)]
+      let releaseFailure!: () => void
+      const pendingFailure = new Promise<void>((resolve) => {
+        releaseFailure = resolve
+      })
+      await page.route('**/api/v1/canvases?**', async (route) => {
+        const query = new URL(route.request().url()).searchParams
+        const offset = Number(query.get('offset'))
+        const limit = Number(query.get('limit'))
+        expect(Number(query.get('workspace_id'))).toBe(WORKSPACE_ID)
+        listRequests.push({ offset, limit })
+        if (offset === 10 && limit === 10) {
+          if (retryPage && listRequests.filter((request) => request.offset === 10).length === 1) {
+            await pendingFailure
+            return route.fulfill({ status: 503, json: { message: '模拟最近项目暂时不可用' } })
+          }
+          return route.fulfill({ json: { items: nextPage } })
+        }
+        return route.fulfill({ json: { items: projects.slice(offset, offset + limit) } })
+      })
+      await page.route('**/api/v1/canvases/*/elements?**', (route) => {
+        const canvasId = Number(new URL(route.request().url()).pathname.split('/').at(-2))
+        coverRequests.push(canvasId)
+        return route.fulfill({ json: { elements: [], sync_revision: 1, history_floor_revision: 0, has_more: false } })
+      })
+      await page.route('**/api/v1/canvases/811?**', (route) =>
+        route.fulfill({ json: { ...projects[10], workspace_id: WORKSPACE_ID, members_restricted: false } }),
+      )
+      await page.route('**/api/v1/canvases/811/members?**', (route) =>
+        route.fulfill({ json: { members: [], members_restricted: false } }),
+      )
+      await page.route('**/api/v1/canvases/811/node-locks?**', (route) =>
+        route.fulfill({ json: { granted: true, nodes: {} } }),
+      )
+      await page.routeWebSocket('**/api/v1/canvases/811/node-locks/socket?**', (socket) => {
+        socket.onMessage(() => socket.send(JSON.stringify({ type: 'state', data: { granted: true, nodes: {} } })))
+      })
+      await page.route('**/api/v1/ai/tools**', (route) => route.fulfill({ json: [] }))
+
+      await page.goto('/canvas')
+      const main = page.getByRole('main', { name: '无限画布创作入口' })
+      const recent = main.getByRole('region', { name: '最近的漫剧项目' })
+      const cards = recent.getByRole('button', { name: /^打开画布 / })
+      await expect(cards).toHaveCount(10)
+      await expect.poll(() => coverRequests.length).toBeGreaterThan(0)
+      expect(listRequests).toEqual([{ offset: 0, limit: 10 }])
+      expect(coverRequests).not.toContain(810)
+
+      const scrollAboveEnd = (pixels: number) =>
+        main.evaluate((element, distance) => {
+          element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - distance)
+        }, pixels)
+      if (retryPage) {
+        try {
+          await scrollAboveEnd(330)
+          await expect.poll(() => listRequests.map(({ offset }) => offset)).toEqual([0, 10])
+          await scrollAboveEnd(60)
+          await expect(recent.getByText('正在加载更多项目…', { exact: true })).toBeVisible()
+          await expect(cards).toHaveCount(10)
+        } finally {
+          releaseFailure()
+        }
+        const retry = recent.getByRole('button', { name: /重试/ })
+        await expect(retry).toBeVisible()
+        await expect(recent.getByText('更多项目加载失败', { exact: true })).toBeVisible()
+        await expect(cards).toHaveCount(10)
+        await retry.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: testInfo.outputPath('canvas-masonry-page-retry.png') })
+        await retry.click()
+        await expect(cards).toHaveCount(projects.length)
+        await expect(retry).toHaveCount(0)
+        expect(listRequests).toEqual([
+          { offset: 0, limit: 10 },
+          { offset: 10, limit: 10 },
+          { offset: 10, limit: 10 },
+        ])
+        expect(pageErrors).toEqual([])
+        expectNoUnexpectedApi(api)
+        return
+      }
+      const prefetchedPage = page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return url.pathname === '/api/v1/canvases' && url.searchParams.get('offset') === '10' && response.ok()
+      })
+      await scrollAboveEnd(330)
+      expect(await (await prefetchedPage).json()).toMatchObject({ items: nextPage })
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      )
+      await expect(cards).toHaveCount(10)
+      await expect(recent.getByRole('button', { name: '打开画布 滚动项目 11' })).toHaveCount(0)
+      expect(coverRequests).not.toContain(811)
+
+      await scrollAboveEnd(60)
+      await expect(cards).toHaveCount(projects.length)
+      const appended = recent.getByRole('button', { name: '打开画布 滚动项目 11', exact: true })
+      await appended.scrollIntoViewIfNeeded()
+      await expect.poll(() => coverRequests).toContain(811)
+      expect(listRequests).toEqual([
+        { offset: 0, limit: 10 },
+        { offset: 10, limit: 10 },
+      ])
+      const menu = recent.getByRole('button', { name: '画布操作 滚动项目 11', exact: true })
+      await menu.focus()
+      await page.keyboard.press('Enter')
+      await expect(menu).toHaveAttribute('aria-expanded', 'true')
+      await expect(recent.getByRole('button', { name: '创建副本', exact: true })).toBeVisible()
+      await expect(recent.getByText('仅创建者可重命名或删除此画布')).toBeVisible()
+      await expect(page).toHaveURL(/\/canvas$/)
+      await page.screenshot({ path: testInfo.outputPath('canvas-masonry-next-page.png') })
+      await menu.click()
+      await appended.focus()
+      await page.keyboard.press('Enter')
+      await expect(page).toHaveURL(/\/canvas\/811$/)
+      await page.getByRole('button', { name: '返回无限画布' }).click()
+      await expect(page).toHaveURL(/\/canvas$/)
+      await recent.getByRole('button', { name: '查看更多' }).click()
+      await expect(page).toHaveURL(/\/projects\?flow=canvas$/)
+      await expect(page.getByRole('tab', { name: '无限画布' })).toHaveAttribute('aria-selected', 'true')
+      expect(pageErrors).toEqual([])
+      expectNoUnexpectedApi(api)
+    },
+  )
+}
+
+test.describe('最近项目卡片元数据', () => {
+  test.use({ timezoneId: 'Asia/Shanghai' })
+
+  for (const width of [1440, 390]) {
+    test.describe(`${width}px`, () => {
+      test.use({ hasTouch: width === 390 })
+      test(`最近项目在 ${width}px 完整显示名称、积分状态和日期时间`, async ({ page }, testInfo) => {
+        await page.setViewportSize({ width, height: 900 })
+        const api = await installStrictAuthenticatedApp(page)
+        const pageErrors: Error[] = []
+        page.on('pageerror', (error) => pageErrors.push(error))
+        const longTitle = '夜行队穿过钟楼的分镜、灯光与画外音最终确认稿'
+        const updatedAt = '2026-11-03T10:04:00.000Z'
+        const createdAt = '2026-11-01T17:09:00.000Z'
+        await page.route('**/api/v1/canvases?**', (route) =>
+          route.fulfill({
+            json: {
+              items: [
+                { id: 701, title: longTitle, used_credits: 15207.23, updated_at: updatedAt, created_at: createdAt },
+                { id: 702, title: '累计消耗明确为零', used_credits: 0, created_at: createdAt },
+                { id: 703, title: '无统计记录', used_credits: null, updated_at: 'invalid-date' },
+              ],
+            },
+          }),
+        )
+
+        await page.goto('/canvas')
+        const main = page.getByRole('main', { name: '无限画布创作入口' })
+        const recent = main.getByRole('region', { name: '最近的漫剧项目' })
+        const actual = recent.getByRole('button', { name: `打开画布 ${longTitle}`, exact: true })
+        const zero = recent.getByRole('button', { name: '打开画布 累计消耗明确为零', exact: true })
+        const missing = recent.getByRole('button', { name: '打开画布 无统计记录', exact: true })
+        await expect(actual.getByText(longTitle, { exact: true })).toBeVisible()
+        await expect(actual).toContainText(/累计消耗\s*15,207\.23 积分/)
+        await expect(zero).toContainText(/累计消耗\s*0 积分/)
+        await expect(missing).toContainText(/累计消耗\s*暂无记录/)
+        await expect(recent.getByText('消耗时间', { exact: true })).toBeHidden()
+        await expect(recent.getByText('预估积分', { exact: true })).toBeHidden()
+
+        const updated = actual.locator('time')
+        await expect(actual.getByText('更新于', { exact: true })).toBeVisible()
+        await expect(updated).toHaveAttribute('datetime', updatedAt)
+        await expect(updated).toHaveText(/2026[年/.-]\s*11[月/.-]\s*03日?\s+18:04/)
+        const created = zero.locator('time')
+        await expect(zero.getByText('创建于', { exact: true })).toBeVisible()
+        await expect(created).toHaveAttribute('datetime', createdAt)
+        await expect(created).toHaveText(/2026[年/.-]\s*11[月/.-]\s*02日?\s+01:09/)
+        await expect(missing).toContainText(/更新时间\s*暂无记录/)
+        await expect(missing.locator('time')).toHaveCount(0)
+        await expect(actual).toHaveAccessibleDescription(/累计消耗\s*15,207\.23 积分/)
+
+        await actual.getByText(longTitle, { exact: true }).scrollIntoViewIfNeeded()
+        for (const text of [actual.getByText(longTitle, { exact: true }), updated, created]) {
+          expect(
+            await text.evaluate((element) => {
+              const box = element.getBoundingClientRect()
+              const range = document.createRange()
+              range.selectNodeContents(element)
+              const lines = Array.from(range.getClientRects())
+              return (
+                lines.length > 0 &&
+                lines.every(
+                  (line) =>
+                    line.left >= box.left - 2 &&
+                    line.right <= box.right + 2 &&
+                    line.top >= box.top - 2 &&
+                    line.bottom <= box.bottom + 2,
+                )
+              )
+            }),
+          ).toBe(true)
+        }
+        expect(await main.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+        expect(api.seen.filter(({ path }) => /estimate-cost|\/canvases\/\d+\/statistics/.test(path))).toEqual([])
+        await page.screenshot({ path: testInfo.outputPath(`canvas-recent-metadata-${width}.png`) })
+
+        const actions = recent.getByRole('button', { name: `画布操作 ${longTitle}`, exact: true })
+        const popup = recent.locator('[data-recent-canvas-id="701"] [data-recent-canvas-menu]')
+        await expect(actions).toHaveAttribute('aria-expanded', 'false')
+        if (width === 390) {
+          await actions.tap()
+        } else {
+          await actions.focus()
+          await page.keyboard.press('Enter')
+        }
+        await expect(actions).toHaveAttribute('aria-expanded', 'true')
+        await expect(popup).toContainText(/消耗时间\s*暂无记录/)
+        await expect(popup).toContainText(/预估积分\s*暂无预估/)
+        await expect(popup.getByText('消耗时间', { exact: true })).toBeInViewport()
+        await expect(popup.getByText('预估积分', { exact: true })).toBeInViewport()
+        await expect(page).toHaveURL(/\/canvas$/)
+        await page.screenshot({ path: testInfo.outputPath(`canvas-recent-metadata-menu-${width}.png`) })
+        if (width === 390) await actions.tap()
+        else await page.keyboard.press('Escape')
+        await expect(actions).toHaveAttribute('aria-expanded', 'false')
+        await expect(popup.getByText('预估积分', { exact: true })).toBeHidden()
+        expect(pageErrors).toEqual([])
+        expectNoUnexpectedApi(api)
+      })
+    })
+  }
+})
 
 test('漫剧起始页可直达最近项目，画布返回时恢复侧栏', async ({ page }, testInfo) => {
   const api = await installStrictAuthenticatedApp(page)
