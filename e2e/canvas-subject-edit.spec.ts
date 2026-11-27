@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { makePaddingSourcePng } from './fixtures/canvas-seedance-preflight'
 import {
   expectNoUnexpectedApi,
   fulfillFixtureVideo,
@@ -309,7 +310,9 @@ async function mockSubjectMaskUpload(page: Page) {
   let uploads = 0
   await page.route('**/api/v1/assets', (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
-    expect(route.request().postDataJSON()).toMatchObject({ workspace_id: WORKSPACE_ID, mime_type: 'image/png' })
+    const request = route.request().postDataJSON()
+    if (request?.source === 'canvas-poster') return route.fallback()
+    expect(request).toMatchObject({ workspace_id: WORKSPACE_ID, mime_type: 'image/png' })
     return route.fulfill({
       json: {
         asset: { id: maskAssetId },
@@ -1334,6 +1337,10 @@ test('Seedance 2.5 在主体修改中按编辑模式估价，提交前审核目�
     materials: [targetImageAsset],
   })
   await mockSubjectImageDownloads(page)
+  const validReference = await makePaddingSourcePng(page, { width: 640, height: 400 })
+  await page.route(/\/api\/v1\/assets\/704\/download/, (route) =>
+    route.fulfill({ contentType: 'image/png', body: validReference }),
+  )
   const moderationChecks: number[] = []
   let isTargetApproved = false
   await page.route(/\/api\/v1\/assets\/(601|704)\/seedance-moderation\?/, (route) => {
@@ -1384,6 +1391,64 @@ test('Seedance 2.5 在主体修改中按编辑模式估价，提交前审核目�
   app.expectMatchingEstimate(app.submissions[0])
   await expect(app.result('主体修改').locator('video')).toHaveAttribute('src', /\/assets\/602\/download/)
   await page.screenshot({ path: testInfo.outputPath('seedance-subject-edit-result.png') })
+  expect(app.pageErrors).toEqual([])
+  expectNoUnexpectedApi(app.api)
+})
+
+test('Seedance 视频主体编辑先拦截像素超限，再使用裁剪后的参考图重新估价和提交', async ({ page }) => {
+  test.setTimeout(90_000)
+  const app = await setupSubjectEdit(page, 'video', {
+    extraModels: [seedanceSubjectModel],
+    materials: [targetImageAsset, { ...targetImageAsset, id: maskAssetId, name: '已裁剪参考图.png' }],
+  })
+  const oversizedReference = await makePaddingSourcePng(page, { width: 5761, height: 2305 })
+  const croppedReference = await makePaddingSourcePng(page, { width: 2305, height: 2305 })
+  await page.route(/\/api\/v1\/assets\/(702|704)\/download/, (route) =>
+    route.fulfill({
+      contentType: 'image/png',
+      body: route.request().url().includes('/704/') ? oversizedReference : croppedReference,
+    }),
+  )
+  const uploads = await mockSubjectMaskUpload(page)
+  const moderationChecks: number[] = []
+  await page.route(/\/api\/v1\/assets\/(601|702|704)\/seedance-moderation\?/, (route) => {
+    expect(route.request().method()).toBe('GET')
+    moderationChecks.push(Number(new URL(route.request().url()).pathname.split('/').at(-2)))
+    return route.fulfill({ json: { data: { status: 'active' } } })
+  })
+
+  await page.goto(`/canvas/${canvasId}`)
+  await app.open()
+  const { dialog } = app
+  await chooseEditModel(page, dialog, seedanceSubjectModel)
+  await dialog.getByRole('button', { name: '主体修改', exact: true }).click()
+  await dialog.getByRole('textbox', { name: '要处理的主体' }).fill('黑色车辆')
+  await dialog.getByRole('textbox', { name: '修改说明' }).fill('将车身改成参考图的蓝色')
+  await addTargetReference(page, dialog)
+  const submit = dialog.getByRole('button', { name: '开始处理', exact: true })
+  await submit.click()
+  const warning = page.getByRole('dialog', { name: '参考图尺寸不符合要求' })
+  await expect(warning).toBeVisible()
+  expect(moderationChecks).toEqual([])
+  expect(app.submissions).toHaveLength(0)
+
+  await warning.getByRole('button', { name: '裁剪', exact: true }).click()
+  const crop = page.getByRole('dialog', { name: '裁剪图片' })
+  await crop.getByRole('button', { name: '1:1', exact: true }).click()
+  await crop.getByRole('button', { name: '裁剪并替换参考图', exact: true }).click()
+  await expect(crop).toBeHidden()
+  expect(uploads()).toBe(1)
+  expect(app.submissions).toHaveLength(0)
+
+  await submit.click()
+  await expect(dialog).toBeHidden()
+  await expect.poll(() => app.submissions.length).toBe(1)
+  expect(app.submissions[0].input_assets).toEqual([
+    { asset_id: videoAssetId, role: 'video' },
+    { asset_id: maskAssetId, role: 'image' },
+  ])
+  expect(moderationChecks).toEqual([maskAssetId, videoAssetId])
+  app.expectMatchingEstimate(app.submissions[0])
   expect(app.pageErrors).toEqual([])
   expectNoUnexpectedApi(app.api)
 })

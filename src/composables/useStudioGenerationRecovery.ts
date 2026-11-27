@@ -5,7 +5,6 @@ import { resumeShotImageGeneration } from '@/api/smartShotImage'
 import { resumeFullVideo } from '@/api/smartVideo'
 import type { StudioOperation } from '@/api/studioHistory'
 import type { StudioResultBatch, StudioResultItem } from '@/components/studio/StudioResultFeed/StudioResultFeed'
-import { getHotCopyTaskIdempotencyKey } from '@/utils/hotCopyGenerationState'
 import {
   isStudioGenerationRejected,
   isStudioMediaPending,
@@ -24,7 +23,6 @@ import { findResumableItems, preferLocalStudioBatches } from '@/utils/studioHist
 
 const RECONCILE_INTERVAL_MS = 5_000
 const MEDIA_RETRY_DELAY_MS = 30_000
-const LOOKUP_PAGE_LIMIT = 100
 
 export function useStudioGenerationRecovery(
   workspaceId: number,
@@ -138,7 +136,6 @@ export function useStudioGenerationRecovery(
     activeScope.current = { key, signal }
     const polling = new Set<number>()
     const mediaRetryAfter = new Map<number, number>()
-    const lookupOffsets = new Map<StudioOperation, number>()
     let lookingUp = false
 
     const load = () => {
@@ -185,35 +182,31 @@ export function useStudioGenerationRecovery(
       lookingUp = true
       const authScope = getAuthRequestScope()
       try {
-        const operations = new Set(unknown.map((record) => record.operation))
         await Promise.all(
-          [...operations].map(async (operationCode) => {
+          unknown.map(async (record) => {
             try {
-              const offset = lookupOffsets.get(operationCode) || 0
               const response = await listAiTasks({
                 workspaceId,
-                operationCode,
-                limit: LOOKUP_PAGE_LIMIT,
-                offset,
-                mine: true,
+                operationCode: record.operation,
+                idempotencyKey: record.idempotencyKey,
+                limit: 1,
                 signal,
               })
-              if (signal.aborted || !isAuthRequestScopeCurrent(authScope)) return
-              const rows = response?.items ?? response?.data?.items
-              if (!Array.isArray(rows)) return
-              // 逐页检查老任务；到末页后回到起点，继续等待尚未出现的任务。
-              lookupOffsets.set(operationCode, rows.length >= LOOKUP_PAGE_LIMIT ? offset + LOOKUP_PAGE_LIMIT : 0)
-              const taskIds = new Map(rows.map((task) => [getHotCopyTaskIdempotencyKey(task), getAiTaskId(task)]))
-              for (const record of readStudioGenerationIntents(key)) {
-                if (record.taskId || record.operation !== operationCode || localItems.current.has(record.itemId))
-                  continue
-                const taskId = taskIds.get(record.idempotencyKey)
-                if (!taskId) continue
-                if (write(record.itemId, { ...record, taskId, submission: undefined }, record))
-                  patchItem(record.batch.id, record.itemId, { taskId })
-              }
+              if (signal.aborted || !isAuthRequestScopeCurrent(authScope) || localItems.current.has(record.itemId))
+                return
+              // Older servers ignore unknown filters and return an ordinary task page.
+              if (
+                response?.idempotency_lookup !== true ||
+                !Array.isArray(response.items) ||
+                response.items.length !== 1
+              )
+                return
+              const taskId = getAiTaskId(response.items[0])
+              if (!taskId) return
+              if (write(record.itemId, { ...record, taskId, submission: undefined }, record))
+                patchItem(record.batch.id, record.itemId, { taskId })
             } catch {
-              // 列表不可用或暂未查到时，保留原任务的幂等记录。
+              // 查询失败或尚未建单时，保留原任务的幂等记录。
             }
           }),
         )

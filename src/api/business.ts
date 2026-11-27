@@ -1628,6 +1628,7 @@ export function listAiTasks({
   workspaceId,
   status = '',
   operationCode = '',
+  idempotencyKey = '',
   mine,
   limit = 20,
   offset = 0,
@@ -1644,8 +1645,13 @@ export function listAiTasks({
   })
   if (status) query.set('status', String(status))
   if (operationCode) query.set('operation_code', String(operationCode))
-  if (mine !== undefined && mine !== null && mine !== '') query.set('mine', String(mine))
-  return requestJson(`/api/v1/ai/tasks?${query}`, { signal })
+  if (idempotencyKey) {
+    query.set('idempotency_key', String(idempotencyKey))
+    query.set('mine', 'true')
+  } else if (mine !== undefined && mine !== null && mine !== '') {
+    query.set('mine', String(mine))
+  }
+  return requestJson(`/api/v1/ai/tasks?${query}`, { signal, ...(idempotencyKey ? { cache: 'no-store' } : {}) })
 }
 
 /** 从各供应商响应形态中读取正安全整数任务 ID。 */

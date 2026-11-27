@@ -74,11 +74,14 @@ for (const [scenario, title] of [
         })
       }
       const url = new URL(route.request().url())
-      const found =
-        remoteVisible &&
-        url.searchParams.get('operation_code') === imageOperation &&
-        url.searchParams.get('mine') === 'true'
-      return route.fulfill({ json: { items: found ? [{ ...imageTask, idempotency_key: keys[0] }] : [] } })
+      if (!url.searchParams.has('idempotency_key')) return route.fulfill({ json: { items: [] } })
+      expect(url.searchParams.get('workspace_id')).toBe(String(WORKSPACE_ID))
+      expect(url.searchParams.get('operation_code')).toBe(imageOperation)
+      expect(url.searchParams.get('mine')).toBe('true')
+      expect(url.searchParams.get('idempotency_key')).toBe(keys[0])
+      return route.fulfill({
+        json: { code: 0, data: { idempotency_lookup: true, items: remoteVisible ? [imageTask] : [] } },
+      })
     })
     await page.route('**/api/v1/ai/tasks/923?**', (route) =>
       route.fulfill({

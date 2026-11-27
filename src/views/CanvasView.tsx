@@ -408,7 +408,7 @@ type CanvasMediaEditTarget = {
   title: string
 }
 
-type CanvasSeedanceImageInput = Pick<CanvasSeedanceAspectRatioImage, 'assetId' | 'title' | 'nodeId'> & {
+type CanvasSeedanceImageInput = Pick<CanvasSeedanceAspectRatioImage, 'assetId' | 'title' | 'nodeId' | 'videoInput'> & {
   workspaceId: number
   reference?: { targetId: string; edgeId: string }
   subjectSource?: CanvasSubjectEditSource
@@ -3145,9 +3145,12 @@ function CanvasInner({
       }
       const checks = await mapWithConcurrency([...uniqueImages.values()], 3, async (image) => {
         try {
-          const videoInput = Boolean(image.reference)
-          const invalid = await readCanvasSeedanceImageAspectRatioIssue(image.assetId, image.workspaceId, videoInput)
-          return { invalid: invalid ? { ...image, ...invalid, videoInput } : null, unreadable: null }
+          const invalid = await readCanvasSeedanceImageAspectRatioIssue(
+            image.assetId,
+            image.workspaceId,
+            image.videoInput,
+          )
+          return { invalid: invalid ? { ...image, ...invalid } : null, unreadable: null }
         } catch {
           return { invalid: null, unreadable: image.title }
         }
@@ -8046,6 +8049,7 @@ function CanvasInner({
                   nodeId: source?.id,
                   title: String(source?.data.title || '').trim() || `主体编辑参考图${index + 1}`,
                   subjectSource: activeSubjectEditRef.current,
+                  videoInput: true,
                 }
               })
               if (!(await validateSeedanceImages(inputs))) return
@@ -9923,13 +9927,13 @@ function CanvasInner({
       }
     }
 
-    if ((padding || replacement) && subjectSource) {
+    if (subjectSource) {
       setSubjectEditTarget((current) =>
         current?.source === subjectSource
           ? { ...current, referenceAssetOverrides: { ...current.referenceAssetOverrides, [request.assetId]: assetId } }
           : current,
       )
-      if (replacement) {
+      if (!padding) {
         showToast('已替换主体编辑的参考图，请重新确认后提交', 'success')
         return
       }
@@ -9982,7 +9986,7 @@ function CanvasInner({
       showToast('已将处理后的图片添加到画布，请选择新图片重新送审', 'success')
       return
     }
-    showToast(sourceNode ? '裁剪结果已添加到画布' : '裁剪结果已保存到素材库，请在主体编辑中重新选择', 'success')
+    showToast('裁剪结果已添加到画布', 'success')
   }
 
   const videoTrimGenerationBlock = (node: Node) =>
@@ -12873,7 +12877,11 @@ function CanvasInner({
                 sourceUrl={standaloneCrop.sourceUrl}
                 title={standaloneCrop.title}
                 zIndex={standaloneCrop.referenceEdit ? 2300 : undefined}
-                saveLabel={standaloneCrop.referenceEdit?.reference ? '裁剪并替换参考图' : undefined}
+                saveLabel={
+                  standaloneCrop.referenceEdit?.reference || standaloneCrop.referenceEdit?.subjectSource
+                    ? '裁剪并替换参考图'
+                    : undefined
+                }
                 referenceLimits={
                   standaloneCrop.referenceEdit
                     ? standaloneCrop.referenceEdit.videoInput
@@ -14830,6 +14838,7 @@ function CanvasInner({
                                 nodeId: ref.sourceId,
                                 title: labels.get(ref.edgeId) || `图片素材 ${ref.assetId}`,
                                 reference: { targetId: selectedNode.id, edgeId: ref.edgeId },
+                                videoInput: true,
                               })),
                             )
                             if (!validImages) return false

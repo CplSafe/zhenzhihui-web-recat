@@ -69,19 +69,21 @@ describe('创作台生成对账', () => {
   it('提交响应丢失后保留原幂等键，按同一任务 ID 对账并重试查询', async () => {
     updateStudioGenerationIntent(scope, intent.itemId, intent)
     vi.mocked(listAiTasks)
-      .mockResolvedValueOnce({ items: [] })
-      .mockResolvedValue({
-        items: [
-          { id: 91, idempotency_key: 'other' },
-          { id: 92, idempotency_key: intent.idempotencyKey },
-        ],
-      })
+      .mockResolvedValueOnce({ idempotency_lookup: true, items: [] })
+      .mockResolvedValue({ idempotency_lookup: true, items: [{ id: 92 }] })
     vi.mocked(resumeShotImageGeneration)
       .mockRejectedValueOnce(Object.assign(new Error('网络断开'), { status: 503 }))
       .mockResolvedValue({ assetId: 701, url: '/image.png' })
 
     const { result } = renderStudioRecovery()
     await act(async () => {})
+    expect(listAiTasks).toHaveBeenCalledWith({
+      workspaceId: 21,
+      operationCode: intent.operation,
+      idempotencyKey: intent.idempotencyKey,
+      limit: 1,
+      signal: expect.any(AbortSignal),
+    })
     expect(readStudioGenerationIntents(scope)).toEqual([intent])
     expect(result.current.lockedOperations.has(intent.operation)).toBe(true)
     expect(result.current.batches[0].items[0]).toMatchObject({ status: 'pending', error: STUDIO_TASK_SYNCING })
@@ -102,6 +104,7 @@ describe('创作台生成对账', () => {
     expect(result.current.batches[0].items[0]).toMatchObject({ status: 'done', url: '/image.png' })
     expect(readStudioGenerationIntents(scope)).toEqual([])
     expect(result.current.lockedOperations.has(intent.operation)).toBe(false)
+    expect(replayAiTaskSubmission).not.toHaveBeenCalled()
   })
 
   it('直接续接服务端历史中的图片任务，无需原本机记录', async () => {
@@ -115,15 +118,16 @@ describe('创作台生成对账', () => {
     expect(result.current.batches[0].items[0]).toMatchObject({ status: 'done', url: '/image.png' })
   })
 
-  it('仍无任务 ID 时继续查老页，并且只接受精确的幂等键', async () => {
+  it('旧后端只返回一条普通任务时也不会将它当成原任务', async () => {
     updateStudioGenerationIntent(scope, intent.itemId, intent)
     vi.mocked(listAiTasks)
-      .mockResolvedValueOnce({ items: Array.from({ length: 100 }, (_, index) => ({ id: index + 1 })) })
-      .mockResolvedValueOnce({ items: [{ id: 1001, idempotency_key: intent.idempotencyKey }] })
+      .mockResolvedValueOnce({ items: [{ id: 1000 }], offset: 0, limit: 1, total: 1 })
+      .mockResolvedValueOnce({ idempotency_lookup: true, items: [{ id: 1001 }] })
     renderStudioRecovery()
     await act(async () => {})
+    expect(readStudioGenerationIntents(scope)).toEqual([intent])
+    expect(resumeShotImageGeneration).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(vi.mocked(listAiTasks).mock.calls.map(([options]) => options.offset)).toEqual([0, 100])
     expect(readStudioGenerationIntents(scope)).toEqual([{ ...intent, taskId: 1001 }])
   })
 
